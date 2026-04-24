@@ -78,15 +78,16 @@ repos:
         types: [go]
         pass_filenames: false
 
-  # Tier 7 — unit tests
+  # Tier 7 — unit tests + coverage summary
   - repo: local
     hooks:
       - id: go-test
-        name: go test
-        entry: go test -timeout 60s ./...
+        name: go test -cover
+        entry: bash -c 'go test -coverprofile=/tmp/aichronicles-cover.out -timeout 60s ./... && go tool cover -func=/tmp/aichronicles-cover.out | tail -1'
         language: system
         types: [go]
         pass_filenames: false
+        verbose: true       # always print so the coverage total is visible
 
   # Tier 8 — integration tests (real UDS listener, ingest CLI end-to-end)
   - repo: local
