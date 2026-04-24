@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/toabctl/aichronicles/internal/redact"
 )
 
 // AnthropicEndpoint is the Messages API URL. Exported so tests can
@@ -118,7 +120,12 @@ func (a *Anthropic) Complete(ctx context.Context, req Request) (*Response, error
 		return nil, fmt.Errorf("anthropic: read response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("anthropic: status %d: %s", resp.StatusCode, truncate(respBody, 1024))
+		// Scrub before surfacing upstream bodies in errors. A
+		// misconfigured 401 could echo the API key back ("Invalid
+		// key: sk-ant-...") and we don't want that landing in a log
+		// file. redact.Outbound catches every detector we know about.
+		scrubbed, _ := redact.Outbound(truncate(respBody, 1024))
+		return nil, fmt.Errorf("anthropic: status %d: %s", resp.StatusCode, scrubbed)
 	}
 
 	return parseAnthropicResponse(respBody, model)

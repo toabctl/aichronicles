@@ -140,6 +140,29 @@ func TestAnthropic_Complete_Non2xxErrorIncludesStatusAndBody(t *testing.T) {
 	}
 }
 
+func TestAnthropic_Complete_ScrubsAPIKeyFromErrorBody(t *testing.T) {
+	t.Parallel()
+	// Simulate an upstream error response that echoes the key.
+	leaked := "sk-ant-" + strings.Repeat("x", 40)
+	c := fakeAnthropic(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":{"message":"Invalid key: `+leaked+`"}}`)
+	})
+	_, err := c.Complete(context.Background(), Request{
+		Messages:  []Message{{Role: RoleUser, Content: "x"}},
+		MaxTokens: 16,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), leaked) {
+		t.Fatalf("API key leaked in error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "<redacted:anthropic_api_key>") {
+		t.Errorf("expected redaction marker in error: %v", err)
+	}
+}
+
 func TestAnthropic_Complete_RefusesEmptyAPIKey(t *testing.T) {
 	t.Parallel()
 	a := &Anthropic{APIKey: ""}

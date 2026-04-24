@@ -106,6 +106,50 @@ func TestBuildSummary_HashChangesWhenContentChanges(t *testing.T) {
 	}
 }
 
+func TestBuildSummary_NullToolUseEventDoesNotPanic(t *testing.T) {
+	t.Parallel()
+	// A tool_use event where content_text is NULL but tool_name is
+	// set — historically a shape that some importers produce. Must
+	// render without panicking; the tool label should still appear.
+	events := []store.EventView{
+		{
+			EventID: "e1", Kind: "tool_use",
+			Role:        sql.NullString{},
+			ContentText: sql.NullString{},
+			TsSourceMs:  1,
+			ToolName:    nullS("Bash"),
+		},
+	}
+	built, err := BuildSummary("sess-null", events)
+	if err != nil {
+		t.Fatalf("BuildSummary: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	if !strings.Contains(body, "Bash") {
+		t.Errorf("tool label missing for NULL-content tool_use event:\n%s", body)
+	}
+}
+
+func TestBuildSummary_AllNullEventFieldsRenderKindLabel(t *testing.T) {
+	t.Parallel()
+	// Every nullable column NULL. The builder should still emit a
+	// [kind] header so the transcript stays well-formed.
+	events := []store.EventView{
+		{
+			EventID: "e1", Kind: "session_start",
+			TsSourceMs: 1,
+		},
+	}
+	built, err := BuildSummary("sess-bare", events)
+	if err != nil {
+		t.Fatalf("BuildSummary: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	if !strings.Contains(body, "[session_start]") {
+		t.Errorf("bare event missing kind label:\n%s", body)
+	}
+}
+
 // --- BuildReflect ---
 
 func TestBuildReflect_RequiresSessions(t *testing.T) {
@@ -136,6 +180,27 @@ func TestBuildReflect_RendersAllDigestFields(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q:\n%s", want, body)
 		}
+	}
+}
+
+func TestBuildReflect_ScrubsSecretsInCwd(t *testing.T) {
+	t.Parallel()
+	// A pathological Cwd can carry a secret (see ApplyRedaction's
+	// rationale for scrubbing env.Cwd). renderDigests must route
+	// Cwd through redact.Outbound too.
+	digests := []SessionDigest{
+		{ID: "s-cwd", Cwd: "/home/AKIAIOSFODNN7EXAMPLE/proj"},
+	}
+	built, err := BuildReflect(digests, time.Hour)
+	if err != nil {
+		t.Fatalf("BuildReflect: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	if strings.Contains(body, "AKIAIOSFODNN7EXAMPLE") {
+		t.Errorf("cwd leaked secret into prompt:\n%s", body)
+	}
+	if len(built.Patterns) != 1 || built.Patterns[0] != "aws_access_key" {
+		t.Errorf("Patterns: got %v", built.Patterns)
 	}
 }
 
