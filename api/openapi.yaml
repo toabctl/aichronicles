@@ -1,0 +1,308 @@
+openapi: 3.1.0
+
+info:
+  title: aichronicles ingest API
+  version: "1.0.0"
+  summary: Canonical contract for ingesting AI coding agent session events.
+  description: |
+    The aichronicles daemon (`aichroniclesd`) accepts JSON envelopes describing
+    events from AI coding agents — user prompts, assistant replies, tool
+    invocations, session boundaries — and persists them to a local SQLite
+    store.
+
+    This spec exists so third-party agents (Crush, Cursor, Opencode,
+    Claude Code via the bundled `aichronicles ingest` CLI) can publish
+    events to the same daemon without reverse-engineering the Go types.
+
+    # Transport
+
+    The daemon binds a Unix-domain socket at
+    `$XDG_RUNTIME_DIR/aichronicles/sock`, 0600, with systemd socket-activation
+    support. There is no TCP listener by design: the per-user socket is the
+    authentication boundary. Requests are HTTP/1.1 over the UDS.
+
+    # Redaction invariant
+
+    Every accepted envelope MUST carry `redaction.applied = true`. The daemon
+    responds `400 Bad Request` otherwise and does not persist anything. This
+    is defense-in-depth: the client CLI is expected to run a credential
+    scrubber before POSTing, but the daemon refuses to trust the client on
+    this point. See `internal/redact` for the reference detector set.
+
+    # Idempotency
+
+    `event_id` is the primary key. Re-POSTing an envelope with the same
+    `event_id` returns `200 OK` with `ack.deduped = true` and writes nothing.
+    Clients may safely retry.
+
+servers:
+  - url: http://unix/v1
+    description: Unix-domain socket at $XDG_RUNTIME_DIR/aichronicles/sock
+
+paths:
+  /v1/ingest:
+    post:
+      operationId: ingest
+      summary: Accept one envelope
+      description: |
+        Validates the envelope, enforces the redaction invariant, and persists
+        it across three storage layers (raw, structured events, FTS5 index).
+        Idempotent on `event_id`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Envelope"
+      responses:
+        "200":
+          description: Accepted (or recognized as a duplicate)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ack"
+        "400":
+          description: |
+            Validation failure. Bodies that are not well-formed JSON,
+            carry unknown fields, fail `Envelope.Validate()`, or are
+            missing `redaction.applied = true`.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "413":
+          description: Request body exceeds 16 MiB.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: Storage error. Envelope was not persisted.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/healthz:
+    get:
+      operationId: healthz
+      summary: Liveness check
+      description: |
+        Cheap ping — the handler does not touch the store. Returns 200 for as
+        long as the HTTP mux is alive. Use it from systemd health probes and
+        client setup scripts.
+      responses:
+        "200":
+          description: Daemon is up
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+
+components:
+  schemas:
+    Envelope:
+      type: object
+      description: |
+        The wire contract for a single event. Field tags match
+        `internal/ingest/envelope.go`; the Go struct is authoritative if
+        this spec drifts.
+      required:
+        - v
+        - event_id
+        - source_agent
+        - source_session_id
+        - kind
+        - ts_source
+        - payload
+        - redaction
+      additionalProperties: false
+      properties:
+        v:
+          type: integer
+          const: 1
+          description: Schema version. Breaking changes bump this and are served under /v2/...
+        event_id:
+          type: string
+          format: uuid
+          description: |
+            Unique identifier for this event. UUIDv7 from hook-based clients
+            (time-ordered); UUIDv4 from transcript importers. Serves as the
+            idempotency key.
+        source_agent:
+          type: string
+          pattern: "^[a-z][a-z0-9-]{1,31}$"
+          description: |
+            Stable slug identifying the agent that produced the event.
+            Examples: `claude-code`, `crush`, `aider`, `cursor`.
+          examples:
+            - claude-code
+            - crush
+        source_agent_version:
+          type: string
+          description: Optional agent build version (e.g. "2.0.3").
+        source_session_id:
+          type: string
+          minLength: 1
+          description: |
+            The agent's own session identifier. Combined with `source_agent`
+            it forms a stable UUIDv5 session identifier server-side (see
+            `ingest.DeriveSessionID`).
+        kind:
+          type: string
+          minLength: 1
+          description: |
+            Canonical event kind. The agent-specific wire kind should be
+            mapped into this vocabulary before POSTing.
+          enum:
+            - user_prompt
+            - assistant_message
+            - tool_use
+            - tool_result
+            - tool_failure
+            - session_start
+            - session_end
+            - subagent_start
+            - subagent_stop
+            - compact_start
+            - compact_end
+            - cwd_changed
+            - instructions_loaded
+            - system_message
+            - error
+            - unknown
+        role:
+          type: string
+          description: |
+            Convenience hint derived from `kind`. Clients may omit; the
+            server does not currently validate.
+          enum: [user, assistant, tool, system]
+        role_raw:
+          type: string
+          description: The agent's native role string when role was translated.
+        ts_source:
+          type: string
+          format: date-time
+          description: RFC3339 / ISO-8601 timestamp captured by the client.
+        cwd:
+          type: string
+          description: Working directory at event time. Optional but recommended.
+        host:
+          type: string
+          description: Hostname. Optional.
+        tool:
+          $ref: "#/components/schemas/Tool"
+        content_text:
+          type: string
+          description: |
+            Free-form human-readable payload for FTS (prompt, assistant
+            reply, tool command). MUST be post-redaction.
+        payload:
+          type: object
+          description: |
+            Arbitrary JSON object capturing the agent's native event shape.
+            Preserved verbatim so downstream enrichment can recover
+            anything not normalized. Redaction rewrites string leaves
+            in-place; key structure is preserved.
+          additionalProperties: true
+        transport:
+          type: string
+          enum: [hook, import]
+          description: |
+            How the event reached the daemon. `hook` = pushed in real time
+            by a running agent's hook system. `import` = bulk-loaded from
+            an on-disk transcript. Used for query-time deduplication when
+            both paths supply the same conversation.
+        redaction:
+          $ref: "#/components/schemas/Redaction"
+        session_id:
+          type: string
+          format: uuid
+          readOnly: true
+          description: Server-derived; clients should omit on POST.
+        ts_server:
+          type: string
+          format: date-time
+          readOnly: true
+          description: Server-assigned receipt timestamp. Omit on POST.
+
+    Tool:
+      type: object
+      description: |
+        Normalized tool invocation metadata. Present when `kind` is
+        `tool_use`, `tool_result`, or `tool_failure`.
+      properties:
+        name:
+          type: string
+          description: Canonical tool name (e.g. `Bash`, `Read`, `Write`).
+        name_raw:
+          type: string
+          description: Agent-native tool name before canonicalization.
+        call_id:
+          type: string
+          description: |
+            Agent-assigned call identifier that pairs `tool_use` with its
+            matching `tool_result` / `tool_failure`.
+
+    Redaction:
+      type: object
+      description: |
+        Declares that credential scrubbing has run against this envelope.
+        The daemon refuses any envelope with `applied != true`.
+      required: [applied]
+      properties:
+        applied:
+          type: boolean
+          description: |
+            Must be `true`. Signals that the client has run its redactor
+            against every string-valued field reachable from this envelope.
+        patterns:
+          type: array
+          items:
+            type: string
+          description: |
+            Unique, sorted list of detector names that fired during
+            scrubbing. Empty when nothing matched. Example values:
+            `anthropic_api_key`, `aws_access_key`, `pem_private_key`.
+
+    Ack:
+      type: object
+      description: |
+        Success response for /v1/ingest. `deduped = true` means the event
+        was already known and no rows were written.
+      required: [event_id, session_id, deduped]
+      additionalProperties: false
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+          format: uuid
+          description: |
+            Server-derived session identifier (`uuidv5(source_agent:
+            source_session_id)` under the namespace `aichronicles.local`).
+        deduped:
+          type: boolean
+
+    Problem:
+      type: object
+      description: |
+        RFC 7807 problem document. The daemon returns this shape for all
+        non-2xx responses on /v1/ingest.
+      required: [title, status]
+      properties:
+        title:
+          type: string
+          description: Short, human-readable summary.
+        status:
+          type: integer
+          description: HTTP status code echoed for client convenience.
+        detail:
+          type: string
+          description: Longer description. May contain validation-error text.

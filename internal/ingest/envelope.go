@@ -1,6 +1,9 @@
 // Package ingest defines the on-the-wire contract for aichronicles.
 // The Envelope is the single shape every source (hook, bridge, import) produces;
 // daemon handlers, client CLIs, and tests all consume it through this package.
+//
+// This file is the authoritative Go source of truth. A mirror description
+// aimed at third-party agents lives in api/openapi.yaml; keep them in sync.
 package ingest
 
 import (
