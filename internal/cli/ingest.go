@@ -2,8 +2,8 @@ package cli
 
 import (
 	"context"
-	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -26,8 +26,7 @@ func newIngestCmd() *cobra.Command {
 			"payload from stdin, wraps it in the canonical Envelope, and POSTs\n" +
 			"to aichroniclesd over a Unix socket.\n\n" +
 			"Blocking policy: this command NEVER fails the hook. Errors are\n" +
-			"logged to stderr and the process exits 0. That way a crashed or\n" +
-			"missing daemon never blocks the Claude session.",
+			"logged to stderr as structured records and the process exits 0.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return RunIngest(cmd.InOrStdin(), cmd.ErrOrStderr(), socketFlag)
 		},
@@ -36,25 +35,37 @@ func newIngestCmd() *cobra.Command {
 	return cmd
 }
 
+// newIngestLogger wraps the caller's stderr in a slog.Logger so every
+// diagnostic emits a structured record (time, level, cmd, message, and
+// any supplied attributes). Tests pass a bytes.Buffer for stderr and
+// assert on its contents, so they observe the same structured output
+// the user sees in a real hook invocation.
+func newIngestLogger(stderr io.Writer) *slog.Logger {
+	h := slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo})
+	return slog.New(h).With("cmd", "aichronicles ingest")
+}
+
 // RunIngest is the executable body of the ingest subcommand, factored out
 // so integration tests can drive it without forking a binary. It reads
 // stdin, assembles an envelope, and forwards to the daemon. The error
 // return exists for the cobra interface; in practice this command always
 // returns nil so a missing or broken daemon never fails a Claude hook.
 func RunIngest(stdin io.Reader, stderr io.Writer, socketFlag string) error {
+	log := newIngestLogger(stderr)
+
 	raw, err := io.ReadAll(stdin)
 	if err != nil {
-		warn(stderr, "read stdin:", err)
+		log.Error("read stdin", "err", err)
 		return nil
 	}
 	if len(raw) == 0 {
-		warn(stderr, "empty stdin; nothing to ingest")
+		log.Warn("empty stdin; nothing to ingest")
 		return nil
 	}
 
 	env, err := Assemble(raw, time.Now().UTC())
 	if err != nil {
-		warn(stderr, "assemble:", err)
+		log.Error("assemble envelope", "err", err)
 		return nil
 	}
 
@@ -62,47 +73,47 @@ func RunIngest(stdin io.Reader, stderr io.Writer, socketFlag string) error {
 	if sockPath == "" {
 		sockPath, err = paths.Socket()
 		if err != nil {
-			warn(stderr, "resolve socket:", err)
+			log.Error("resolve socket path", "err", err)
 			return nil
 		}
 	}
 
 	cfg, err := config.Load()
 	if err != nil {
-		warn(stderr, "config load failed, using defaults:", err)
+		log.Warn("config load failed, using defaults", "err", err)
 		d := config.Default()
 		cfg = &d
 	}
 
-	tracker := outageTracker(stderr)
+	tracker := outageTracker(log)
 
 	ctx, cancel := context.WithTimeout(context.Background(), ingestTimeout)
 	defer cancel()
 
 	client := NewClient(sockPath)
 	if _, err := client.Post(ctx, env); err != nil {
-		warn(stderr, err)
-		maybeNotifyOutage(stderr, cfg, tracker, err)
+		log.Error("post to daemon", "socket", sockPath, "err", err)
+		maybeNotifyOutage(log, cfg, tracker, err)
 		return nil
 	}
 
-	// Post succeeded — if a prior outage flag lingered, drop it so the
-	// next failure gets its own notification.
+	// Post succeeded — drop any lingering outage flag so the next
+	// failure gets its own notification.
 	if tracker != nil {
 		if err := tracker.Clear(); err != nil {
-			warn(stderr, "clear outage flag:", err)
+			log.Warn("clear outage flag", "err", err)
 		}
 	}
 	return nil
 }
 
 // outageTracker resolves the outage flag path and returns a tracker, or
-// nil when we cannot build one (in which case notifications simply fire
-// every time — acceptable degradation, never block the hook).
-func outageTracker(stderr io.Writer) *notify.OutageTracker {
+// nil when the path cannot be built (in which case notifications simply
+// fire every time — acceptable degradation, never block the hook).
+func outageTracker(log *slog.Logger) *notify.OutageTracker {
 	path, err := paths.OutageFlag()
 	if err != nil {
-		warn(stderr, "resolve outage flag:", err)
+		log.Warn("resolve outage flag path", "err", err)
 		return nil
 	}
 	return notify.NewOutageTracker(path)
@@ -111,26 +122,18 @@ func outageTracker(stderr io.Writer) *notify.OutageTracker {
 // maybeNotifyOutage sends one desktop notification per outage when the
 // user has opted in. Swallows all errors — no notification must ever
 // fail a hook.
-func maybeNotifyOutage(stderr io.Writer, cfg *config.Config, tracker *notify.OutageTracker, cause error) {
+func maybeNotifyOutage(log *slog.Logger, cfg *config.Config, tracker *notify.OutageTracker, cause error) {
 	if !cfg.Notifications.DaemonUnreachable || tracker == nil || !tracker.ShouldNotify() {
 		return
 	}
 	if err := notify.New(true).Send(
 		"aichronicles: daemon unreachable",
-		fmt.Sprintf("hooks are losing events. %v", cause),
+		"hooks are losing events: "+cause.Error(),
 	); err != nil {
-		warn(stderr, "notify failed:", err)
+		log.Warn("notify failed", "err", err)
 		return
 	}
 	if err := tracker.MarkNotified(); err != nil {
-		warn(stderr, "mark outage notified:", err)
+		log.Warn("mark outage notified", "err", err)
 	}
-}
-
-// warn writes a single-line diagnostic prefixed with the CLI name to w.
-// The Fprintln error return is intentionally discarded — there is nothing
-// useful we could do if writing to stderr itself fails.
-func warn(w io.Writer, args ...any) {
-	parts := append([]any{"aichronicles ingest:"}, args...)
-	_, _ = fmt.Fprintln(w, parts...)
 }

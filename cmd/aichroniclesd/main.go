@@ -20,7 +20,7 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "aichroniclesd:", err)
+		slog.New(slog.NewTextHandler(os.Stderr, nil)).Error("aichroniclesd failed to start", "err", err)
 		os.Exit(1)
 	}
 }
