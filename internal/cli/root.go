@@ -38,5 +38,7 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newAuditCmd())
 	cmd.AddCommand(newScrubCmd())
 	cmd.AddCommand(newSummarizeCmd())
+	cmd.AddCommand(newReflectCmd())
+	cmd.AddCommand(newProposeCmd())
 	return cmd
 }

@@ -18,6 +18,65 @@ type EventView struct {
 	ToolName    sql.NullString
 }
 
+// SessionDigestRow is the read shape used by reflect/propose. Each
+// row represents one conversation: its time window, the first user
+// prompt (so the model has something to anchor on when there is no
+// summary yet), and the latest llm_outputs summary if any.
+//
+// Callers fold this into the prompts.SessionDigest payload; keeping
+// the DB-facing shape separate lets us evolve either side without
+// coupling.
+type SessionDigestRow struct {
+	ID            string
+	StartedAtMs   sql.NullInt64
+	EndedAtMs     sql.NullInt64
+	Cwd           sql.NullString
+	FirstPrompt   sql.NullString
+	LatestSummary sql.NullString
+}
+
+// LoadRecentSessionDigests returns the most-recently-ended sessions
+// whose ended_at is within the `sinceMs` cutoff, newest first,
+// capped at `limit`. Sessions with a NULL ended_at fall back to
+// started_at so mid-flight captures aren't invisible.
+//
+// Both subqueries (first_prompt, latest_summary) are correlated;
+// at thousand-session scale the cost is negligible. If that ever
+// becomes the slow spot, materialize them into columns.
+func LoadRecentSessionDigests(db *sql.DB, sinceMs int64, limit int) ([]SessionDigestRow, error) {
+	if limit <= 0 {
+		limit = 30
+	}
+	rows, err := db.Query(
+		`SELECT s.id, s.started_at_ms, s.ended_at_ms, s.cwd,
+			(SELECT content_text FROM events
+				WHERE session_id = s.id AND kind = 'user_prompt'
+				ORDER BY ts_source_ms ASC LIMIT 1) AS first_prompt,
+			(SELECT body FROM llm_outputs
+				WHERE session_id = s.id AND kind = 'summary'
+				ORDER BY created_at_ms DESC LIMIT 1) AS latest_summary
+		FROM sessions s
+		WHERE COALESCE(s.ended_at_ms, s.started_at_ms, 0) >= ?
+		ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC
+		LIMIT ?`,
+		sinceMs, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query session digests: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []SessionDigestRow
+	for rows.Next() {
+		var r SessionDigestRow
+		if err := rows.Scan(&r.ID, &r.StartedAtMs, &r.EndedAtMs, &r.Cwd, &r.FirstPrompt, &r.LatestSummary); err != nil {
+			return nil, fmt.Errorf("scan digest: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // LoadEventsForSession returns every event for a session, oldest
 // first. An empty slice is returned for an unknown session.
 func LoadEventsForSession(db *sql.DB, sessionID string) ([]EventView, error) {
