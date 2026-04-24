@@ -408,6 +408,114 @@ func TestAnthropic_Complete_MaxRetriesNegativeDisables(t *testing.T) {
 	}
 }
 
+func TestAnthropic_Complete_SendsToolsAndToolChoice(t *testing.T) {
+	t.Parallel()
+	var gotBody anthropicBody
+	c := fakeAnthropic(t, func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		// Return a happy tool_use response so Complete can finish.
+		_, _ = io.WriteString(w, `{
+			"content":[{"type":"tool_use","id":"toolu_1","name":"record_x","input":{"k":"v"}}],
+			"usage":{"input_tokens":1,"output_tokens":1}
+		}`)
+	})
+
+	schema := json.RawMessage(`{"type":"object","properties":{"k":{"type":"string"}}}`)
+	resp, err := c.Complete(context.Background(), Request{
+		Messages:  []Message{{Role: RoleUser, Content: "x"}},
+		MaxTokens: 16,
+		Tools: []Tool{
+			{Name: "record_x", Description: "does x", InputSchema: schema},
+		},
+		ForceTool: "record_x",
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if len(gotBody.Tools) != 1 || gotBody.Tools[0].Name != "record_x" {
+		t.Errorf("tools: got %+v", gotBody.Tools)
+	}
+	if string(gotBody.Tools[0].InputSchema) != string(schema) {
+		t.Errorf("input_schema roundtrip: got %s, want %s",
+			gotBody.Tools[0].InputSchema, schema)
+	}
+	if gotBody.ToolChoice == nil || gotBody.ToolChoice.Type != "tool" || gotBody.ToolChoice.Name != "record_x" {
+		t.Errorf("tool_choice: got %+v", gotBody.ToolChoice)
+	}
+	if len(resp.ToolUses) != 1 {
+		t.Fatalf("tool_uses: got %d, want 1", len(resp.ToolUses))
+	}
+	if resp.ToolUses[0].Name != "record_x" || resp.ToolUses[0].ID != "toolu_1" {
+		t.Errorf("tool_use ident: got %+v", resp.ToolUses[0])
+	}
+	var decoded struct {
+		K string `json:"k"`
+	}
+	if err := json.Unmarshal(resp.ToolUses[0].Input, &decoded); err != nil {
+		t.Fatalf("input unmarshal: %v", err)
+	}
+	if decoded.K != "v" {
+		t.Errorf("input decoded: got %+v", decoded)
+	}
+}
+
+func TestAnthropic_Complete_OmitsToolFieldsWhenUnused(t *testing.T) {
+	t.Parallel()
+	// Non-tool callers must produce wire-identical bodies to the
+	// pre-tools shape (no `tools`, no `tool_choice`) so the provider's
+	// prompt cache and our own prompt_hash stay stable.
+	var raw map[string]json.RawMessage
+	c := fakeAnthropic(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &raw)
+		_, _ = io.WriteString(w,
+			`{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`)
+	})
+	if _, err := c.Complete(context.Background(), Request{
+		System:    "be terse",
+		Messages:  []Message{{Role: RoleUser, Content: "hi"}},
+		MaxTokens: 16,
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if _, present := raw["tools"]; present {
+		t.Errorf("tools must be omitted when unused, got %s", raw["tools"])
+	}
+	if _, present := raw["tool_choice"]; present {
+		t.Errorf("tool_choice must be omitted when unused, got %s", raw["tool_choice"])
+	}
+}
+
+func TestAnthropic_Complete_MixedTextAndToolUseBlocks(t *testing.T) {
+	t.Parallel()
+	// Real responses can narrate AND call a tool. Both paths must
+	// populate Response: Text concatenates text blocks in order,
+	// ToolUses carries every tool_use block in order.
+	c := fakeAnthropic(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{
+			"content":[
+				{"type":"text","text":"I'll record that now."},
+				{"type":"tool_use","id":"toolu_a","name":"record_x","input":{"a":1}}
+			],
+			"usage":{"input_tokens":1,"output_tokens":1}
+		}`)
+	})
+	resp, err := c.Complete(context.Background(), Request{
+		Messages:  []Message{{Role: RoleUser, Content: "x"}},
+		MaxTokens: 16,
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if resp.Text != "I'll record that now." {
+		t.Errorf("Text: got %q", resp.Text)
+	}
+	if len(resp.ToolUses) != 1 || resp.ToolUses[0].Name != "record_x" {
+		t.Errorf("ToolUses: got %+v", resp.ToolUses)
+	}
+}
+
 func TestFromEnvOrCommand_EnvWins(t *testing.T) {
 	// Not parallel: mutates process env.
 	t.Setenv(APIKeyEnv, "env-key")

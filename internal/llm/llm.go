@@ -15,7 +15,10 @@
 // pattern appears, before anything crosses the network.
 package llm
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // Role identifies the speaker of a Message in a multi-turn Request.
 // Values mirror Anthropic's Messages API: user messages from the
@@ -58,6 +61,26 @@ type Request struct {
 	// oversizing wastes budget if the provider bills per max, not
 	// per generated.
 	MaxTokens int
+
+	// Tools, when non-empty, advertises structured-output tools the
+	// model may call. Block B features (summarize/reflect/propose)
+	// use a single forced tool per call so the reply arrives as
+	// validated JSON rather than free-form prose.
+	Tools []Tool
+
+	// ForceTool, when non-empty, names the tool the model MUST call.
+	// Ignored when Tools is empty. The provider translates this into
+	// tool_choice={"type":"tool","name":ForceTool}.
+	ForceTool string
+}
+
+// Tool declares one structured-output function the model can call.
+// InputSchema is the caller's JSON Schema (as raw bytes so the
+// provider wire can forward it without re-marshaling).
+type Tool struct {
+	Name        string
+	Description string
+	InputSchema json.RawMessage
 }
 
 // Response is the model's reply plus bookkeeping the caller will
@@ -65,6 +88,7 @@ type Request struct {
 type Response struct {
 	// Text is the assembled reply. For providers that stream multiple
 	// content blocks we concatenate them here so callers get one field.
+	// Empty when the model responded exclusively via tool_use.
 	Text string
 
 	// Model echoes the provider's report of which model served the
@@ -75,6 +99,20 @@ type Response struct {
 	// Usage records the token counts the provider reports back.
 	// Zero values mean "provider did not supply".
 	Usage Usage
+
+	// ToolUses is the list of structured-output calls the model made.
+	// Populated only when Request.Tools was non-empty. Callers with
+	// ForceTool set expect exactly one entry.
+	ToolUses []ToolUse
+}
+
+// ToolUse is one invocation of a structured-output tool. Input is the
+// raw JSON the model produced, suitable for Unmarshal into the
+// caller's typed result.
+type ToolUse struct {
+	ID    string
+	Name  string
+	Input json.RawMessage
 }
 
 // Usage is the token accounting block returned by the provider.

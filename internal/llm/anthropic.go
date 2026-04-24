@@ -393,10 +393,27 @@ func validateRequest(req Request) error {
 // deliberately keys on the system string (not the wire block form)
 // so the cache behavior is transparent to callers.
 type anthropicBody struct {
-	Model     string             `json:"model"`
-	MaxTokens int                `json:"max_tokens"`
-	System    []systemBlock      `json:"system,omitempty"`
-	Messages  []anthropicMessage `json:"messages"`
+	Model      string               `json:"model"`
+	MaxTokens  int                  `json:"max_tokens"`
+	System     []systemBlock        `json:"system,omitempty"`
+	Messages   []anthropicMessage   `json:"messages"`
+	Tools      []anthropicTool      `json:"tools,omitempty"`
+	ToolChoice *anthropicToolChoice `json:"tool_choice,omitempty"`
+}
+
+// anthropicTool is one entry of the request `tools` array. The
+// schema field name is `input_schema` on the wire (not `inputSchema`).
+type anthropicTool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	InputSchema json.RawMessage `json:"input_schema"`
+}
+
+// anthropicToolChoice forces a specific tool call. Type is always
+// "tool" for our callers — "auto" and "any" are unused today.
+type anthropicToolChoice struct {
+	Type string `json:"type"`
+	Name string `json:"name"`
 }
 
 // systemBlock is one entry in the Messages API `system` array. We only
@@ -428,9 +445,15 @@ type anthropicResponse struct {
 	Usage   anthropicUsage     `json:"usage"`
 }
 
+// anthropicContent models one content block in the response. Text
+// blocks populate Text; tool_use blocks populate ID, Name, and Input
+// (the model's JSON arguments). Blocks of other types are ignored.
 type anthropicContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type  string          `json:"type"`
+	Text  string          `json:"text,omitempty"`
+	ID    string          `json:"id,omitempty"`
+	Name  string          `json:"name,omitempty"`
+	Input json.RawMessage `json:"input,omitempty"`
 }
 
 type anthropicUsage struct {
@@ -451,11 +474,29 @@ func buildAnthropicBody(req Request, model string) ([]byte, error) {
 			CacheControl: &cacheControl{Type: "ephemeral"},
 		}}
 	}
+	var tools []anthropicTool
+	if len(req.Tools) > 0 {
+		tools = make([]anthropicTool, len(req.Tools))
+		for i, t := range req.Tools {
+			// anthropicTool has the same fields as Tool plus JSON
+			// tags; Go allows this conversion despite the tag
+			// difference (spec: field tags are ignored for struct
+			// conversions). Keeps us from drifting if either side
+			// gains a field.
+			tools[i] = anthropicTool(t)
+		}
+	}
+	var toolChoice *anthropicToolChoice
+	if req.ForceTool != "" {
+		toolChoice = &anthropicToolChoice{Type: "tool", Name: req.ForceTool}
+	}
 	return json.Marshal(anthropicBody{
-		Model:     model,
-		MaxTokens: req.MaxTokens,
-		System:    system,
-		Messages:  msgs,
+		Model:      model,
+		MaxTokens:  req.MaxTokens,
+		System:     system,
+		Messages:   msgs,
+		Tools:      tools,
+		ToolChoice: toolChoice,
 	})
 }
 
@@ -465,9 +506,17 @@ func parseAnthropicResponse(body []byte, model string) (*Response, error) {
 		return nil, fmt.Errorf("anthropic: decode response: %w", err)
 	}
 	var text bytes.Buffer
+	var toolUses []ToolUse
 	for _, c := range r.Content {
-		if c.Type == "text" {
+		switch c.Type {
+		case "text":
 			text.WriteString(c.Text)
+		case "tool_use":
+			toolUses = append(toolUses, ToolUse{
+				ID:    c.ID,
+				Name:  c.Name,
+				Input: c.Input,
+			})
 		}
 	}
 	respModel := r.Model
@@ -475,8 +524,9 @@ func parseAnthropicResponse(body []byte, model string) (*Response, error) {
 		respModel = model
 	}
 	return &Response{
-		Text:  text.String(),
-		Model: respModel,
+		Text:     text.String(),
+		Model:    respModel,
+		ToolUses: toolUses,
 		Usage: Usage{
 			InputTokens:  r.Usage.InputTokens,
 			OutputTokens: r.Usage.OutputTokens,
