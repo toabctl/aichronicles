@@ -4,10 +4,10 @@ Requires=aichronicles.socket
 After=aichronicles.socket
 
 [Service]
-# aichroniclesd must be discoverable on systemd's user manager PATH
-# (usually inherits login PATH; override via `systemctl --user edit
-# aichronicles.service` if it isn't).
-ExecStart=aichroniclesd
+# systemd's spawned-service environment does not reliably inherit the
+# user manager's PATH, so we reference the binary by absolute path via
+# the %h (home) specifier. The XDG convention ~/.local/bin is assumed.
+ExecStart=%h/.local/bin/aichroniclesd
 Type=simple
 Restart=on-failure
 RestartSec=5s
