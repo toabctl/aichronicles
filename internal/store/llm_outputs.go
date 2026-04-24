@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -36,7 +37,7 @@ type LLMOutput struct {
 // existing row and (false, nil) — never errors. This is the caching
 // primitive the summarize/reflect/propose commands lean on to avoid
 // re-paying for identical prompts.
-func SaveLLMOutput(tx *sql.Tx, out *LLMOutput) (id int64, inserted bool, err error) {
+func SaveLLMOutput(ctx context.Context, tx *sql.Tx, out *LLMOutput) (id int64, inserted bool, err error) {
 	if out == nil {
 		return 0, false, errors.New("SaveLLMOutput: nil output")
 	}
@@ -50,7 +51,7 @@ func SaveLLMOutput(tx *sql.Tx, out *LLMOutput) (id int64, inserted bool, err err
 		return 0, false, errors.New("SaveLLMOutput: body is required")
 	}
 
-	res, err := tx.Exec(
+	res, err := tx.ExecContext(ctx,
 		`INSERT OR IGNORE INTO llm_outputs(
 			session_id, kind, model, prompt_hash,
 			input_tokens, output_tokens, body, created_at_ms
@@ -68,7 +69,7 @@ func SaveLLMOutput(tx *sql.Tx, out *LLMOutput) (id int64, inserted bool, err err
 	if n == 0 {
 		// Duplicate (kind, prompt_hash) — look up the existing id.
 		var existing int64
-		err := tx.QueryRow(
+		err := tx.QueryRowContext(ctx,
 			`SELECT id FROM llm_outputs WHERE kind = ? AND prompt_hash = ?`,
 			string(out.Kind), out.PromptHash,
 		).Scan(&existing)
@@ -87,8 +88,8 @@ func SaveLLMOutput(tx *sql.Tx, out *LLMOutput) (id int64, inserted bool, err err
 // LoadLLMOutputByHash returns the stored output for (kind, prompt_hash)
 // or nil if none exists. Callers use this as an "have I already run
 // this exact prompt?" probe before calling the LLM.
-func LoadLLMOutputByHash(db *sql.DB, kind LLMOutputKind, promptHash string) (*LLMOutput, error) {
-	row := db.QueryRow(
+func LoadLLMOutputByHash(ctx context.Context, db *sql.DB, kind LLMOutputKind, promptHash string) (*LLMOutput, error) {
+	row := db.QueryRowContext(ctx,
 		`SELECT id, session_id, kind, model, prompt_hash,
 			input_tokens, output_tokens, body, created_at_ms
 		 FROM llm_outputs
@@ -104,8 +105,8 @@ func LoadLLMOutputByHash(db *sql.DB, kind LLMOutputKind, promptHash string) (*LL
 
 // LoadLLMOutputsForSession returns every output attached to a given
 // session, newest first. Empty slice when there are none.
-func LoadLLMOutputsForSession(db *sql.DB, sessionID string) ([]LLMOutput, error) {
-	rows, err := db.Query(
+func LoadLLMOutputsForSession(ctx context.Context, db *sql.DB, sessionID string) ([]LLMOutput, error) {
+	rows, err := db.QueryContext(ctx,
 		`SELECT id, session_id, kind, model, prompt_hash,
 			input_tokens, output_tokens, body, created_at_ms
 		 FROM llm_outputs

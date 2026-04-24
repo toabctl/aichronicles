@@ -103,7 +103,7 @@ func RunReflect(
 	}
 
 	sinceMs := time.Now().Add(-window).UnixMilli()
-	rows, err := store.LoadRecentSessionDigests(s.DB(), sinceMs, opts.Limit)
+	rows, err := store.LoadRecentSessionDigests(ctx, s.DB(), sinceMs, opts.Limit)
 	if err != nil {
 		return 0, fmt.Errorf("reflect: load sessions: %w", err)
 	}
@@ -175,7 +175,7 @@ func runCachedLLM(
 	in cachedLLMInput,
 ) (int64, error) {
 	if !in.force {
-		cached, err := store.LoadLLMOutputByHash(s.DB(), in.kind, in.hash)
+		cached, err := store.LoadLLMOutputByHash(ctx, s.DB(), in.kind, in.hash)
 		if err != nil {
 			return 0, fmt.Errorf("%s: cache lookup: %w", in.kind, err)
 		}
@@ -205,7 +205,7 @@ func runCachedLLM(
 		return 0, fmt.Errorf("%s: LLM returned empty text", in.kind)
 	}
 
-	id, err := persistSummary(s, &persistInput{
+	id, err := persistSummary(ctx, s, &persistInput{
 		// session_id intentionally empty: reflect/propose span many
 		// sessions. Summary uses this same helper with a real id.
 		kind:       in.kind,

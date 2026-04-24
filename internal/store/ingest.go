@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -23,13 +24,16 @@ var ErrRedactionRequired = errors.New("IngestEnvelope: envelope.redaction.applie
 // supplying the original envelope bytes (so raw_envelopes holds the
 // source of truth verbatim), and the server-side receipt timestamp.
 //
+// ctx is propagated to every SQL call so an HTTP request cancellation
+// or a daemon shutdown can abort a long write cleanly.
+//
 // Returns deduped=true when raw_envelopes already had this event_id
 // and no rows were written. Returns (false, err) on any SQL error.
 // Returns (false, ErrRedactionRequired) if env.Redaction.Applied is
 // not explicitly true.
 // Cascading trigger work (sessions.event_count, events_fts) is handled
 // by the schema's AFTER INSERT triggers.
-func IngestEnvelope(tx *sql.Tx, env *ingest.Envelope, envelopeJSON []byte, tsServerMs int64) (deduped bool, err error) {
+func IngestEnvelope(ctx context.Context, tx *sql.Tx, env *ingest.Envelope, envelopeJSON []byte, tsServerMs int64) (deduped bool, err error) {
 	if env == nil {
 		return false, errors.New("IngestEnvelope: nil envelope")
 	}
@@ -37,7 +41,7 @@ func IngestEnvelope(tx *sql.Tx, env *ingest.Envelope, envelopeJSON []byte, tsSer
 		return false, ErrRedactionRequired
 	}
 
-	res, err := tx.Exec(
+	res, err := tx.ExecContext(ctx,
 		`INSERT OR IGNORE INTO raw_envelopes(
 			event_id, ingest_seq, source_agent, source_session_id,
 			ts_source_ms, ts_server_ms, envelope_json
@@ -60,7 +64,7 @@ func IngestEnvelope(tx *sql.Tx, env *ingest.Envelope, envelopeJSON []byte, tsSer
 	}
 
 	sessionID := ingest.DeriveSessionID(env.SourceAgent, env.SourceSessionID)
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO sessions(id, source_agent, source_session_id)
 		 VALUES (?, ?, ?)
 		 ON CONFLICT DO NOTHING`,
@@ -74,7 +78,7 @@ func IngestEnvelope(tx *sql.Tx, env *ingest.Envelope, envelopeJSON []byte, tsSer
 		toolName = nullString(env.Tool.Name)
 		toolCallID = nullString(env.Tool.CallID)
 	}
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO events(
 			event_id, session_id, source_agent, kind, role,
 			ts_source_ms, cwd, tool_name, tool_call_id, content_text
@@ -98,7 +102,7 @@ func IngestEnvelope(tx *sql.Tx, env *ingest.Envelope, envelopeJSON []byte, tsSer
 				extraJSON = sql.NullString{String: string(b), Valid: true}
 			}
 		}
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO extractions(event_id, session_id, kind, value, extra_json) VALUES (?, ?, ?, ?, ?)`,
 			env.EventID, sessionID, ex.Kind, ex.Value, extraJSON,
 		); err != nil {

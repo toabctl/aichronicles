@@ -22,7 +22,7 @@ func TestSaveLLMOutput_HappyPathInsertsRow(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
 	withTx(t, s, func(tx *sql.Tx) {
-		id, inserted, err := SaveLLMOutput(tx, newOutput(LLMKindSummary, "h1", "body one"))
+		id, inserted, err := SaveLLMOutput(t.Context(), tx, newOutput(LLMKindSummary, "h1", "body one"))
 		if err != nil {
 			t.Fatalf("SaveLLMOutput: %v", err)
 		}
@@ -40,14 +40,14 @@ func TestSaveLLMOutput_DuplicateHashReturnsExisting(t *testing.T) {
 	s := openTemp(t)
 	var firstID int64
 	withTx(t, s, func(tx *sql.Tx) {
-		id, _, err := SaveLLMOutput(tx, newOutput(LLMKindSummary, "dup", "first"))
+		id, _, err := SaveLLMOutput(t.Context(), tx, newOutput(LLMKindSummary, "dup", "first"))
 		if err != nil {
 			t.Fatalf("first: %v", err)
 		}
 		firstID = id
 	})
 	withTx(t, s, func(tx *sql.Tx) {
-		id, inserted, err := SaveLLMOutput(tx, newOutput(LLMKindSummary, "dup", "second"))
+		id, inserted, err := SaveLLMOutput(t.Context(), tx, newOutput(LLMKindSummary, "dup", "second"))
 		if err != nil {
 			t.Fatalf("second: %v", err)
 		}
@@ -71,10 +71,10 @@ func TestSaveLLMOutput_SameHashDifferentKindCoexists(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
 	withTx(t, s, func(tx *sql.Tx) {
-		if _, _, err := SaveLLMOutput(tx, newOutput(LLMKindSummary, "shared", "as summary")); err != nil {
+		if _, _, err := SaveLLMOutput(t.Context(), tx, newOutput(LLMKindSummary, "shared", "as summary")); err != nil {
 			t.Fatalf("summary: %v", err)
 		}
-		if _, _, err := SaveLLMOutput(tx, newOutput(LLMKindReflect, "shared", "as reflect")); err != nil {
+		if _, _, err := SaveLLMOutput(t.Context(), tx, newOutput(LLMKindReflect, "shared", "as reflect")); err != nil {
 			t.Fatalf("reflect: %v", err)
 		}
 	})
@@ -89,16 +89,16 @@ func TestSaveLLMOutput_ValidationErrors(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
 	withTx(t, s, func(tx *sql.Tx) {
-		if _, _, err := SaveLLMOutput(tx, nil); err == nil {
+		if _, _, err := SaveLLMOutput(t.Context(), tx, nil); err == nil {
 			t.Error("expected error for nil output")
 		}
-		if _, _, err := SaveLLMOutput(tx, &LLMOutput{PromptHash: "x", Body: "y"}); err == nil {
+		if _, _, err := SaveLLMOutput(t.Context(), tx, &LLMOutput{PromptHash: "x", Body: "y"}); err == nil {
 			t.Error("expected error for missing kind")
 		}
-		if _, _, err := SaveLLMOutput(tx, &LLMOutput{Kind: LLMKindSummary, Body: "y"}); err == nil {
+		if _, _, err := SaveLLMOutput(t.Context(), tx, &LLMOutput{Kind: LLMKindSummary, Body: "y"}); err == nil {
 			t.Error("expected error for missing prompt_hash")
 		}
-		if _, _, err := SaveLLMOutput(tx, &LLMOutput{Kind: LLMKindSummary, PromptHash: "x"}); err == nil {
+		if _, _, err := SaveLLMOutput(t.Context(), tx, &LLMOutput{Kind: LLMKindSummary, PromptHash: "x"}); err == nil {
 			t.Error("expected error for missing body")
 		}
 	})
@@ -107,7 +107,7 @@ func TestSaveLLMOutput_ValidationErrors(t *testing.T) {
 func TestLoadLLMOutputByHash_ReturnsNilWhenAbsent(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
-	got, err := LoadLLMOutputByHash(s.DB(), LLMKindSummary, "nope")
+	got, err := LoadLLMOutputByHash(t.Context(), s.DB(), LLMKindSummary, "nope")
 	if err != nil {
 		t.Fatalf("LoadLLMOutputByHash: %v", err)
 	}
@@ -120,11 +120,11 @@ func TestLoadLLMOutputByHash_ReturnsRowWhenPresent(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
 	withTx(t, s, func(tx *sql.Tx) {
-		if _, _, err := SaveLLMOutput(tx, newOutput(LLMKindSummary, "h42", "hello")); err != nil {
+		if _, _, err := SaveLLMOutput(t.Context(), tx, newOutput(LLMKindSummary, "h42", "hello")); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 	})
-	got, err := LoadLLMOutputByHash(s.DB(), LLMKindSummary, "h42")
+	got, err := LoadLLMOutputByHash(t.Context(), s.DB(), LLMKindSummary, "h42")
 	if err != nil {
 		t.Fatalf("LoadLLMOutputByHash: %v", err)
 	}
@@ -156,13 +156,13 @@ func TestLoadLLMOutputsForSession_NewestFirst(t *testing.T) {
 		o.SessionID = sql.NullString{String: "sess-1", Valid: true}
 		o.CreatedAtMs = int64(100 + i*10)
 		withTx(t, s, func(tx *sql.Tx) {
-			if _, _, err := SaveLLMOutput(tx, o); err != nil {
+			if _, _, err := SaveLLMOutput(t.Context(), tx, o); err != nil {
 				t.Fatalf("seed %s: %v", hash, err)
 			}
 		})
 	}
 
-	got, err := LoadLLMOutputsForSession(s.DB(), "sess-1")
+	got, err := LoadLLMOutputsForSession(t.Context(), s.DB(), "sess-1")
 	if err != nil {
 		t.Fatalf("LoadLLMOutputsForSession: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestLLMOutputs_SessionDeleteDetachesNotCascades(t *testing.T) {
 	o := newOutput(LLMKindSummary, "keep-me", "summary body")
 	o.SessionID = sql.NullString{String: "sess-x", Valid: true}
 	withTx(t, s, func(tx *sql.Tx) {
-		if _, _, err := SaveLLMOutput(tx, o); err != nil {
+		if _, _, err := SaveLLMOutput(t.Context(), tx, o); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 	})
@@ -202,7 +202,7 @@ func TestLLMOutputs_SessionDeleteDetachesNotCascades(t *testing.T) {
 		t.Fatalf("delete session: %v", err)
 	}
 
-	got, err := LoadLLMOutputByHash(s.DB(), LLMKindSummary, "keep-me")
+	got, err := LoadLLMOutputByHash(t.Context(), s.DB(), LLMKindSummary, "keep-me")
 	if err != nil {
 		t.Fatalf("lookup: %v", err)
 	}

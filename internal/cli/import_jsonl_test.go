@@ -66,7 +66,7 @@ func TestImportJSONL_HappyPath(t *testing.T) {
 		newEnv("tool_use"),
 	)
 
-	report, err := ImportJSONL(bytes.NewReader(data), s)
+	report, err := ImportJSONL(t.Context(), bytes.NewReader(data), s)
 	if err != nil {
 		t.Fatalf("ImportJSONL: %v", err)
 	}
@@ -89,10 +89,10 @@ func TestImportJSONL_IdempotentOnDuplicates(t *testing.T) {
 	s := testStore(t)
 	data := jsonlFromEnvelopes(t, newEnv("user_prompt"), newEnv("tool_use"))
 
-	if _, err := ImportJSONL(bytes.NewReader(data), s); err != nil {
+	if _, err := ImportJSONL(t.Context(), bytes.NewReader(data), s); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	report, err := ImportJSONL(bytes.NewReader(data), s)
+	report, err := ImportJSONL(t.Context(), bytes.NewReader(data), s)
 	if err != nil {
 		t.Fatalf("second: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestImportJSONL_MalformedLinesAreCountedNotFatal(t *testing.T) {
 	buf.Write(goodB2)
 	buf.WriteByte('\n')
 
-	report, err := ImportJSONL(&buf, s)
+	report, err := ImportJSONL(t.Context(), &buf, s)
 	if err != nil {
 		t.Fatalf("ImportJSONL: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestImportJSONL_EmptyInput(t *testing.T) {
 	t.Parallel()
 	s := testStore(t)
 
-	report, err := ImportJSONL(bytes.NewReader(nil), s)
+	report, err := ImportJSONL(t.Context(), bytes.NewReader(nil), s)
 	if err != nil {
 		t.Fatalf("ImportJSONL: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestImportJSONL_LargeContentSurvivesScannerBuffer(t *testing.T) {
 	env.Payload = map[string]any{"text": huge}
 	data := jsonlFromEnvelopes(t, env)
 
-	report, err := ImportJSONL(bytes.NewReader(data), s)
+	report, err := ImportJSONL(t.Context(), bytes.NewReader(data), s)
 	if err != nil {
 		t.Fatalf("ImportJSONL: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestImportJSONL_ScrubsSecretsEvenWhenInputClaimsApplied(t *testing.T) {
 	env.Redaction = &ingest.Redaction{Applied: true, Patterns: nil}
 	data := jsonlFromEnvelopes(t, env)
 
-	report, err := ImportJSONL(bytes.NewReader(data), s)
+	report, err := ImportJSONL(t.Context(), bytes.NewReader(data), s)
 	if err != nil {
 		t.Fatalf("ImportJSONL: %v", err)
 	}

@@ -4,6 +4,7 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +42,7 @@ func TestCLI_IngestRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer func() { _ = shutdown() }()
+	defer func() { _ = shutdown(context.Background()) }()
 
 	hook := []byte(`{
 		"session_id": "e2e-1",
@@ -103,7 +104,7 @@ func TestCLI_IngestRedactsSecretsEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer func() { _ = shutdown() }()
+	defer func() { _ = shutdown(context.Background()) }()
 
 	// User accidentally pasted an Anthropic API key into a prompt.
 	secret := "sk-ant-" + strings.Repeat("a", 40)
@@ -169,7 +170,7 @@ func TestCLI_IngestRespectsDenyPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer func() { _ = shutdown() }()
+	defer func() { _ = shutdown(context.Background()) }()
 
 	// Write a config that denies /work/nda.
 	cfgDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "aichronicles")

@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -216,6 +218,105 @@ func TestIngest_Rejects_OversizedEnvelope(t *testing.T) {
 
 	if rr.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("expected 413, got %d", rr.Code)
+	}
+}
+
+// TestListenAndServe_ShutdownDrainsInflightRequest proves that a POST
+// already being handled at shutdown time runs to completion when a
+// drain context is supplied. Without the graceful path this test would
+// see a 500 (tx rollback) or a connection reset.
+func TestListenAndServe_ShutdownDrainsInflightRequest(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "sock")
+
+	s, err := store.Open(filepath.Join(dir, "store.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+	srvInstance := NewServer(s, nil)
+
+	// Wrap the real handler to gate its return until the test says so.
+	// This lets us start shutdown while the request is still in flight.
+	releaseHandler := make(chan struct{})
+	handlerEntered := make(chan struct{})
+	gated := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(handlerEntered)
+		<-releaseHandler
+		srvInstance.Handler().ServeHTTP(w, r)
+	})
+
+	shutdown, err := ListenAndServe(sock, gated)
+	if err != nil {
+		t.Fatalf("ListenAndServe: %v", err)
+	}
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+				return net.Dial("unix", sock)
+			},
+		},
+		Timeout: 5 * time.Second,
+	}
+
+	type result struct {
+		status int
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		resp, err := client.Post("http://unix/v1/ingest",
+			"application/json", bytes.NewReader(validBody(t)))
+		if err != nil {
+			done <- result{err: err}
+			return
+		}
+		_ = resp.Body.Close()
+		done <- result{status: resp.StatusCode}
+	}()
+
+	// Wait for the handler to start before triggering shutdown.
+	select {
+	case <-handlerEntered:
+	case <-time.After(2 * time.Second):
+		close(releaseHandler)
+		t.Fatal("handler never entered")
+	}
+
+	// Kick off shutdown in the background with a 5s drain budget.
+	shutdownErr := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		shutdownErr <- shutdown(ctx)
+	}()
+
+	// Release the handler so the in-flight request finishes.
+	close(releaseHandler)
+
+	// The request must complete successfully — drain waited for it.
+	select {
+	case r := <-done:
+		if r.err != nil {
+			t.Fatalf("request failed during graceful shutdown: %v", r.err)
+		}
+		if r.status != http.StatusOK {
+			t.Fatalf("status during drain: got %d, want 200", r.status)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("request did not finish before drain timeout")
+	}
+
+	// And shutdown must now return cleanly (no deadline exceeded).
+	select {
+	case err := <-shutdownErr:
+		if err != nil {
+			t.Fatalf("shutdown: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("shutdown did not complete")
 	}
 }
 

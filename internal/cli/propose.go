@@ -99,7 +99,7 @@ func RunPropose(
 	}
 
 	sinceMs := time.Now().Add(-window).UnixMilli()
-	rows, err := store.LoadRecentSessionDigests(s.DB(), sinceMs, opts.Limit)
+	rows, err := store.LoadRecentSessionDigests(ctx, s.DB(), sinceMs, opts.Limit)
 	if err != nil {
 		return 0, fmt.Errorf("propose: load sessions: %w", err)
 	}

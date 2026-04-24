@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/daemon"
@@ -17,6 +19,12 @@ import (
 	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/store"
 )
+
+// shutdownDrainTimeout caps how long the daemon will wait for
+// in-flight requests to finish after SIGTERM / SIGINT. systemd's
+// default TimeoutStopSec is 90s; 10s is comfortably under that while
+// still letting a slow SQLite write commit.
+const shutdownDrainTimeout = 10 * time.Second
 
 func main() {
 	if err := run(); err != nil {
@@ -59,7 +67,7 @@ func run() error {
 
 	srv := daemon.NewServer(st, logger)
 
-	var shutdown func() error
+	var shutdown func(context.Context) error
 	activationListener, err := daemon.ListenFromSystemd()
 	if err != nil {
 		return fmt.Errorf("systemd socket activation: %w", err)
@@ -82,9 +90,15 @@ func run() error {
 		logger.Warn("start notification failed", "err", err)
 	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
-	logger.Info("aichroniclesd shutting down")
-	return shutdown()
+	// signal.NotifyContext gives us a cancellable context that fires
+	// on SIGTERM/SIGINT. We use it purely to wait — the actual drain
+	// deadline lives on a separate bounded child below.
+	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	<-sigCtx.Done()
+	logger.Info("aichroniclesd shutting down", "drain_timeout", shutdownDrainTimeout)
+
+	drainCtx, cancel := context.WithTimeout(context.Background(), shutdownDrainTimeout)
+	defer cancel()
+	return shutdown(drainCtx)
 }

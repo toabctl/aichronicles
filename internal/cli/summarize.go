@@ -98,7 +98,7 @@ func RunSummarize(
 	opts SummarizeOptions,
 	out io.Writer,
 ) (int64, error) {
-	events, err := store.LoadEventsForSession(s.DB(), opts.SessionID, 0)
+	events, err := store.LoadEventsForSession(ctx, s.DB(), opts.SessionID, 0)
 	if err != nil {
 		return 0, fmt.Errorf("summarize: load events: %w", err)
 	}
@@ -112,7 +112,7 @@ func RunSummarize(
 	}
 
 	if !opts.Force {
-		cached, err := store.LoadLLMOutputByHash(s.DB(), store.LLMKindSummary, built.Hash)
+		cached, err := store.LoadLLMOutputByHash(ctx, s.DB(), store.LLMKindSummary, built.Hash)
 		if err != nil {
 			return 0, fmt.Errorf("summarize: cache lookup: %w", err)
 		}
@@ -142,7 +142,7 @@ func RunSummarize(
 		return 0, errors.New("summarize: LLM returned empty text")
 	}
 
-	id, err := persistSummary(s, &persistInput{
+	id, err := persistSummary(ctx, s, &persistInput{
 		sessionID:  opts.SessionID,
 		kind:       store.LLMKindSummary,
 		hash:       built.Hash,
@@ -175,7 +175,7 @@ type persistInput struct {
 	body       string
 }
 
-func persistSummary(s *store.Store, in *persistInput) (int64, error) {
+func persistSummary(ctx context.Context, s *store.Store, in *persistInput) (int64, error) {
 	out := &store.LLMOutput{
 		SessionID:   sql.NullString{String: in.sessionID, Valid: in.sessionID != ""},
 		Kind:        in.kind,
@@ -191,12 +191,12 @@ func persistSummary(s *store.Store, in *persistInput) (int64, error) {
 		out.OutputTokens = sql.NullInt64{Int64: int64(in.outputToks), Valid: true}
 	}
 
-	tx, err := s.DB().Begin()
+	tx, err := s.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	id, _, err := store.SaveLLMOutput(tx, out)
+	id, _, err := store.SaveLLMOutput(ctx, tx, out)
 	if err != nil {
 		return 0, err
 	}

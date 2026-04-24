@@ -202,7 +202,7 @@ func TestImportClaudeTranscripts_SingleFile(t *testing.T) {
 	var warns bytes.Buffer
 
 	path := filepath.Join("testdata", "claude_transcripts", "user_prompt_string.jsonl")
-	report, err := ImportClaudeTranscripts(path, s, &warns)
+	report, err := ImportClaudeTranscripts(t.Context(), path, s, &warns)
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestImportClaudeTranscripts_MixedSessionCountsCorrectly(t *testing.T) {
 	var warns bytes.Buffer
 
 	path := filepath.Join("testdata", "claude_transcripts", "mixed_session.jsonl")
-	report, err := ImportClaudeTranscripts(path, s, &warns)
+	report, err := ImportClaudeTranscripts(t.Context(), path, s, &warns)
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -267,11 +267,11 @@ func TestImportClaudeTranscripts_IdempotentReplay(t *testing.T) {
 	var warns bytes.Buffer
 
 	path := filepath.Join("testdata", "claude_transcripts", "mixed_session.jsonl")
-	if _, err := ImportClaudeTranscripts(path, s, &warns); err != nil {
+	if _, err := ImportClaudeTranscripts(t.Context(), path, s, &warns); err != nil {
 		t.Fatalf("first: %v", err)
 	}
 
-	second, err := ImportClaudeTranscripts(path, s, &warns)
+	second, err := ImportClaudeTranscripts(t.Context(), path, s, &warns)
 	if err != nil {
 		t.Fatalf("second: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestImportClaudeTranscripts_DirectoryWalk(t *testing.T) {
 	var warns bytes.Buffer
 
 	dir := filepath.Join("testdata", "claude_transcripts")
-	report, err := ImportClaudeTranscripts(dir, s, &warns)
+	report, err := ImportClaudeTranscripts(t.Context(), dir, s, &warns)
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestImportClaudeTranscripts_DirectoryWalk(t *testing.T) {
 func TestImportClaudeTranscripts_NonExistentPathReturnsError(t *testing.T) {
 	t.Parallel()
 	s := testStore(t)
-	_, err := ImportClaudeTranscripts(filepath.Join(t.TempDir(), "nope"), s, &bytes.Buffer{})
+	_, err := ImportClaudeTranscripts(t.Context(), filepath.Join(t.TempDir(), "nope"), s, &bytes.Buffer{})
 	if err == nil {
 		t.Error("expected error for non-existent path")
 	}
@@ -327,7 +327,7 @@ func TestImportClaudeTranscripts_MalformedJSONIsCountedNotFatal(t *testing.T) {
 		t.Fatalf("write temp: %v", err)
 	}
 
-	report, err := ImportClaudeTranscripts(path, s, &warns)
+	report, err := ImportClaudeTranscripts(t.Context(), path, s, &warns)
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}

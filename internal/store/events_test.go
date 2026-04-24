@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -30,7 +32,7 @@ func seedEvents(t *testing.T, s *Store, sessionKey string, n int, baseTs time.Ti
 		}
 		raw := []byte(`{"v":1}`) // body content does not matter for these tests
 		withTx(t, s, func(tx *sql.Tx) {
-			if _, err := IngestEnvelope(tx, env, raw, env.TsSource.UnixMilli()); err != nil {
+			if _, err := IngestEnvelope(t.Context(), tx, env, raw, env.TsSource.UnixMilli()); err != nil {
 				t.Fatalf("seed ingest: %v", err)
 			}
 		})
@@ -46,7 +48,7 @@ func TestLoadEventsForSession_ClampsToDefaultLimit(t *testing.T) {
 	seedEvents(t, s, "big-session", total, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
 	sessionID := ingest.DeriveSessionID("claude-code", "big-session")
-	got, err := LoadEventsForSession(s.DB(), sessionID, 0) // 0 → default cap
+	got, err := LoadEventsForSession(t.Context(), s.DB(), sessionID, 0) // 0 → default cap
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -61,7 +63,7 @@ func TestLoadEventsForSession_ExplicitLimitWins(t *testing.T) {
 	seedEvents(t, s, "sess-1", 10, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
 	sessionID := ingest.DeriveSessionID("claude-code", "sess-1")
-	got, err := LoadEventsForSession(s.DB(), sessionID, 3)
+	got, err := LoadEventsForSession(t.Context(), s.DB(), sessionID, 3)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -80,12 +82,32 @@ func TestLoadEventsForSession_ExplicitLimitWins(t *testing.T) {
 func TestLoadEventsForSession_UnknownSession_ReturnsEmpty(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
-	got, err := LoadEventsForSession(s.DB(), "nope", 0)
+	got, err := LoadEventsForSession(t.Context(), s.DB(), "nope", 0)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if len(got) != 0 {
 		t.Errorf("expected empty, got %d rows", len(got))
+	}
+}
+
+func TestLoadEventsForSession_RespectsCancelledContext(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	seedEvents(t, s, "cancel-me", 5, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	// A context that's already dead must never succeed — proves the
+	// call path actually uses the context variant rather than
+	// quietly dropping it on the floor.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := LoadEventsForSession(ctx, s.DB(), ingest.DeriveSessionID("claude-code", "cancel-me"), 0)
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("want context.Canceled in error chain, got %v", err)
 	}
 }
 

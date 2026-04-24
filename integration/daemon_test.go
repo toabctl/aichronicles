@@ -22,8 +22,10 @@ import (
 )
 
 // spinDaemon wires up a fresh store + UDS listener and returns the
-// shutdown closure plus the store for inspection.
-func spinDaemon(t *testing.T) (sock string, st *store.Store, shutdown func() error) {
+// shutdown closure plus the store for inspection. The shutdown takes
+// a context so integration tests can exercise the daemon's drain
+// semantics. Callers that don't care can pass context.Background().
+func spinDaemon(t *testing.T) (sock string, st *store.Store, shutdown func(context.Context) error) {
 	t.Helper()
 	dir := t.TempDir()
 	sock = filepath.Join(dir, "sock")
@@ -55,7 +57,7 @@ func udsClient(sock string) *http.Client {
 
 func TestDaemon_RoundTrip(t *testing.T) {
 	sock, st, shutdown := spinDaemon(t)
-	defer func() { _ = shutdown() }()
+	defer func() { _ = shutdown(context.Background()) }()
 
 	env := ingest.Envelope{
 		V:               1,
@@ -125,7 +127,7 @@ func TestDaemon_RoundTrip(t *testing.T) {
 
 func TestDaemon_DuplicateIsDeduped(t *testing.T) {
 	sock, _, shutdown := spinDaemon(t)
-	defer func() { _ = shutdown() }()
+	defer func() { _ = shutdown(context.Background()) }()
 
 	env := ingest.Envelope{
 		V:               1,
@@ -157,7 +159,7 @@ func TestDaemon_DuplicateIsDeduped(t *testing.T) {
 
 func TestDaemon_Healthz(t *testing.T) {
 	sock, _, shutdown := spinDaemon(t)
-	defer func() { _ = shutdown() }()
+	defer func() { _ = shutdown(context.Background()) }()
 
 	resp, err := udsClient(sock).Get("http://unix/v1/healthz")
 	if err != nil {

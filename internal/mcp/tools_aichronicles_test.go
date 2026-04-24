@@ -55,7 +55,7 @@ func openSeededStore(t *testing.T) *store.Store {
 		}
 		raw, _ := json.Marshal(env)
 		tx, _ := s.DB().Begin()
-		if _, err := store.IngestEnvelope(tx, &env, raw, time.Now().UnixMilli()); err != nil {
+		if _, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli()); err != nil {
 			_ = tx.Rollback()
 			t.Fatalf("seed: %v", err)
 		}
@@ -161,7 +161,7 @@ func TestGetSummary_ReturnsStoredBody(t *testing.T) {
 
 	sessID := ingest.DeriveSessionID("claude-code", "sess-foo")
 	tx, _ := st.DB().Begin()
-	_, _, err := store.SaveLLMOutput(tx, &store.LLMOutput{
+	_, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
 		SessionID:   sql.NullString{String: sessID, Valid: true},
 		Kind:        store.LLMKindSummary,
 		Model:       "claude-sonnet-4-6",

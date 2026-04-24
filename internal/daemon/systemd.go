@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -67,8 +68,15 @@ func ListenFromSystemd() (net.Listener, error) {
 // ListenAndServe, it does not own the listener's backing socket — it
 // will not chmod, unlink, or otherwise touch filesystem state. Use it
 // when the listener came from systemd or elsewhere.
-func Serve(l net.Listener, handler http.Handler) func() error {
+//
+// The returned shutdown function takes a context so the caller can
+// bound graceful drain: in-flight requests run until they finish or
+// the context fires, whichever comes first. A nil ctx skips drain
+// and hard-closes immediately.
+func Serve(l net.Listener, handler http.Handler) func(context.Context) error {
 	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = srv.Serve(l) }()
-	return srv.Close
+	return func(ctx context.Context) error {
+		return gracefulShutdown(srv, ctx)
+	}
 }

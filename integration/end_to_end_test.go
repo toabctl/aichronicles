@@ -54,7 +54,7 @@ func TestE2E_IngestSummarizeFetchViaMCP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer func() { _ = shutdown() }()
+	defer func() { _ = shutdown(context.Background()) }()
 
 	pastedKey := "sk-ant-" + strings.Repeat("a", 40)
 	hook := []byte(`{
@@ -93,7 +93,7 @@ func TestE2E_IngestSummarizeFetchViaMCP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	_, _, err = store.SaveLLMOutput(tx, &store.LLMOutput{
+	_, _, err = store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
 		SessionID:   sql.NullString{String: sessID, Valid: true},
 		Kind:        store.LLMKindSummary,
 		Model:       "claude-sonnet-4-6",

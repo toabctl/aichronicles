@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -51,7 +52,12 @@ func (s *Server) Handler() http.Handler {
 // ListenAndServe opens a Unix-domain listener at sockPath with 0600 perms
 // and serves until the returned shutdown func is invoked. The socket
 // file is removed on shutdown.
-func ListenAndServe(sockPath string, handler http.Handler) (func() error, error) {
+//
+// The returned shutdown function takes a context so the caller can
+// bound graceful drain: in-flight requests run until they finish or
+// the context fires, whichever comes first. A nil ctx is treated as
+// "no drain" and is equivalent to a hard close.
+func ListenAndServe(sockPath string, handler http.Handler) (func(context.Context) error, error) {
 	if err := os.MkdirAll(filepath.Dir(sockPath), 0o700); err != nil {
 		return nil, fmt.Errorf("ensure socket dir: %w", err)
 	}
@@ -79,12 +85,22 @@ func ListenAndServe(sockPath string, handler http.Handler) (func() error, error)
 		_ = srv.Serve(l)
 	}()
 
-	shutdown := func() error {
-		err := srv.Close()
+	shutdown := func(ctx context.Context) error {
+		err := gracefulShutdown(srv, ctx)
 		_ = os.Remove(sockPath)
 		return err
 	}
 	return shutdown, nil
+}
+
+// gracefulShutdown runs srv.Shutdown(ctx) when a non-nil ctx is
+// supplied and falls back to Close otherwise. Exposed as a helper so
+// both ListenAndServe and Serve share the drain semantics.
+func gracefulShutdown(srv *http.Server, ctx context.Context) error {
+	if ctx == nil {
+		return srv.Close()
+	}
+	return srv.Shutdown(ctx)
 }
 
 func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
@@ -131,7 +147,7 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := s.store.DB().Begin()
+	tx, err := s.store.DB().BeginTx(r.Context(), nil)
 	if err != nil {
 		s.slog.Error("begin tx", "event_id", env.EventID, "err", err)
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
@@ -140,7 +156,7 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback() }()
 
 	tsServer := time.Now().UTC().UnixMilli()
-	deduped, err := store.IngestEnvelope(tx, &env, body, tsServer)
+	deduped, err := store.IngestEnvelope(r.Context(), tx, &env, body, tsServer)
 	if err != nil {
 		s.slog.Error("store.IngestEnvelope", "event_id", env.EventID, "err", err)
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")

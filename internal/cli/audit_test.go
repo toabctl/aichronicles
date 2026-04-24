@@ -53,7 +53,7 @@ func seedAuditStore(t *testing.T) *store.Store {
 		if err != nil {
 			t.Fatalf("begin: %v", err)
 		}
-		if _, err := store.IngestEnvelope(tx, &env, raw, time.Now().UnixMilli()); err != nil {
+		if _, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli()); err != nil {
 			_ = tx.Rollback()
 			t.Fatalf("seed ingest: %v", err)
 		}

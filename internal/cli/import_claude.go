@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -90,7 +91,7 @@ func newImportClaudeTranscriptsCmd() *cobra.Command {
 			}
 			defer func() { _ = s.Close() }()
 
-			report, err := ImportClaudeTranscripts(target, s, cmd.ErrOrStderr())
+			report, err := ImportClaudeTranscripts(cmd.Context(), target, s, cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}
@@ -141,8 +142,10 @@ func (r ClaudeImportReport) String() string {
 // ImportClaudeTranscripts walks target (file or directory) and
 // ingests every conversational transcript line. warnOut receives one
 // line per skipped-with-warning entry (missing uuid, invalid JSON)
-// so the user can grep the original transcript.
-func ImportClaudeTranscripts(target string, s *store.Store, warnOut io.Writer) (ClaudeImportReport, error) {
+// so the user can grep the original transcript. The ctx is propagated
+// to each store write so Ctrl-C stops an import between lines rather
+// than after the current file.
+func ImportClaudeTranscripts(ctx context.Context, target string, s *store.Store, warnOut io.Writer) (ClaudeImportReport, error) {
 	start := time.Now()
 	report := ClaudeImportReport{}
 
@@ -175,7 +178,7 @@ func ImportClaudeTranscripts(target string, s *store.Store, warnOut io.Writer) (
 	}
 
 	for _, path := range files {
-		if err := importClaudeFile(path, s, &report, warnOut); err != nil {
+		if err := importClaudeFile(ctx, path, s, &report, warnOut); err != nil {
 			report.DurationMS = time.Since(start).Milliseconds()
 			return report, fmt.Errorf("import %s: %w", path, err)
 		}
@@ -204,7 +207,7 @@ type claudeMessage struct {
 	Model   string          `json:"model"`
 }
 
-func importClaudeFile(path string, s *store.Store, report *ClaudeImportReport, warnOut io.Writer) error {
+func importClaudeFile(ctx context.Context, path string, s *store.Store, report *ClaudeImportReport, warnOut io.Writer) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -261,7 +264,7 @@ func importClaudeFile(path string, s *store.Store, report *ClaudeImportReport, w
 			continue
 		}
 
-		deduped, err := importOneEnvelope(s, env, rawForStore)
+		deduped, err := importOneEnvelope(ctx, s, env, rawForStore)
 		if err != nil {
 			return fmt.Errorf("%s:%d: %w", path, lineNum, err)
 		}
@@ -497,15 +500,15 @@ func importWarn(w io.Writer, args ...any) {
 // its own transaction. Shared with the events.jsonl importer in
 // import_jsonl.go via importOne, but the two are kept separate so
 // schema drift for either format is isolated.
-func importOneEnvelope(s *store.Store, env *ingest.Envelope, raw []byte) (bool, error) {
-	tx, err := s.DB().Begin()
+func importOneEnvelope(ctx context.Context, s *store.Store, env *ingest.Envelope, raw []byte) (bool, error) {
+	tx, err := s.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return false, fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	tsServer := time.Now().UTC().UnixMilli()
-	deduped, err := store.IngestEnvelope(tx, env, raw, tsServer)
+	deduped, err := store.IngestEnvelope(ctx, tx, env, raw, tsServer)
 	if err != nil {
 		return false, err
 	}

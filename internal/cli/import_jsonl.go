@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -49,7 +50,7 @@ func newImportJSONLCmd() *cobra.Command {
 			}
 			defer func() { _ = f.Close() }()
 
-			report, err := ImportJSONL(f, s)
+			report, err := ImportJSONL(cmd.Context(), f, s)
 			if err != nil {
 				return err
 			}
@@ -84,9 +85,11 @@ func (r ImportReport) String() string {
 // ImportJSONL reads envelopes line-by-line from r and inserts each
 // into the store. Every line runs in its own transaction — that way a
 // mid-file malformed line doesn't abort earlier successful writes.
+// ctx is propagated to each store write so Ctrl-C stops an import
+// between lines rather than after the current file.
 //
 // Idempotent via event_id PK; rerunning on the same input is safe.
-func ImportJSONL(r io.Reader, s *store.Store) (ImportReport, error) {
+func ImportJSONL(ctx context.Context, r io.Reader, s *store.Store) (ImportReport, error) {
 	start := time.Now()
 	report := ImportReport{}
 
@@ -124,7 +127,7 @@ func ImportJSONL(r io.Reader, s *store.Store) (ImportReport, error) {
 			continue
 		}
 
-		deduped, err := importOne(s, &env, scrubbed)
+		deduped, err := importOne(ctx, s, &env, scrubbed)
 		if err != nil {
 			// Storage-level error is fatal — something is wrong with
 			// the DB, not the input.
@@ -147,15 +150,15 @@ func ImportJSONL(r io.Reader, s *store.Store) (ImportReport, error) {
 }
 
 // importOne wraps one envelope insertion in its own transaction.
-func importOne(s *store.Store, env *ingest.Envelope, raw []byte) (bool, error) {
-	tx, err := s.DB().Begin()
+func importOne(ctx context.Context, s *store.Store, env *ingest.Envelope, raw []byte) (bool, error) {
+	tx, err := s.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return false, fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	tsServer := time.Now().UTC().UnixMilli()
-	deduped, err := store.IngestEnvelope(tx, env, raw, tsServer)
+	deduped, err := store.IngestEnvelope(ctx, tx, env, raw, tsServer)
 	if err != nil {
 		return false, err
 	}

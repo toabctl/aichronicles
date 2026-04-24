@@ -50,7 +50,7 @@ func seedSessionsForMeta(t *testing.T, count int) *store.Store {
 			}
 			raw, _ := json.Marshal(env)
 			tx, _ := s.DB().Begin()
-			if _, err := store.IngestEnvelope(tx, &env, raw, time.Now().UnixMilli()); err != nil {
+			if _, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli()); err != nil {
 				_ = tx.Rollback()
 				t.Fatalf("seed %d/%s: %v", i, kind, err)
 			}
@@ -159,7 +159,7 @@ func TestRunReflect_PrefersExistingSummaryOverFirstPrompt(t *testing.T) {
 	var sessID string
 	_ = s.DB().QueryRow(`SELECT id FROM sessions LIMIT 1`).Scan(&sessID)
 	tx, _ := s.DB().Begin()
-	if _, _, err := store.SaveLLMOutput(tx, &store.LLMOutput{
+	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
 		SessionID:   sqlStringValid(sessID),
 		Kind:        store.LLMKindSummary,
 		Model:       "m",

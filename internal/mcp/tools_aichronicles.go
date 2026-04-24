@@ -65,7 +65,7 @@ func RegisterAichroniclesTools(s *Server, st *store.Store) {
 // --- search_events ---
 
 func searchEventsHandler(st *store.Store) ToolHandler {
-	return func(_ context.Context, args json.RawMessage) (*ToolResult, *Error) {
+	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
 		var req struct {
 			Query string `json:"query"`
 			Limit int    `json:"limit"`
@@ -83,7 +83,7 @@ func searchEventsHandler(st *store.Store) ToolHandler {
 		// Reuse the deduped SQL shape so tools/search and CLI/search
 		// return consistent rows. Duplicating the SQL here keeps the
 		// mcp package free of a cli/* import cycle.
-		rows, err := st.DB().Query(`
+		rows, err := st.DB().QueryContext(ctx, `
 			WITH matched AS (
 				SELECT e.session_id, e.kind, e.role, e.cwd, e.ts_source_ms, e.content_text,
 					ROW_NUMBER() OVER (
@@ -134,7 +134,7 @@ func searchEventsHandler(st *store.Store) ToolHandler {
 // --- list_sessions ---
 
 func listSessionsHandler(st *store.Store) ToolHandler {
-	return func(_ context.Context, args json.RawMessage) (*ToolResult, *Error) {
+	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
 		var req struct {
 			Cwd        string `json:"cwd"`
 			SinceHours int    `json:"since_hours"`
@@ -169,7 +169,7 @@ func listSessionsHandler(st *store.Store) ToolHandler {
 			ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC
 			LIMIT ?`
 
-		rows, err := st.DB().Query(q, sqlArgs...)
+		rows, err := st.DB().QueryContext(ctx, q, sqlArgs...)
 		if err != nil {
 			return nil, &Error{Code: InternalError, Message: "list_sessions: query: " + err.Error()}
 		}
@@ -203,7 +203,7 @@ func listSessionsHandler(st *store.Store) ToolHandler {
 // --- get_summary ---
 
 func getSummaryHandler(st *store.Store) ToolHandler {
-	return func(_ context.Context, args json.RawMessage) (*ToolResult, *Error) {
+	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
 		var req struct {
 			SessionID string `json:"session_id"`
 			Kind      string `json:"kind"`
@@ -219,7 +219,7 @@ func getSummaryHandler(st *store.Store) ToolHandler {
 			kind = store.LLMKindSummary
 		}
 
-		outs, err := store.LoadLLMOutputsForSession(st.DB(), req.SessionID)
+		outs, err := store.LoadLLMOutputsForSession(ctx, st.DB(), req.SessionID)
 		if err != nil {
 			return nil, &Error{Code: InternalError, Message: "get_summary: load: " + err.Error()}
 		}

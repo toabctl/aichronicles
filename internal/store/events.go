@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 )
@@ -43,11 +44,11 @@ type SessionDigestRow struct {
 // Both subqueries (first_prompt, latest_summary) are correlated;
 // at thousand-session scale the cost is negligible. If that ever
 // becomes the slow spot, materialize them into columns.
-func LoadRecentSessionDigests(db *sql.DB, sinceMs int64, limit int) ([]SessionDigestRow, error) {
+func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs int64, limit int) ([]SessionDigestRow, error) {
 	if limit <= 0 {
 		limit = 30
 	}
-	rows, err := db.Query(
+	rows, err := db.QueryContext(ctx,
 		`SELECT s.id, s.started_at_ms, s.ended_at_ms, s.cwd,
 			(SELECT content_text FROM events
 				WHERE session_id = s.id AND kind = 'user_prompt'
@@ -89,11 +90,11 @@ const DefaultEventsPerSessionLimit = 10_000
 // A non-positive `limit` uses DefaultEventsPerSessionLimit — callers
 // that truly want "every event" should pass a very large number and
 // own the memory consequences.
-func LoadEventsForSession(db *sql.DB, sessionID string, limit int) ([]EventView, error) {
+func LoadEventsForSession(ctx context.Context, db *sql.DB, sessionID string, limit int) ([]EventView, error) {
 	if limit <= 0 {
 		limit = DefaultEventsPerSessionLimit
 	}
-	rows, err := db.Query(
+	rows, err := db.QueryContext(ctx,
 		`SELECT event_id, kind, role, content_text, ts_source_ms, tool_name
 		 FROM events
 		 WHERE session_id = ?
