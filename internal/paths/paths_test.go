@@ -64,3 +64,28 @@ func TestEventLog_FallsBackToHome(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+func TestConfigFile_UsesXDGConfig(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "/etc/xdg-example")
+	got, err := ConfigFile()
+	if err != nil {
+		t.Fatalf("ConfigFile: %v", err)
+	}
+	want := "/etc/xdg-example/aichronicles/config.toml"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestConfigFile_FallsBackToHome(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	got, err := ConfigFile()
+	if err != nil {
+		t.Fatalf("ConfigFile: %v", err)
+	}
+	home, _ := os.UserHomeDir()
+	want := filepath.Join(home, ".config", "aichronicles", "config.toml")
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

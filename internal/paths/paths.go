@@ -39,3 +39,17 @@ func EventLog() (string, error) {
 	}
 	return filepath.Join(home, ".local", "state", "aichronicles", "events.jsonl"), nil
 }
+
+// ConfigFile returns the TOML config path under XDG_CONFIG_HOME
+// (fallback ~/.config). Loading is the caller's concern; this function
+// only resolves where the file lives.
+func ConfigFile() (string, error) {
+	if c := os.Getenv("XDG_CONFIG_HOME"); c != "" {
+		return filepath.Join(c, "aichronicles", "config.toml"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "aichronicles", "config.toml"), nil
+}
