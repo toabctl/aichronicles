@@ -72,3 +72,17 @@ func ConfigFile() (string, error) {
 	}
 	return filepath.Join(home, ".config", "aichronicles", "config.toml"), nil
 }
+
+// StorePath returns the SQLite database path. Persistent state belongs
+// under XDG_STATE_HOME (same bucket as events.jsonl), with the
+// conventional ~/.local/state fallback.
+func StorePath() (string, error) {
+	if s := os.Getenv("XDG_STATE_HOME"); s != "" {
+		return filepath.Join(s, "aichronicles", "store.db"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".local", "state", "aichronicles", "store.db"), nil
+}

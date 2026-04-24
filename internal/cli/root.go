@@ -31,5 +31,6 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newIngestCmd())
 	cmd.AddCommand(newSetupCmd())
 	cmd.AddCommand(newTeardownCmd())
+	cmd.AddCommand(newImportJSONLCmd())
 	return cmd
 }

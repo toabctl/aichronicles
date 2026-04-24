@@ -89,3 +89,28 @@ func TestConfigFile_FallsBackToHome(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+func TestStorePath_UsesXDGState(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", "/var/state/example")
+	got, err := StorePath()
+	if err != nil {
+		t.Fatalf("StorePath: %v", err)
+	}
+	want := "/var/state/example/aichronicles/store.db"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestStorePath_FallsBackToHome(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", "")
+	got, err := StorePath()
+	if err != nil {
+		t.Fatalf("StorePath: %v", err)
+	}
+	home, _ := os.UserHomeDir()
+	want := filepath.Join(home, ".local", "state", "aichronicles", "store.db")
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
