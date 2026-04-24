@@ -56,8 +56,8 @@ func newAuditCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().IntVar(&limit, "limit", 0, "max rows to print (0 = no limit)")
-	cmd.Flags().DurationVar(&since, "since", 0, "only scan events newer than this duration (e.g. 168h)")
+	cmd.Flags().IntVar(&limit, "limit", 0, "max events to scan, newest first (0 = scan all)")
+	cmd.Flags().DurationVar(&since, "since", 0, "only scan events with ts_source newer than this duration (e.g. 168h)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
 	return cmd
 }

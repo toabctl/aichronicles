@@ -61,7 +61,7 @@ func newSessionsCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 30, "max sessions to return")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "filter by cwd (exact match)")
 	cmd.Flags().StringVar(&agent, "agent", "", "filter by source_agent (e.g. claude-code)")
-	cmd.Flags().DurationVar(&since, "since", 0, "only sessions ended within this duration (e.g. 24h, 7d)")
+	cmd.Flags().DurationVar(&since, "since", 0, "only sessions whose ended_at is within this duration (search/audit filter on per-event ts_source)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
 	return cmd
 }

@@ -69,12 +69,14 @@ type ScrubOptions struct {
 }
 
 // ScrubReport summarizes what scrub did (or would do under --dry-run).
+// Counts are envelope counts, not byte counts — one envelope with a
+// 40-char key contributes 1 to EnvelopesRewritten, not 40.
 type ScrubReport struct {
-	EventsScanned     int
-	EventsRewritten   int
-	RawBytesRewritten int
-	PatternHits       map[string]int
-	DryRun            bool
+	EventsScanned      int
+	EventsRewritten    int // events.content_text rewrites (implies raw was rewritten too)
+	EnvelopesRewritten int // raw_envelopes.envelope_json rewrites; >= EventsRewritten
+	PatternHits        map[string]int
+	DryRun             bool
 }
 
 // RunScrub walks every raw envelope, applies the scanner to it, and
@@ -148,7 +150,7 @@ func RunScrub(s *store.Store, scanner redact.Scanner, opts ScrubOptions, out io.
 		for _, p := range rw.patterns {
 			report.PatternHits[p]++
 		}
-		report.RawBytesRewritten++
+		report.EnvelopesRewritten++
 		if rw.contentDirty {
 			report.EventsRewritten++
 		}
@@ -163,8 +165,8 @@ func RunScrub(s *store.Store, scanner redact.Scanner, opts ScrubOptions, out io.
 		_, _ = fmt.Fprintf(out, "%s %s patterns=%v\n", mode, firstN(rw.eventID, 8), rw.patterns)
 	}
 
-	summary := fmt.Sprintf("scanned=%d raw_rewritten=%d events_content_rewritten=%d dry_run=%t\n",
-		report.EventsScanned, report.RawBytesRewritten, report.EventsRewritten, report.DryRun)
+	summary := fmt.Sprintf("scanned=%d envelopes_rewritten=%d events_content_rewritten=%d dry_run=%t\n",
+		report.EventsScanned, report.EnvelopesRewritten, report.EventsRewritten, report.DryRun)
 	_, _ = fmt.Fprint(out, summary)
 	for _, p := range sortedKeys(report.PatternHits) {
 		_, _ = fmt.Fprintf(out, "  %-24s %d\n", p, report.PatternHits[p])

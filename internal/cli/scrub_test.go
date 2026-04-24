@@ -70,8 +70,8 @@ func TestRunScrub_DryRunReportsWithoutWriting(t *testing.T) {
 	if report.EventsScanned != 3 {
 		t.Errorf("EventsScanned: got %d, want 3", report.EventsScanned)
 	}
-	if report.RawBytesRewritten != 2 {
-		t.Errorf("RawBytesRewritten: got %d, want 2", report.RawBytesRewritten)
+	if report.EnvelopesRewritten != 2 {
+		t.Errorf("EnvelopesRewritten: got %d, want 2", report.EnvelopesRewritten)
 	}
 
 	// DB MUST be untouched.
@@ -156,8 +156,8 @@ func TestRunScrub_IdempotentOnSecondRun(t *testing.T) {
 	if report.EventsRewritten != 0 {
 		t.Errorf("second pass should be a no-op: rewrote %d", report.EventsRewritten)
 	}
-	if report.RawBytesRewritten != 0 {
-		t.Errorf("second pass should not touch raw: rewrote %d", report.RawBytesRewritten)
+	if report.EnvelopesRewritten != 0 {
+		t.Errorf("second pass should not touch raw: rewrote %d", report.EnvelopesRewritten)
 	}
 }
 
