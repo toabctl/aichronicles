@@ -78,13 +78,22 @@ repos:
         types: [go]
         pass_filenames: false
 
-  # Tier 7 — unit tests (runs actual code; integration tests behind
-  # build tag stay out of pre-commit so this tier stays fast)
+  # Tier 7 — unit tests
   - repo: local
     hooks:
       - id: go-test
         name: go test
         entry: go test -timeout 60s ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+
+  # Tier 8 — integration tests (real UDS listener, ingest CLI end-to-end)
+  - repo: local
+    hooks:
+      - id: go-test-integration
+        name: go test -tags=integration
+        entry: go test -tags=integration -timeout 120s ./integration/...
         language: system
         types: [go]
         pass_filenames: false
