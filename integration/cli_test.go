@@ -3,10 +3,7 @@
 package integration
 
 import (
-	"bufio"
 	"bytes"
-	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,6 +11,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/cli"
 	"github.com/toabctl/aichronicles/internal/daemon"
 	"github.com/toabctl/aichronicles/internal/ingest"
+	"github.com/toabctl/aichronicles/internal/store"
 )
 
 // isolateEnv scopes XDG + notification env so RunIngest never reads
@@ -30,20 +28,19 @@ func TestCLI_IngestRoundTrip(t *testing.T) {
 	isolateEnv(t)
 	dir := t.TempDir()
 	sock := filepath.Join(dir, "sock")
-	logPath := filepath.Join(dir, "events.jsonl")
 
-	lg, err := daemon.OpenLogger(logPath)
+	s, err := store.Open(filepath.Join(dir, "store.db"))
 	if err != nil {
-		t.Fatalf("open logger: %v", err)
+		t.Fatalf("store.Open: %v", err)
 	}
-	defer lg.Close()
+	defer func() { _ = s.Close() }()
 
-	srv := daemon.NewServer(lg, nil)
+	srv := daemon.NewServer(s, nil)
 	shutdown, err := daemon.ListenAndServe(sock, srv.Handler())
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer shutdown()
+	defer func() { _ = shutdown() }()
 
 	hook := []byte(`{
 		"session_id": "e2e-1",
@@ -60,45 +57,32 @@ func TestCLI_IngestRoundTrip(t *testing.T) {
 		t.Fatalf("unexpected stderr: %q", stderr.String())
 	}
 
-	f, err := os.Open(logPath)
+	// The event should now be in the store.
+	wantSessionID := ingest.DeriveSessionID("claude-code", "e2e-1")
+	var kind, cwd, content string
+	err = s.DB().QueryRow(
+		`SELECT kind, cwd, content_text FROM events WHERE session_id=?`, wantSessionID,
+	).Scan(&kind, &cwd, &content)
 	if err != nil {
-		t.Fatalf("open log: %v", err)
+		t.Fatalf("query event: %v", err)
 	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	var lines []string
-	for sc.Scan() {
-		lines = append(lines, sc.Text())
+	if kind != "user_prompt" {
+		t.Errorf("kind: got %q", kind)
 	}
-	if len(lines) != 1 {
-		t.Fatalf("expected 1 log line, got %d", len(lines))
+	if cwd != "/tmp/e2e" {
+		t.Errorf("cwd: got %q", cwd)
 	}
-	var got ingest.Envelope
-	if err := json.Unmarshal([]byte(lines[0]), &got); err != nil {
-		t.Fatalf("unmarshal log: %v", err)
+	if content != "what is the time" {
+		t.Errorf("content: got %q", content)
 	}
 
-	if got.SourceAgent != "claude-code" {
-		t.Errorf("SourceAgent: got %q", got.SourceAgent)
-	}
-	if got.SourceSessionID != "e2e-1" {
-		t.Errorf("SourceSessionID: got %q", got.SourceSessionID)
-	}
-	if got.Kind != "user_prompt" {
-		t.Errorf("Kind: got %q", got.Kind)
-	}
-	if got.Cwd != "/tmp/e2e" {
-		t.Errorf("Cwd: got %q", got.Cwd)
-	}
-	if got.ContentText != "what is the time" {
-		t.Errorf("ContentText: got %q", got.ContentText)
-	}
-	if got.Transport != "hook" {
-		t.Errorf("Transport: got %q", got.Transport)
-	}
-	want := ingest.DeriveSessionID("claude-code", "e2e-1")
-	if got.SessionID != want {
-		t.Errorf("SessionID: got %q, want %q", got.SessionID, want)
+	// FTS should find it too.
+	var ftsHits int
+	_ = s.DB().QueryRow(
+		`SELECT COUNT(*) FROM events_fts WHERE events_fts MATCH ?`, "time",
+	).Scan(&ftsHits)
+	if ftsHits != 1 {
+		t.Errorf("FTS: got %d, want 1", ftsHits)
 	}
 }
 

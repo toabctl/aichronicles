@@ -14,22 +14,24 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/ingest"
+	"github.com/toabctl/aichronicles/internal/store"
 )
 
-func newTestServer(t *testing.T) (*Server, string) {
+// newTestServer returns a Server backed by a fresh temp SQLite store.
+// The store closes automatically when the test ends.
+func newTestServer(t *testing.T) *Server {
 	t.Helper()
-	logPath := filepath.Join(t.TempDir(), "events.jsonl")
-	lg, err := OpenLogger(logPath)
+	s, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
-		t.Fatalf("open logger: %v", err)
+		t.Fatalf("store.Open: %v", err)
 	}
-	t.Cleanup(func() { _ = lg.Close() })
-	return NewServer(lg, nil), logPath
+	t.Cleanup(func() { _ = s.Close() })
+	return NewServer(s, nil)
 }
 
-func validBody(t *testing.T) []byte {
+func validEnvelope(t *testing.T) ingest.Envelope {
 	t.Helper()
-	e := ingest.Envelope{
+	return ingest.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -38,7 +40,11 @@ func validBody(t *testing.T) []byte {
 		TsSource:        time.Now().UTC(),
 		Payload:         map[string]any{"hook_event_name": "UserPromptSubmit", "prompt": "hi"},
 	}
-	b, err := json.Marshal(e)
+}
+
+func validBody(t *testing.T) []byte {
+	t.Helper()
+	b, err := json.Marshal(validEnvelope(t))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -47,11 +53,11 @@ func validBody(t *testing.T) []byte {
 
 func TestIngest_Accepts_ValidEnvelope(t *testing.T) {
 	t.Parallel()
-	s, _ := newTestServer(t)
+	srv := newTestServer(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/ingest", bytes.NewReader(validBody(t)))
 	rr := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rr, req)
+	srv.Handler().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: got %d, body=%s", rr.Code, rr.Body.String())
@@ -66,15 +72,53 @@ func TestIngest_Accepts_ValidEnvelope(t *testing.T) {
 	if ack.Deduped {
 		t.Fatalf("expected Deduped=false for first write")
 	}
+
+	var n int
+	_ = srv.store.DB().QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n)
+	if n != 1 {
+		t.Errorf("events table: got %d, want 1", n)
+	}
+}
+
+func TestIngest_DuplicateReturnsDedupedAck(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	body := validBody(t)
+
+	// First write: accepted, Deduped=false.
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr,
+		httptest.NewRequest(http.MethodPost, "/v1/ingest", bytes.NewReader(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("first: status %d", rr.Code)
+	}
+	// Second write with identical body (same event_id): deduped.
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr,
+		httptest.NewRequest(http.MethodPost, "/v1/ingest", bytes.NewReader(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("second: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var ack ingest.Ack
+	_ = json.Unmarshal(rr.Body.Bytes(), &ack)
+	if !ack.Deduped {
+		t.Errorf("expected Deduped=true on replay, got %+v", ack)
+	}
+
+	var rawCount int
+	_ = srv.store.DB().QueryRow(`SELECT COUNT(*) FROM raw_envelopes`).Scan(&rawCount)
+	if rawCount != 1 {
+		t.Errorf("raw_envelopes: got %d, want 1", rawCount)
+	}
 }
 
 func TestIngest_Rejects_MalformedJSON(t *testing.T) {
 	t.Parallel()
-	s, _ := newTestServer(t)
+	srv := newTestServer(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/ingest", strings.NewReader("{not json"))
 	rr := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rr, req)
+	srv.Handler().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rr.Code)
@@ -86,13 +130,12 @@ func TestIngest_Rejects_MalformedJSON(t *testing.T) {
 
 func TestIngest_Rejects_InvalidEnvelope(t *testing.T) {
 	t.Parallel()
-	s, _ := newTestServer(t)
+	srv := newTestServer(t)
 
-	// v=1 is required; omit it to trigger validation
 	body := []byte(`{"event_id":"00000000-0000-0000-0000-000000000000","source_agent":"x","source_session_id":"s","kind":"k","ts_source":"2026-01-01T00:00:00Z","payload":{}}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/ingest", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rr, req)
+	srv.Handler().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d body=%s", rr.Code, rr.Body.String())
@@ -101,25 +144,43 @@ func TestIngest_Rejects_InvalidEnvelope(t *testing.T) {
 
 func TestIngest_Rejects_UnknownEnvelopeFields(t *testing.T) {
 	t.Parallel()
-	s, _ := newTestServer(t)
+	srv := newTestServer(t)
 
-	body := bytes.Join([][]byte{validBody(t)[:len(validBody(t))-1], []byte(`,"extra":"nope"}`)}, nil)
+	good := validBody(t)
+	body := bytes.Join([][]byte{good[:len(good)-1], []byte(`,"extra":"nope"}`)}, nil)
 	req := httptest.NewRequest(http.MethodPost, "/v1/ingest", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rr, req)
+	srv.Handler().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for unknown field, got %d body=%s", rr.Code, rr.Body.String())
 	}
 }
 
+func TestIngest_Rejects_OversizedEnvelope(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+
+	// Build a body just over the 16MB cap. A single oversized JSON
+	// string is enough; don't bother validating its shape — the size
+	// check must fire before JSON decode.
+	huge := bytes.Repeat([]byte("x"), maxEnvelopeBytes+10)
+	req := httptest.NewRequest(http.MethodPost, "/v1/ingest", bytes.NewReader(huge))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d", rr.Code)
+	}
+}
+
 func TestHealthz(t *testing.T) {
 	t.Parallel()
-	s, _ := newTestServer(t)
+	srv := newTestServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/healthz", nil)
 	rr := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rr, req)
+	srv.Handler().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)

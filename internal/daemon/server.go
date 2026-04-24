@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -11,22 +13,31 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/ingest"
+	"github.com/toabctl/aichronicles/internal/store"
 )
 
-// Server implements the aichronicles ingest HTTP surface.
-// It is transport-agnostic — wire it to a net.Listener of any kind.
+// maxEnvelopeBytes caps the POST body we will read. Real envelopes
+// are small, but the assistant_message content_text (last turn of a
+// long session) can legitimately be large. 16MB is generous enough to
+// accept anything realistic and tight enough to stop a pathological
+// payload from blowing up the daemon.
+const maxEnvelopeBytes = 16 << 20
+
+// Server implements the aichronicles ingest HTTP surface backed by
+// the SQLite store. Transport-agnostic — wire it to a net.Listener
+// of any kind (UDS locally, HTTPS later).
 type Server struct {
-	logger *Logger
-	slog   *slog.Logger
+	store *store.Store
+	slog  *slog.Logger
 }
 
-// NewServer returns a Server that persists accepted envelopes through logger.
-// If log is nil, a default slog.Logger to stderr is used.
-func NewServer(logger *Logger, log *slog.Logger) *Server {
+// NewServer returns a Server that persists accepted envelopes through
+// the store. If log is nil, a default slog.Logger to stderr is used.
+func NewServer(s *store.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
-	return &Server{logger: logger, slog: log}
+	return &Server{store: s, slog: log}
 }
 
 // Handler returns the HTTP multiplexer with every /v1 route mounted.
@@ -38,8 +49,8 @@ func (s *Server) Handler() http.Handler {
 }
 
 // ListenAndServe opens a Unix-domain listener at sockPath with 0600 perms
-// and serves until the context is cancelled or the listener fails. The
-// socket file is removed on shutdown.
+// and serves until the returned shutdown func is invoked. The socket
+// file is removed on shutdown.
 func ListenAndServe(sockPath string, handler http.Handler) (func() error, error) {
 	if err := os.MkdirAll(filepath.Dir(sockPath), 0o700); err != nil {
 		return nil, fmt.Errorf("ensure socket dir: %w", err)
@@ -79,8 +90,21 @@ func ListenAndServe(sockPath string, handler http.Handler) (func() error, error)
 func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = r.Body.Close() }()
 
+	// Buffer the body so we can strict-decode AND also store the
+	// original bytes verbatim in raw_envelopes.envelope_json. io.ReadAll
+	// is fine: our limit bounds memory.
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxEnvelopeBytes+1))
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "Read request body failed", err.Error())
+		return
+	}
+	if int64(len(body)) > maxEnvelopeBytes {
+		writeProblem(w, http.StatusRequestEntityTooLarge, "Envelope too large", "")
+		return
+	}
+
 	var env ingest.Envelope
-	dec := json.NewDecoder(r.Body)
+	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&env); err != nil {
 		writeProblem(w, http.StatusBadRequest, "Malformed envelope JSON", err.Error())
@@ -91,19 +115,31 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	env.SessionID = ingest.DeriveSessionID(env.SourceAgent, env.SourceSessionID)
-	env.TsServer = time.Now().UTC()
+	tx, err := s.store.DB().Begin()
+	if err != nil {
+		s.slog.Error("begin tx", "event_id", env.EventID, "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
 
-	if err := s.logger.AppendJSON(env); err != nil {
-		s.slog.Error("log append failed", "event_id", env.EventID, "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Log write failed", "")
+	tsServer := time.Now().UTC().UnixMilli()
+	deduped, err := store.IngestEnvelope(tx, &env, body, tsServer)
+	if err != nil {
+		s.slog.Error("store.IngestEnvelope", "event_id", env.EventID, "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		s.slog.Error("commit", "event_id", env.EventID, "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
 
 	writeJSON(w, http.StatusOK, ingest.Ack{
 		EventID:   env.EventID,
-		SessionID: env.SessionID,
-		Deduped:   false,
+		SessionID: store.ResolveSessionID(env.SourceAgent, env.SourceSessionID),
+		Deduped:   deduped,
 	})
 }
 

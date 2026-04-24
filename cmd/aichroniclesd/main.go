@@ -1,6 +1,5 @@
 // aichroniclesd is the ingest daemon: a Unix-socket HTTP server that
-// accepts envelopes on POST /v1/ingest and appends them to an on-disk
-// JSONL event log.
+// accepts envelopes on POST /v1/ingest and persists them to SQLite.
 package main
 
 import (
@@ -16,6 +15,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/daemon"
 	"github.com/toabctl/aichronicles/internal/notify"
 	"github.com/toabctl/aichronicles/internal/paths"
+	"github.com/toabctl/aichronicles/internal/store"
 )
 
 func main() {
@@ -30,25 +30,16 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("resolve socket path: %w", err)
 	}
-	defaultLog, err := paths.EventLog()
+	defaultDB, err := paths.StorePath()
 	if err != nil {
-		return fmt.Errorf("resolve event log path: %w", err)
+		return fmt.Errorf("resolve store path: %w", err)
 	}
 
 	sockPath := flag.String("socket", defaultSock, "unix socket path")
-	logPath := flag.String("log", defaultLog, "append-only JSONL event log path")
+	dbPath := flag.String("db", defaultDB, "SQLite store path")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-
-	if err := os.MkdirAll(filepath.Dir(*logPath), 0o700); err != nil {
-		return fmt.Errorf("ensure log dir: %w", err)
-	}
-	lg, err := daemon.OpenLogger(*logPath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = lg.Close() }()
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -57,7 +48,16 @@ func run() error {
 		cfg = &d
 	}
 
-	srv := daemon.NewServer(lg, logger)
+	if err := os.MkdirAll(filepath.Dir(*dbPath), 0o700); err != nil {
+		return fmt.Errorf("ensure store dir: %w", err)
+	}
+	st, err := store.Open(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = st.Close() }()
+
+	srv := daemon.NewServer(st, logger)
 
 	var shutdown func() error
 	activationListener, err := daemon.ListenFromSystemd()
@@ -68,14 +68,14 @@ func run() error {
 	if activationListener != nil {
 		shutdown = daemon.Serve(activationListener, srv.Handler())
 		startMsg = "socket-activated by systemd"
-		logger.Info("aichroniclesd started (socket-activated by systemd)", "log", *logPath)
+		logger.Info("aichroniclesd started (socket-activated by systemd)", "db", *dbPath)
 	} else {
 		shutdown, err = daemon.ListenAndServe(*sockPath, srv.Handler())
 		if err != nil {
 			return err
 		}
 		startMsg = "listener at " + *sockPath
-		logger.Info("aichroniclesd started", "socket", *sockPath, "log", *logPath)
+		logger.Info("aichroniclesd started", "socket", *sockPath, "db", *dbPath)
 	}
 
 	if err := notify.New(cfg.Notifications.DaemonStart).Send("aichronicles started", startMsg); err != nil {
