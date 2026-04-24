@@ -7,7 +7,6 @@ Description=aichronicles ingest socket
 ListenStream=%t/aichronicles/sock
 SocketMode=0600
 DirectoryMode=0700
-# Tear the socket down between stops so a stale path never lingers.
 RemoveOnStop=true
 
 [Install]

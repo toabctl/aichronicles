@@ -34,9 +34,10 @@ const defaultHookCommand = "aichronicles ingest"
 func newSetupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "setup",
-		Short: "Install aichronicles into an AI coding agent",
+		Short: "Install aichronicles into an AI coding agent or the OS",
 	}
 	cmd.AddCommand(newSetupClaudeCodeCmd())
+	cmd.AddCommand(newSetupSystemdCmd())
 	return cmd
 }
 

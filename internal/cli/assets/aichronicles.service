@@ -1,0 +1,16 @@
+[Unit]
+Description=aichronicles ingest daemon
+Requires=aichronicles.socket
+After=aichronicles.socket
+
+[Service]
+# aichroniclesd must be discoverable on systemd's user manager PATH
+# (usually inherits login PATH; override via `systemctl --user edit
+# aichronicles.service` if it isn't).
+ExecStart=aichroniclesd
+Type=simple
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target
