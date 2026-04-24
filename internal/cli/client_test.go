@@ -118,29 +118,5 @@ func TestClient_Post_UnreachableSocketReturnsError(t *testing.T) {
 	}
 }
 
-func TestDefaultSocketPath_UsesXDG(t *testing.T) {
-	// t.Setenv forbids t.Parallel — XDG_STATE_HOME is process-global.
-	t.Setenv("XDG_STATE_HOME", "/tmp/xdg-state-test")
-	p, err := DefaultSocketPath()
-	if err != nil {
-		t.Fatalf("DefaultSocketPath: %v", err)
-	}
-	want := filepath.Join("/tmp/xdg-state-test", "aichronicles", "sock")
-	if p != want {
-		t.Errorf("got %q, want %q", p, want)
-	}
-}
-
-func TestDefaultSocketPath_FallsBackToHome(t *testing.T) {
-	// t.Setenv forbids t.Parallel — XDG_STATE_HOME is process-global.
-	t.Setenv("XDG_STATE_HOME", "")
-	p, err := DefaultSocketPath()
-	if err != nil {
-		t.Fatalf("DefaultSocketPath: %v", err)
-	}
-	home, _ := os.UserHomeDir()
-	want := filepath.Join(home, ".local", "state", "aichronicles", "sock")
-	if p != want {
-		t.Errorf("got %q, want %q", p, want)
-	}
-}
+// Path-resolution tests live in internal/paths; this file only
+// exercises the UDS Client.

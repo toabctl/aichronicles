@@ -8,8 +8,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 
 	"github.com/toabctl/aichronicles/internal/ingest"
 )
@@ -66,18 +64,4 @@ func (c *Client) Post(ctx context.Context, env ingest.Envelope) (ingest.Ack, err
 		return ingest.Ack{}, fmt.Errorf("decode ack: %w", err)
 	}
 	return ack, nil
-}
-
-// DefaultSocketPath resolves $XDG_STATE_HOME/aichronicles/sock, falling
-// back to ~/.local/state/aichronicles/sock when XDG_STATE_HOME is unset.
-// Matches the daemon's resolution so the two always agree by default.
-func DefaultSocketPath() (string, error) {
-	if d := os.Getenv("XDG_STATE_HOME"); d != "" {
-		return filepath.Join(d, "aichronicles", "sock"), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".local", "state", "aichronicles", "sock"), nil
 }

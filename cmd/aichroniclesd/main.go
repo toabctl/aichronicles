@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/toabctl/aichronicles/internal/daemon"
+	"github.com/toabctl/aichronicles/internal/paths"
 )
 
 func main() {
@@ -23,12 +24,14 @@ func main() {
 }
 
 func run() error {
-	defaultDir, err := stateDir()
+	defaultSock, err := paths.Socket()
 	if err != nil {
-		return fmt.Errorf("resolve state dir: %w", err)
+		return fmt.Errorf("resolve socket path: %w", err)
 	}
-	defaultSock := filepath.Join(defaultDir, "sock")
-	defaultLog := filepath.Join(defaultDir, "events.jsonl")
+	defaultLog, err := paths.EventLog()
+	if err != nil {
+		return fmt.Errorf("resolve event log path: %w", err)
+	}
 
 	sockPath := flag.String("socket", defaultSock, "unix socket path")
 	logPath := flag.String("log", defaultLog, "append-only JSONL event log path")
@@ -57,17 +60,4 @@ func run() error {
 	<-sig
 	logger.Info("aichroniclesd shutting down")
 	return shutdown()
-}
-
-// stateDir resolves $XDG_STATE_HOME/aichronicles, falling back to
-// ~/.local/state/aichronicles when XDG_STATE_HOME is unset.
-func stateDir() (string, error) {
-	if d := os.Getenv("XDG_STATE_HOME"); d != "" {
-		return filepath.Join(d, "aichronicles"), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".local", "state", "aichronicles"), nil
 }

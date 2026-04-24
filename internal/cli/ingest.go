@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/toabctl/aichronicles/internal/paths"
 )
 
 // ingestTimeout caps the daemon round-trip so a wedged daemon can never
@@ -56,7 +58,7 @@ func RunIngest(stdin io.Reader, stderr io.Writer, socketFlag string) error {
 
 	sockPath := socketFlag
 	if sockPath == "" {
-		sockPath, err = DefaultSocketPath()
+		sockPath, err = paths.Socket()
 		if err != nil {
 			warn(stderr, "resolve socket:", err)
 			return nil
