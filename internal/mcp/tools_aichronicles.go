@@ -219,7 +219,12 @@ func getSummaryHandler(st *store.Store) ToolHandler {
 			kind = store.LLMKindSummary
 		}
 
-		outs, err := store.LoadLLMOutputsForSession(ctx, st.DB(), req.SessionID)
+		sessionID, err := store.ResolveSessionIDPrefix(ctx, st.DB(), req.SessionID)
+		if err != nil {
+			return TextError("get_summary: %v", err), nil
+		}
+
+		outs, err := store.LoadLLMOutputsForSession(ctx, st.DB(), sessionID)
 		if err != nil {
 			return nil, &Error{Code: InternalError, Message: "get_summary: load: " + err.Error()}
 		}
@@ -228,7 +233,7 @@ func getSummaryHandler(st *store.Store) ToolHandler {
 				return TextResult(o.Body), nil
 			}
 		}
-		return TextError("no %s output for session %s", kind, req.SessionID), nil
+		return TextError("no %s output for session %s", kind, sessionID), nil
 	}
 }
 

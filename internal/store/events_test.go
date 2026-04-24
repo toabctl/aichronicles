@@ -91,6 +91,106 @@ func TestLoadEventsForSession_UnknownSession_ReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestResolveSessionIDPrefix_ExactMatch(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	seedEvents(t, s, "exact-test", 1, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	want := ingest.DeriveSessionID("claude-code", "exact-test")
+
+	got, err := ResolveSessionIDPrefix(t.Context(), s.DB(), want)
+	if err != nil {
+		t.Fatalf("resolve full: %v", err)
+	}
+	if got != want {
+		t.Errorf("full id: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveSessionIDPrefix_UniquePrefixResolves(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	seedEvents(t, s, "prefix-test", 1, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	full := ingest.DeriveSessionID("claude-code", "prefix-test")
+
+	// The 8-char preview is the common case — that's what
+	// `aichronicles sessions` prints.
+	got, err := ResolveSessionIDPrefix(t.Context(), s.DB(), full[:8])
+	if err != nil {
+		t.Fatalf("resolve prefix: %v", err)
+	}
+	if got != full {
+		t.Errorf("prefix expanded to %q, want %q", got, full)
+	}
+}
+
+func TestResolveSessionIDPrefix_NoMatchErrs(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	_, err := ResolveSessionIDPrefix(t.Context(), s.DB(), "deadbeef")
+	if !errors.Is(err, ErrNoSuchSession) {
+		t.Errorf("want ErrNoSuchSession, got %v", err)
+	}
+}
+
+func TestResolveSessionIDPrefix_AmbiguousLists(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	// DeriveSessionID is UUIDv5 so collisions are impossible in
+	// normal use, but we can contrive two ids sharing a prefix by
+	// inserting directly.
+	for _, id := range []string{
+		"deadbeef-0000-0000-0000-000000000001",
+		"deadbeef-0000-0000-0000-000000000002",
+	} {
+		if _, err := s.DB().Exec(
+			`INSERT INTO sessions(id, source_agent, source_session_id) VALUES (?, 'claude-code', ?)`,
+			id, id,
+		); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	_, err := ResolveSessionIDPrefix(t.Context(), s.DB(), "deadbeef")
+	if !errors.Is(err, ErrAmbiguousSessionPrefix) {
+		t.Errorf("want ErrAmbiguousSessionPrefix, got %v", err)
+	}
+	// Both matching ids should appear in the message so the user
+	// can pick one.
+	if !strings.Contains(err.Error(), "000000000001") || !strings.Contains(err.Error(), "000000000002") {
+		t.Errorf("ambiguity message should list candidates, got %v", err)
+	}
+}
+
+func TestResolveSessionIDPrefix_RejectsNonHexInput(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	// Wildcards in the input would be interpreted by LIKE otherwise —
+	// the input validator is the defense.
+	cases := []string{"1a%febea", "1a_febea", "1a;febea", ""}
+	for _, c := range cases {
+		if _, err := ResolveSessionIDPrefix(t.Context(), s.DB(), c); err == nil {
+			t.Errorf("expected error for input %q", c)
+		}
+	}
+}
+
+func TestResolveSessionIDPrefix_NormalisesCase(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	seedEvents(t, s, "case-test", 1, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	full := ingest.DeriveSessionID("claude-code", "case-test")
+
+	// Uppercase should resolve the same as lowercase.
+	got, err := ResolveSessionIDPrefix(t.Context(), s.DB(), strings.ToUpper(full[:8]))
+	if err != nil {
+		t.Fatalf("resolve upper: %v", err)
+	}
+	if got != full {
+		t.Errorf("got %q, want %q", got, full)
+	}
+}
+
 func TestLoadEventsForSession_RespectsCancelledContext(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)

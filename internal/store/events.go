@@ -3,8 +3,88 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 )
+
+// ErrNoSuchSession is returned when a session-id prefix does not match
+// any row. Callers typically wrap this with a feature-specific message.
+var ErrNoSuchSession = errors.New("no such session")
+
+// ErrAmbiguousSessionPrefix is returned when a prefix matches more than
+// one session. The error string embeds up to ambiguityListLimit ids so
+// the user can disambiguate without shelling into sqlite.
+var ErrAmbiguousSessionPrefix = errors.New("ambiguous session prefix")
+
+// ambiguityListLimit caps how many candidates we list on an ambiguous
+// prefix. Enough to recognise which one you meant, not so many that a
+// "0" prefix spams the terminal.
+const ambiguityListLimit = 5
+
+// ResolveSessionIDPrefix resolves a user-supplied session identifier —
+// typically the 8-char prefix `aichronicles sessions` prints — to the
+// single full session id in the store. A full UUID also works: the
+// LIKE match is trivially satisfied.
+//
+// Returns ErrNoSuchSession if no row matches, or
+// ErrAmbiguousSessionPrefix (wrapped with up to ambiguityListLimit
+// matching ids) if the prefix is under-specified. The input must be
+// lowercase hex + hyphens to keep SQLite's LIKE wildcards out of the
+// query — session ids are UUID strings so this is always true for
+// legitimate input.
+func ResolveSessionIDPrefix(ctx context.Context, db *sql.DB, prefix string) (string, error) {
+	if prefix == "" {
+		return "", errors.New("session id is required")
+	}
+	prefix = strings.ToLower(prefix)
+	for _, r := range prefix {
+		isHex := (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')
+		if !isHex && r != '-' {
+			return "", fmt.Errorf("session id must be hex or hyphens, got %q", prefix)
+		}
+	}
+
+	rows, err := db.QueryContext(ctx,
+		`SELECT id FROM sessions WHERE id LIKE ? || '%' LIMIT ?`,
+		prefix, ambiguityListLimit+1,
+	)
+	if err != nil {
+		return "", fmt.Errorf("resolve session prefix: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var matches []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return "", fmt.Errorf("scan session id: %w", err)
+		}
+		matches = append(matches, id)
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("iterate sessions: %w", err)
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("%w: %q", ErrNoSuchSession, prefix)
+	case 1:
+		return matches[0], nil
+	default:
+		// More than one — show up to ambiguityListLimit so the user
+		// can pick, and hint there might be more.
+		shown := matches
+		hint := ""
+		if len(shown) > ambiguityListLimit {
+			shown = shown[:ambiguityListLimit]
+			hint = " (…)"
+		}
+		return "", fmt.Errorf("%w %q matches %d sessions: %s%s",
+			ErrAmbiguousSessionPrefix, prefix, len(matches),
+			strings.Join(shown, ", "), hint)
+	}
+}
 
 // EventView is the read-only shape used by code that walks stored
 // events (prompt builders, export, audit). Nullable fields are

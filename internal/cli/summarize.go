@@ -69,7 +69,7 @@ func newSummarizeCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&sessionID, "session", "", "derived session_id (required; see `aichronicles sessions`)")
+	cmd.Flags().StringVar(&sessionID, "session", "", "session id or unique prefix (see `aichronicles sessions`)")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
@@ -98,15 +98,19 @@ func RunSummarize(
 	opts SummarizeOptions,
 	out io.Writer,
 ) (int64, error) {
-	events, err := store.LoadEventsForSession(ctx, s.DB(), opts.SessionID, 0)
+	sessionID, err := store.ResolveSessionIDPrefix(ctx, s.DB(), opts.SessionID)
+	if err != nil {
+		return 0, fmt.Errorf("summarize: %w", err)
+	}
+	events, err := store.LoadEventsForSession(ctx, s.DB(), sessionID, 0)
 	if err != nil {
 		return 0, fmt.Errorf("summarize: load events: %w", err)
 	}
 	if len(events) == 0 {
-		return 0, fmt.Errorf("summarize: session %s has no events", opts.SessionID)
+		return 0, fmt.Errorf("summarize: session %s has no events", sessionID)
 	}
 
-	built, err := prompts.BuildSummary(opts.SessionID, events)
+	built, err := prompts.BuildSummary(sessionID, events)
 	if err != nil {
 		return 0, fmt.Errorf("summarize: build prompt: %w", err)
 	}
@@ -143,7 +147,7 @@ func RunSummarize(
 	}
 
 	id, err := persistSummary(ctx, s, &persistInput{
-		sessionID:  opts.SessionID,
+		sessionID:  sessionID,
 		kind:       store.LLMKindSummary,
 		hash:       built.Hash,
 		model:      resp.Model,

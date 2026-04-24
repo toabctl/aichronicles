@@ -203,12 +203,66 @@ func TestGetSummary_NoOutputIsUserError(t *testing.T) {
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
 	RegisterAichroniclesTools(s, st)
 
-	res := callTool(t, s, "get_summary", `{"session_id":"nope"}`)
+	// A real session that exists but has no stored LLM output yet —
+	// the seeded "sess-foo" has events, no summary row.
+	sessID := ingest.DeriveSessionID("claude-code", "sess-foo")
+	res := callTool(t, s, "get_summary", `{"session_id":"`+sessID+`"}`)
 	if !res.IsError {
 		t.Errorf("expected IsError=true for session with no outputs")
 	}
 	if !strings.Contains(res.Content[0].Text, "no summary output") {
 		t.Errorf("expected diagnostic text: %s", res.Content[0].Text)
+	}
+}
+
+func TestGetSummary_UnknownSessionIsUserError(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	// A syntactically valid session id that doesn't exist in the
+	// store resolves through the prefix path and comes back as
+	// "no such session" rather than an empty output.
+	res := callTool(t, s, "get_summary",
+		`{"session_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}`)
+	if !res.IsError {
+		t.Errorf("expected IsError=true for unknown session")
+	}
+	if !strings.Contains(res.Content[0].Text, "no such session") {
+		t.Errorf("expected 'no such session' diagnostic, got: %s", res.Content[0].Text)
+	}
+}
+
+func TestGetSummary_AcceptsPrefix(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	// Stash a summary for sess-foo so the happy-path resolves.
+	tx, _ := st.DB().Begin()
+	sessID := ingest.DeriveSessionID("claude-code", "sess-foo")
+	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
+		SessionID:   sql.NullString{String: sessID, Valid: true},
+		Kind:        store.LLMKindSummary,
+		Model:       "test",
+		PromptHash:  "h-prefix",
+		Body:        "summary body",
+		CreatedAtMs: 1,
+	}); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("seed summary: %v", err)
+	}
+	_ = tx.Commit()
+
+	// Pass only the 8-char preview — the resolver must expand it.
+	res := callTool(t, s, "get_summary", `{"session_id":"`+sessID[:8]+`"}`)
+	if res.IsError {
+		t.Fatalf("prefix should resolve, got error: %s", res.Content[0].Text)
+	}
+	if res.Content[0].Text != "summary body" {
+		t.Errorf("body: got %q, want %q", res.Content[0].Text, "summary body")
 	}
 }
 

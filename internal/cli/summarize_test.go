@@ -202,16 +202,38 @@ func TestRunSummarize_CacheHitDoesNotRequireAPIKey(t *testing.T) {
 	}
 }
 
-func TestRunSummarize_NoEventsIsError(t *testing.T) {
+func TestRunSummarize_UnknownSessionIsError(t *testing.T) {
 	t.Parallel()
 	s := testStore(t)
+	// A syntactically valid UUID that doesn't exist in the store.
+	// The prefix resolver rejects it before we ever try to load
+	// events, so the diagnostic is "no such session", not
+	// "no events" — more useful for the user.
 	_, err := RunSummarize(context.Background(), s,
 		func() (llm.Client, error) { return &fakeLLM{}, nil },
-		SummarizeOptions{SessionID: "nope"},
+		SummarizeOptions{SessionID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
 		&bytes.Buffer{},
 	)
-	if err == nil || !strings.Contains(err.Error(), "no events") {
-		t.Fatalf("expected 'no events' error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "no such session") {
+		t.Fatalf("expected 'no such session' error, got %v", err)
+	}
+}
+
+func TestRunSummarize_AcceptsSessionPrefix(t *testing.T) {
+	t.Parallel()
+	s, sessID := seedSessionForSummarize(t)
+	var out bytes.Buffer
+	f := &fakeLLM{reply: "summary via prefix"}
+
+	// Pass only the 8-char preview — the resolver must expand it
+	// to the full id before the loader runs.
+	if _, err := RunSummarize(context.Background(), s,
+		func() (llm.Client, error) { return f, nil },
+		SummarizeOptions{SessionID: sessID[:8]}, &out); err != nil {
+		t.Fatalf("prefix should resolve: %v", err)
+	}
+	if !strings.Contains(out.String(), "summary via prefix") {
+		t.Errorf("output: %q", out.String())
 	}
 }
 

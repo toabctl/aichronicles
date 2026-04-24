@@ -49,10 +49,23 @@ func newSearchCmd() *cobra.Command {
 			}
 			defer func() { _ = s.Close() }()
 
+			// If the user passed a session-id prefix (e.g. the 8-char
+			// preview `aichronicles sessions` prints), resolve it to
+			// the full id here so the downstream filter is an exact
+			// match.
+			resolvedSessionID := sessionID
+			if resolvedSessionID != "" {
+				full, err := store.ResolveSessionIDPrefix(cmd.Context(), s.DB(), resolvedSessionID)
+				if err != nil {
+					return err
+				}
+				resolvedSessionID = full
+			}
+
 			opts := SearchOptions{
 				Query:     args[0],
 				Kind:      kind,
-				SessionID: sessionID,
+				SessionID: resolvedSessionID,
 				Limit:     limit,
 				ShowAll:   showAll,
 			}
@@ -64,7 +77,7 @@ func newSearchCmd() *cobra.Command {
 	}
 	cmd.Flags().IntVar(&limit, "limit", 20, "max number of hits")
 	cmd.Flags().StringVar(&kind, "kind", "", "filter by event kind (user_prompt, tool_use, …)")
-	cmd.Flags().StringVar(&sessionID, "session", "", "filter by session id")
+	cmd.Flags().StringVar(&sessionID, "session", "", "filter by session id or unique prefix")
 	cmd.Flags().DurationVar(&since, "since", 0, "only events within this duration (e.g. 24h, 7d)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
 	cmd.Flags().BoolVar(&showAll, "show-all", false, "do not deduplicate same-turn events from multiple sources (hook + import)")
