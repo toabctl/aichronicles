@@ -165,6 +165,51 @@ func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs int64, li
 // memory for a summarize call.
 const DefaultEventsPerSessionLimit = 10_000
 
+// Extraction is one row from the extractions table — a typed fact
+// pulled out of an event at ingest time (URL, file path, shell
+// command, etc.). Callers usually want them deduped by value, which
+// is what LoadExtractionsForSession does.
+type Extraction struct {
+	Kind  string
+	Value string
+}
+
+// LoadExtractionsForSession returns every distinct extraction of the
+// given kind for a session, ordered by first-appearance timestamp so
+// downstream callers see them in the order the user produced them.
+// Dedup is on value — the same URL mentioned 10 times across a
+// session yields one row.
+//
+// Empty kind is rejected: callers should target one kind per query
+// (kind='url', kind='file_path', …) so the return type stays simple.
+func LoadExtractionsForSession(ctx context.Context, db *sql.DB, sessionID, kind string) ([]Extraction, error) {
+	if kind == "" {
+		return nil, errors.New("LoadExtractionsForSession: kind is required")
+	}
+	rows, err := db.QueryContext(ctx,
+		`SELECT x.kind, x.value
+		 FROM extractions x
+		 WHERE x.session_id = ? AND x.kind = ?
+		 GROUP BY x.value
+		 ORDER BY MIN(x.id) ASC`,
+		sessionID, kind,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query extractions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []Extraction
+	for rows.Next() {
+		var e Extraction
+		if err := rows.Scan(&e.Kind, &e.Value); err != nil {
+			return nil, fmt.Errorf("scan extraction: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // LoadEventsForSession returns up to `limit` events for a session,
 // oldest first. An empty slice is returned for an unknown session.
 // A non-positive `limit` uses DefaultEventsPerSessionLimit — callers

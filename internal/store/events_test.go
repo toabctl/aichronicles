@@ -91,6 +91,82 @@ func TestLoadEventsForSession_UnknownSession_ReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestLoadExtractionsForSession_DedupsAndOrdersByFirstSight(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	// Seed one event so sessions + events exist, then insert
+	// extractions directly — keeps the test focused on the read
+	// path rather than exercising the ingest extractor.
+	seedEvents(t, s, "extract-test", 1, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	sessionID := ingest.DeriveSessionID("claude-code", "extract-test")
+
+	// Grab the event_id we just inserted.
+	var evID string
+	if err := s.DB().QueryRow(
+		`SELECT event_id FROM events WHERE session_id = ?`, sessionID,
+	).Scan(&evID); err != nil {
+		t.Fatalf("fetch event_id: %v", err)
+	}
+
+	// Insert URLs out of order, with duplicates interleaved.
+	inserts := []struct {
+		kind, value string
+	}{
+		{"url", "https://first.example/"},
+		{"url", "https://second.example/"},
+		{"url", "https://first.example/"}, // duplicate
+		{"url", "https://third.example/"},
+		{"file_path", "/some/path"}, // different kind
+	}
+	for _, r := range inserts {
+		if _, err := s.DB().Exec(
+			`INSERT INTO extractions(event_id, session_id, kind, value) VALUES (?, ?, ?, ?)`,
+			evID, sessionID, r.kind, r.value,
+		); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	got, err := LoadExtractionsForSession(t.Context(), s.DB(), sessionID, "url")
+	if err != nil {
+		t.Fatalf("LoadExtractionsForSession: %v", err)
+	}
+	want := []Extraction{
+		{Kind: "url", Value: "https://first.example/"},
+		{Kind: "url", Value: "https://second.example/"},
+		{Kind: "url", Value: "https://third.example/"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("count: got %d, want %d (%+v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("row %d: got %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestLoadExtractionsForSession_EmptyKindIsError(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	if _, err := LoadExtractionsForSession(t.Context(), s.DB(), "whatever", ""); err == nil {
+		t.Fatal("expected error for empty kind")
+	}
+}
+
+func TestLoadExtractionsForSession_UnknownSessionReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	got, err := LoadExtractionsForSession(t.Context(), s.DB(), "no-such-session", "url")
+	if err != nil {
+		t.Fatalf("LoadExtractionsForSession: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty, got %+v", got)
+	}
+}
+
 func TestResolveSessionIDPrefix_ExactMatch(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
