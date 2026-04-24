@@ -1,0 +1,7 @@
+{"type":"user","uuid":"77777777-7777-4777-8777-777777777777","sessionId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","timestamp":"2026-04-24T12:00:00.000Z","cwd":"/home/user/project","version":"2.0.0","message":{"role":"user","content":"write me a hello world"}}
+{"type":"file-history-snapshot","messageId":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","snapshot":{"messageId":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","trackedFileBackups":{},"timestamp":"2026-04-24T12:00:00.001Z"},"isSnapshotUpdate":false}
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-04-24T12:00:00.002Z","sessionId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","content":"write me a hello world"}
+{"type":"assistant","uuid":"88888888-8888-4888-8888-888888888888","sessionId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","timestamp":"2026-04-24T12:00:01.000Z","cwd":"/home/user/project","version":"2.0.0","message":{"role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"here is hello world"}]}}
+{"type":"permission-mode","permissionMode":"ask","sessionId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}
+{"type":"attachment","uuid":"99999999-9999-4999-8999-999999999999","sessionId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","timestamp":"2026-04-24T12:00:02.000Z"}
+{"type":"user","uuid":"","sessionId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","timestamp":"2026-04-24T12:00:03.000Z","cwd":"/home/user/project","message":{"role":"user","content":"follow up"}}

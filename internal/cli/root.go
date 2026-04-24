@@ -32,6 +32,7 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newSetupCmd())
 	cmd.AddCommand(newTeardownCmd())
 	cmd.AddCommand(newImportJSONLCmd())
+	cmd.AddCommand(newImportClaudeTranscriptsCmd())
 	cmd.AddCommand(newSearchCmd())
 	return cmd
 }
