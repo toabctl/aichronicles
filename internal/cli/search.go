@@ -25,6 +25,7 @@ func newSearchCmd() *cobra.Command {
 		sessionID string
 		since     time.Duration
 		dbPath    string
+		showAll   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "search <query>",
@@ -53,6 +54,7 @@ func newSearchCmd() *cobra.Command {
 				Kind:      kind,
 				SessionID: sessionID,
 				Limit:     limit,
+				ShowAll:   showAll,
 			}
 			if since > 0 {
 				opts.SinceMs = time.Now().Add(-since).UnixMilli()
@@ -65,6 +67,7 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sessionID, "session", "", "filter by session id")
 	cmd.Flags().DurationVar(&since, "since", 0, "only events within this duration (e.g. 24h, 7d)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
+	cmd.Flags().BoolVar(&showAll, "show-all", false, "do not deduplicate same-turn events from multiple sources (hook + import)")
 	return cmd
 }
 
@@ -76,6 +79,12 @@ type SearchOptions struct {
 	SessionID string
 	SinceMs   int64
 	Limit     int
+	// ShowAll disables query-time deduplication. By default, when the
+	// same logical turn is present from multiple sources (e.g. hook
+	// events and transcript imports of the same session), search
+	// collapses them to one row per (session_id, role, kind, content),
+	// preferring transport=hook. Set to true to surface every row.
+	ShowAll bool
 }
 
 // RunSearch executes an FTS5 query against the store and writes one
@@ -114,34 +123,76 @@ func RunSearch(s *store.Store, opts SearchOptions, out io.Writer) error {
 
 // buildSearchSQL composes the SQL + args for a SearchOptions value.
 // Factored out so tests can exercise composition without touching SQLite.
+//
+// Default behavior wraps the base FTS result in a CTE + ROW_NUMBER
+// window so logical turns captured through multiple sources (hook +
+// transcript) collapse to one row per (session_id, role, kind,
+// content_text). transport='hook' wins within each partition, then
+// FTS rank breaks ties. ShowAll skips the wrapper and returns every
+// row — useful for auditing what's actually in the store.
 func buildSearchSQL(opts SearchOptions) (string, []any) {
-	var b strings.Builder
-	b.WriteString(`SELECT e.session_id, e.kind, e.cwd, e.ts_source_ms, e.content_text
-		FROM events_fts f JOIN events e ON e.rowid = f.rowid
-		WHERE events_fts MATCH ?`)
+	var filter strings.Builder
 	args := []any{opts.Query}
 
 	if opts.Kind != "" {
-		b.WriteString(` AND e.kind = ?`)
+		filter.WriteString(` AND e.kind = ?`)
 		args = append(args, opts.Kind)
 	}
 	if opts.SessionID != "" {
-		b.WriteString(` AND e.session_id = ?`)
+		filter.WriteString(` AND e.session_id = ?`)
 		args = append(args, opts.SessionID)
 	}
 	if opts.SinceMs > 0 {
-		b.WriteString(` AND e.ts_source_ms >= ?`)
+		filter.WriteString(` AND e.ts_source_ms >= ?`)
 		args = append(args, opts.SinceMs)
 	}
 
-	b.WriteString(` ORDER BY rank LIMIT ?`)
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = 20
 	}
-	args = append(args, limit)
 
-	return b.String(), args
+	if opts.ShowAll {
+		sql := `SELECT e.session_id, e.kind, e.cwd, e.ts_source_ms, e.content_text
+			FROM events_fts f JOIN events e ON e.rowid = f.rowid
+			WHERE events_fts MATCH ?` + filter.String() + `
+			ORDER BY rank LIMIT ?`
+		args = append(args, limit)
+		return sql, args
+	}
+
+	// Deduped path. COALESCE on content_text so NULL partitions don't
+	// collapse into a single group. Kind is included so tool_use and
+	// assistant_message of a turn stay distinct even if they share
+	// (session_id, role, content).
+	sql := `WITH matched AS (
+			SELECT e.rowid, e.session_id, e.role, e.kind, e.cwd,
+				e.ts_source_ms, e.content_text, e.source_agent,
+				(CASE
+					WHEN json_extract(r.envelope_json, '$.transport') = 'hook'
+					THEN 0 ELSE 1
+				END) AS transport_rank,
+				f.rank AS fts_rank
+			FROM events_fts f
+			JOIN events e         ON e.rowid = f.rowid
+			JOIN raw_envelopes r  ON r.event_id = e.event_id
+			WHERE events_fts MATCH ?` + filter.String() + `
+		),
+		ranked AS (
+			SELECT *,
+				ROW_NUMBER() OVER (
+					PARTITION BY session_id, role, kind, COALESCE(content_text, rowid)
+					ORDER BY transport_rank, fts_rank, rowid
+				) AS rn
+			FROM matched
+		)
+		SELECT session_id, kind, cwd, ts_source_ms, content_text
+		FROM ranked
+		WHERE rn = 1
+		ORDER BY fts_rank
+		LIMIT ?`
+	args = append(args, limit)
+	return sql, args
 }
 
 // formatHit renders one row as a single grep-like line. Columns are

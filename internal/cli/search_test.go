@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -78,14 +79,17 @@ func seedStore(t *testing.T) (*store.Store, []ingest.Envelope) {
 	return s, envs
 }
 
-func TestBuildSearchSQL_BaseQueryOnly(t *testing.T) {
+func TestBuildSearchSQL_DefaultIsDeduped(t *testing.T) {
 	t.Parallel()
-	sql, args := buildSearchSQL(SearchOptions{Query: "hello"})
-	if !strings.Contains(sql, "events_fts MATCH ?") {
-		t.Errorf("SQL should MATCH on FTS: %s", sql)
+	sqlText, args := buildSearchSQL(SearchOptions{Query: "hello"})
+	if !strings.Contains(sqlText, "events_fts MATCH ?") {
+		t.Errorf("SQL should MATCH on FTS: %s", sqlText)
 	}
-	if !strings.Contains(sql, "ORDER BY rank LIMIT ?") {
-		t.Errorf("SQL should order by rank and limit: %s", sql)
+	if !strings.Contains(sqlText, "ROW_NUMBER()") {
+		t.Errorf("default SQL should wrap in dedup CTE with ROW_NUMBER: %s", sqlText)
+	}
+	if !strings.Contains(sqlText, "LIMIT ?") {
+		t.Errorf("SQL should limit: %s", sqlText)
 	}
 	if len(args) != 2 {
 		t.Errorf("args: got %d, want 2 (query, limit)", len(args))
@@ -95,6 +99,17 @@ func TestBuildSearchSQL_BaseQueryOnly(t *testing.T) {
 	}
 	if args[1] != 20 {
 		t.Errorf("default limit: got %v, want 20", args[1])
+	}
+}
+
+func TestBuildSearchSQL_ShowAllBypassesCTE(t *testing.T) {
+	t.Parallel()
+	sqlText, _ := buildSearchSQL(SearchOptions{Query: "x", ShowAll: true})
+	if strings.Contains(sqlText, "ROW_NUMBER()") {
+		t.Errorf("ShowAll should skip the dedup CTE: %s", sqlText)
+	}
+	if !strings.Contains(sqlText, "ORDER BY rank LIMIT ?") {
+		t.Errorf("ShowAll should keep the plain ORDER BY rank LIMIT: %s", sqlText)
 	}
 }
 
@@ -209,13 +224,15 @@ func TestRunSearch_RespectsLimit(t *testing.T) {
 	t.Parallel()
 	s, _ := seedStore(t)
 
-	// Insert many more events so we can cap.
+	// Insert many more events so we can cap. Content must be distinct
+	// per iteration so the default dedup doesn't collapse them into
+	// one partition — this test is about --limit, not about dedupe.
 	for i := 0; i < 15; i++ {
 		env := ingest.Envelope{
 			V: 1, EventID: uuid.Must(uuid.NewV7()).String(),
 			SourceAgent: "claude-code", SourceSessionID: "sess-bulk",
 			Kind: "user_prompt", TsSource: time.Now().UTC(),
-			ContentText: "limittest marker",
+			ContentText: fmt.Sprintf("limittest marker %d", i),
 			Payload:     map[string]any{},
 		}
 		raw, _ := json.Marshal(env)
@@ -256,6 +273,164 @@ func TestRunSearch_NoMatchesProducesNoOutput(t *testing.T) {
 	}
 	if out.Len() != 0 {
 		t.Errorf("expected no output, got %q", out.String())
+	}
+}
+
+// seedDuplicateTurn inserts two envelopes for the same logical turn:
+// one with transport="hook" and one with transport="import". Same
+// source_session_id so they collapse into the same derived session_id.
+// Same role, kind, and content. Different event_ids, different
+// timestamps (hook observed earlier, transcript a bit later), so the
+// dedup logic has to use content equality rather than timestamp match.
+func seedDuplicateTurn(t *testing.T, s *store.Store) (sessionID, hookEventID, importEventID string) {
+	t.Helper()
+	hookEnv := ingest.Envelope{
+		V:               1,
+		EventID:         uuid.Must(uuid.NewV7()).String(),
+		SourceAgent:     "claude-code",
+		SourceSessionID: "sess-dup",
+		Kind:            "user_prompt",
+		Role:            "user",
+		TsSource:        time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC),
+		Cwd:             "/work/dup",
+		ContentText:     "duplicated turn text marker",
+		Payload:         map[string]any{"from": "hook"},
+		Transport:       "hook",
+	}
+	importEnv := hookEnv
+	importEnv.EventID = uuid.Must(uuid.NewV7()).String()
+	importEnv.TsSource = hookEnv.TsSource.Add(50 * time.Millisecond)
+	importEnv.Payload = map[string]any{"from": "import"}
+	importEnv.Transport = "import"
+
+	for _, e := range []ingest.Envelope{hookEnv, importEnv} {
+		raw, err := json.Marshal(e)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		tx, err := s.DB().Begin()
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		if _, err := store.IngestEnvelope(tx, &e, raw, time.Now().UnixMilli()); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("ingest: %v", err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+	}
+	return ingest.DeriveSessionID("claude-code", "sess-dup"), hookEnv.EventID, importEnv.EventID
+}
+
+func TestRunSearch_DedupeCollapsesDuplicateTurn(t *testing.T) {
+	t.Parallel()
+	s, _ := seedStore(t)
+	seedDuplicateTurn(t, s)
+
+	var out bytes.Buffer
+	if err := RunSearch(s, SearchOptions{Query: "duplicated"}, &out); err != nil {
+		t.Fatalf("RunSearch: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 deduped hit, got %d:\n%s", len(lines), out.String())
+	}
+	if !strings.Contains(lines[0], "duplicated turn text marker") {
+		t.Errorf("unexpected hit: %s", lines[0])
+	}
+}
+
+func TestRunSearch_ShowAllSurfacesBothCopies(t *testing.T) {
+	t.Parallel()
+	s, _ := seedStore(t)
+	seedDuplicateTurn(t, s)
+
+	var out bytes.Buffer
+	if err := RunSearch(s, SearchOptions{Query: "duplicated", ShowAll: true}, &out); err != nil {
+		t.Fatalf("RunSearch: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("--show-all expected 2 hits, got %d:\n%s", len(lines), out.String())
+	}
+}
+
+func TestRunSearch_DedupePrefersHookTransport(t *testing.T) {
+	t.Parallel()
+	s, _ := seedStore(t)
+	sessionID, hookID, importID := seedDuplicateTurn(t, s)
+
+	// To prove which survived, pull the row directly via the deduped
+	// query path. The deduped result should correspond to the hook
+	// row's ts_source_ms, not the import's (50ms later).
+	var tsSrcMs int64
+	opts := SearchOptions{Query: "duplicated", Limit: 1}
+	sqlText, args := buildSearchSQL(opts)
+	row := s.DB().QueryRow(sqlText, args...)
+	var sess, kind string
+	var cwd, content *string
+	if err := row.Scan(&sess, &kind, &cwd, &tsSrcMs, &content); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+
+	// Hook event had ts = 2026-04-24T12:00:00.000Z; import was +50ms.
+	// Milliseconds ending in 000 means hook was kept.
+	if tsSrcMs%1000 != 0 {
+		t.Errorf("dedupe picked the import row (ts_ms=%d); hook was expected", tsSrcMs)
+	}
+	// And the session_id should match our derived one.
+	if sess != sessionID {
+		t.Errorf("session_id: got %q, want %q", sess, sessionID)
+	}
+
+	// Sanity: both events exist in the raw table (we haven't deleted
+	// anything — dedupe is query-time only).
+	var nRaw int
+	_ = s.DB().QueryRow(`SELECT COUNT(*) FROM raw_envelopes WHERE event_id IN (?, ?)`,
+		hookID, importID).Scan(&nRaw)
+	if nRaw != 2 {
+		t.Errorf("raw_envelopes should retain both rows, got %d", nRaw)
+	}
+}
+
+func TestRunSearch_DedupeDoesNotCollapseDistinctContent(t *testing.T) {
+	t.Parallel()
+	s, _ := seedStore(t)
+
+	// Two events in same session, same role, same kind — but different
+	// content. Must NOT be deduped.
+	base := ingest.Envelope{
+		V:               1,
+		SourceAgent:     "claude-code",
+		SourceSessionID: "sess-distinct",
+		Kind:            "user_prompt",
+		Role:            "user",
+		TsSource:        time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC),
+		Payload:         map[string]any{},
+		Transport:       "hook",
+	}
+	for _, txt := range []string{"distinct one marker", "distinct two marker"} {
+		env := base
+		env.EventID = uuid.Must(uuid.NewV7()).String()
+		env.ContentText = txt
+		raw, _ := json.Marshal(env)
+		tx, _ := s.DB().Begin()
+		_, err := store.IngestEnvelope(tx, &env, raw, time.Now().UnixMilli())
+		if err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("ingest: %v", err)
+		}
+		_ = tx.Commit()
+	}
+
+	var out bytes.Buffer
+	if err := RunSearch(s, SearchOptions{Query: "distinct"}, &out); err != nil {
+		t.Fatalf("RunSearch: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 2 {
+		t.Errorf("distinct-content rows should both surface, got %d:\n%s", len(lines), out.String())
 	}
 }
 
