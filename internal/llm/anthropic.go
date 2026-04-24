@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/redact"
@@ -29,13 +31,39 @@ const AnthropicAPIVersion = "2023-06-01"
 // can override per-request via Request.Model.
 const DefaultAnthropicModel = "claude-sonnet-4-6"
 
+// DefaultMaxRetries is the number of retry attempts Complete will make
+// on top of the initial request when the provider returns a retryable
+// status (429 or 5xx) or the network call fails. Total attempts =
+// initial + DefaultMaxRetries. A budget of 3 survives a brief 429 or
+// transient upstream hiccup without turning a flaky API into hangs.
+const DefaultMaxRetries = 3
+
+// defaultRetryBaseDelay is the first-retry wait before jitter. Each
+// subsequent retry doubles until defaultRetryMaxDelay. A server-sent
+// Retry-After (seconds or HTTP-date) overrides this entirely, capped
+// at defaultRetryMaxDelay so a hostile upstream can't pin us.
+const (
+	defaultRetryBaseDelay = 500 * time.Millisecond
+	defaultRetryMaxDelay  = 10 * time.Second
+)
+
 // Anthropic is a Client that talks to the Anthropic Messages API.
 // Safe for concurrent use: http.Client is goroutine-safe and this
-// struct holds no other state.
+// struct holds no other state that mutates after construction.
 type Anthropic struct {
 	APIKey   string
 	Endpoint string       // overridable for tests; empty means AnthropicEndpoint
 	HTTP     *http.Client // optional; nil means a sensible default
+
+	// MaxRetries overrides DefaultMaxRetries. Zero uses the default;
+	// set negative to disable retries entirely (useful for tests that
+	// want to assert a single attempt).
+	MaxRetries int
+
+	// RetryBaseDelay overrides defaultRetryBaseDelay. Zero uses the
+	// default. Tests set this small (e.g., 1ms) so the retry loop
+	// does not wait real wall-clock time.
+	RetryBaseDelay time.Duration
 }
 
 // APIKeyEnv is the environment variable the CLI subcommands (and
@@ -72,8 +100,12 @@ func NewAnthropic(apiKey string) *Anthropic {
 	}
 }
 
-// Complete issues one Messages API call and returns the reply text
-// plus token usage.
+// Complete issues a Messages API call and returns the reply text plus
+// token usage. Retries on 429 and 5xx using exponential backoff with
+// jitter; a server-sent Retry-After header (seconds or HTTP-date)
+// overrides the computed delay. Network errors retry the same way.
+// The ctx deadline is honored both during I/O and during backoff —
+// the loop aborts as soon as ctx is done.
 func (a *Anthropic) Complete(ctx context.Context, req Request) (*Response, error) {
 	if a.APIKey == "" {
 		return nil, errors.New("anthropic: API key not set (expected in ANTHROPIC_API_KEY)")
@@ -97,6 +129,73 @@ func (a *Anthropic) Complete(ctx context.Context, req Request) (*Response, error
 		endpoint = AnthropicEndpoint
 	}
 
+	client := a.HTTP
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	maxRetries := a.MaxRetries
+	if maxRetries == 0 {
+		maxRetries = DefaultMaxRetries
+	}
+	if maxRetries < 0 {
+		maxRetries = 0
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		resp, err := a.doOnce(ctx, client, endpoint, body)
+		switch {
+		case err == nil && resp != nil && isRetryableStatus(resp.status):
+			scrubbed, _ := redact.Outbound(truncate(resp.body, 1024))
+			lastErr = fmt.Errorf("anthropic: status %d: %s", resp.status, scrubbed)
+			if attempt == maxRetries {
+				return nil, lastErr
+			}
+			delay := retryDelay(resp.retryAfter, attempt, a.RetryBaseDelay)
+			if err := sleepCtx(ctx, delay); err != nil {
+				return nil, err
+			}
+			continue
+		case err == nil && resp != nil && (resp.status < 200 || resp.status >= 300):
+			scrubbed, _ := redact.Outbound(truncate(resp.body, 1024))
+			return nil, fmt.Errorf("anthropic: status %d: %s", resp.status, scrubbed)
+		case err == nil && resp != nil:
+			return parseAnthropicResponse(resp.body, model)
+		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+			return nil, err
+		default:
+			// Transport-level failure (DNS, connection reset, TLS…)
+			// — treat as retryable.
+			lastErr = err
+			if attempt == maxRetries {
+				return nil, lastErr
+			}
+			delay := retryDelay("", attempt, a.RetryBaseDelay)
+			if sleepErr := sleepCtx(ctx, delay); sleepErr != nil {
+				return nil, sleepErr
+			}
+		}
+	}
+	// Exhausted retries.
+	return nil, lastErr
+}
+
+// attemptResult is the successful-I/O shape returned by doOnce: the
+// status, the fully-read body, and the raw Retry-After header if set.
+// We return the body instead of an open reader so the retry loop can
+// inspect status + body after the connection has closed.
+type attemptResult struct {
+	status     int
+	body       []byte
+	retryAfter string
+}
+
+// doOnce performs exactly one HTTP attempt. Network / request-build
+// errors come back as the second return. A non-2xx status is NOT an
+// error here — the caller decides whether to retry based on the
+// status code.
+func (a *Anthropic) doOnce(ctx context.Context, client *http.Client, endpoint string, body []byte) (*attemptResult, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: build request: %w", err)
@@ -105,10 +204,6 @@ func (a *Anthropic) Complete(ctx context.Context, req Request) (*Response, error
 	httpReq.Header.Set("x-api-key", a.APIKey)
 	httpReq.Header.Set("anthropic-version", AnthropicAPIVersion)
 
-	client := a.HTTP
-	if client == nil {
-		client = http.DefaultClient
-	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: http: %w", err)
@@ -119,16 +214,87 @@ func (a *Anthropic) Complete(ctx context.Context, req Request) (*Response, error
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: read response: %w", err)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// Scrub before surfacing upstream bodies in errors. A
-		// misconfigured 401 could echo the API key back ("Invalid
-		// key: sk-ant-...") and we don't want that landing in a log
-		// file. redact.Outbound catches every detector we know about.
-		scrubbed, _ := redact.Outbound(truncate(respBody, 1024))
-		return nil, fmt.Errorf("anthropic: status %d: %s", resp.StatusCode, scrubbed)
-	}
+	return &attemptResult{
+		status:     resp.StatusCode,
+		body:       respBody,
+		retryAfter: resp.Header.Get("Retry-After"),
+	}, nil
+}
 
-	return parseAnthropicResponse(respBody, model)
+// isRetryableStatus reports whether a response status code justifies a
+// retry. 429 is the rate-limit signal; any 5xx is "server's problem,
+// may clear up". 4xx other than 429 is a client bug — retrying won't
+// help, so we don't.
+func isRetryableStatus(code int) bool {
+	return code == http.StatusTooManyRequests || code >= 500
+}
+
+// retryDelay picks the next backoff duration. If the server sent a
+// Retry-After we honor it (capped at defaultRetryMaxDelay so a hostile
+// upstream can't pin us). Otherwise we use exponential backoff with
+// ±25% jitter so a swarm of clients doesn't synchronize on retry.
+func retryDelay(retryAfter string, attempt int, base time.Duration) time.Duration {
+	if d, ok := parseRetryAfter(retryAfter, time.Now()); ok {
+		if d > defaultRetryMaxDelay {
+			d = defaultRetryMaxDelay
+		}
+		if d < 0 {
+			d = 0
+		}
+		return d
+	}
+	if base <= 0 {
+		base = defaultRetryBaseDelay
+	}
+	// Exponential: base, base*2, base*4, …
+	shift := attempt
+	if shift > 10 {
+		shift = 10 // guard against absurd attempt counts
+	}
+	d := base << shift
+	if d > defaultRetryMaxDelay {
+		d = defaultRetryMaxDelay
+	}
+	// ±25% jitter — rand.Float64() is fine here, we don't need crypto.
+	jitter := 1 + (rand.Float64()*0.5 - 0.25)
+	return time.Duration(float64(d) * jitter)
+}
+
+// parseRetryAfter accepts both RFC 7231 forms: an integer number of
+// seconds, or an HTTP-date. `now` is injectable so the HTTP-date branch
+// is deterministically testable.
+func parseRetryAfter(v string, now time.Time) (time.Duration, bool) {
+	if v == "" {
+		return 0, false
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		return time.Duration(secs) * time.Second, true
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		return t.Sub(now), true
+	}
+	return 0, false
+}
+
+// sleepCtx waits for d or ctx.Done, whichever comes first. A
+// non-positive d returns immediately (subject to ctx).
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			return nil
+		}
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // validateRequest enforces the small set of invariants we care about

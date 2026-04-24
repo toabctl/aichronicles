@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // fakeAnthropic runs the handler as an HTTP server and returns a
@@ -175,6 +177,203 @@ func TestAnthropic_Complete_RefusesEmptyAPIKey(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "API key") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAnthropic_Complete_RetriesOn429ThenSucceeds(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	c := fakeAnthropic(t, func(w http.ResponseWriter, _ *http.Request) {
+		n := calls.Add(1)
+		if n < 3 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":"slow down"}`)
+			return
+		}
+		_, _ = io.WriteString(w,
+			`{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`)
+	})
+	c.RetryBaseDelay = time.Millisecond // keep the test fast
+
+	resp, err := c.Complete(context.Background(), Request{
+		Messages:  []Message{{Role: RoleUser, Content: "x"}},
+		MaxTokens: 16,
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if resp.Text != "ok" {
+		t.Errorf("Text: %q", resp.Text)
+	}
+	if got := calls.Load(); got != 3 {
+		t.Errorf("calls: got %d, want 3 (two 429s then success)", got)
+	}
+}
+
+func TestAnthropic_Complete_RetriesOn5xxThenFails(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	c := fakeAnthropic(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":"down"}`)
+	})
+	c.MaxRetries = 2
+	c.RetryBaseDelay = time.Millisecond
+
+	_, err := c.Complete(context.Background(), Request{
+		Messages:  []Message{{Role: RoleUser, Content: "x"}},
+		MaxTokens: 16,
+	})
+	if err == nil {
+		t.Fatal("expected error after exhausted retries")
+	}
+	if !strings.Contains(err.Error(), "503") {
+		t.Errorf("error should mention 503: %v", err)
+	}
+	// 1 initial + 2 retries = 3 attempts.
+	if got := calls.Load(); got != 3 {
+		t.Errorf("calls: got %d, want 3", got)
+	}
+}
+
+func TestAnthropic_Complete_DoesNotRetry4xxOtherThan429(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	c := fakeAnthropic(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":"malformed"}`)
+	})
+	c.RetryBaseDelay = time.Millisecond
+
+	_, err := c.Complete(context.Background(), Request{
+		Messages:  []Message{{Role: RoleUser, Content: "x"}},
+		MaxTokens: 16,
+	})
+	if err == nil {
+		t.Fatal("expected 400 error")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("400 must not retry: got %d attempts, want 1", got)
+	}
+}
+
+func TestAnthropic_Complete_HonorsRetryAfterSeconds(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	var firstAt, secondAt time.Time
+	c := fakeAnthropic(t, func(w http.ResponseWriter, _ *http.Request) {
+		n := calls.Add(1)
+		if n == 1 {
+			firstAt = time.Now()
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		secondAt = time.Now()
+		_, _ = io.WriteString(w,
+			`{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`)
+	})
+	// Base delay tiny — if Retry-After is ignored, gap will be ~1ms,
+	// not ~1s, and the assertion below catches it.
+	c.RetryBaseDelay = time.Millisecond
+
+	if _, err := c.Complete(context.Background(), Request{
+		Messages:  []Message{{Role: RoleUser, Content: "x"}},
+		MaxTokens: 16,
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	gap := secondAt.Sub(firstAt)
+	if gap < 750*time.Millisecond {
+		t.Errorf("Retry-After=1 should delay ≥~1s, got %v", gap)
+	}
+	// And not >2s either — that'd mean we waited way too long
+	// (defaultRetryMaxDelay is 10s so this is a sanity bound).
+	if gap > 2*time.Second {
+		t.Errorf("Retry-After=1 should not delay >2s, got %v", gap)
+	}
+}
+
+func TestAnthropic_Complete_RetryAfterCapsAtMaxDelay(t *testing.T) {
+	t.Parallel()
+	// A server claiming "come back in an hour" must not hang us for
+	// an hour — we cap at defaultRetryMaxDelay (10s) and still retry.
+	if got, ok := parseRetryAfter("3600", time.Unix(0, 0)); !ok || got != time.Hour {
+		t.Fatalf("parseRetryAfter integer path: got %v,%v", got, ok)
+	}
+	got := retryDelay("3600", 0, time.Millisecond)
+	if got > defaultRetryMaxDelay {
+		t.Errorf("retryDelay should cap at %v, got %v", defaultRetryMaxDelay, got)
+	}
+}
+
+func TestAnthropic_Complete_RetryAfterHTTPDate(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	target := now.Add(3 * time.Second).Format(http.TimeFormat)
+	got, ok := parseRetryAfter(target, now)
+	if !ok {
+		t.Fatalf("parseRetryAfter date path failed")
+	}
+	// Exact 3s, give or take a second from header-date truncation.
+	if got < 2*time.Second || got > 4*time.Second {
+		t.Errorf("HTTP-date delta: got %v, want ~3s", got)
+	}
+}
+
+func TestAnthropic_Complete_ContextCancelledDuringBackoff(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	c := fakeAnthropic(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Retry-After", "10") // long server-requested wait
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		// Cancel soon after the first attempt has surely landed.
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	_, err := c.Complete(ctx, Request{
+		Messages:  []Message{{Role: RoleUser, Content: "x"}},
+		MaxTokens: 16,
+	})
+	if err == nil {
+		t.Fatal("expected context error")
+	}
+	if !strings.Contains(err.Error(), "context canceled") {
+		t.Errorf("expected context cancellation, got %v", err)
+	}
+	// At most 1 network attempt should have happened before cancel.
+	if got := calls.Load(); got != 1 {
+		t.Errorf("expected 1 attempt before cancel, got %d", got)
+	}
+}
+
+func TestAnthropic_Complete_MaxRetriesNegativeDisables(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	c := fakeAnthropic(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	c.MaxRetries = -1
+	c.RetryBaseDelay = time.Millisecond
+
+	_, err := c.Complete(context.Background(), Request{
+		Messages:  []Message{{Role: RoleUser, Content: "x"}},
+		MaxTokens: 16,
+	})
+	if err == nil {
+		t.Fatal("expected 429 error")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("MaxRetries=-1 should make exactly 1 attempt, got %d", got)
 	}
 }
 
