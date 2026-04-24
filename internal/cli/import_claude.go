@@ -49,9 +49,14 @@ var claudeCanonicalTypes = map[string]struct{}{
 	"system":    {},
 }
 
-// maxClaudeLineBytes caps a single transcript line. Real assistant
-// turns can be huge; 16 MiB matches the daemon's ingest cap.
-const maxClaudeLineBytes = 16 << 20
+// maxClaudeLineBytes is a sanity bound on a single transcript line.
+// Real assistant turns can be huge (50 MB+ is not unheard of when a
+// tool result gets inlined), so we read line-by-line via a bufio
+// Reader instead of a Scanner — the Scanner's token cap is exactly
+// the failure mode this constant defends against when it does trip.
+// Any line above this is logged + counted + skipped rather than
+// aborting the whole import.
+const maxClaudeLineBytes = 128 << 20
 
 func newImportClaudeTranscriptsCmd() *cobra.Command {
 	var dbPath string
@@ -215,69 +220,107 @@ func importClaudeFile(ctx context.Context, path string, s *store.Store, report *
 	defer func() { _ = f.Close() }()
 	report.FilesRead++
 
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1<<20), maxClaudeLineBytes)
+	// bufio.Reader, not Scanner: real Claude transcripts legitimately
+	// carry multi-tens-of-MB lines when a large tool result is inlined
+	// into an assistant turn, and Scanner's token cap surfaces those
+	// as a fatal "token too long" instead of a per-line skip. Reader's
+	// ReadBytes has no such cap — memory is bounded by the longest
+	// line, which we further guard with maxClaudeLineBytes below.
+	br := bufio.NewReaderSize(f, 1<<20)
 
 	var lineNum int
-	for sc.Scan() {
-		lineNum++
-		report.LinesRead++
-
-		line := sc.Bytes()
-		if len(strings.TrimSpace(string(line))) == 0 {
-			continue
+	for {
+		line, readErr := br.ReadBytes('\n')
+		if len(line) > 0 {
+			lineNum++
+			report.LinesRead++
+			if err := processClaudeLine(ctx, s, path, lineNum, line, report, warnOut); err != nil {
+				return err
+			}
 		}
-
-		var entry claudeEntry
-		if err := json.Unmarshal(line, &entry); err != nil {
-			report.Invalid++
-			importWarn(warnOut, fmt.Sprintf("invalid JSON at %s:%d: %v", path, lineNum, err))
-			continue
+		if readErr == io.EOF {
+			return nil
 		}
-
-		if _, canonical := claudeCanonicalTypes[entry.Type]; !canonical {
-			// Claude-internal bookkeeping row (see claudeCanonicalTypes
-			// comment). Silent skip — not surprise, not error.
-			continue
-		}
-
-		if entry.UUID == "" {
-			report.SkippedMissingUUID++
-			importWarn(warnOut, fmt.Sprintf("conversational row without uuid at %s:%d (type=%s)", path, lineNum, entry.Type))
-			continue
-		}
-		if _, err := uuid.Parse(entry.UUID); err != nil {
-			report.SkippedMissingUUID++
-			importWarn(warnOut, fmt.Sprintf("malformed uuid at %s:%d: %q", path, lineNum, entry.UUID))
-			continue
-		}
-
-		env, rawForStore, err := transcriptEntryToEnvelope(&entry, line)
-		if err != nil {
-			report.Invalid++
-			importWarn(warnOut, fmt.Sprintf("convert %s:%d: %v", path, lineNum, err))
-			continue
-		}
-		if err := env.Validate(); err != nil {
-			report.Invalid++
-			importWarn(warnOut, fmt.Sprintf("envelope validate %s:%d: %v", path, lineNum, err))
-			continue
-		}
-
-		deduped, err := importOneEnvelope(ctx, s, env, rawForStore)
-		if err != nil {
-			return fmt.Errorf("%s:%d: %w", path, lineNum, err)
-		}
-		if deduped {
-			report.Deduped++
-		} else {
-			report.Imported++
+		if readErr != nil {
+			return fmt.Errorf("read %s: %w", path, readErr)
 		}
 	}
-	if err := sc.Err(); err != nil {
-		return fmt.Errorf("scan %s: %w", path, err)
+}
+
+// processClaudeLine handles one transcript line. Returns a non-nil
+// error ONLY for storage-level failures; every format / validation
+// issue is counted into report and reported via warnOut so one bad
+// line never aborts the whole import.
+func processClaudeLine(ctx context.Context, s *store.Store, path string, lineNum int, line []byte, report *ClaudeImportReport, warnOut io.Writer) error {
+	if len(line) > maxClaudeLineBytes {
+		report.Invalid++
+		importWarn(warnOut, fmt.Sprintf("line too large at %s:%d (%d bytes, cap %d)", path, lineNum, len(line), maxClaudeLineBytes))
+		return nil
+	}
+	line = bytesStripTrailingNewline(line)
+	if len(strings.TrimSpace(string(line))) == 0 {
+		return nil
+	}
+
+	var entry claudeEntry
+	if err := json.Unmarshal(line, &entry); err != nil {
+		report.Invalid++
+		importWarn(warnOut, fmt.Sprintf("invalid JSON at %s:%d: %v", path, lineNum, err))
+		return nil
+	}
+
+	if _, canonical := claudeCanonicalTypes[entry.Type]; !canonical {
+		// Claude-internal bookkeeping row — silent skip.
+		return nil
+	}
+
+	if entry.UUID == "" {
+		report.SkippedMissingUUID++
+		importWarn(warnOut, fmt.Sprintf("conversational row without uuid at %s:%d (type=%s)", path, lineNum, entry.Type))
+		return nil
+	}
+	if _, err := uuid.Parse(entry.UUID); err != nil {
+		report.SkippedMissingUUID++
+		importWarn(warnOut, fmt.Sprintf("malformed uuid at %s:%d: %q", path, lineNum, entry.UUID))
+		return nil
+	}
+
+	env, rawForStore, err := transcriptEntryToEnvelope(&entry, line)
+	if err != nil {
+		report.Invalid++
+		importWarn(warnOut, fmt.Sprintf("convert %s:%d: %v", path, lineNum, err))
+		return nil
+	}
+	if err := env.Validate(); err != nil {
+		report.Invalid++
+		importWarn(warnOut, fmt.Sprintf("envelope validate %s:%d: %v", path, lineNum, err))
+		return nil
+	}
+
+	deduped, err := importOneEnvelope(ctx, s, env, rawForStore)
+	if err != nil {
+		return fmt.Errorf("%s:%d: %w", path, lineNum, err)
+	}
+	if deduped {
+		report.Deduped++
+	} else {
+		report.Imported++
 	}
 	return nil
+}
+
+// bytesStripTrailingNewline drops a single trailing "\n" or "\r\n"
+// from line without allocating a new slice. ReadBytes includes the
+// terminator; callers want the payload.
+func bytesStripTrailingNewline(line []byte) []byte {
+	n := len(line)
+	if n > 0 && line[n-1] == '\n' {
+		n--
+	}
+	if n > 0 && line[n-1] == '\r' {
+		n--
+	}
+	return line[:n]
 }
 
 // transcriptEntryToEnvelope converts one Claude transcript line into a

@@ -342,6 +342,95 @@ func TestImportClaudeTranscripts_MalformedJSONIsCountedNotFatal(t *testing.T) {
 	}
 }
 
+// TestImportClaudeTranscripts_HandlesVeryLargeLine proves the shift
+// from bufio.Scanner to bufio.Reader: a legitimate multi-MB assistant
+// turn must import without hitting a fixed token cap. 20 MB is well
+// past bufio.Scanner's 64 KB default and past the old 16 MiB cap.
+func TestImportClaudeTranscripts_HandlesVeryLargeLine(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	var warns bytes.Buffer
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "huge.jsonl")
+
+	// Build a valid Claude-transcript line with a 20 MB content payload.
+	// Structure matches assistant_text fixture (see testdata).
+	hugeText := strings.Repeat("x", 20<<20)
+	line := map[string]any{
+		"type":      "assistant",
+		"uuid":      "019dd999-bd8c-7fff-aaaa-000000000001",
+		"sessionId": "huge-session",
+		"timestamp": "2026-04-24T10:00:00Z",
+		"cwd":       "/tmp/huge",
+		"message": map[string]any{
+			"role":    "assistant",
+			"content": []map[string]any{{"type": "text", "text": hugeText}},
+			"model":   "claude-sonnet-4-6",
+		},
+	}
+	raw, err := json.Marshal(line)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	report, err := ImportClaudeTranscripts(t.Context(), path, s, &warns)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if report.Imported != 1 {
+		t.Errorf("Imported: got %d, want 1 (warns=%s)", report.Imported, warns.String())
+	}
+	if report.Invalid != 0 {
+		t.Errorf("Invalid: got %d, want 0", report.Invalid)
+	}
+}
+
+// TestImportClaudeTranscripts_SkipsOversizeLine proves the upper sanity
+// bound fires as a per-line skip rather than a file-wide abort. We
+// temporarily tighten the cap via a smaller line size guard by
+// constructing a line just over the absolute cap. Since the real cap
+// is 128 MiB (too big for a unit test), we drive the branch indirectly
+// through the same code path on a custom tiny file — the point of the
+// test is that the loop continues past an oversize line.
+func TestImportClaudeTranscripts_OversizeLineIsCountedNotFatal(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	var warns bytes.Buffer
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mixed.jsonl")
+
+	// Line A: perfectly normal.
+	good := []byte(`{"type":"user","uuid":"019dd999-bd8c-7fff-aaaa-000000000002","sessionId":"s","timestamp":"2026-04-24T10:00:00Z","cwd":"/tmp","message":{"role":"user","content":"hi"}}`)
+	// Line B: exceeds the compile-time cap by a safe margin. We test
+	// the *behavior* (counted + skipped), not the exact boundary.
+	oversize := bytes.Repeat([]byte("x"), maxClaudeLineBytes+1)
+
+	content := append(append(good, '\n'), oversize...)
+	content = append(content, '\n')
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	report, err := ImportClaudeTranscripts(t.Context(), path, s, &warns)
+	if err != nil {
+		t.Fatalf("import: %v (warns=%s)", err, warns.String())
+	}
+	if report.Imported != 1 {
+		t.Errorf("Imported: got %d, want 1 (good line)", report.Imported)
+	}
+	if report.Invalid != 1 {
+		t.Errorf("Invalid: got %d, want 1 (oversize line)", report.Invalid)
+	}
+	if !strings.Contains(warns.String(), "line too large") {
+		t.Errorf("expected 'line too large' warning, got: %s", warns.String())
+	}
+}
+
 func TestReport_StringShape(t *testing.T) {
 	t.Parallel()
 	r := ClaudeImportReport{
