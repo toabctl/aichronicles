@@ -77,15 +77,29 @@ func LoadRecentSessionDigests(db *sql.DB, sinceMs int64, limit int) ([]SessionDi
 	return out, rows.Err()
 }
 
-// LoadEventsForSession returns every event for a session, oldest
-// first. An empty slice is returned for an unknown session.
-func LoadEventsForSession(db *sql.DB, sessionID string) ([]EventView, error) {
+// DefaultEventsPerSessionLimit caps LoadEventsForSession's result set
+// when the caller does not supply a tighter bound. 10k events per
+// session is generous (an hour of hot tool use is typically under 1k
+// events) and keeps a pathological session from loading 1M rows into
+// memory for a summarize call.
+const DefaultEventsPerSessionLimit = 10_000
+
+// LoadEventsForSession returns up to `limit` events for a session,
+// oldest first. An empty slice is returned for an unknown session.
+// A non-positive `limit` uses DefaultEventsPerSessionLimit — callers
+// that truly want "every event" should pass a very large number and
+// own the memory consequences.
+func LoadEventsForSession(db *sql.DB, sessionID string, limit int) ([]EventView, error) {
+	if limit <= 0 {
+		limit = DefaultEventsPerSessionLimit
+	}
 	rows, err := db.Query(
 		`SELECT event_id, kind, role, content_text, ts_source_ms, tool_name
 		 FROM events
 		 WHERE session_id = ?
-		 ORDER BY ts_source_ms ASC, rowid ASC`,
-		sessionID,
+		 ORDER BY ts_source_ms ASC, rowid ASC
+		 LIMIT ?`,
+		sessionID, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query events: %w", err)

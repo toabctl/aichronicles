@@ -98,7 +98,7 @@ func RunSummarize(
 	opts SummarizeOptions,
 	out io.Writer,
 ) (int64, error) {
-	events, err := store.LoadEventsForSession(s.DB(), opts.SessionID)
+	events, err := store.LoadEventsForSession(s.DB(), opts.SessionID, 0)
 	if err != nil {
 		return 0, fmt.Errorf("summarize: load events: %w", err)
 	}

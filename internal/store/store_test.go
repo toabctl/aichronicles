@@ -29,13 +29,15 @@ func TestOpen_FreshCreatesSchema(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
 
-	// meta table seeded with schema_version=1
+	// meta table seeded with the latest schema version the migration
+	// runner knows about. Bump here when you add a new migration so
+	// this test catches accidental drops.
 	var v string
 	if err := s.DB().QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if v != "2" {
-		t.Errorf("schema_version: got %q, want 2", v)
+	if v != "3" {
+		t.Errorf("schema_version: got %q, want 3", v)
 	}
 
 	// Expected tables all exist
