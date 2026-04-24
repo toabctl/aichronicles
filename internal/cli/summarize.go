@@ -27,17 +27,20 @@ func newSummarizeCmd() *cobra.Command {
 		sessionID string
 		model     string
 		force     bool
+		jsonOut   bool
 		dbPath    string
 	)
 	cmd := &cobra.Command{
 		Use:   "summarize",
 		Short: "Generate an LLM summary for one session",
-		Long: "Pulls every event for --session, asks the LLM for a tight\n" +
-			"summary (topic, what was done, unresolved issues, files touched),\n" +
-			"and persists the reply in llm_outputs.\n\n" +
+		Long: "Pulls every event for --session, asks the LLM for a structured\n" +
+			"summary (topic, what was done, unresolved issues, files touched,\n" +
+			"annotated links), and persists the JSON reply in llm_outputs.\n\n" +
 			"Idempotent on the full prompt: re-running without --force returns\n" +
 			"the cached summary and does not call the LLM again. Pass --force\n" +
 			"to bypass the cache (e.g. after changing the prompt template).\n\n" +
+			"Output is rendered for the terminal by default; pass --json to\n" +
+			"emit the raw JSON body stored in the database.\n\n" +
 			"Requires " + llm.APIKeyEnv + " to be set unless --force is off AND\n" +
 			"a cached summary exists.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -71,7 +74,7 @@ func newSummarizeCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), summarizeTimeout)
 			defer cancel()
 			_, err = RunSummarize(ctx, s, newClient, SummarizeOptions{
-				SessionID: sessionID, Model: model, Force: force,
+				SessionID: sessionID, Model: model, Force: force, JSON: jsonOut,
 			}, cmd.OutOrStdout())
 			return err
 		},
@@ -79,6 +82,7 @@ func newSummarizeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sessionID, "session", "", "session id or unique prefix (see `aichronicles sessions`)")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit raw JSON body instead of the human-readable render")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
 	return cmd
 }
@@ -89,6 +93,7 @@ type SummarizeOptions struct {
 	SessionID string
 	Model     string
 	Force     bool
+	JSON      bool
 }
 
 // RunSummarize orchestrates the three phases: build prompt, hit cache
@@ -117,10 +122,19 @@ func RunSummarize(
 		return 0, fmt.Errorf("summarize: session %s has no events", sessionID)
 	}
 
-	// Links get populated in the next commit when we wire
-	// store.LoadExtractionsForSession through. For now pass nil so
-	// the tool receives an empty links array.
-	built, err := prompts.BuildSummary(sessionID, events, nil)
+	// Pre-extracted URLs for this session — the LLM annotates each
+	// with a `used_for` rather than extracting them itself. Empty
+	// slice is fine (tool input will carry links:[]).
+	urls, err := store.LoadExtractionsForSession(ctx, s.DB(), sessionID, "url")
+	if err != nil {
+		return 0, fmt.Errorf("summarize: load extractions: %w", err)
+	}
+	links := make([]string, len(urls))
+	for i, u := range urls {
+		links[i] = u.Value
+	}
+
+	built, err := prompts.BuildSummary(sessionID, events, links)
 	if err != nil {
 		return 0, fmt.Errorf("summarize: build prompt: %w", err)
 	}
@@ -131,9 +145,8 @@ func RunSummarize(
 			return 0, fmt.Errorf("summarize: cache lookup: %w", err)
 		}
 		if cached != nil {
-			_, _ = fmt.Fprint(out, cached.Body)
-			if !endsWithNewline(cached.Body) {
-				_, _ = fmt.Fprintln(out)
+			if renderErr := emitLLMBody(out, store.LLMKindSummary, cached.Body, opts.JSON); renderErr != nil {
+				return cached.ID, fmt.Errorf("summarize: render cached body: %w", renderErr)
 			}
 			return cached.ID, nil
 		}
@@ -152,8 +165,13 @@ func RunSummarize(
 	if err != nil {
 		return 0, fmt.Errorf("summarize: LLM call: %w", err)
 	}
-	if resp.Text == "" {
-		return 0, errors.New("summarize: LLM returned empty text")
+	var result prompts.SummaryResult
+	if err := parseToolResult(resp, prompts.ToolNameSummary, &result); err != nil {
+		return 0, fmt.Errorf("summarize: %w", err)
+	}
+	body, err := marshalLLMBody(&result)
+	if err != nil {
+		return 0, fmt.Errorf("summarize: marshal result: %w", err)
 	}
 
 	id, err := persistSummary(ctx, s, &persistInput{
@@ -163,15 +181,14 @@ func RunSummarize(
 		model:      resp.Model,
 		inputToks:  resp.Usage.InputTokens,
 		outputToks: resp.Usage.OutputTokens,
-		body:       resp.Text,
+		body:       body,
 	})
 	if err != nil {
 		return 0, err
 	}
 
-	_, _ = fmt.Fprint(out, resp.Text)
-	if !endsWithNewline(resp.Text) {
-		_, _ = fmt.Fprintln(out)
+	if renderErr := emitLLMBody(out, store.LLMKindSummary, body, opts.JSON); renderErr != nil {
+		return id, fmt.Errorf("summarize: render body: %w", renderErr)
 	}
 	return id, nil
 }
@@ -220,6 +237,14 @@ func persistSummary(ctx context.Context, s *store.Store, in *persistInput) (int6
 	return id, nil
 }
 
-func endsWithNewline(s string) bool {
-	return len(s) > 0 && s[len(s)-1] == '\n'
+// marshalLLMBody is the canonical serializer for a tool result we're
+// about to stash in llm_outputs.body. Deterministic JSON (no HTML
+// escaping, indented for human grep) so identical inputs produce
+// identical bytes and line-diff tools work on the stored rows.
+func marshalLLMBody(v any) (string, error) {
+	b, err := jsonMarshalIndent(v)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }

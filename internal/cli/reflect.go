@@ -32,22 +32,24 @@ const defaultReflectLimit = 25
 
 func newReflectCmd() *cobra.Command {
 	var (
-		since  time.Duration
-		limit  int
-		model  string
-		force  bool
-		dbPath string
+		since   time.Duration
+		limit   int
+		model   string
+		force   bool
+		jsonOut bool
+		dbPath  string
 	)
 	cmd := &cobra.Command{
 		Use:   "reflect",
 		Short: "LLM-derived meta-analysis of recent sessions",
-		Long: "Looks at sessions that ended within --since and asks the LLM to\n" +
-			"identify recurring task types, recurring sources of friction, and\n" +
-			"one workflow change worth trying. Existing per-session summaries\n" +
-			"(from `aichronicles summarize`) are preferred to raw first\n" +
-			"prompts — cheaper tokens, denser signal.\n\n" +
+		Long: "Looks at sessions that ended within --since and asks the LLM,\n" +
+			"via the record_reflection tool, to identify recurring task types,\n" +
+			"recurring sources of friction, and one workflow change worth\n" +
+			"trying. Existing per-session summaries (from `aichronicles\n" +
+			"summarize`) are preferred to raw first prompts.\n\n" +
 			"Cached like summarize: same digest list = same prompt_hash = same\n" +
-			"cached body. Use --force to re-call.\n\n" +
+			"cached body. Use --force to re-call. Use --json to emit the raw\n" +
+			"JSON body instead of the human-readable render.\n\n" +
 			"Requires " + llm.APIKeyEnv + " unless the cache hits.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			resolved := dbPath
@@ -76,7 +78,7 @@ func newReflectCmd() *cobra.Command {
 				func() (llm.Client, error) {
 					return llm.FromEnvOrCommand(ctx, cfg.LLM.APIKeyCommand)
 				},
-				ReflectOptions{Since: since, Limit: limit, Model: model, Force: force},
+				ReflectOptions{Since: since, Limit: limit, Model: model, Force: force, JSON: jsonOut},
 				cmd.OutOrStdout())
 			return err
 		},
@@ -85,6 +87,7 @@ func newReflectCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", defaultReflectLimit, "max sessions to feed the LLM, newest first")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit raw JSON body instead of the human-readable render")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
 	return cmd
 }
@@ -95,6 +98,7 @@ type ReflectOptions struct {
 	Limit int
 	Model string
 	Force bool
+	JSON  bool
 }
 
 // RunReflect orchestrates the meta-analysis path. Same cache-first /
@@ -120,26 +124,39 @@ func RunReflect(
 		return 0, errors.New("reflect: no sessions in the requested window")
 	}
 
-	digests := digestsFromRows(rows)
+	digests, err := digestsFromRowsWithLinks(ctx, s, rows)
+	if err != nil {
+		return 0, fmt.Errorf("reflect: enrich digests: %w", err)
+	}
 	built, err := prompts.BuildReflect(digests, window)
 	if err != nil {
 		return 0, fmt.Errorf("reflect: build prompt: %w", err)
 	}
 
 	return runCachedLLM(ctx, s, newClient, cachedLLMInput{
-		kind:   store.LLMKindReflect,
-		hash:   built.Hash,
-		req:    built.Request,
-		model:  opts.Model,
-		force:  opts.Force,
-		output: out,
+		kind:     store.LLMKindReflect,
+		toolName: prompts.ToolNameReflection,
+		result:   new(prompts.ReflectionResult),
+		hash:     built.Hash,
+		req:      built.Request,
+		model:    opts.Model,
+		force:    opts.Force,
+		jsonRaw:  opts.JSON,
+		output:   out,
 	})
 }
 
-// digestsFromRows converts the DB-facing digest rows into the
-// prompt-facing shape. NULL summary → empty string (BuildReflect
-// treats it as "use first_prompt").
-func digestsFromRows(rows []store.SessionDigestRow) []prompts.SessionDigest {
+// digestsFromRowsWithLinks converts the DB-facing digest rows into
+// the prompt-facing shape and enriches each with the per-session URL
+// list from extractions. NULL summary → empty string (BuildReflect
+// treats it as "use first_prompt"). Does one extractions query per
+// session — N is bounded by reflect/propose --limit (typically ≤25),
+// so batching isn't worth the complexity today.
+func digestsFromRowsWithLinks(
+	ctx context.Context,
+	s *store.Store,
+	rows []store.SessionDigestRow,
+) ([]prompts.SessionDigest, error) {
 	out := make([]prompts.SessionDigest, 0, len(rows))
 	for _, r := range rows {
 		d := prompts.SessionDigest{ID: r.ID}
@@ -158,25 +175,42 @@ func digestsFromRows(rows []store.SessionDigestRow) []prompts.SessionDigest {
 		if r.LatestSummary.Valid {
 			d.Summary = r.LatestSummary.String
 		}
+		urls, err := store.LoadExtractionsForSession(ctx, s.DB(), r.ID, "url")
+		if err != nil {
+			return nil, fmt.Errorf("links for %s: %w", r.ID, err)
+		}
+		if len(urls) > 0 {
+			d.Links = make([]string, len(urls))
+			for i, u := range urls {
+				d.Links[i] = u.Value
+			}
+		}
 		out = append(out, d)
 	}
-	return out
+	return out, nil
 }
 
 // cachedLLMInput is the shared input shape for reflect and propose.
-// Both features follow identical orchestration; this type lets us
-// keep the runCachedLLM helper below private and small.
+// Both features follow identical orchestration: cache-first, tool-
+// based LLM call, parse into a typed *Result, persist raw JSON body,
+// render (or emit raw).
 type cachedLLMInput struct {
-	kind   store.LLMOutputKind
-	hash   string
-	req    llm.Request
-	model  string
-	force  bool
-	output io.Writer
+	kind     store.LLMOutputKind
+	toolName string
+	// result is a pointer to the *Result struct the tool payload will
+	// decode into. Caller owns the allocation so runCachedLLM does
+	// not need to know the concrete type.
+	result  any
+	hash    string
+	req     llm.Request
+	model   string
+	force   bool
+	jsonRaw bool
+	output  io.Writer
 }
 
 // runCachedLLM implements the cache-first / lazy-client / clean-on-
-// failure dance. Returns the persisted row id.
+// failure dance for reflect and propose. Returns the persisted row id.
 func runCachedLLM(
 	ctx context.Context,
 	s *store.Store,
@@ -189,9 +223,8 @@ func runCachedLLM(
 			return 0, fmt.Errorf("%s: cache lookup: %w", in.kind, err)
 		}
 		if cached != nil {
-			_, _ = fmt.Fprint(in.output, cached.Body)
-			if !endsWithNewline(cached.Body) {
-				_, _ = fmt.Fprintln(in.output)
+			if renderErr := emitLLMBody(in.output, in.kind, cached.Body, in.jsonRaw); renderErr != nil {
+				return cached.ID, fmt.Errorf("%s: render cached body: %w", in.kind, renderErr)
 			}
 			return cached.ID, nil
 		}
@@ -210,8 +243,12 @@ func runCachedLLM(
 	if err != nil {
 		return 0, fmt.Errorf("%s: LLM call: %w", in.kind, err)
 	}
-	if resp.Text == "" {
-		return 0, fmt.Errorf("%s: LLM returned empty text", in.kind)
+	if err := parseToolResult(resp, in.toolName, in.result); err != nil {
+		return 0, fmt.Errorf("%s: %w", in.kind, err)
+	}
+	body, err := marshalLLMBody(in.result)
+	if err != nil {
+		return 0, fmt.Errorf("%s: marshal result: %w", in.kind, err)
 	}
 
 	id, err := persistSummary(ctx, s, &persistInput{
@@ -222,15 +259,14 @@ func runCachedLLM(
 		model:      resp.Model,
 		inputToks:  resp.Usage.InputTokens,
 		outputToks: resp.Usage.OutputTokens,
-		body:       resp.Text,
+		body:       body,
 	})
 	if err != nil {
 		return 0, err
 	}
 
-	_, _ = fmt.Fprint(in.output, resp.Text)
-	if !endsWithNewline(resp.Text) {
-		_, _ = fmt.Fprintln(in.output)
+	if renderErr := emitLLMBody(in.output, in.kind, body, in.jsonRaw); renderErr != nil {
+		return id, fmt.Errorf("%s: render body: %w", in.kind, renderErr)
 	}
 	return id, nil
 }

@@ -13,13 +13,24 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/ingest"
 	"github.com/toabctl/aichronicles/internal/llm"
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
 )
 
 // --- fake LLM client ---
 
 type fakeLLM struct {
-	reply   string
+	// reply is the convenience knob: when set and the request forces
+	// a tool, we synthesize a minimal valid tool_use input keyed off
+	// this string (summary.Topic, reflection.WorkflowChange,
+	// proposal.Skills[0].WhenToUse all carry `reply`). For legacy
+	// text-only paths (ForceTool=="") reply goes into Response.Text.
+	reply string
+	// toolInput, when non-nil, is returned verbatim as the forced
+	// tool_use input. Use this when a test needs a specific schema-
+	// compliant shape (e.g. asserting link annotations round-trip).
+	toolInput json.RawMessage
+
 	err     error
 	called  int
 	lastReq llm.Request
@@ -31,11 +42,65 @@ func (f *fakeLLM) Complete(_ context.Context, req llm.Request) (*llm.Response, e
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &llm.Response{
-		Text:  f.reply,
+	resp := &llm.Response{
 		Model: "claude-sonnet-4-6",
 		Usage: llm.Usage{InputTokens: 17, OutputTokens: 23},
-	}, nil
+	}
+	if req.ForceTool == "" {
+		resp.Text = f.reply
+		return resp, nil
+	}
+	input := f.toolInput
+	if input == nil {
+		input = synthMinimalToolInput(req.ForceTool, f.reply)
+	}
+	resp.ToolUses = []llm.ToolUse{{
+		ID:    "toolu_fake",
+		Name:  req.ForceTool,
+		Input: input,
+	}}
+	return resp, nil
+}
+
+// synthMinimalToolInput returns a schema-compliant tool_use input for
+// the named tool, threading `hint` through a prominent field so
+// substring-based test assertions still find it in the rendered
+// output.
+func synthMinimalToolInput(toolName, hint string) json.RawMessage {
+	if hint == "" {
+		hint = "placeholder"
+	}
+	switch toolName {
+	case prompts.ToolNameSummary:
+		b, _ := json.Marshal(prompts.SummaryResult{
+			Topic:       hint,
+			WhatWasDone: []string{hint},
+			Unresolved:  []string{},
+			KeyFiles:    []string{},
+			Links:       []prompts.LinkAnnotation{},
+		})
+		return b
+	case prompts.ToolNameReflection:
+		b, _ := json.Marshal(prompts.ReflectionResult{
+			TaskTypes:      []prompts.Evidenced{},
+			Frictions:      []prompts.Evidenced{},
+			WorkflowChange: hint,
+		})
+		return b
+	case prompts.ToolNameProposal:
+		b, _ := json.Marshal(prompts.ProposalResult{
+			Skills: []prompts.ProposedSkill{{
+				Name:       "stub",
+				WhenToUse:  hint,
+				Why:        hint,
+				SessionIDs: []string{"s"},
+			}},
+			ClaudeMdEntries: []prompts.ProposedClaudeMdRule{},
+			Scripts:         []prompts.ProposedScript{},
+		})
+		return b
+	}
+	return json.RawMessage(`{}`)
 }
 
 // seedSessionForSummarize writes a short but realistic session. The
@@ -234,6 +299,152 @@ func TestRunSummarize_AcceptsSessionPrefix(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "summary via prefix") {
 		t.Errorf("output: %q", out.String())
+	}
+}
+
+func TestRunSummarize_PersistsJSONBodyAndRendersTopic(t *testing.T) {
+	t.Parallel()
+	s, sessID := seedSessionForSummarize(t)
+
+	// Precise tool payload with links so we can assert both the
+	// stored JSON shape and the rendered output.
+	input := prompts.SummaryResult{
+		Topic:       "stored-json-topic",
+		WhatWasDone: []string{"did a thing", "did another"},
+		Unresolved:  []string{"still broken"},
+		KeyFiles:    []string{"file/a.go"},
+		Links: []prompts.LinkAnnotation{
+			{URL: "https://example.com/a", UsedFor: "reading the spec"},
+		},
+	}
+	raw, _ := json.Marshal(input)
+	f := &fakeLLM{toolInput: raw}
+
+	var out bytes.Buffer
+	id, err := RunSummarize(context.Background(), s,
+		func() (llm.Client, error) { return f, nil },
+		SummarizeOptions{SessionID: sessID}, &out)
+	if err != nil {
+		t.Fatalf("RunSummarize: %v", err)
+	}
+
+	// Rendered output — human-readable bits.
+	rendered := out.String()
+	for _, want := range []string{
+		"stored-json-topic",
+		"did a thing",
+		"still broken",
+		"file/a.go",
+		"https://example.com/a",
+		"reading the spec",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("rendered output missing %q:\n%s", want, rendered)
+		}
+	}
+
+	// Stored body — JSON, round-trips.
+	var body string
+	_ = s.DB().QueryRow(`SELECT body FROM llm_outputs WHERE id = ?`, id).Scan(&body)
+	var back prompts.SummaryResult
+	if err := json.Unmarshal([]byte(body), &back); err != nil {
+		t.Fatalf("stored body is not valid JSON: %v\nbody=%s", err, body)
+	}
+	if back.Topic != input.Topic {
+		t.Errorf("round-trip topic: got %q, want %q", back.Topic, input.Topic)
+	}
+	if len(back.Links) != 1 || back.Links[0].URL != "https://example.com/a" {
+		t.Errorf("round-trip links: got %+v", back.Links)
+	}
+}
+
+func TestRunSummarize_JSONFlagEmitsRawBody(t *testing.T) {
+	t.Parallel()
+	s, sessID := seedSessionForSummarize(t)
+	f := &fakeLLM{reply: "t"}
+
+	var out bytes.Buffer
+	if _, err := RunSummarize(context.Background(), s,
+		func() (llm.Client, error) { return f, nil },
+		SummarizeOptions{SessionID: sessID, JSON: true}, &out); err != nil {
+		t.Fatalf("RunSummarize: %v", err)
+	}
+	// With --json, output must be valid JSON matching SummaryResult.
+	var parsed prompts.SummaryResult
+	if err := json.Unmarshal(out.Bytes(), &parsed); err != nil {
+		t.Fatalf("--json output is not valid SummaryResult JSON: %v\n%s", err, out.String())
+	}
+	if parsed.Topic != "t" {
+		t.Errorf("topic: got %q, want %q", parsed.Topic, "t")
+	}
+}
+
+func TestRunSummarize_ModelRefusesToolIsClearError(t *testing.T) {
+	t.Parallel()
+	s, sessID := seedSessionForSummarize(t)
+
+	// Force the fake to return text only (no tool_use) even though
+	// the request forced record_summary. parseToolResult must turn
+	// this into a user-visible error, not a silent pass-through.
+	textOnly := &textOnlyFakeLLM{text: "I refuse"}
+
+	_, err := RunSummarize(context.Background(), s,
+		func() (llm.Client, error) { return textOnly, nil },
+		SummarizeOptions{SessionID: sessID}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error when model ignores tool_choice")
+	}
+	if !strings.Contains(err.Error(), "did not call") {
+		t.Errorf("expected diagnostic about missing tool call, got %v", err)
+	}
+}
+
+// textOnlyFakeLLM returns only Text, ignoring Request.Tools. Used to
+// prove the CLI wrappers surface a clear error when the model fails
+// to honor tool_choice.
+type textOnlyFakeLLM struct{ text string }
+
+func (t *textOnlyFakeLLM) Complete(_ context.Context, _ llm.Request) (*llm.Response, error) {
+	return &llm.Response{Text: t.text, Model: "test"}, nil
+}
+
+func TestRunSummarize_LoadsAndPassesLinksToPromptBuilder(t *testing.T) {
+	t.Parallel()
+	s, sessID := seedSessionForSummarize(t)
+
+	// Seed URL extractions on the session so the wiring from store
+	// -> prompts.BuildSummary -> Request.Messages[0].Content carries
+	// them through.
+	var eventID string
+	_ = s.DB().QueryRow(`SELECT event_id FROM events WHERE session_id = ? LIMIT 1`, sessID).Scan(&eventID)
+	for _, u := range []string{"https://from-extractions.example/x", "https://from-extractions.example/y"} {
+		if _, err := s.DB().Exec(
+			`INSERT INTO extractions(event_id, session_id, kind, value) VALUES (?, ?, 'url', ?)`,
+			eventID, sessID, u,
+		); err != nil {
+			t.Fatalf("seed extraction: %v", err)
+		}
+	}
+
+	f := &fakeLLM{reply: "t"}
+	if _, err := RunSummarize(context.Background(), s,
+		func() (llm.Client, error) { return f, nil },
+		SummarizeOptions{SessionID: sessID}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("RunSummarize: %v", err)
+	}
+	// The fake captured the Request; confirm the user message carries
+	// both URLs in the Links stanza.
+	if len(f.lastReq.Messages) == 0 {
+		t.Fatal("no request captured")
+	}
+	body := f.lastReq.Messages[0].Content
+	if !strings.Contains(body, "Links observed in this session") {
+		t.Errorf("links stanza missing:\n%s", body)
+	}
+	for _, u := range []string{"from-extractions.example/x", "from-extractions.example/y"} {
+		if !strings.Contains(body, u) {
+			t.Errorf("url %q not routed into prompt:\n%s", u, body)
+		}
 	}
 }
 

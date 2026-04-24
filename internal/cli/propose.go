@@ -25,22 +25,23 @@ const (
 
 func newProposeCmd() *cobra.Command {
 	var (
-		since  time.Duration
-		limit  int
-		model  string
-		force  bool
-		dbPath string
+		since   time.Duration
+		limit   int
+		model   string
+		force   bool
+		jsonOut bool
+		dbPath  string
 	)
 	cmd := &cobra.Command{
 		Use:   "propose",
 		Short: "LLM-suggested skills / CLAUDE.md entries / scripts from recent sessions",
-		Long: "Reads recent sessions (same window semantics as `reflect`) and\n" +
-			"asks the LLM to propose concrete reusable capabilities: new\n" +
-			"slash-commands, CLAUDE.md rules, and scripts to pre-build. The\n" +
-			"system prompt forbids generic advice — every suggestion must cite\n" +
-			"at least one session as evidence.\n\n" +
+		Long: "Reads recent sessions (same window semantics as `reflect`) and,\n" +
+			"via the record_proposal tool, asks the LLM to propose concrete\n" +
+			"reusable capabilities: new slash-commands, CLAUDE.md rules, and\n" +
+			"scripts to pre-build. The system prompt forbids generic advice —\n" +
+			"every suggestion must cite at least one session as evidence.\n\n" +
 			"Cached on prompt_hash in llm_outputs with kind=propose. Use\n" +
-			"--force to re-call.\n\n" +
+			"--force to re-call. Use --json to emit the raw JSON body.\n\n" +
 			"Requires " + llm.APIKeyEnv + " unless the cache hits.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			resolved := dbPath
@@ -69,7 +70,7 @@ func newProposeCmd() *cobra.Command {
 				func() (llm.Client, error) {
 					return llm.FromEnvOrCommand(ctx, cfg.LLM.APIKeyCommand)
 				},
-				ProposeOptions{Since: since, Limit: limit, Model: model, Force: force},
+				ProposeOptions{Since: since, Limit: limit, Model: model, Force: force, JSON: jsonOut},
 				cmd.OutOrStdout())
 			return err
 		},
@@ -78,6 +79,7 @@ func newProposeCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", defaultProposeLimit, "max sessions to feed the LLM, newest first")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit raw JSON body instead of the human-readable render")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
 	return cmd
 }
@@ -91,6 +93,7 @@ type ProposeOptions struct {
 	Limit int
 	Model string
 	Force bool
+	JSON  bool
 }
 
 // RunPropose orchestrates the proposal path. Same cache + lazy-client
@@ -116,18 +119,24 @@ func RunPropose(
 		return 0, errors.New("propose: no sessions in the requested window")
 	}
 
-	digests := digestsFromRows(rows)
+	digests, err := digestsFromRowsWithLinks(ctx, s, rows)
+	if err != nil {
+		return 0, fmt.Errorf("propose: enrich digests: %w", err)
+	}
 	built, err := prompts.BuildPropose(digests)
 	if err != nil {
 		return 0, fmt.Errorf("propose: build prompt: %w", err)
 	}
 
 	return runCachedLLM(ctx, s, newClient, cachedLLMInput{
-		kind:   store.LLMKindPropose,
-		hash:   built.Hash,
-		req:    built.Request,
-		model:  opts.Model,
-		force:  opts.Force,
-		output: out,
+		kind:     store.LLMKindPropose,
+		toolName: prompts.ToolNameProposal,
+		result:   new(prompts.ProposalResult),
+		hash:     built.Hash,
+		req:      built.Request,
+		model:    opts.Model,
+		force:    opts.Force,
+		jsonRaw:  opts.JSON,
+		output:   out,
 	})
 }
