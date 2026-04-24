@@ -1,0 +1,21 @@
+[Unit]
+Description=aichronicles ingest daemon
+Requires=aichronicles.socket
+After=aichronicles.socket
+
+[Service]
+# Assumes aichroniclesd is on PATH (e.g. installed to ~/bin or ~/go/bin).
+# Override with `systemctl --user edit aichronicles.service` if you need a
+# different absolute path.
+ExecStart=aichroniclesd
+Type=simple
+Restart=on-failure
+RestartSec=5s
+
+# Idle shutdown is possible: uncomment the next line to have the daemon
+# exit after 5 minutes of no requests; systemd will relaunch it on the
+# next hook. Matches the spirit of socket activation.
+# TimeoutStopSec=5s
+
+[Install]
+WantedBy=default.target

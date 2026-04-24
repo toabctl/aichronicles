@@ -49,11 +49,22 @@ func run() error {
 	defer func() { _ = lg.Close() }()
 
 	srv := daemon.NewServer(lg, logger)
-	shutdown, err := daemon.ListenAndServe(*sockPath, srv.Handler())
+
+	var shutdown func() error
+	activationListener, err := daemon.ListenFromSystemd()
 	if err != nil {
-		return err
+		return fmt.Errorf("systemd socket activation: %w", err)
 	}
-	logger.Info("aichroniclesd started", "socket", *sockPath, "log", *logPath)
+	if activationListener != nil {
+		shutdown = daemon.Serve(activationListener, srv.Handler())
+		logger.Info("aichroniclesd started (socket-activated by systemd)", "log", *logPath)
+	} else {
+		shutdown, err = daemon.ListenAndServe(*sockPath, srv.Handler())
+		if err != nil {
+			return err
+		}
+		logger.Info("aichroniclesd started", "socket", *sockPath, "log", *logPath)
+	}
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
