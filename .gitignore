@@ -1,4 +1,6 @@
 /aichronicles
+/aichroniclesd
+/bin/
 /aichronicles.db
 *.db-journal
 *.db-wal
