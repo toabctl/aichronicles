@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -33,6 +34,25 @@ type Anthropic struct {
 	APIKey   string
 	Endpoint string       // overridable for tests; empty means AnthropicEndpoint
 	HTTP     *http.Client // optional; nil means a sensible default
+}
+
+// APIKeyEnv is the environment variable the CLI subcommands (and
+// `FromEnv`) read when wiring up a production Anthropic client.
+// Exported so user-facing docs can reference it without hard-coding
+// the string.
+const APIKeyEnv = "ANTHROPIC_API_KEY"
+
+// FromEnv returns a production Anthropic client built from
+// $ANTHROPIC_API_KEY. Returns a non-nil error when the env var is
+// missing; callers in CLI-land surface that as a user-facing error.
+// Tests wanting a different key path should use t.Setenv or construct
+// NewAnthropic directly rather than calling through here.
+func FromEnv() (Client, error) {
+	key := os.Getenv(APIKeyEnv)
+	if key == "" {
+		return nil, fmt.Errorf("llm: %s not set", APIKeyEnv)
+	}
+	return NewAnthropic(key), nil
 }
 
 // NewAnthropic returns a Client ready to hit production. The API key
