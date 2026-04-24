@@ -15,16 +15,21 @@ import (
 //
 // Fields covered:
 //   - ContentText (free-form string)
+//   - Cwd (paths can legitimately contain secrets — usernames equal to
+//     access-key-shaped strings, temp dirs holding tokens)
 //   - Payload (recursive walk of every string leaf in the map/array tree)
 //
-// Slug-shaped fields (source_agent, kind, role, cwd, tool names, UUIDs)
-// are not scanned: by construction they can't carry credentials, and
+// Slug-shaped fields (source_agent, kind, role, tool names, UUIDs) are
+// not scanned: by construction they can't carry credentials, and
 // running regex over them would only add noise to any audit output.
 func ApplyRedaction(env *Envelope, scanner redact.Scanner) {
 	patterns := map[string]struct{}{}
 
 	if env.ContentText != "" {
 		env.ContentText = scrubString(env.ContentText, scanner, patterns)
+	}
+	if env.Cwd != "" {
+		env.Cwd = scrubString(env.Cwd, scanner, patterns)
 	}
 	if env.Payload != nil {
 		if m, ok := walkAny(env.Payload, scanner, patterns).(map[string]any); ok {

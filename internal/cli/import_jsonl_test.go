@@ -184,6 +184,40 @@ func TestImportJSONL_LargeContentSurvivesScannerBuffer(t *testing.T) {
 	}
 }
 
+func TestImportJSONL_ScrubsSecretsEvenWhenInputClaimsApplied(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+
+	secret := "sk-ant-" + strings.Repeat("a", 40)
+	env := newEnv("user_prompt")
+	env.ContentText = "here is my key " + secret
+	// Input file LIES about being pre-scrubbed. The importer must not
+	// trust the incoming Redaction.Applied and must scrub anyway.
+	env.Redaction = &ingest.Redaction{Applied: true, Patterns: nil}
+	data := jsonlFromEnvelopes(t, env)
+
+	report, err := ImportJSONL(bytes.NewReader(data), s)
+	if err != nil {
+		t.Fatalf("ImportJSONL: %v", err)
+	}
+	if report.Imported != 1 {
+		t.Fatalf("expected 1 import, got %+v", report)
+	}
+
+	var content, raw string
+	_ = s.DB().QueryRow(`SELECT content_text FROM events`).Scan(&content)
+	_ = s.DB().QueryRow(`SELECT envelope_json FROM raw_envelopes`).Scan(&raw)
+	if strings.Contains(content, "sk-ant-") {
+		t.Errorf("events.content_text still has secret: %q", content)
+	}
+	if strings.Contains(raw, "sk-ant-") {
+		t.Errorf("raw_envelopes.envelope_json still has secret: %q", raw)
+	}
+	if !strings.Contains(content, "<redacted:anthropic_api_key>") {
+		t.Errorf("expected marker in content: %q", content)
+	}
+}
+
 func TestImportJSONL_ReportStringMentionsAllFields(t *testing.T) {
 	t.Parallel()
 	r := ImportReport{LinesRead: 4, Imported: 2, Deduped: 1, Invalid: 1, DurationMS: 7}

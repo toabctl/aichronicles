@@ -148,6 +148,32 @@ func TestTranscriptEntryToEnvelope_UUIDFlowsToEventID(t *testing.T) {
 	}
 }
 
+func TestTranscriptEntryToEnvelope_AppliesRedaction(t *testing.T) {
+	t.Parallel()
+	raw, entry := loadClaudeFixture(t, "user_prompt_string.jsonl")
+
+	// Inject a synthetic secret in the transcript entry's text fields
+	// without writing a new fixture. The goal is to prove the envelope
+	// builder scrubs before marshaling — both the in-memory envelope
+	// and the bytes handed to IngestEnvelope must be secret-free.
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	entry.CWD = "/home/" + secret + "/project"
+
+	env, out, err := transcriptEntryToEnvelope(entry, raw)
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if env.Redaction == nil || !env.Redaction.Applied {
+		t.Fatalf("envelope must carry Redaction.Applied=true")
+	}
+	if strings.Contains(env.Cwd, secret) {
+		t.Errorf("cwd carries secret: %q", env.Cwd)
+	}
+	if strings.Contains(string(out), secret) {
+		t.Errorf("marshaled bytes carry secret")
+	}
+}
+
 func TestTranscriptEntryToEnvelope_MissingSessionIDIsError(t *testing.T) {
 	t.Parallel()
 	_, entry := loadClaudeFixture(t, "user_prompt_string.jsonl")

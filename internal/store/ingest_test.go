@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ func newValidEnvelope(t *testing.T) (*ingest.Envelope, []byte) {
 		ContentText:     "hello from ingest test",
 		Payload:         map[string]any{"prompt": "hello from ingest test"},
 		Transport:       "hook",
+		Redaction:       &ingest.Redaction{Applied: true},
 	}
 	raw, err := json.Marshal(env)
 	if err != nil {
@@ -46,6 +48,40 @@ func withTx(t *testing.T, s *Store, fn func(tx *sql.Tx)) {
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
+}
+
+func TestIngestEnvelope_RejectsMissingRedaction(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	env, raw := newValidEnvelope(t)
+	env.Redaction = nil // simulate a caller that forgot to scrub
+
+	withTx(t, s, func(tx *sql.Tx) {
+		_, err := IngestEnvelope(tx, env, raw, 99)
+		if !errors.Is(err, ErrRedactionRequired) {
+			t.Fatalf("expected ErrRedactionRequired, got %v", err)
+		}
+	})
+
+	var n int
+	_ = s.DB().QueryRow(`SELECT COUNT(*) FROM raw_envelopes`).Scan(&n)
+	if n != 0 {
+		t.Errorf("raw_envelopes should remain empty, got %d", n)
+	}
+}
+
+func TestIngestEnvelope_RejectsAppliedFalse(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	env, raw := newValidEnvelope(t)
+	env.Redaction = &ingest.Redaction{Applied: false}
+
+	withTx(t, s, func(tx *sql.Tx) {
+		_, err := IngestEnvelope(tx, env, raw, 99)
+		if !errors.Is(err, ErrRedactionRequired) {
+			t.Fatalf("expected ErrRedactionRequired, got %v", err)
+		}
+	})
 }
 
 func TestIngestEnvelope_HappyPath(t *testing.T) {

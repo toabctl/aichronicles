@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/ingest"
+	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/store"
 )
 
@@ -60,6 +61,7 @@ func seedStore(t *testing.T) (*store.Store, []ingest.Envelope) {
 	}
 
 	for _, e := range envs {
+		ingest.ApplyRedaction(&e, redact.Default())
 		raw, err := json.Marshal(e)
 		if err != nil {
 			t.Fatalf("marshal: %v", err)
@@ -235,6 +237,7 @@ func TestRunSearch_RespectsLimit(t *testing.T) {
 			ContentText: fmt.Sprintf("limittest marker %d", i),
 			Payload:     map[string]any{},
 		}
+		ingest.ApplyRedaction(&env, redact.Default())
 		raw, _ := json.Marshal(env)
 		tx, _ := s.DB().Begin()
 		_, err := store.IngestEnvelope(tx, &env, raw, time.Now().UnixMilli())
@@ -304,6 +307,7 @@ func seedDuplicateTurn(t *testing.T, s *store.Store) (sessionID, hookEventID, im
 	importEnv.Transport = "import"
 
 	for _, e := range []ingest.Envelope{hookEnv, importEnv} {
+		ingest.ApplyRedaction(&e, redact.Default())
 		raw, err := json.Marshal(e)
 		if err != nil {
 			t.Fatalf("marshal: %v", err)
@@ -414,6 +418,7 @@ func TestRunSearch_DedupeDoesNotCollapseDistinctContent(t *testing.T) {
 		env := base
 		env.EventID = uuid.Must(uuid.NewV7()).String()
 		env.ContentText = txt
+		ingest.ApplyRedaction(&env, redact.Default())
 		raw, _ := json.Marshal(env)
 		tx, _ := s.DB().Begin()
 		_, err := store.IngestEnvelope(tx, &env, raw, time.Now().UnixMilli())

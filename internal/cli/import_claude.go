@@ -17,6 +17,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/ingest"
 	"github.com/toabctl/aichronicles/internal/paths"
+	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/store"
 )
 
@@ -322,6 +323,12 @@ func transcriptEntryToEnvelope(entry *claudeEntry, rawLine []byte) (*ingest.Enve
 		Payload:            payload,
 		Transport:          "import",
 	}
+
+	// Scrub before we serialize. The scrubbed envelope is what lands
+	// in both events.content_text and raw_envelopes.envelope_json, so
+	// a transcript that contains a pasted API key never reaches disk
+	// in plain form. Idempotent on re-import (markers don't match).
+	ingest.ApplyRedaction(env, redact.Default())
 
 	// Re-marshal deterministically so raw_envelopes.envelope_json is
 	// the *our-canonical-envelope* JSON, not Claude's wire format.

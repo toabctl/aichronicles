@@ -10,6 +10,14 @@ import (
 	"github.com/toabctl/aichronicles/internal/ingest/extract"
 )
 
+// ErrRedactionRequired is returned when an envelope reaches the store
+// without Redaction.Applied=true. It is the last line of defense for
+// Block A's "no unredacted secrets in the DB" invariant: both the
+// daemon HTTP handler and the in-process import commands end up here,
+// so enforcing it at this choke point means no future code path can
+// quietly bypass redaction by calling IngestEnvelope directly.
+var ErrRedactionRequired = errors.New("IngestEnvelope: envelope.redaction.applied must be true")
+
 // IngestEnvelope writes a validated envelope through all three layers
 // in the provided transaction. The caller is responsible for Validate(),
 // supplying the original envelope bytes (so raw_envelopes holds the
@@ -17,11 +25,16 @@ import (
 //
 // Returns deduped=true when raw_envelopes already had this event_id
 // and no rows were written. Returns (false, err) on any SQL error.
+// Returns (false, ErrRedactionRequired) if env.Redaction.Applied is
+// not explicitly true.
 // Cascading trigger work (sessions.event_count, events_fts) is handled
 // by the schema's AFTER INSERT triggers.
 func IngestEnvelope(tx *sql.Tx, env *ingest.Envelope, envelopeJSON []byte, tsServerMs int64) (deduped bool, err error) {
 	if env == nil {
 		return false, errors.New("IngestEnvelope: nil envelope")
+	}
+	if env.Redaction == nil || !env.Redaction.Applied {
+		return false, ErrRedactionRequired
 	}
 
 	res, err := tx.Exec(

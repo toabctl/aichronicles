@@ -13,6 +13,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/ingest"
 	"github.com/toabctl/aichronicles/internal/paths"
+	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/store"
 )
 
@@ -111,7 +112,19 @@ func ImportJSONL(r io.Reader, s *store.Store) (ImportReport, error) {
 			continue
 		}
 
-		deduped, err := importOne(s, &env, line)
+		// Scrub every envelope on import. The input file may be a
+		// pre-redaction export, a third-party JSONL dump, or a buggy
+		// client — we don't trust Redaction.Applied on the wire.
+		// After scrubbing we re-marshal so the bytes we persist match
+		// the scrubbed in-memory envelope.
+		ingest.ApplyRedaction(&env, redact.Default())
+		scrubbed, err := json.Marshal(&env)
+		if err != nil {
+			report.Invalid++
+			continue
+		}
+
+		deduped, err := importOne(s, &env, scrubbed)
 		if err != nil {
 			// Storage-level error is fatal — something is wrong with
 			// the DB, not the input.
