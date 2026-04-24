@@ -11,13 +11,17 @@ import (
 
 func newTeardownSystemdCmd() *cobra.Command {
 	var unitDir string
+	var yes bool
 	cmd := &cobra.Command{
 		Use:   "systemd",
 		Short: "Remove aichronicles systemd --user units",
 		Long: "Disables + stops aichronicles.socket and aichronicles.service,\n" +
 			"deletes the unit files from ~/.config/systemd/user/, and reloads\n" +
 			"the user manager. Idempotent: running when nothing is installed\n" +
-			"is a no-op.",
+			"is a no-op.\n\n" +
+			"Runs in dry-run mode by default: it reports what would be\n" +
+			"disabled and deleted without invoking systemctl or removing\n" +
+			"files. Pass --yes to actually remove.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			dir := unitDir
 			if dir == "" {
@@ -27,7 +31,7 @@ func newTeardownSystemdCmd() *cobra.Command {
 					return err
 				}
 			}
-			report, err := RemoveSystemdUnits(dir, execSystemctl)
+			report, err := RemoveSystemdUnits(dir, execSystemctl, !yes)
 			if err != nil {
 				return err
 			}
@@ -36,6 +40,7 @@ func newTeardownSystemdCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&unitDir, "unit-dir", "", "systemd user-unit directory (default: ~/.config/systemd/user)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the removal (required to invoke systemctl and delete files)")
 	return cmd
 }
 
@@ -43,10 +48,22 @@ func newTeardownSystemdCmd() *cobra.Command {
 // It disables any units that exist, deletes them, and reloads the user
 // manager. Running on a clean state runs daemon-reload only so systemd
 // sees a consistent view regardless of what was or wasn't installed.
-func RemoveSystemdUnits(unitDir string, runner SystemctlRunner) (string, error) {
+//
+// When dryRun is true the function only inspects the filesystem and
+// reports what it would do — runner is never called, files are never
+// touched. The returned report uses "would disable/remove" phrasing.
+func RemoveSystemdUnits(unitDir string, runner SystemctlRunner, dryRun bool) (string, error) {
 	present, err := unitsPresent(unitDir)
 	if err != nil {
 		return "", err
+	}
+
+	if dryRun {
+		wouldRemove := make([]string, 0, len(present))
+		for _, name := range present {
+			wouldRemove = append(wouldRemove, filepath.Join(unitDir, name))
+		}
+		return formatSystemdTeardownReport(unitDir, wouldRemove, true), nil
 	}
 
 	if len(present) > 0 {
@@ -74,7 +91,7 @@ func RemoveSystemdUnits(unitDir string, runner SystemctlRunner) (string, error) 
 		return "", err
 	}
 
-	return formatSystemdTeardownReport(unitDir, removed), nil
+	return formatSystemdTeardownReport(unitDir, removed, false), nil
 }
 
 // unitsPresent returns the names (not paths) of our units that exist
@@ -97,12 +114,22 @@ func unitsPresent(unitDir string) ([]string, error) {
 	return present, nil
 }
 
-func formatSystemdTeardownReport(unitDir string, removed []string) string {
+func formatSystemdTeardownReport(unitDir string, removed []string, dryRun bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "unit dir: %s\n", unitDir)
 	if len(removed) == 0 {
-		fmt.Fprint(&b, "no changes: units not installed\n")
-		fmt.Fprint(&b, "reloaded systemd user manager")
+		fmt.Fprint(&b, "no changes: units not installed")
+		if !dryRun {
+			fmt.Fprint(&b, "\nreloaded systemd user manager")
+		}
+		return b.String()
+	}
+	if dryRun {
+		fmt.Fprint(&b, "would disable + stop units\n")
+		for _, p := range removed {
+			fmt.Fprintf(&b, "would remove %s\n", p)
+		}
+		fmt.Fprint(&b, "(dry-run — pass --yes to apply)")
 		return b.String()
 	}
 	fmt.Fprint(&b, "disabled + stopped units\n")

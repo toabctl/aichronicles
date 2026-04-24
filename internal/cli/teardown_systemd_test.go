@@ -12,7 +12,7 @@ func TestRemoveSystemdUnits_NoUnitsInstalled_OnlyDaemonReload(t *testing.T) {
 	dir := t.TempDir()
 	r := &recordingRunner{}
 
-	report, err := RemoveSystemdUnits(dir, r.run)
+	report, err := RemoveSystemdUnits(dir, r.run, false)
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestRemoveSystemdUnits_AfterInstallCleansUp(t *testing.T) {
 	}
 
 	r := &recordingRunner{}
-	report, err := RemoveSystemdUnits(dir, r.run)
+	report, err := RemoveSystemdUnits(dir, r.run, false)
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
@@ -71,10 +71,10 @@ func TestRemoveSystemdUnits_IsIdempotent(t *testing.T) {
 	if _, err := InstallSystemdUnits(dir, (&recordingRunner{}).run); err != nil {
 		t.Fatalf("install: %v", err)
 	}
-	if _, err := RemoveSystemdUnits(dir, (&recordingRunner{}).run); err != nil {
+	if _, err := RemoveSystemdUnits(dir, (&recordingRunner{}).run, false); err != nil {
 		t.Fatalf("first remove: %v", err)
 	}
-	report, err := RemoveSystemdUnits(dir, (&recordingRunner{}).run)
+	report, err := RemoveSystemdUnits(dir, (&recordingRunner{}).run, false)
 	if err != nil {
 		t.Fatalf("second remove: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestRemoveSystemdUnits_PartialStateCleansUp(t *testing.T) {
 	}
 
 	r := &recordingRunner{}
-	if _, err := RemoveSystemdUnits(dir, r.run); err != nil {
+	if _, err := RemoveSystemdUnits(dir, r.run, false); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 
@@ -113,6 +113,69 @@ func TestRemoveSystemdUnits_PartialStateCleansUp(t *testing.T) {
 	}
 }
 
+func TestRemoveSystemdUnits_DryRun_DoesNotTouchFsOrRunSystemctl(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if _, err := InstallSystemdUnits(dir, (&recordingRunner{}).run); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	// Snapshot file names present before dry-run so we can verify
+	// nothing was deleted.
+	beforeEntries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+
+	r := &recordingRunner{}
+	report, err := RemoveSystemdUnits(dir, r.run, true)
+	if err != nil {
+		t.Fatalf("dry-run remove: %v", err)
+	}
+	if !strings.Contains(report, "would disable") {
+		t.Errorf("dry-run report should say 'would disable', got %q", report)
+	}
+	if !strings.Contains(report, "pass --yes") {
+		t.Errorf("dry-run report should hint at --yes, got %q", report)
+	}
+	if len(r.calls) != 0 {
+		t.Errorf("dry-run invoked systemctl: %v", r.calls)
+	}
+
+	afterEntries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	if len(beforeEntries) != len(afterEntries) {
+		t.Fatalf("dry-run deleted files: before=%d after=%d", len(beforeEntries), len(afterEntries))
+	}
+
+	// A real remove after dry-run should still fully clean up.
+	if _, err := RemoveSystemdUnits(dir, (&recordingRunner{}).run, false); err != nil {
+		t.Fatalf("apply remove: %v", err)
+	}
+	for _, name := range unitFilenames {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Errorf("%s: expected absent after apply, got err=%v", name, err)
+		}
+	}
+}
+
+func TestRemoveSystemdUnits_DryRun_NothingInstalled(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	r := &recordingRunner{}
+	report, err := RemoveSystemdUnits(dir, r.run, true)
+	if err != nil {
+		t.Fatalf("dry-run: %v", err)
+	}
+	if !strings.Contains(report, "not installed") {
+		t.Errorf("expected no-op report, got %q", report)
+	}
+	if len(r.calls) != 0 {
+		t.Errorf("dry-run no-op should not invoke systemctl: %v", r.calls)
+	}
+}
+
 func TestRemoveSystemdUnits_RunnerErrorFromDisablePropagates(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -120,7 +183,7 @@ func TestRemoveSystemdUnits_RunnerErrorFromDisablePropagates(t *testing.T) {
 		t.Fatalf("install: %v", err)
 	}
 	r := &recordingRunner{err: errMockSystemctl}
-	_, err := RemoveSystemdUnits(dir, r.run)
+	_, err := RemoveSystemdUnits(dir, r.run, false)
 	if err == nil {
 		t.Fatal("expected error when runner fails")
 	}

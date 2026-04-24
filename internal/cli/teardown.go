@@ -21,6 +21,7 @@ func newTeardownCmd() *cobra.Command {
 func newTeardownClaudeCodeCmd() *cobra.Command {
 	var settingsPath string
 	var hookCommand string
+	var yes bool
 	cmd := &cobra.Command{
 		Use:   "claude-code",
 		Short: "Remove aichronicles Claude Code hooks from settings.json",
@@ -28,7 +29,9 @@ func newTeardownClaudeCodeCmd() *cobra.Command {
 			"of the event types aichronicles installed into. Entries from other\n" +
 			"tools are preserved unchanged. Empty event arrays and an empty\n" +
 			"`hooks` object are cleaned up so the file looks pristine after\n" +
-			"a full removal. Idempotent: running twice is a no-op.",
+			"a full removal. Idempotent: running twice is a no-op.\n\n" +
+			"Runs in dry-run mode by default: it reports what would change\n" +
+			"without touching settings.json. Pass --yes to actually write.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			path := settingsPath
 			if path == "" {
@@ -38,7 +41,7 @@ func newTeardownClaudeCodeCmd() *cobra.Command {
 					return err
 				}
 			}
-			report, err := RemoveClaudeCodeHooks(path, hookCommand)
+			report, err := RemoveClaudeCodeHooks(path, hookCommand, !yes)
 			if err != nil {
 				return err
 			}
@@ -48,6 +51,7 @@ func newTeardownClaudeCodeCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&settingsPath, "settings", "", "path to Claude Code settings.json (default: ~/.claude/settings.json)")
 	cmd.Flags().StringVar(&hookCommand, "command", defaultHookCommand, "command to strip from each hook")
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the removal (required to modify settings.json)")
 	return cmd
 }
 
@@ -55,7 +59,11 @@ func newTeardownClaudeCodeCmd() *cobra.Command {
 // drops every hook entry whose inner command matches, preserves
 // entries belonging to other tools, and rewrites the file only when
 // something actually changed.
-func RemoveClaudeCodeHooks(path, command string) (string, error) {
+//
+// When dryRun is true the function computes the plan without touching
+// settings.json. The returned report uses "would remove" phrasing so
+// cobra can relay it as a preview.
+func RemoveClaudeCodeHooks(path, command string, dryRun bool) (string, error) {
 	if command == "" {
 		command = defaultHookCommand
 	}
@@ -67,7 +75,7 @@ func RemoveClaudeCodeHooks(path, command string) (string, error) {
 	hooksRoot, ok := settings["hooks"].(map[string]any)
 	if !ok {
 		// No hooks section at all — nothing to remove.
-		return formatRemoveReport(path, nil), nil
+		return formatRemoveReport(path, nil, dryRun), nil
 	}
 
 	var removed []string
@@ -94,14 +102,14 @@ func RemoveClaudeCodeHooks(path, command string) (string, error) {
 		delete(settings, "hooks")
 	}
 
-	if len(removed) > 0 {
+	if len(removed) > 0 && !dryRun {
 		if err := writeSettingsAtomic(path, settings); err != nil {
 			return "", err
 		}
 	}
 
 	sort.Strings(removed)
-	return formatRemoveReport(path, removed), nil
+	return formatRemoveReport(path, removed, dryRun), nil
 }
 
 // stripOurEntries returns a copy of entries with every entry whose
@@ -143,13 +151,20 @@ func isPureOurEntry(raw any, command string) bool {
 	return true
 }
 
-func formatRemoveReport(path string, removed []string) string {
+func formatRemoveReport(path string, removed []string, dryRun bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "settings: %s\n", path)
 	if len(removed) == 0 {
 		fmt.Fprint(&b, "no changes: no aichronicles hooks found")
 		return b.String()
 	}
-	fmt.Fprintf(&b, "removed %d hook entries: %s", len(removed), strings.Join(removed, ", "))
+	verb := "removed"
+	if dryRun {
+		verb = "would remove"
+	}
+	fmt.Fprintf(&b, "%s %d hook entries: %s", verb, len(removed), strings.Join(removed, ", "))
+	if dryRun {
+		fmt.Fprint(&b, "\n(dry-run — pass --yes to apply)")
+	}
 	return b.String()
 }

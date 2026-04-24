@@ -13,7 +13,7 @@ func TestRemove_NoSettingsFile_NoOp(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
 
-	report, err := RemoveClaudeCodeHooks(path, "")
+	report, err := RemoveClaudeCodeHooks(path, "", false)
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestRemove_AfterInstall_CleansUpCompletely(t *testing.T) {
 	if _, err := InstallClaudeCodeHooks(path, ""); err != nil {
 		t.Fatalf("install: %v", err)
 	}
-	report, err := RemoveClaudeCodeHooks(path, "")
+	report, err := RemoveClaudeCodeHooks(path, "", false)
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestRemove_PreservesOtherToolsHooks(t *testing.T) {
 	if _, err := InstallClaudeCodeHooks(path, ""); err != nil {
 		t.Fatalf("install: %v", err)
 	}
-	if _, err := RemoveClaudeCodeHooks(path, ""); err != nil {
+	if _, err := RemoveClaudeCodeHooks(path, "", false); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 
@@ -108,12 +108,12 @@ func TestRemove_IsIdempotent(t *testing.T) {
 	if _, err := InstallClaudeCodeHooks(path, ""); err != nil {
 		t.Fatalf("install: %v", err)
 	}
-	if _, err := RemoveClaudeCodeHooks(path, ""); err != nil {
+	if _, err := RemoveClaudeCodeHooks(path, "", false); err != nil {
 		t.Fatalf("first remove: %v", err)
 	}
 	afterFirst, _ := os.ReadFile(path)
 
-	report, err := RemoveClaudeCodeHooks(path, "")
+	report, err := RemoveClaudeCodeHooks(path, "", false)
 	if err != nil {
 		t.Fatalf("second remove: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestRemove_PreservesUnknownTopLevelFields(t *testing.T) {
 		t.Fatalf("rewrite: %v", err)
 	}
 
-	if _, err := RemoveClaudeCodeHooks(path, ""); err != nil {
+	if _, err := RemoveClaudeCodeHooks(path, "", false); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 	after := readJSON(t, path)
@@ -181,7 +181,7 @@ func TestRemove_KeepsMixedEntryIntact(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	report, err := RemoveClaudeCodeHooks(path, "")
+	report, err := RemoveClaudeCodeHooks(path, "", false)
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
@@ -207,8 +207,68 @@ func TestRemove_MalformedJSON_IsError(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if _, err := RemoveClaudeCodeHooks(path, ""); err == nil {
+	if _, err := RemoveClaudeCodeHooks(path, "", false); err == nil {
 		t.Fatal("expected error on malformed JSON")
+	}
+}
+
+func TestRemove_DryRun_ReportsPlanWithoutWriting(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+
+	if _, err := InstallClaudeCodeHooks(path, ""); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+
+	report, err := RemoveClaudeCodeHooks(path, "", true)
+	if err != nil {
+		t.Fatalf("dry-run remove: %v", err)
+	}
+	if !strings.Contains(report, "would remove") {
+		t.Errorf("dry-run report should say 'would remove', got %q", report)
+	}
+	if !strings.Contains(report, "pass --yes") {
+		t.Errorf("dry-run report should hint at --yes, got %q", report)
+	}
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reread: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("dry-run mutated settings.json")
+	}
+
+	// A subsequent real removal should behave exactly as if dry-run
+	// had never run — idempotent boundary check.
+	if _, err := RemoveClaudeCodeHooks(path, "", false); err != nil {
+		t.Fatalf("apply remove: %v", err)
+	}
+	got := readJSON(t, path)
+	if _, exists := got["hooks"]; exists {
+		t.Errorf("expected hooks section removed after --yes apply, got %v", got["hooks"])
+	}
+}
+
+func TestRemove_DryRun_NoHooks_IsClean(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+
+	report, err := RemoveClaudeCodeHooks(path, "", true)
+	if err != nil {
+		t.Fatalf("dry-run remove: %v", err)
+	}
+	if !strings.Contains(report, "no aichronicles hooks found") {
+		t.Errorf("expected no-op report, got %q", report)
+	}
+	if strings.Contains(report, "--yes") {
+		t.Errorf("no-op report should not mention --yes, got %q", report)
 	}
 }
 
@@ -222,7 +282,7 @@ func TestRemove_CustomCommand(t *testing.T) {
 		t.Fatalf("install: %v", err)
 	}
 	// Removing with the default command should NOT strip the custom install.
-	report, err := RemoveClaudeCodeHooks(path, "")
+	report, err := RemoveClaudeCodeHooks(path, "", false)
 	if err != nil {
 		t.Fatalf("remove default: %v", err)
 	}
@@ -230,7 +290,7 @@ func TestRemove_CustomCommand(t *testing.T) {
 		t.Errorf("default teardown should not touch custom command, got %q", report)
 	}
 	// Removing with the matching command should strip it.
-	if _, err := RemoveClaudeCodeHooks(path, custom); err != nil {
+	if _, err := RemoveClaudeCodeHooks(path, custom, false); err != nil {
 		t.Fatalf("remove custom: %v", err)
 	}
 	got := readJSON(t, path)
