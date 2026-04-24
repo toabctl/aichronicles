@@ -30,5 +30,6 @@ func newRootCmd() *cobra.Command {
 	cmd.SetErr(os.Stderr)
 	cmd.AddCommand(newIngestCmd())
 	cmd.AddCommand(newSetupCmd())
+	cmd.AddCommand(newTeardownCmd())
 	return cmd
 }
