@@ -117,7 +117,10 @@ func RunSummarize(
 		return 0, fmt.Errorf("summarize: session %s has no events", sessionID)
 	}
 
-	built, err := prompts.BuildSummary(sessionID, events)
+	// Links get populated in the next commit when we wire
+	// store.LoadExtractionsForSession through. For now pass nil so
+	// the tool receives an empty links array.
+	built, err := prompts.BuildSummary(sessionID, events, nil)
 	if err != nil {
 		return 0, fmt.Errorf("summarize: build prompt: %w", err)
 	}

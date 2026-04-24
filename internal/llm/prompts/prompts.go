@@ -2,11 +2,18 @@
 // (summarize, reflect, propose) send to the LLM. Each Build* function
 // returns:
 //
-//   - the llm.Request the caller will hand to a llm.Client
+//   - the llm.Request the caller will hand to a llm.Client (with a
+//     forced-tool call so the reply arrives as validated JSON)
 //   - a deterministic prompt hash the caller can use as the
 //     llm_outputs cache key
 //   - the union of redact.Outbound pattern names that fired while
 //     assembling the prompt, so callers can log what got scrubbed
+//
+// Structured output via tool use: each feature declares exactly one
+// tool (record_summary / record_reflection / record_proposal) and
+// forces the model to call it. The model's JSON arguments arrive on
+// Response.ToolUses[0].Input, ready to Unmarshal into the matching
+// *Result type in this package.
 //
 // Egress redaction is enforced here, not in the llm transport.
 // Every user-content string passes through redact.Outbound before it
@@ -18,6 +25,7 @@ package prompts
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -45,25 +53,115 @@ const (
 	proposeMaxTokens = 2048
 )
 
+// Tool names. Keeping them as consts so callers (CLI wrappers, tests)
+// can assert against a single source of truth rather than duplicating
+// the string literal.
+const (
+	ToolNameSummary    = "record_summary"
+	ToolNameReflection = "record_reflection"
+	ToolNameProposal   = "record_proposal"
+)
+
+// --- result types ---
+
+// SummaryResult is the schema-validated payload of a record_summary
+// tool call. Fields are always populated (empty slices/strings on
+// fields the model had nothing to say about).
+type SummaryResult struct {
+	Topic       string           `json:"topic"`
+	WhatWasDone []string         `json:"what_was_done"`
+	Unresolved  []string         `json:"unresolved"`
+	KeyFiles    []string         `json:"key_files"`
+	Links       []LinkAnnotation `json:"links"`
+}
+
+// LinkAnnotation pairs a URL the user actually referenced in a
+// session with a one-line explanation of what it was used for. The
+// URL must appear in the session's extractions table — the model is
+// prompted to drop any link it can't confidently attribute rather
+// than emit a filler `used_for`.
+type LinkAnnotation struct {
+	URL     string `json:"url"`
+	UsedFor string `json:"used_for"`
+}
+
+// ReflectionResult is the schema-validated payload of a
+// record_reflection tool call.
+type ReflectionResult struct {
+	TaskTypes      []Evidenced `json:"task_types"`
+	Frictions      []Evidenced `json:"frictions"`
+	WorkflowChange string      `json:"workflow_change"`
+}
+
+// Evidenced is a claim the model is making that must cite at least
+// one session id as evidence.
+type Evidenced struct {
+	Label      string   `json:"label"`
+	SessionIDs []string `json:"session_ids"`
+}
+
+// ProposalResult is the schema-validated payload of a
+// record_proposal tool call. Each section capped at 5 items by
+// schema so callers can render the output deterministically.
+type ProposalResult struct {
+	Skills          []ProposedSkill        `json:"skills"`
+	ClaudeMdEntries []ProposedClaudeMdRule `json:"claude_md_entries"`
+	Scripts         []ProposedScript       `json:"scripts"`
+}
+
+type ProposedSkill struct {
+	Name       string   `json:"name"`
+	WhenToUse  string   `json:"when_to_use"`
+	Why        string   `json:"why"`
+	SessionIDs []string `json:"session_ids"`
+}
+
+type ProposedClaudeMdRule struct {
+	Rule       string   `json:"rule"`
+	Why        string   `json:"why"`
+	SessionIDs []string `json:"session_ids"`
+}
+
+type ProposedScript struct {
+	Name       string   `json:"name"`
+	Purpose    string   `json:"purpose"`
+	SessionIDs []string `json:"session_ids"`
+}
+
 // --- summary ---
 
-const summarySystem = `You summarize a single coding session between a human and an AI coding assistant. Be factual and tight. Do not invent details. If a section has no content, say "none".`
+const summarySystem = `You summarize a single coding session between a human and an AI coding assistant. You MUST call the record_summary tool exactly once. Be factual and tight. Do not invent details. Do not invent URLs — only annotate links that were observed in the session. If a list section has no content, return an empty array.`
+
+// summaryToolSchema is the JSON Schema for record_summary. Kept as a
+// const so its bytes are stable; hashRequest includes these bytes
+// when computing prompt_hash.
+const summaryToolSchema = `{
+  "type": "object",
+  "required": ["topic","what_was_done","unresolved","key_files","links"],
+  "additionalProperties": false,
+  "properties": {
+    "topic": {"type":"string","minLength":1},
+    "what_was_done": {"type":"array","items":{"type":"string","minLength":1},"minItems":1,"maxItems":8},
+    "unresolved": {"type":"array","items":{"type":"string","minLength":1}},
+    "key_files": {"type":"array","items":{"type":"string","minLength":1}},
+    "links": {
+      "type":"array",
+      "items":{
+        "type":"object",
+        "required":["url","used_for"],
+        "additionalProperties": false,
+        "properties":{
+          "url":{"type":"string","minLength":1},
+          "used_for":{"type":"string","minLength":1}
+        }
+      }
+    }
+  }
+}`
 
 const summaryTemplate = `Session: %s
 Events: %d
-
-Produce, in this exact order:
-
-Topic: one line.
-What was done:
-- bullet
-- bullet
-- bullet (3-5 total)
-Unresolved issues:
-- bullet or "none"
-Key files touched:
-- path or "none"
-
+%s
 Transcript follows, oldest first:
 ---
 %s
@@ -71,9 +169,13 @@ Transcript follows, oldest first:
 `
 
 // BuildSummary returns the prompt for summarizing one session's
-// events. The caller is expected to have already filtered out empty
-// events if they wanted to; this function includes every event.
-func BuildSummary(sessionID string, events []store.EventView) (Built, error) {
+// events. links is the distinct URL list observed in the session
+// (typically from store.LoadExtractionsForSession(kind='url')); the
+// model is prompted to annotate each with a `used_for` via the
+// record_summary tool, dropping any it cannot confidently attribute.
+// Passing a nil/empty links slice is fine — the tool just receives
+// an empty links array.
+func BuildSummary(sessionID string, events []store.EventView, links []string) (Built, error) {
 	if sessionID == "" {
 		return Built{}, fmt.Errorf("BuildSummary: sessionID required")
 	}
@@ -83,15 +185,43 @@ func BuildSummary(sessionID string, events []store.EventView) (Built, error) {
 
 	pats := patternSet{}
 	transcript := renderEvents(events, pats)
+	linksBlock := renderLinksBlock(links, pats)
 
-	userMsg := fmt.Sprintf(summaryTemplate, sessionID, len(events), transcript)
+	userMsg := fmt.Sprintf(summaryTemplate, sessionID, len(events), linksBlock, transcript)
 
 	req := llm.Request{
 		System:    summarySystem,
 		Messages:  []llm.Message{{Role: llm.RoleUser, Content: userMsg}},
 		MaxTokens: summaryMaxTokens,
+		Tools: []llm.Tool{{
+			Name:        ToolNameSummary,
+			Description: "Record the structured summary of one coding session.",
+			InputSchema: json.RawMessage(summaryToolSchema),
+		}},
+		ForceTool: ToolNameSummary,
 	}
 	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
+}
+
+// renderLinksBlock formats the "Links observed" stanza that goes
+// above the transcript, or returns "" when there are no links to
+// annotate. The model is told to drop links it can't attribute so
+// noise in extractions (e.g. spurious URLs in tool output) doesn't
+// pollute the final summary.
+func renderLinksBlock(links []string, pats patternSet) string {
+	if len(links) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nLinks observed in this session — annotate each with a specific `used_for` in the record_summary `links` field. DROP any you cannot confidently attribute; do NOT invent new URLs:\n")
+	for _, url := range links {
+		clean, names := redact.Outbound(url)
+		pats.addAll(names)
+		b.WriteString("- ")
+		b.WriteString(clean)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // --- reflect / propose share an input shape ---
@@ -105,28 +235,51 @@ type SessionDigest struct {
 	StartedAtMs int64
 	EndedAtMs   int64
 	Cwd         string
-	FirstPrompt string // usually the first user_prompt in the session
-	Summary     string // optional: existing llm_outputs summary for this session
+	FirstPrompt string   // usually the first user_prompt in the session
+	Summary     string   // optional: existing llm_outputs summary for this session
+	Links       []string // optional: distinct URLs observed in the session
 }
 
-const reflectSystem = `You reflect on a developer's recent AI coding sessions to spot patterns. Be concrete and grounded in the material. Do not invent sessions, tools, or files. Brevity beats completeness.`
+const reflectSystem = `You reflect on a developer's recent AI coding sessions to spot patterns. You MUST call the record_reflection tool exactly once. Be concrete and grounded in the material. Do not invent sessions, tools, or files. Brevity beats completeness. Every claim in task_types or frictions must cite at least one real session_id from the input.`
+
+const reflectionToolSchema = `{
+  "type": "object",
+  "required": ["task_types","frictions","workflow_change"],
+  "additionalProperties": false,
+  "properties": {
+    "task_types": {
+      "type":"array",
+      "minItems": 0,
+      "maxItems": 3,
+      "items": {
+        "type":"object",
+        "required":["label","session_ids"],
+        "additionalProperties": false,
+        "properties": {
+          "label": {"type":"string","minLength":1},
+          "session_ids": {"type":"array","minItems":1,"items":{"type":"string","minLength":1}}
+        }
+      }
+    },
+    "frictions": {
+      "type":"array",
+      "minItems": 0,
+      "maxItems": 3,
+      "items": {
+        "type":"object",
+        "required":["label","session_ids"],
+        "additionalProperties": false,
+        "properties": {
+          "label": {"type":"string","minLength":1},
+          "session_ids": {"type":"array","minItems":1,"items":{"type":"string","minLength":1}}
+        }
+      }
+    },
+    "workflow_change": {"type":"string"}
+  }
+}`
 
 const reflectTemplate = `Below are %d sessions from %s to %s.
-
-Output, in this exact order:
-
-Top 3 recurring task types (with session ids as evidence):
-1. ...
-2. ...
-3. ...
-
-Top 3 recurring sources of friction (with session ids as evidence):
-1. ...
-2. ...
-3. ...
-
-One workflow change that would most likely help:
-- ...
 
 ---
 %s
@@ -153,27 +306,73 @@ func BuildReflect(digests []SessionDigest, window time.Duration) (Built, error) 
 		System:    reflectSystem,
 		Messages:  []llm.Message{{Role: llm.RoleUser, Content: userMsg}},
 		MaxTokens: reflectMaxTokens,
+		Tools: []llm.Tool{{
+			Name:        ToolNameReflection,
+			Description: "Record a structured reflection across multiple coding sessions.",
+			InputSchema: json.RawMessage(reflectionToolSchema),
+		}},
+		ForceTool: ToolNameReflection,
 	}
 	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
 }
 
-const proposeSystem = `You are a principal engineer reviewing a developer's AI coding sessions to propose reusable capabilities. Only suggest things that would have demonstrably saved time in the sessions shown. Reject generic advice.`
+const proposeSystem = `You are a principal engineer reviewing a developer's AI coding sessions to propose reusable capabilities. You MUST call the record_proposal tool exactly once. Only suggest things that would have demonstrably saved time in the sessions shown. Reject generic advice. Every proposed item must cite at least one real session_id from the input as evidence.`
+
+const proposalToolSchema = `{
+  "type": "object",
+  "required": ["skills","claude_md_entries","scripts"],
+  "additionalProperties": false,
+  "properties": {
+    "skills": {
+      "type":"array",
+      "minItems": 0,
+      "maxItems": 5,
+      "items": {
+        "type":"object",
+        "required":["name","when_to_use","why","session_ids"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type":"string","pattern":"^[a-z][a-z0-9-]*$"},
+          "when_to_use": {"type":"string","minLength":1},
+          "why": {"type":"string","minLength":1},
+          "session_ids": {"type":"array","minItems":1,"items":{"type":"string","minLength":1}}
+        }
+      }
+    },
+    "claude_md_entries": {
+      "type":"array",
+      "minItems": 0,
+      "maxItems": 5,
+      "items": {
+        "type":"object",
+        "required":["rule","why","session_ids"],
+        "additionalProperties": false,
+        "properties": {
+          "rule": {"type":"string","minLength":1},
+          "why": {"type":"string","minLength":1},
+          "session_ids": {"type":"array","minItems":1,"items":{"type":"string","minLength":1}}
+        }
+      }
+    },
+    "scripts": {
+      "type":"array",
+      "minItems": 0,
+      "maxItems": 5,
+      "items": {
+        "type":"object",
+        "required":["name","purpose","session_ids"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type":"string","minLength":1},
+          "purpose": {"type":"string","minLength":1},
+          "session_ids": {"type":"array","minItems":1,"items":{"type":"string","minLength":1}}
+        }
+      }
+    }
+  }
+}`
 
 const proposeTemplate = `Below are %d recent sessions.
-
-Propose, in this exact order:
-
-Skills / slash-command ideas (max 5):
-- name: <kebab-case>
-  when to use: 1 line
-  why: 1 line citing at least one session id
-
-CLAUDE.md entries worth adding (max 5):
-- the rule: 1 line
-  why: 1 line citing at least one session id
-
-Pre-built scripts worth keeping in scripts/bin/ (max 5):
-- script name + 1-line purpose + citing session id
 
 ---
 %s
@@ -193,6 +392,12 @@ func BuildPropose(digests []SessionDigest) (Built, error) {
 		System:    proposeSystem,
 		Messages:  []llm.Message{{Role: llm.RoleUser, Content: userMsg}},
 		MaxTokens: proposeMaxTokens,
+		Tools: []llm.Tool{{
+			Name:        ToolNameProposal,
+			Description: "Record a structured proposal of reusable capabilities derived from recent sessions.",
+			InputSchema: json.RawMessage(proposalToolSchema),
+		}},
+		ForceTool: ToolNameProposal,
 	}
 	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
 }
@@ -228,6 +433,8 @@ func renderEvents(events []store.EventView, pats patternSet) string {
 }
 
 // renderDigests flattens session digests for reflect/propose.
+// Per-session Links (when present) are inline so the model's
+// annotation tool output can cite them by session_id.
 func renderDigests(digests []SessionDigest, pats patternSet) string {
 	var b strings.Builder
 	for i, d := range digests {
@@ -252,15 +459,30 @@ func renderDigests(digests []SessionDigest, pats patternSet) string {
 			pats.addAll(names)
 			_, _ = fmt.Fprintf(&b, "Prior summary:\n%s\n", clean)
 		}
+		if len(d.Links) > 0 {
+			b.WriteString("Links observed:\n")
+			for _, url := range d.Links {
+				clean, names := redact.Outbound(url)
+				pats.addAll(names)
+				b.WriteString("- ")
+				b.WriteString(clean)
+				b.WriteByte('\n')
+			}
+		}
 		b.WriteByte('\n')
 	}
 	return b.String()
 }
 
 // hashRequest produces the stable cache key for Request. Includes
-// system, all messages, and max_tokens. Model is NOT included — we
-// want swapping models to still hit the cache when the input text
-// is identical; callers can force a refresh via --force.
+// system, all messages, max_tokens, and (when set) the tools +
+// tool_choice. Model is NOT included — we want swapping models to
+// still hit the cache when the input text is identical; callers can
+// force a refresh via --force.
+//
+// Non-tool requests produce byte-identical hashes to the pre-tools
+// version so any legacy caller that did not declare tools still hits
+// the same cache rows it used to.
 func hashRequest(req llm.Request) string {
 	h := sha256.New()
 	h.Write([]byte(req.System))
@@ -272,6 +494,20 @@ func hashRequest(req llm.Request) string {
 		h.Write([]byte{0})
 	}
 	_, _ = fmt.Fprintf(h, "%d", req.MaxTokens)
+	// Tools section — only hashed when present, so the no-tools hash
+	// stays identical to what we produced before tool use existed.
+	for _, t := range req.Tools {
+		h.Write([]byte{0xFE}) // sentinel separator
+		h.Write([]byte(t.Name))
+		h.Write([]byte{0})
+		h.Write([]byte(t.Description))
+		h.Write([]byte{0})
+		h.Write(t.InputSchema)
+	}
+	if req.ForceTool != "" {
+		h.Write([]byte{0xFD})
+		h.Write([]byte(req.ForceTool))
+	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 
