@@ -104,10 +104,17 @@ func Assemble(raw []byte, now time.Time) (ingest.Envelope, error) {
 
 // extractContentText pulls the most informative human-readable field
 // from the hook payload per kind. Empty when nothing obvious is there.
+// Field names reflect what Claude Code's hook runtime actually sends
+// (see internal/cli/testdata/hooks/*.json for samples).
 func extractContentText(kind string, hook map[string]any) string {
 	switch kind {
 	case "user_prompt":
 		if s, ok := hook["prompt"].(string); ok {
+			return s
+		}
+	case "assistant_message":
+		// Stop hooks carry the full assistant turn text here.
+		if s, ok := hook["last_assistant_message"].(string); ok {
 			return s
 		}
 	case "tool_use", "tool_failure":
