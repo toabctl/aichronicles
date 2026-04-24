@@ -16,7 +16,18 @@ import (
 	"github.com/toabctl/aichronicles/internal/ingest"
 )
 
+// isolateEnv scopes XDG + notification env so RunIngest never reads
+// the user's real config or fires real DBus notifications from a test.
+func isolateEnv(t *testing.T) {
+	t.Helper()
+	tmp := t.TempDir()
+	t.Setenv("AICHRONICLES_DISABLE_NOTIFY", "1")
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(tmp, "runtime"))
+}
+
 func TestCLI_IngestRoundTrip(t *testing.T) {
+	isolateEnv(t)
 	dir := t.TempDir()
 	sock := filepath.Join(dir, "sock")
 	logPath := filepath.Join(dir, "events.jsonl")
@@ -92,6 +103,7 @@ func TestCLI_IngestRoundTrip(t *testing.T) {
 }
 
 func TestCLI_IngestUnreachableDaemon_DoesNotFail(t *testing.T) {
+	isolateEnv(t)
 	// Unreachable socket path; CLI must NEVER return an error to the hook.
 	hook := []byte(`{"session_id":"x","hook_event_name":"UserPromptSubmit","cwd":"/","prompt":"hi"}`)
 	var stderr bytes.Buffer

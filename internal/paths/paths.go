@@ -9,21 +9,40 @@ import (
 	"path/filepath"
 )
 
-// Socket returns the Unix domain socket path used for the ingest API.
-// Sockets are ephemeral IPC — per XDG they belong under XDG_RUNTIME_DIR
-// (typically /run/user/<uid>, tmpfs, cleared on reboot). When that is
-// unset we fall back to $TMPDIR/aichronicles-<uid>/sock so we never
-// silently drop to a persistent directory where a stale socket could
-// outlive a reboot.
-func Socket() (string, error) {
+// RuntimeDir returns the per-user ephemeral directory where sockets
+// and outage flags live. XDG_RUNTIME_DIR when set (typically
+// /run/user/<uid>, tmpfs, cleared on reboot), otherwise a UID-keyed
+// fallback under $TMPDIR so we never silently drop ephemeral files
+// into persistent state.
+func RuntimeDir() (string, error) {
 	if r := os.Getenv("XDG_RUNTIME_DIR"); r != "" {
-		return filepath.Join(r, "aichronicles", "sock"), nil
+		return filepath.Join(r, "aichronicles"), nil
 	}
 	uid := os.Getuid()
 	if uid < 0 {
 		return "", fmt.Errorf("no XDG_RUNTIME_DIR and non-posix uid %d", uid)
 	}
-	return filepath.Join(os.TempDir(), fmt.Sprintf("aichronicles-%d", uid), "sock"), nil
+	return filepath.Join(os.TempDir(), fmt.Sprintf("aichronicles-%d", uid)), nil
+}
+
+// Socket returns the Unix domain socket path for the ingest API.
+func Socket() (string, error) {
+	d, err := RuntimeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "sock"), nil
+}
+
+// OutageFlag is the marker file the ingest CLI touches when it has
+// already surfaced a "daemon unreachable" notification, so we only
+// notify once per outage. Cleared on the next successful POST.
+func OutageFlag() (string, error) {
+	d, err := RuntimeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "outage.flag"), nil
 }
 
 // EventLog returns the JSONL append-only event log path. This is

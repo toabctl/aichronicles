@@ -8,6 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/toabctl/aichronicles/internal/config"
+	"github.com/toabctl/aichronicles/internal/notify"
 	"github.com/toabctl/aichronicles/internal/paths"
 )
 
@@ -30,7 +32,7 @@ func newIngestCmd() *cobra.Command {
 			return RunIngest(cmd.InOrStdin(), cmd.ErrOrStderr(), socketFlag)
 		},
 	}
-	cmd.Flags().StringVar(&socketFlag, "socket", "", "daemon UDS path (default: $XDG_STATE_HOME/aichronicles/sock)")
+	cmd.Flags().StringVar(&socketFlag, "socket", "", "daemon UDS path (default: $XDG_RUNTIME_DIR/aichronicles/sock)")
 	return cmd
 }
 
@@ -65,14 +67,64 @@ func RunIngest(stdin io.Reader, stderr io.Writer, socketFlag string) error {
 		}
 	}
 
+	cfg, err := config.Load()
+	if err != nil {
+		warn(stderr, "config load failed, using defaults:", err)
+		d := config.Default()
+		cfg = &d
+	}
+
+	tracker := outageTracker(stderr)
+
 	ctx, cancel := context.WithTimeout(context.Background(), ingestTimeout)
 	defer cancel()
 
 	client := NewClient(sockPath)
 	if _, err := client.Post(ctx, env); err != nil {
 		warn(stderr, err)
+		maybeNotifyOutage(stderr, cfg, tracker, err)
+		return nil
+	}
+
+	// Post succeeded — if a prior outage flag lingered, drop it so the
+	// next failure gets its own notification.
+	if tracker != nil {
+		if err := tracker.Clear(); err != nil {
+			warn(stderr, "clear outage flag:", err)
+		}
 	}
 	return nil
+}
+
+// outageTracker resolves the outage flag path and returns a tracker, or
+// nil when we cannot build one (in which case notifications simply fire
+// every time — acceptable degradation, never block the hook).
+func outageTracker(stderr io.Writer) *notify.OutageTracker {
+	path, err := paths.OutageFlag()
+	if err != nil {
+		warn(stderr, "resolve outage flag:", err)
+		return nil
+	}
+	return notify.NewOutageTracker(path)
+}
+
+// maybeNotifyOutage sends one desktop notification per outage when the
+// user has opted in. Swallows all errors — no notification must ever
+// fail a hook.
+func maybeNotifyOutage(stderr io.Writer, cfg *config.Config, tracker *notify.OutageTracker, cause error) {
+	if !cfg.Notifications.DaemonUnreachable || tracker == nil || !tracker.ShouldNotify() {
+		return
+	}
+	if err := notify.New(true).Send(
+		"aichronicles: daemon unreachable",
+		fmt.Sprintf("hooks are losing events. %v", cause),
+	); err != nil {
+		warn(stderr, "notify failed:", err)
+		return
+	}
+	if err := tracker.MarkNotified(); err != nil {
+		warn(stderr, "mark outage notified:", err)
+	}
 }
 
 // warn writes a single-line diagnostic prefixed with the CLI name to w.
