@@ -35,5 +35,6 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newImportClaudeTranscriptsCmd())
 	cmd.AddCommand(newSearchCmd())
 	cmd.AddCommand(newSessionsCmd())
+	cmd.AddCommand(newAuditCmd())
 	return cmd
 }
