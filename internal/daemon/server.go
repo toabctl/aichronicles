@@ -17,12 +17,14 @@ import (
 	"github.com/toabctl/aichronicles/internal/store"
 )
 
-// maxEnvelopeBytes caps the POST body we will read. Real envelopes
-// are small, but the assistant_message content_text (last turn of a
-// long session) can legitimately be large. 16MB is generous enough to
-// accept anything realistic and tight enough to stop a pathological
-// payload from blowing up the daemon.
-const maxEnvelopeBytes = 16 << 20
+// maxEnvelopeBytes caps the POST body we will read. Real hook
+// envelopes are usually tiny, but a single assistant_message carrying
+// an inlined large tool result can legitimately exceed 16 MiB — we
+// have observed real transcripts with ~49 MB single lines. Keep this
+// in lockstep with maxClaudeLineBytes in cli/import_claude.go so the
+// live-hook path and the backfill path accept the same shape of
+// envelope. 128 MiB is a sanity bound against a pathological payload.
+const maxEnvelopeBytes = 128 << 20
 
 // Server implements the aichronicles ingest HTTP surface backed by
 // the SQLite store. Transport-agnostic — wire it to a net.Listener

@@ -71,7 +71,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
         "413":
-          description: Request body exceeds 16 MiB.
+          description: Request body exceeds 128 MiB.
           content:
             application/problem+json:
               schema:
