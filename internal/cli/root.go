@@ -40,5 +40,6 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newSummarizeCmd())
 	cmd.AddCommand(newReflectCmd())
 	cmd.AddCommand(newProposeCmd())
+	cmd.AddCommand(newMCPServeCmd())
 	return cmd
 }
