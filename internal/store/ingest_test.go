@@ -252,3 +252,116 @@ func TestIngestEnvelope_DifferentSessionsCoexist(t *testing.T) {
 		t.Errorf("sessions count: got %d, want 3", n)
 	}
 }
+
+func TestIngestEnvelope_ExtractorsPopulateExtractions(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	// A Bash tool_use with a URL in its content_text should produce
+	// both a shell_command and a url extraction.
+	env, raw := newValidEnvelope(t)
+	env.Kind = "tool_use"
+	env.Role = "tool"
+	env.Tool = &ingest.Tool{Name: "Bash"}
+	env.ContentText = "curl https://example.com/api"
+	env.Payload = map[string]any{
+		"tool_input": map[string]any{
+			"command":     "curl https://example.com/api",
+			"description": "hit healthz",
+		},
+	}
+
+	withTx(t, s, func(tx *sql.Tx) {
+		if _, err := IngestEnvelope(tx, env, raw, 1); err != nil {
+			t.Fatalf("ingest: %v", err)
+		}
+	})
+
+	rows, err := s.DB().Query(
+		`SELECT kind, value, extra_json FROM extractions WHERE event_id=? ORDER BY kind, value`,
+		env.EventID,
+	)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	type row struct {
+		kind, value, extra string
+	}
+	var got []row
+	for rows.Next() {
+		var r row
+		var ex sql.NullString
+		if err := rows.Scan(&r.kind, &r.value, &ex); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		r.extra = ex.String
+		got = append(got, r)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("extractions: got %d rows, want 2: %+v", len(got), got)
+	}
+	if got[0].kind != "shell_command" || got[0].value != "curl https://example.com/api" {
+		t.Errorf("row 0: %+v", got[0])
+	}
+	if got[0].extra == "" {
+		t.Errorf("shell_command should have extra_json from description")
+	}
+	if got[1].kind != "url" || got[1].value != "https://example.com/api" {
+		t.Errorf("row 1: %+v", got[1])
+	}
+}
+
+func TestIngestEnvelope_NoExtractionsForPlainEvents(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	// Plain user_prompt with no URLs and no tool → zero extractions.
+	env, raw := newValidEnvelope(t)
+	env.ContentText = "just a message"
+	withTx(t, s, func(tx *sql.Tx) {
+		if _, err := IngestEnvelope(tx, env, raw, 1); err != nil {
+			t.Fatalf("ingest: %v", err)
+		}
+	})
+
+	var n int
+	_ = s.DB().QueryRow(`SELECT COUNT(*) FROM extractions`).Scan(&n)
+	if n != 0 {
+		t.Errorf("extractions: got %d, want 0", n)
+	}
+}
+
+func TestIngestEnvelope_ExtractionsCascadeOnRawDelete(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	env, raw := newValidEnvelope(t)
+	env.Tool = &ingest.Tool{Name: "Bash"}
+	env.ContentText = "see https://example.com"
+	env.Payload = map[string]any{"tool_input": map[string]any{"command": "ls"}}
+
+	withTx(t, s, func(tx *sql.Tx) {
+		if _, err := IngestEnvelope(tx, env, raw, 1); err != nil {
+			t.Fatalf("ingest: %v", err)
+		}
+	})
+
+	var before int
+	_ = s.DB().QueryRow(`SELECT COUNT(*) FROM extractions`).Scan(&before)
+	if before == 0 {
+		t.Fatal("precondition: expected extractions")
+	}
+
+	// Deleting the raw envelope should cascade down through events
+	// and wipe the associated extractions.
+	if _, err := s.DB().Exec(`DELETE FROM raw_envelopes WHERE event_id=?`, env.EventID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	var after int
+	_ = s.DB().QueryRow(`SELECT COUNT(*) FROM extractions`).Scan(&after)
+	if after != 0 {
+		t.Errorf("extractions not cascaded: got %d, want 0", after)
+	}
+}

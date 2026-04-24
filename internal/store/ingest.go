@@ -2,10 +2,12 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/toabctl/aichronicles/internal/ingest"
+	"github.com/toabctl/aichronicles/internal/ingest/extract"
 )
 
 // IngestEnvelope writes a validated envelope through all three layers
@@ -68,6 +70,27 @@ func IngestEnvelope(tx *sql.Tx, env *ingest.Envelope, envelopeJSON []byte, tsSer
 		env.TsSource.UnixMilli(), nullString(env.Cwd), toolName, toolCallID, nullString(env.ContentText),
 	); err != nil {
 		return false, fmt.Errorf("insert event: %w", err)
+	}
+
+	// Extractions: URLs, file paths, shell commands. Best-effort and
+	// synchronous — they run in the same transaction so the row set
+	// stays consistent with events. Extractor bugs should not fail
+	// ingest, so a malformed extra_json falls back to NULL rather
+	// than aborting; but a SQL insert error is structural and does
+	// propagate up to the caller.
+	for _, ex := range extract.FromEnvelope(env) {
+		var extraJSON sql.NullString
+		if len(ex.Extra) > 0 {
+			if b, err := json.Marshal(ex.Extra); err == nil {
+				extraJSON = sql.NullString{String: string(b), Valid: true}
+			}
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO extractions(event_id, session_id, kind, value, extra_json) VALUES (?, ?, ?, ?, ?)`,
+			env.EventID, sessionID, ex.Kind, ex.Value, extraJSON,
+		); err != nil {
+			return false, fmt.Errorf("insert extraction (%s=%q): %w", ex.Kind, ex.Value, err)
+		}
 	}
 
 	return false, nil
