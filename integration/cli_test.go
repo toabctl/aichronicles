@@ -4,6 +4,7 @@ package integration
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -149,6 +150,74 @@ func TestCLI_IngestRedactsSecretsEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(raw, `"applied":true`) {
 		t.Errorf("expected redaction.applied=true in raw envelope: %q", raw)
+	}
+}
+
+func TestCLI_IngestRespectsDenyPaths(t *testing.T) {
+	isolateEnv(t)
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "sock")
+
+	s, err := store.Open(filepath.Join(dir, "store.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	srv := daemon.NewServer(s, nil)
+	shutdown, err := daemon.ListenAndServe(sock, srv.Handler())
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = shutdown() }()
+
+	// Write a config that denies /work/nda.
+	cfgDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "aichronicles")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatalf("mkdir cfg: %v", err)
+	}
+	cfgPath := filepath.Join(cfgDir, "config.toml")
+	cfgBody := "[capture]\ndeny_paths = [\"/work/nda\"]\n"
+	if err := os.WriteFile(cfgPath, []byte(cfgBody), 0o600); err != nil {
+		t.Fatalf("write cfg: %v", err)
+	}
+
+	// Hook event from inside /work/nda — must be dropped silently.
+	hook := []byte(`{
+		"session_id": "denied",
+		"hook_event_name": "UserPromptSubmit",
+		"cwd": "/work/nda/secret",
+		"prompt": "confidential"
+	}`)
+
+	var stderr bytes.Buffer
+	if err := cli.RunIngest(bytes.NewReader(hook), &stderr, sock); err != nil {
+		t.Fatalf("RunIngest: %v", err)
+	}
+
+	var n int
+	_ = s.DB().QueryRow(`SELECT COUNT(*) FROM raw_envelopes`).Scan(&n)
+	if n != 0 {
+		t.Fatalf("denied envelope was persisted: %d rows", n)
+	}
+	if !strings.Contains(stderr.String(), "capture.deny_paths") {
+		t.Errorf("expected deny-paths log line in stderr: %q", stderr.String())
+	}
+
+	// A control hook from an allowed cwd still lands.
+	hookOK := []byte(`{
+		"session_id": "allowed",
+		"hook_event_name": "UserPromptSubmit",
+		"cwd": "/work/public",
+		"prompt": "ok"
+	}`)
+	stderr.Reset()
+	if err := cli.RunIngest(bytes.NewReader(hookOK), &stderr, sock); err != nil {
+		t.Fatalf("RunIngest allowed: %v", err)
+	}
+	_ = s.DB().QueryRow(`SELECT COUNT(*) FROM raw_envelopes`).Scan(&n)
+	if n != 1 {
+		t.Fatalf("allowed envelope should land: got %d rows", n)
 	}
 }
 

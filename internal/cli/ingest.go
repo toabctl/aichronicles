@@ -71,6 +71,22 @@ func RunIngest(stdin io.Reader, stderr io.Writer, socketFlag string) error {
 		return nil
 	}
 
+	cfg, err := config.Load()
+	if err != nil {
+		log.Warn("config load failed, using defaults", "err", err)
+		d := config.Default()
+		cfg = &d
+	}
+
+	// Coarse denylist: drop the whole envelope if its cwd falls under
+	// a user-configured deny_paths entry. Runs BEFORE redaction so no
+	// bytes from a denied directory enter further processing.
+	if cfg.Capture.IsDenied(env.Cwd) {
+		log.Info("envelope dropped by capture.deny_paths",
+			"cwd", env.Cwd, "source_session_id", env.SourceSessionID)
+		return nil
+	}
+
 	// Redact at the edge: secrets present in the original hook payload
 	// must never leave this process unscrubbed. Downstream — daemon,
 	// store, future LLM shim — treats Redaction.Applied as proof that
@@ -84,13 +100,6 @@ func RunIngest(stdin io.Reader, stderr io.Writer, socketFlag string) error {
 			log.Error("resolve socket path", "err", err)
 			return nil
 		}
-	}
-
-	cfg, err := config.Load()
-	if err != nil {
-		log.Warn("config load failed, using defaults", "err", err)
-		d := config.Default()
-		cfg = &d
 	}
 
 	tracker := outageTracker(log)

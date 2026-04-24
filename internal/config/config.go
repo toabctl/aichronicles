@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 
@@ -19,6 +21,46 @@ import (
 // older config files remain valid.
 type Config struct {
 	Notifications Notifications `toml:"notifications"`
+	Capture       Capture       `toml:"capture"`
+}
+
+// Capture controls what the client CLI is willing to forward to the
+// daemon at all. The redactor scrubs known credential patterns; the
+// denylist here is the coarser hammer for whole directories the user
+// does not want captured under any circumstance — NDA-covered client
+// work, ephemeral spike dirs, etc.
+type Capture struct {
+	// DenyPaths are absolute directory paths. An envelope whose cwd
+	// equals, or is a descendant of, any entry here is dropped at
+	// the client before POST. Matching is purely lexicographic:
+	// symlinks are NOT resolved, so list canonical paths.
+	DenyPaths []string `toml:"deny_paths"`
+}
+
+// IsDenied reports whether an envelope's cwd falls under any of the
+// configured deny paths. Empty cwd is never denied (no information to
+// match on). Empty DenyPaths means nothing is denied.
+func (c Capture) IsDenied(cwd string) bool {
+	if cwd == "" || len(c.DenyPaths) == 0 {
+		return false
+	}
+	cleanCwd := filepath.Clean(cwd)
+	for _, p := range c.DenyPaths {
+		if p == "" {
+			continue
+		}
+		cleanDeny := filepath.Clean(p)
+		if cleanCwd == cleanDeny {
+			return true
+		}
+		// Component-boundary match only: /foo/bar should match
+		// /foo/bar/baz but NOT /foo/barrel. The trailing separator
+		// enforces the boundary.
+		if strings.HasPrefix(cleanCwd, cleanDeny+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // Notifications toggles individual freedesktop-notification events.
