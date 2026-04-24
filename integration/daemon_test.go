@@ -71,6 +71,7 @@ func TestDaemon_RoundTrip(t *testing.T) {
 			"hook_event_name": "UserPromptSubmit",
 			"prompt":          "hello daemon",
 		},
+		Redaction: &ingest.Redaction{Applied: true},
 	}
 	body, err := json.Marshal(env)
 	if err != nil {
@@ -135,6 +136,7 @@ func TestDaemon_DuplicateIsDeduped(t *testing.T) {
 		TsSource:        time.Now().UTC(),
 		ContentText:     "dup",
 		Payload:         map[string]any{},
+		Redaction:       &ingest.Redaction{Applied: true},
 	}
 	body, _ := json.Marshal(env)
 

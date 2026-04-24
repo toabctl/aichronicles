@@ -39,6 +39,7 @@ func validEnvelope(t *testing.T) ingest.Envelope {
 		Kind:            "user_prompt",
 		TsSource:        time.Now().UTC(),
 		Payload:         map[string]any{"hook_event_name": "UserPromptSubmit", "prompt": "hi"},
+		Redaction:       &ingest.Redaction{Applied: true},
 	}
 }
 
@@ -154,6 +155,50 @@ func TestIngest_Rejects_UnknownEnvelopeFields(t *testing.T) {
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for unknown field, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestIngest_Rejects_EnvelopeMissingRedaction(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+
+	env := validEnvelope(t)
+	env.Redaction = nil // simulate a client that skipped redaction
+	body, _ := json.Marshal(env)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/ingest", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "Redaction required") {
+		t.Errorf("expected 'Redaction required' in body: %s", rr.Body.String())
+	}
+
+	// Nothing must have been persisted.
+	var n int
+	_ = srv.store.DB().QueryRow(`SELECT COUNT(*) FROM raw_envelopes`).Scan(&n)
+	if n != 0 {
+		t.Errorf("raw_envelopes should be empty, got %d", n)
+	}
+}
+
+func TestIngest_Rejects_RedactionAppliedFalse(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+
+	env := validEnvelope(t)
+	env.Redaction = &ingest.Redaction{Applied: false} // claim present but negative
+	body, _ := json.Marshal(env)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/ingest", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rr.Code, rr.Body.String())
 	}
 }
 

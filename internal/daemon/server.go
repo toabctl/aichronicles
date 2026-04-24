@@ -115,6 +115,22 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Defense-in-depth: the client CLI is responsible for redaction,
+	// but a forgetful or third-party client might skip it. Refuse to
+	// persist anything that hasn't been explicitly marked as scrubbed.
+	// We never silently re-scrub server-side — that would hide a
+	// broken client from operator view.
+	if env.Redaction == nil || !env.Redaction.Applied {
+		s.slog.Warn("rejecting unredacted envelope",
+			"event_id", env.EventID,
+			"source_agent", env.SourceAgent,
+		)
+		writeProblem(w, http.StatusBadRequest,
+			"Redaction required",
+			"envelope.redaction.applied must be true; run the client's redactor before POSTing")
+		return
+	}
+
 	tx, err := s.store.DB().Begin()
 	if err != nil {
 		s.slog.Error("begin tx", "event_id", env.EventID, "err", err)
