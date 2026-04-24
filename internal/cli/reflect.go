@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/paths"
@@ -63,10 +64,18 @@ func newReflectCmd() *cobra.Command {
 			}
 			defer func() { _ = s.Close() }()
 
+			cfg, cfgErr := config.Load()
+			if cfgErr != nil {
+				return cfgErr
+			}
+
 			ctx, cancel := context.WithTimeout(cmd.Context(), metaLLMTimeout)
 			defer cancel()
 
-			_, err = RunReflect(ctx, s, func() (llm.Client, error) { return llm.FromEnv() },
+			_, err = RunReflect(ctx, s,
+				func() (llm.Client, error) {
+					return llm.FromEnvOrCommand(ctx, cfg.LLM.APIKeyCommand)
+				},
 				ReflectOptions{Since: since, Limit: limit, Model: model, Force: force},
 				cmd.OutOrStdout())
 			return err

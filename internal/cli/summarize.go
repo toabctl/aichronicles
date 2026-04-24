@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/paths"
@@ -59,7 +60,13 @@ func newSummarizeCmd() *cobra.Command {
 
 			// Only build the client lazily — the user should be able
 			// to re-print a cached summary without an API key.
-			newClient := func() (llm.Client, error) { return llm.FromEnv() }
+			cfg, cfgErr := config.Load()
+			if cfgErr != nil {
+				return cfgErr
+			}
+			newClient := func() (llm.Client, error) {
+				return llm.FromEnvOrCommand(cmd.Context(), cfg.LLM.APIKeyCommand)
+			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), summarizeTimeout)
 			defer cancel()

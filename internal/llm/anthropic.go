@@ -10,7 +10,9 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/redact"
@@ -83,6 +85,66 @@ func FromEnv() (Client, error) {
 		return nil, fmt.Errorf("llm: %s not set", APIKeyEnv)
 	}
 	return NewAnthropic(key), nil
+}
+
+// keyCommandTimeout caps how long we'll wait for the user's shell
+// command to produce the API key. Keyrings usually answer in ms; a
+// hung `secret-tool` waiting on a locked keyring should fail fast so
+// the user sees an error rather than an apparently-hung CLI.
+const keyCommandTimeout = 10 * time.Second
+
+// FromEnvOrCommand returns a Client whose key comes from
+// $ANTHROPIC_API_KEY, or — when that is empty — from the stdout of
+// `/bin/sh -c <command>`. An empty command combined with an empty
+// env yields the same "not set" error FromEnv does.
+//
+// Trailing whitespace is stripped from the command output. Empty
+// output is rejected — a command that fails to produce a key should
+// error visibly, not hand us an empty string that the API will
+// 401 on later.
+//
+// Stderr from the command is discarded. This is deliberate: some
+// keyring tools write informational prompts to stderr, and we do
+// not want to risk echoing a partial key there either. The user can
+// debug their command outside aichronicles if it misbehaves.
+func FromEnvOrCommand(ctx context.Context, command string) (Client, error) {
+	if key := os.Getenv(APIKeyEnv); key != "" {
+		return NewAnthropic(key), nil
+	}
+	if command == "" {
+		return nil, fmt.Errorf("llm: %s not set and no api_key_command configured", APIKeyEnv)
+	}
+	key, err := runKeyCommand(ctx, command)
+	if err != nil {
+		return nil, err
+	}
+	return NewAnthropic(key), nil
+}
+
+// runKeyCommand executes command via `/bin/sh -c` and returns the
+// trimmed stdout. Exported only via FromEnvOrCommand; direct callers
+// should go through that so the env-first shortcut applies.
+func runKeyCommand(parent context.Context, command string) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, keyCommandTimeout)
+	defer cancel()
+
+	// #nosec G204 — command is user-supplied via their own 0600
+	// config file. The mode-check in config.LoadFrom is the trust
+	// boundary; beyond that we treat the command like any other
+	// user-chosen shell command.
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
+	out, err := cmd.Output()
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", fmt.Errorf("llm: api_key_command timed out after %v", keyCommandTimeout)
+		}
+		return "", fmt.Errorf("llm: api_key_command failed: %w", err)
+	}
+	key := strings.TrimRight(string(out), " \t\r\n")
+	if key == "" {
+		return "", fmt.Errorf("llm: api_key_command produced empty output")
+	}
+	return key, nil
 }
 
 // NewAnthropic returns a Client ready to hit production. The API key

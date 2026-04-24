@@ -22,6 +22,22 @@ import (
 type Config struct {
 	Notifications Notifications `toml:"notifications"`
 	Capture       Capture       `toml:"capture"`
+	LLM           LLM           `toml:"llm"`
+}
+
+// LLM controls how the CLI subcommands (summarize, reflect, propose)
+// obtain API credentials. Fields are optional; when everything is
+// zero the CLI falls back to the plain ANTHROPIC_API_KEY env var.
+type LLM struct {
+	// APIKeyCommand is a shell command (run via `/bin/sh -c`) whose
+	// stdout yields the API key. Used only when the env var is
+	// unset. Typical values: `secret-tool lookup service anthropic`,
+	// `pass show anthropic/api-key`, `cat ~/.config/aichronicles/key`.
+	//
+	// Trailing newlines are stripped. Runs with a 10-second timeout.
+	// Stderr is discarded — a command that writes the key to stderr
+	// will fail the resolve, by design.
+	APIKeyCommand string `toml:"api_key_command"`
 }
 
 // Capture controls what the client CLI is willing to forward to the
@@ -100,13 +116,22 @@ func Load() (*Config, error) {
 // LoadFrom reads the TOML config from an explicit path. Used in tests
 // and anywhere the caller wants to override the default location.
 // Missing file → defaults; malformed file → error.
+//
+// When `[llm].api_key_command` is set, the file mode is checked: any
+// group or world bit (mask 0077) refuses to load. Rationale: an api
+// key command is a trust boundary — if anyone else on the box can
+// rewrite the config, they can redirect the key to arbitrary places.
 func LoadFrom(path string) (*Config, error) {
 	cfg := Default()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		if errors.Is(statErr, fs.ErrNotExist) {
 			return &cfg, nil
 		}
+		return nil, fmt.Errorf("stat %s: %w", path, statErr)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	if len(data) == 0 {
@@ -114,6 +139,15 @@ func LoadFrom(path string) (*Config, error) {
 	}
 	if err := toml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if cfg.LLM.APIKeyCommand != "" {
+		if perm := info.Mode().Perm(); perm&0o077 != 0 {
+			return nil, fmt.Errorf(
+				"%s has mode %04o but `[llm].api_key_command` is set; "+
+					"refuse to trust a world/group-accessible config. "+
+					"run `chmod 600 %s` to proceed",
+				path, perm, path)
+		}
 	}
 	return &cfg, nil
 }

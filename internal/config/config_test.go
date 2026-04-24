@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -207,5 +208,87 @@ daemon_future_event = true
 	}
 	if cfg.Notifications.DaemonStart {
 		t.Error("DaemonStart should be false (override)")
+	}
+}
+
+func TestLoadFrom_LLMAPIKeyCommand_Parses(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := `
+[llm]
+api_key_command = "secret-tool lookup service anthropic user default"
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	cfg, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if !strings.HasPrefix(cfg.LLM.APIKeyCommand, "secret-tool") {
+		t.Errorf("api_key_command: got %q", cfg.LLM.APIKeyCommand)
+	}
+}
+
+func TestLoadFrom_LLMAPIKeyCommand_RefusesGroupReadableFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := `
+[llm]
+api_key_command = "echo secret"
+`
+	// Mode 0644 — group + other readable. Since api_key_command is
+	// a trust boundary, LoadFrom must refuse rather than silently
+	// trusting a world/group-readable file.
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	_, err := LoadFrom(path)
+	if err == nil {
+		t.Fatal("expected error on 0644 config with api_key_command")
+	}
+	if !strings.Contains(err.Error(), "chmod 600") {
+		t.Errorf("error should suggest fix, got: %v", err)
+	}
+}
+
+func TestLoadFrom_LLMAPIKeyCommand_AcceptsOwnerOnlyFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := `
+[llm]
+api_key_command = "echo secret"
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	cfg, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom on 0600: %v", err)
+	}
+	if cfg.LLM.APIKeyCommand != "echo secret" {
+		t.Errorf("api_key_command: got %q", cfg.LLM.APIKeyCommand)
+	}
+}
+
+// TestLoadFrom_UnlockedWhenCommandEmpty proves the mode-check only
+// fires when api_key_command is set — a typical config with only
+// notification settings must still load under any permissive mode.
+func TestLoadFrom_UnlockedWhenCommandEmpty(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := `
+[notifications]
+daemon_start = false
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := LoadFrom(path); err != nil {
+		t.Errorf("config without api_key_command should load under any mode, got %v", err)
 	}
 }

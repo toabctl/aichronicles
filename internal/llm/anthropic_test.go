@@ -408,6 +408,92 @@ func TestAnthropic_Complete_MaxRetriesNegativeDisables(t *testing.T) {
 	}
 }
 
+func TestFromEnvOrCommand_EnvWins(t *testing.T) {
+	// Not parallel: mutates process env.
+	t.Setenv(APIKeyEnv, "env-key")
+	c, err := FromEnvOrCommand(context.Background(), "echo command-should-not-run")
+	if err != nil {
+		t.Fatalf("FromEnvOrCommand: %v", err)
+	}
+	a, ok := c.(*Anthropic)
+	if !ok {
+		t.Fatalf("unexpected client type: %T", c)
+	}
+	if a.APIKey != "env-key" {
+		t.Errorf("env should win: got %q", a.APIKey)
+	}
+}
+
+func TestFromEnvOrCommand_FallsBackToCommand(t *testing.T) {
+	t.Setenv(APIKeyEnv, "")
+	c, err := FromEnvOrCommand(context.Background(), "printf 'file-key\n'")
+	if err != nil {
+		t.Fatalf("FromEnvOrCommand: %v", err)
+	}
+	a := c.(*Anthropic)
+	if a.APIKey != "file-key" {
+		t.Errorf("command output: got %q, want 'file-key' (trailing newline stripped)", a.APIKey)
+	}
+}
+
+func TestFromEnvOrCommand_NeitherConfigured(t *testing.T) {
+	t.Setenv(APIKeyEnv, "")
+	_, err := FromEnvOrCommand(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error when both env and command are empty")
+	}
+	if !strings.Contains(err.Error(), APIKeyEnv) {
+		t.Errorf("error should name the env var: %v", err)
+	}
+}
+
+func TestFromEnvOrCommand_EmptyCommandOutputIsRejected(t *testing.T) {
+	t.Setenv(APIKeyEnv, "")
+	_, err := FromEnvOrCommand(context.Background(), "printf ''")
+	if err == nil {
+		t.Fatal("expected error for empty command output")
+	}
+	if !strings.Contains(err.Error(), "empty") {
+		t.Errorf("error should mention empty output: %v", err)
+	}
+}
+
+func TestFromEnvOrCommand_FailingCommandSurfaces(t *testing.T) {
+	t.Setenv(APIKeyEnv, "")
+	_, err := FromEnvOrCommand(context.Background(), "false")
+	if err == nil {
+		t.Fatal("expected error when command exits non-zero")
+	}
+	if !strings.Contains(err.Error(), "api_key_command") {
+		t.Errorf("error should mention the source: %v", err)
+	}
+}
+
+func TestFromEnvOrCommand_StderrIsDiscarded(t *testing.T) {
+	// A command that writes noise to stderr but a valid key to stdout
+	// must still succeed — stderr is explicitly ignored so a chatty
+	// keyring tool doesn't break the resolve.
+	t.Setenv(APIKeyEnv, "")
+	c, err := FromEnvOrCommand(context.Background(),
+		"printf 'unlocking keyring...\n' 1>&2; printf 'stdout-key'")
+	if err != nil {
+		t.Fatalf("FromEnvOrCommand: %v", err)
+	}
+	if c.(*Anthropic).APIKey != "stdout-key" {
+		t.Errorf("got %q", c.(*Anthropic).APIKey)
+	}
+}
+
+func TestFromEnvOrCommand_CancelledContextAborts(t *testing.T) {
+	t.Setenv(APIKeyEnv, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := FromEnvOrCommand(ctx, "sleep 30")
+	if err == nil {
+		t.Fatal("expected error from cancelled ctx")
+	}
+}
+
 func TestValidateRequest_Rejections(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
