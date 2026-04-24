@@ -323,11 +323,35 @@ func validateRequest(req Request) error {
 
 // --- wire types for Anthropic's Messages API ---
 
+// anthropicBody is the request payload. `System` uses the blocks form
+// (not the legacy top-level string) so we can attach cache_control
+// for prompt caching — Block B's system prompts are hardcoded constants
+// reused across every summarize/reflect/propose call, so the input-
+// token cost drops by ~90% on cache hits. The hash in prompts.go
+// deliberately keys on the system string (not the wire block form)
+// so the cache behavior is transparent to callers.
 type anthropicBody struct {
 	Model     string             `json:"model"`
 	MaxTokens int                `json:"max_tokens"`
-	System    string             `json:"system,omitempty"`
+	System    []systemBlock      `json:"system,omitempty"`
 	Messages  []anthropicMessage `json:"messages"`
+}
+
+// systemBlock is one entry in the Messages API `system` array. We only
+// ever emit a single text block today; the type exists because
+// cache_control attaches at the block level.
+type systemBlock struct {
+	Type         string        `json:"type"`
+	Text         string        `json:"text"`
+	CacheControl *cacheControl `json:"cache_control,omitempty"`
+}
+
+// cacheControl = {"type":"ephemeral"} is the Anthropic prompt-cache
+// directive. Ephemeral caches live ~5 minutes and are keyed by the
+// exact block content. We only attach it to the system block, which
+// is the one part of the prompt that is identical across calls.
+type cacheControl struct {
+	Type string `json:"type"`
 }
 
 type anthropicMessage struct {
@@ -357,10 +381,18 @@ func buildAnthropicBody(req Request, model string) ([]byte, error) {
 	for i, m := range req.Messages {
 		msgs[i] = anthropicMessage{Role: string(m.Role), Content: m.Content}
 	}
+	var system []systemBlock
+	if req.System != "" {
+		system = []systemBlock{{
+			Type:         "text",
+			Text:         req.System,
+			CacheControl: &cacheControl{Type: "ephemeral"},
+		}}
+	}
 	return json.Marshal(anthropicBody{
 		Model:     model,
 		MaxTokens: req.MaxTokens,
-		System:    req.System,
+		System:    system,
 		Messages:  msgs,
 	})
 }

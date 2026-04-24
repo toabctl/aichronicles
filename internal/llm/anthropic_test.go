@@ -64,8 +64,14 @@ func TestAnthropic_Complete_HappyPath(t *testing.T) {
 	if gotBody.MaxTokens != 64 {
 		t.Errorf("max_tokens: got %d", gotBody.MaxTokens)
 	}
-	if gotBody.System != "be concise" {
-		t.Errorf("system: got %q", gotBody.System)
+	if len(gotBody.System) != 1 || gotBody.System[0].Text != "be concise" {
+		t.Errorf("system: got %+v", gotBody.System)
+	}
+	if gotBody.System[0].CacheControl == nil || gotBody.System[0].CacheControl.Type != "ephemeral" {
+		t.Errorf("system cache_control: got %+v", gotBody.System[0].CacheControl)
+	}
+	if gotBody.System[0].Type != "text" {
+		t.Errorf("system type: got %q, want \"text\"", gotBody.System[0].Type)
 	}
 	if len(gotBody.Messages) != 1 || gotBody.Messages[0].Role != "user" {
 		t.Errorf("messages: got %+v", gotBody.Messages)
@@ -75,6 +81,31 @@ func TestAnthropic_Complete_HappyPath(t *testing.T) {
 	}
 	if gotHeaders.Get("anthropic-version") != AnthropicAPIVersion {
 		t.Errorf("anthropic-version header: got %q", gotHeaders.Get("anthropic-version"))
+	}
+}
+
+func TestAnthropic_Complete_OmitsSystemBlockWhenEmpty(t *testing.T) {
+	t.Parallel()
+	// Round-trip the wire body through the raw map so we catch the
+	// case where json.Marshal emits `"system": []` or `"system": ""`
+	// instead of omitting the field entirely. Anthropic accepts either,
+	// but the omitempty contract matters for cache-key stability.
+	var raw map[string]json.RawMessage
+	c := fakeAnthropic(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &raw)
+		_, _ = io.WriteString(w,
+			`{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`)
+	})
+	if _, err := c.Complete(context.Background(), Request{
+		// System omitted
+		Messages:  []Message{{Role: RoleUser, Content: "hi"}},
+		MaxTokens: 16,
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if _, present := raw["system"]; present {
+		t.Errorf("system field should be omitted when empty, got %s", raw["system"])
 	}
 }
 
