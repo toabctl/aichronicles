@@ -34,5 +34,6 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newImportJSONLCmd())
 	cmd.AddCommand(newImportClaudeTranscriptsCmd())
 	cmd.AddCommand(newSearchCmd())
+	cmd.AddCommand(newSessionsCmd())
 	return cmd
 }
