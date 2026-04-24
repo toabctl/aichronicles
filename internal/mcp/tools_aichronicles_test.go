@@ -1,0 +1,285 @@
+package mcp
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"io"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/toabctl/aichronicles/internal/ingest"
+	"github.com/toabctl/aichronicles/internal/store"
+)
+
+// openSeededStore writes a handful of events across two sessions so
+// search_events, list_sessions, and get_summary each have real data
+// to return.
+func openSeededStore(t *testing.T) *store.Store {
+	t.Helper()
+	s, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	now := time.Now().UTC()
+	fixtures := []struct {
+		sess, kind, content string
+		off                 int
+	}{
+		{"sess-foo", "user_prompt", "how do I parse jsonl in Go", 0},
+		{"sess-foo", "assistant_message", "bufio.Scanner works for jsonl", 1},
+		{"sess-bar", "user_prompt", "explain systemd socket activation", 0},
+		{"sess-bar", "assistant_message", "LISTEN_FDS + fd 3", 1},
+	}
+	for _, fx := range fixtures {
+		env := ingest.Envelope{
+			V:               1,
+			EventID:         uuid.Must(uuid.NewV7()).String(),
+			SourceAgent:     "claude-code",
+			SourceSessionID: fx.sess,
+			Kind:            fx.kind,
+			Role:            "user",
+			TsSource:        now.Add(time.Duration(fx.off) * time.Second),
+			Cwd:             "/work/" + fx.sess,
+			ContentText:     fx.content,
+			Payload:         map[string]any{"k": fx.kind},
+			Redaction:       &ingest.Redaction{Applied: true},
+		}
+		raw, _ := json.Marshal(env)
+		tx, _ := s.DB().Begin()
+		if _, err := store.IngestEnvelope(tx, &env, raw, time.Now().UnixMilli()); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("seed: %v", err)
+		}
+		_ = tx.Commit()
+	}
+	return s
+}
+
+// callTool invokes tool.Handler directly without going through the
+// JSON-RPC layer. Keeps these tests tight and deterministic — the
+// wire path is exercised by mcp_test.go.
+func callTool(t *testing.T, s *Server, name string, args string) *ToolResult {
+	t.Helper()
+	tool, ok := s.tools[name]
+	if !ok {
+		t.Fatalf("tool %q not registered", name)
+	}
+	res, mcpErr := tool.Handler(context.Background(), json.RawMessage(args))
+	if mcpErr != nil {
+		t.Fatalf("tool %s: protocol error: %+v", name, mcpErr)
+	}
+	return res
+}
+
+func TestRegisterAichroniclesTools_InstallsAllThree(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	for _, want := range []string{"search_events", "list_sessions", "get_summary"} {
+		if _, ok := s.tools[want]; !ok {
+			t.Errorf("tool %q not registered", want)
+		}
+	}
+}
+
+func TestSearchEvents_FindsMatchingRow(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "search_events", `{"query":"jsonl"}`)
+	if res.IsError {
+		t.Fatalf("expected success, got %+v", res)
+	}
+	text := res.Content[0].Text
+	if !strings.Contains(text, "jsonl") {
+		t.Errorf("result missing match:\n%s", text)
+	}
+}
+
+func TestSearchEvents_MissingQueryReturnsUserFacingError(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "search_events", `{}`)
+	if !res.IsError {
+		t.Errorf("expected IsError=true for missing query")
+	}
+}
+
+func TestListSessions_ReturnsSessionRows(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "list_sessions", `{}`)
+	text := res.Content[0].Text
+	// Both sessions should appear.
+	for _, want := range []string{"/work/sess-foo", "/work/sess-bar"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("expected %q in output:\n%s", want, text)
+		}
+	}
+}
+
+func TestListSessions_CwdFilterNarrows(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "list_sessions", `{"cwd":"/work/sess-foo"}`)
+	text := res.Content[0].Text
+	if strings.Contains(text, "/work/sess-bar") {
+		t.Errorf("cwd filter leaked: %s", text)
+	}
+	if !strings.Contains(text, "/work/sess-foo") {
+		t.Errorf("expected /work/sess-foo in output:\n%s", text)
+	}
+}
+
+func TestGetSummary_ReturnsStoredBody(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	sessID := ingest.DeriveSessionID("claude-code", "sess-foo")
+	tx, _ := st.DB().Begin()
+	_, _, err := store.SaveLLMOutput(tx, &store.LLMOutput{
+		SessionID:   sql.NullString{String: sessID, Valid: true},
+		Kind:        store.LLMKindSummary,
+		Model:       "claude-sonnet-4-6",
+		PromptHash:  "h1",
+		Body:        "SESSION_SUMMARY_BODY",
+		CreatedAtMs: time.Now().UnixMilli(),
+	})
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("seed summary: %v", err)
+	}
+	_ = tx.Commit()
+
+	args := `{"session_id":"` + sessID + `"}`
+	res := callTool(t, s, "get_summary", args)
+	if res.IsError {
+		t.Fatalf("unexpected IsError: %+v", res)
+	}
+	if res.Content[0].Text != "SESSION_SUMMARY_BODY" {
+		t.Errorf("body mismatch: got %q", res.Content[0].Text)
+	}
+}
+
+func TestGetSummary_MissingSessionIDIsUserError(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "get_summary", `{}`)
+	if !res.IsError {
+		t.Errorf("expected IsError=true for missing session_id")
+	}
+}
+
+func TestGetSummary_NoOutputIsUserError(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "get_summary", `{"session_id":"nope"}`)
+	if !res.IsError {
+		t.Errorf("expected IsError=true for session with no outputs")
+	}
+	if !strings.Contains(res.Content[0].Text, "no summary output") {
+		t.Errorf("expected diagnostic text: %s", res.Content[0].Text)
+	}
+}
+
+func TestToolsCall_ScrubsEgressText(t *testing.T) {
+	t.Parallel()
+	// Plant a secret directly in the store (bypassing the ingest
+	// redact, like a pre-redactor store). The egress scrub at the
+	// tools/call boundary MUST rewrite it to a marker before it
+	// reaches the client.
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s.RegisterTool(Tool{
+		Name:        "leaky",
+		Description: "returns a secret on purpose",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+		Handler: func(_ context.Context, _ json.RawMessage) (*ToolResult, *Error) {
+			return TextResult("the leak is AKIAIOSFODNN7EXAMPLE right there"), nil
+		},
+	})
+
+	// Exercise via the JSON-RPC dispatcher so the scrub in
+	// handleToolsCall actually runs.
+	in, inW := io.Pipe()
+	out := &bytes.Buffer{}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { defer wg.Done(); _ = s.Run(context.Background(), in, out) }()
+
+	_, _ = io.WriteString(inW, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"leaky","arguments":{}}}`+"\n")
+	_ = inW.Close()
+	wg.Wait()
+
+	if strings.Contains(out.String(), "AKIAIOSFODNN7EXAMPLE") {
+		t.Fatalf("egress leaked secret:\n%s", out.String())
+	}
+	// JSON encoder HTML-escapes < and > so the marker reads as
+	// <redacted:aws_access_key> on the wire. Check for
+	// the pattern name either way.
+	if !strings.Contains(out.String(), "redacted:aws_access_key") {
+		t.Errorf("expected redaction marker:\n%s", out.String())
+	}
+}
+
+func TestToolsList_IncludesInputSchema(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	in, inW := io.Pipe()
+	out := &bytes.Buffer{}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { defer wg.Done(); _ = s.Run(context.Background(), in, out) }()
+
+	_, _ = io.WriteString(inW, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`+"\n")
+	_ = inW.Close()
+	wg.Wait()
+
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out.String())), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	result := resp["result"].(map[string]any)
+	tools := result["tools"].([]any)
+	if len(tools) != 3 {
+		t.Errorf("expected 3 tools, got %d", len(tools))
+	}
+	for _, t0 := range tools {
+		tool := t0.(map[string]any)
+		if _, ok := tool["inputSchema"]; !ok {
+			t.Errorf("tool %v missing inputSchema", tool["name"])
+		}
+	}
+}

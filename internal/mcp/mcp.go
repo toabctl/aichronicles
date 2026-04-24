@@ -64,6 +64,11 @@ type Server struct {
 	// tool methods via RegisterTool.
 	handlers map[string]methodHandler
 
+	// tools is the registered tool set. Populated via RegisterTool;
+	// handlers for tools/list and tools/call are lazily wired the
+	// first time a tool is registered.
+	tools map[string]Tool
+
 	mu          sync.RWMutex
 	initialized bool
 }
