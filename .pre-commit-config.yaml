@@ -78,6 +78,17 @@ repos:
         types: [go]
         pass_filenames: false
 
+  # Tier 7 — unit tests (runs actual code; integration tests behind
+  # build tag stay out of pre-commit so this tier stays fast)
+  - repo: local
+    hooks:
+      - id: go-test
+        name: go test
+        entry: go test -timeout 60s ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+
   # commit-msg stage (runs on message, not files — ordering irrelevant)
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.4.0
