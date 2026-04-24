@@ -11,9 +11,10 @@ import (
 func newTeardownCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "teardown",
-		Short: "Remove aichronicles integration from an AI coding agent",
+		Short: "Remove aichronicles integration from an AI coding agent or the OS",
 	}
 	cmd.AddCommand(newTeardownClaudeCodeCmd())
+	cmd.AddCommand(newTeardownSystemdCmd())
 	return cmd
 }
 
