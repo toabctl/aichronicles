@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // LLMOutputKind is the discriminator for llm_outputs.kind. Application
@@ -101,6 +102,73 @@ func LoadLLMOutputByHash(ctx context.Context, db *sql.DB, kind LLMOutputKind, pr
 		return nil, nil
 	}
 	return out, err
+}
+
+// LLMOutputFilter composes a list-query. Any zero-value field is
+// omitted from the WHERE clause, so a zero-value filter lists every
+// row (subject to Limit).
+type LLMOutputFilter struct {
+	SessionID string        // exact match; empty means "no session filter"
+	Kind      LLMOutputKind // exact match; empty means "no kind filter"
+	// Limit caps the result set, newest-first by created_at_ms. A
+	// non-positive value uses DefaultLLMOutputsListLimit.
+	Limit int
+}
+
+// DefaultLLMOutputsListLimit is the cap applied when a caller passes
+// a non-positive Limit through LLMOutputFilter. 50 balances "see a
+// history at a glance" against "don't slurp the whole table into a
+// CLI buffer".
+const DefaultLLMOutputsListLimit = 50
+
+// LoadLLMOutputs is the generic read path for llm_outputs. Combines
+// optional session_id and kind filters with a newest-first ORDER BY
+// and a LIMIT so CLI listings stay bounded.
+//
+// Null session_id rows (multi-session outputs from reflect/propose)
+// are included when filter.SessionID is empty. When filter.SessionID
+// is set, rows with NULL session_id are naturally excluded by the
+// equality.
+func LoadLLMOutputs(ctx context.Context, db *sql.DB, filter LLMOutputFilter) ([]LLMOutput, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = DefaultLLMOutputsListLimit
+	}
+
+	var where []string
+	var args []any
+	if filter.SessionID != "" {
+		where = append(where, "session_id = ?")
+		args = append(args, filter.SessionID)
+	}
+	if filter.Kind != "" {
+		where = append(where, "kind = ?")
+		args = append(args, string(filter.Kind))
+	}
+	q := `SELECT id, session_id, kind, model, prompt_hash,
+			input_tokens, output_tokens, body, created_at_ms
+		 FROM llm_outputs`
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	q += " ORDER BY created_at_ms DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query llm_outputs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []LLMOutput
+	for rows.Next() {
+		item, err := scanLLMOutput(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *item)
+	}
+	return out, rows.Err()
 }
 
 // LoadLLMOutputsForSession returns every output attached to a given

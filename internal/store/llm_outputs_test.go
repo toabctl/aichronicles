@@ -18,6 +18,142 @@ func newOutput(kind LLMOutputKind, hash, body string) *LLMOutput {
 	}
 }
 
+func TestLoadLLMOutputs_NewestFirstAcrossAllKinds(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	now := time.Now().UnixMilli()
+	fixtures := []struct {
+		kind LLMOutputKind
+		hash string
+		body string
+		ts   int64
+	}{
+		{LLMKindSummary, "hA", "oldest", now - 3000},
+		{LLMKindReflect, "hB", "middle", now - 2000},
+		{LLMKindPropose, "hC", "newest", now - 1000},
+	}
+	withTx(t, s, func(tx *sql.Tx) {
+		for _, fx := range fixtures {
+			out := newOutput(fx.kind, fx.hash, fx.body)
+			out.CreatedAtMs = fx.ts
+			if _, _, err := SaveLLMOutput(t.Context(), tx, out); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+		}
+	})
+
+	got, err := LoadLLMOutputs(t.Context(), s.DB(), LLMOutputFilter{})
+	if err != nil {
+		t.Fatalf("LoadLLMOutputs: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("count: got %d, want 3", len(got))
+	}
+	// newest → oldest
+	wantOrder := []string{"newest", "middle", "oldest"}
+	for i, w := range wantOrder {
+		if got[i].Body != w {
+			t.Errorf("row %d: got body %q, want %q", i, got[i].Body, w)
+		}
+	}
+}
+
+func TestLoadLLMOutputs_FilterByKind(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	withTx(t, s, func(tx *sql.Tx) {
+		for _, fx := range []struct {
+			kind LLMOutputKind
+			hash string
+		}{
+			{LLMKindSummary, "s1"},
+			{LLMKindReflect, "r1"},
+			{LLMKindSummary, "s2"},
+			{LLMKindPropose, "p1"},
+		} {
+			if _, _, err := SaveLLMOutput(t.Context(), tx, newOutput(fx.kind, fx.hash, "x")); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+		}
+	})
+
+	got, err := LoadLLMOutputs(t.Context(), s.DB(), LLMOutputFilter{Kind: LLMKindSummary})
+	if err != nil {
+		t.Fatalf("LoadLLMOutputs: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("summary rows: got %d, want 2", len(got))
+	}
+	for _, r := range got {
+		if r.Kind != LLMKindSummary {
+			t.Errorf("stray kind %q", r.Kind)
+		}
+	}
+}
+
+func TestLoadLLMOutputs_FilterBySession(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	// Seed a real session so the foreign key stands up.
+	seedEvents(t, s, "outputs-filter", 1, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	sessID := "claude-code/outputs-filter"
+	// Derive the canonical id the way ingest does — same helper as
+	// elsewhere in the store layer.
+	var realSID string
+	_ = s.DB().QueryRow(`SELECT id FROM sessions WHERE source_session_id = ?`, "outputs-filter").Scan(&realSID)
+
+	withTx(t, s, func(tx *sql.Tx) {
+		a := newOutput(LLMKindSummary, "with-session", "A")
+		a.SessionID = sql.NullString{String: realSID, Valid: true}
+		b := newOutput(LLMKindReflect, "no-session", "B") // multi-session → NULL
+		if _, _, err := SaveLLMOutput(t.Context(), tx, a); err != nil {
+			t.Fatalf("seed A: %v", err)
+		}
+		if _, _, err := SaveLLMOutput(t.Context(), tx, b); err != nil {
+			t.Fatalf("seed B: %v", err)
+		}
+	})
+
+	got, err := LoadLLMOutputs(t.Context(), s.DB(), LLMOutputFilter{SessionID: realSID})
+	if err != nil {
+		t.Fatalf("LoadLLMOutputs: %v", err)
+	}
+	if len(got) != 1 || got[0].Body != "A" {
+		t.Errorf("session filter: got %+v", got)
+	}
+
+	// With no session filter, the NULL-session row is included too.
+	all, _ := LoadLLMOutputs(t.Context(), s.DB(), LLMOutputFilter{})
+	if len(all) != 2 {
+		t.Errorf("all rows: got %d, want 2 (including NULL session)", len(all))
+	}
+	_ = sessID // silence unused complaint if seedEvents changes
+}
+
+func TestLoadLLMOutputs_LimitClamped(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	withTx(t, s, func(tx *sql.Tx) {
+		for i := range 5 {
+			out := newOutput(LLMKindSummary, "h"+string(rune('0'+i)), "x")
+			out.CreatedAtMs = int64(i + 1)
+			if _, _, err := SaveLLMOutput(t.Context(), tx, out); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+		}
+	})
+	got, err := LoadLLMOutputs(t.Context(), s.DB(), LLMOutputFilter{Limit: 2})
+	if err != nil {
+		t.Fatalf("LoadLLMOutputs: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("explicit limit: got %d, want 2", len(got))
+	}
+}
+
 func TestSaveLLMOutput_HappyPathInsertsRow(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
