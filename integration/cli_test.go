@@ -86,6 +86,72 @@ func TestCLI_IngestRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCLI_IngestRedactsSecretsEndToEnd(t *testing.T) {
+	isolateEnv(t)
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "sock")
+
+	s, err := store.Open(filepath.Join(dir, "store.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	srv := daemon.NewServer(s, nil)
+	shutdown, err := daemon.ListenAndServe(sock, srv.Handler())
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = shutdown() }()
+
+	// User accidentally pasted an Anthropic API key into a prompt.
+	secret := "sk-ant-" + strings.Repeat("a", 40)
+	hook := []byte(`{
+		"session_id": "e2e-secret",
+		"hook_event_name": "UserPromptSubmit",
+		"cwd": "/tmp/e2e",
+		"prompt": "my key is ` + secret + ` do not log"
+	}`)
+
+	var stderr bytes.Buffer
+	if err := cli.RunIngest(bytes.NewReader(hook), &stderr, sock); err != nil {
+		t.Fatalf("RunIngest: %v", err)
+	}
+
+	wantSessionID := ingest.DeriveSessionID("claude-code", "e2e-secret")
+	var content string
+	err = s.DB().QueryRow(
+		`SELECT content_text FROM events WHERE session_id=?`, wantSessionID,
+	).Scan(&content)
+	if err != nil {
+		t.Fatalf("query event: %v", err)
+	}
+	if strings.Contains(content, "sk-ant-") {
+		t.Fatalf("stored content still contains raw secret: %q", content)
+	}
+	if !strings.Contains(content, "<redacted:anthropic_api_key>") {
+		t.Errorf("expected redacted marker: %q", content)
+	}
+
+	// The raw envelope must also have been scrubbed before it hit the
+	// daemon — otherwise a rogue admin with DB access could recover the
+	// secret from raw_envelopes.json_bytes.
+	var raw string
+	err = s.DB().QueryRow(
+		`SELECT envelope_json FROM raw_envelopes WHERE event_id IN
+			(SELECT event_id FROM events WHERE session_id=?)`, wantSessionID,
+	).Scan(&raw)
+	if err != nil {
+		t.Fatalf("query raw_envelopes: %v", err)
+	}
+	if strings.Contains(raw, "sk-ant-") {
+		t.Fatalf("raw envelope still contains secret: %q", raw)
+	}
+	if !strings.Contains(raw, `"applied":true`) {
+		t.Errorf("expected redaction.applied=true in raw envelope: %q", raw)
+	}
+}
+
 func TestCLI_IngestUnreachableDaemon_DoesNotFail(t *testing.T) {
 	isolateEnv(t)
 	// Unreachable socket path; CLI must NEVER return an error to the hook.

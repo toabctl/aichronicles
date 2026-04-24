@@ -9,8 +9,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/config"
+	"github.com/toabctl/aichronicles/internal/ingest"
 	"github.com/toabctl/aichronicles/internal/notify"
 	"github.com/toabctl/aichronicles/internal/paths"
+	"github.com/toabctl/aichronicles/internal/redact"
 )
 
 // ingestTimeout caps the daemon round-trip so a wedged daemon can never
@@ -68,6 +70,12 @@ func RunIngest(stdin io.Reader, stderr io.Writer, socketFlag string) error {
 		log.Error("assemble envelope", "err", err)
 		return nil
 	}
+
+	// Redact at the edge: secrets present in the original hook payload
+	// must never leave this process unscrubbed. Downstream — daemon,
+	// store, future LLM shim — treats Redaction.Applied as proof that
+	// this step ran.
+	ingest.ApplyRedaction(&env, redact.Default())
 
 	sockPath := socketFlag
 	if sockPath == "" {
