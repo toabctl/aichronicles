@@ -9,6 +9,9 @@ repos:
       - id: check-added-large-files
         args: [--maxkb=500]
       - id: detect-private-key
+        # redact_test.go contains a synthetic PEM fixture for the
+        # pem_private_key detector. No live key material.
+        exclude: ^internal/redact/redact_test\.go$
       - id: check-yaml
       - id: check-json
       - id: check-toml
