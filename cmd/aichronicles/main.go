@@ -1,11 +1,13 @@
+// aichronicles is the client binary: the `ingest` subcommand is invoked
+// by Claude Code hooks; `setup claude-code` installs those hooks.
 package main
 
 import (
-	"fmt"
 	"os"
+
+	"github.com/toabctl/aichronicles/internal/cli"
 )
 
 func main() {
-	fmt.Fprintln(os.Stderr, "aichronicles: no subcommand provided")
-	os.Exit(2)
+	os.Exit(cli.Execute())
 }
