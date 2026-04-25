@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -81,69 +80,12 @@ func seedStore(t *testing.T) (*store.Store, []ingest.Envelope) {
 	return s, envs
 }
 
-func TestBuildSearchSQL_DefaultIsDeduped(t *testing.T) {
-	t.Parallel()
-	sqlText, args := buildSearchSQL(SearchOptions{Query: "hello"})
-	if !strings.Contains(sqlText, "events_fts MATCH ?") {
-		t.Errorf("SQL should MATCH on FTS: %s", sqlText)
-	}
-	if !strings.Contains(sqlText, "ROW_NUMBER()") {
-		t.Errorf("default SQL should wrap in dedup CTE with ROW_NUMBER: %s", sqlText)
-	}
-	if !strings.Contains(sqlText, "LIMIT ?") {
-		t.Errorf("SQL should limit: %s", sqlText)
-	}
-	if len(args) != 2 {
-		t.Errorf("args: got %d, want 2 (query, limit)", len(args))
-	}
-	if args[0] != "hello" {
-		t.Errorf("args[0]: got %v, want hello", args[0])
-	}
-	if args[1] != 20 {
-		t.Errorf("default limit: got %v, want 20", args[1])
-	}
-}
-
-func TestBuildSearchSQL_NoDedupBypassesCTE(t *testing.T) {
-	t.Parallel()
-	sqlText, _ := buildSearchSQL(SearchOptions{Query: "x", NoDedup: true})
-	if strings.Contains(sqlText, "ROW_NUMBER()") {
-		t.Errorf("NoDedup should skip the dedup CTE: %s", sqlText)
-	}
-	if !strings.Contains(sqlText, "ORDER BY rank LIMIT ?") {
-		t.Errorf("NoDedup should keep the plain ORDER BY rank LIMIT: %s", sqlText)
-	}
-}
-
-func TestBuildSearchSQL_AllFilters(t *testing.T) {
-	t.Parallel()
-	sql, args := buildSearchSQL(SearchOptions{
-		Query:     "boom",
-		Kind:      "tool_use",
-		SessionID: "sess-xyz",
-		SinceMs:   1000,
-		Limit:     5,
-	})
-	for _, frag := range []string{`e.kind = ?`, `e.session_id = ?`, `e.ts_source_ms >= ?`} {
-		if !strings.Contains(sql, frag) {
-			t.Errorf("missing filter %q in sql: %s", frag, sql)
-		}
-	}
-	want := []any{"boom", "tool_use", "sess-xyz", int64(1000), 5}
-	for i, w := range want {
-		if args[i] != w {
-			t.Errorf("args[%d]: got %v, want %v", i, args[i], w)
-		}
-	}
-}
-
-func TestBuildSearchSQL_ZeroLimitDefaults(t *testing.T) {
-	t.Parallel()
-	_, args := buildSearchSQL(SearchOptions{Query: "x", Limit: 0})
-	if args[len(args)-1] != 20 {
-		t.Errorf("zero limit should default to 20, got %v", args[len(args)-1])
-	}
-}
+// SQL-composition assertions for SearchOptions used to live here as
+// TestBuildSearchSQL_*; the equivalent behavior tests now live in
+// internal/store/search_test.go and exercise the real query end to
+// end against a seeded SQLite. Deleting the string-shape assertions
+// removes a brittle layer that broke on every harmless query
+// rewrite.
 
 func TestRunSearch_FindsByKeyword(t *testing.T) {
 	t.Parallel()
@@ -400,27 +342,23 @@ func TestRunSearch_DedupePrefersHookTransport(t *testing.T) {
 	s, _ := seedStore(t)
 	sessionID, hookID, importID := seedDuplicateTurn(t, s)
 
-	// To prove which survived, pull the row directly via the deduped
-	// query path. The deduped result should correspond to the hook
-	// row's ts_source_ms, not the import's (50ms later).
-	var tsSrcMs int64
-	opts := SearchOptions{Query: "duplicated", Limit: 1}
-	sqlText, args := buildSearchSQL(opts)
-	row := s.DB().QueryRow(sqlText, args...)
-	var sess, kind string
-	var cwd, content *string
-	if err := row.Scan(&sess, &kind, &cwd, &tsSrcMs, &content); err != nil {
-		t.Fatalf("scan: %v", err)
+	// Drive the real SearchEvents path the CLI uses. The deduped
+	// row should be the hook event, whose ts_source_ms ends in :000;
+	// the import was +50ms.
+	hits, err := store.SearchEvents(t.Context(), s.DB(), store.SearchEventOpts{
+		Query: "duplicated", Limit: 1,
+	})
+	if err != nil {
+		t.Fatalf("SearchEvents: %v", err)
 	}
-
-	// Hook event had ts = 2026-04-24T12:00:00.000Z; import was +50ms.
-	// Milliseconds ending in 000 means hook was kept.
-	if tsSrcMs%1000 != 0 {
-		t.Errorf("dedupe picked the import row (ts_ms=%d); hook was expected", tsSrcMs)
+	if len(hits) != 1 {
+		t.Fatalf("dedup: got %d hits, want 1", len(hits))
 	}
-	// And the session_id should match our derived one.
-	if sess != sessionID {
-		t.Errorf("session_id: got %q, want %q", sess, sessionID)
+	if hits[0].TsSourceMs%1000 != 0 {
+		t.Errorf("dedupe picked the import row (ts_ms=%d); hook was expected", hits[0].TsSourceMs)
+	}
+	if hits[0].SessionID != sessionID {
+		t.Errorf("session_id: got %q, want %q", hits[0].SessionID, sessionID)
 	}
 
 	// Sanity: both events exist in the raw table (we haven't deleted
@@ -505,21 +443,3 @@ func TestTruncateSnippet_LongText(t *testing.T) {
 
 // compile-time sanity: SearchOptions zero value works.
 var _ = SearchOptions{}
-
-// deref helper from search.go must handle sql.NullString wrappers
-// correctly via *string. Dummy test confirms the shape.
-func TestDeref(t *testing.T) {
-	t.Parallel()
-	if deref(nil) != "" {
-		t.Error("nil → empty")
-	}
-	s := "x"
-	if deref(&s) != "x" {
-		t.Error("*string → value")
-	}
-}
-
-// suppressUnusedLinterWhenPackageShrinks ensures database/sql is
-// referenced even in a future where search_test.go is the only file
-// using it (unlikely but keeps lint from complaining in rewrites).
-var _ sql.NullString

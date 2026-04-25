@@ -99,52 +99,28 @@ func searchEventsHandler(st *store.Store) ToolHandler {
 			}
 		}
 
-		// Reuse the deduped SQL shape so tools/search and CLI/search
-		// return consistent rows. Duplicating the SQL here keeps the
-		// mcp package free of a cli/* import cycle.
-		rows, err := st.DB().QueryContext(ctx, `
-			WITH matched AS (
-				SELECT e.session_id, e.kind, e.role, e.cwd, e.ts_source_ms, e.content_text,
-					ROW_NUMBER() OVER (
-						PARTITION BY e.session_id, e.role, e.kind, COALESCE(e.content_text, e.rowid)
-						ORDER BY e.rowid
-					) AS rn
-				FROM events_fts
-				JOIN events e ON e.rowid = events_fts.rowid
-				WHERE events_fts MATCH ?
-			)
-			SELECT session_id, kind, ts_source_ms, content_text
-			FROM matched
-			WHERE rn = 1
-			ORDER BY ts_source_ms DESC
-			LIMIT ?`, ftsQuery, req.Limit)
+		hits, err := store.SearchEvents(ctx, st.DB(), store.SearchEventOpts{
+			Query: ftsQuery,
+			Limit: req.Limit,
+			// MCP defaults to chronological — an agent asking
+			// "did I work on X recently?" wants newest first.
+			Order: store.OrderRecency,
+		})
 		if err != nil {
 			return nil, &Error{Code: InternalError, Message: "search_events: query: " + err.Error()}
 		}
-		defer func() { _ = rows.Close() }()
 
-		var b strings.Builder
-		hits := 0
-		for rows.Next() {
-			var sessID, kind string
-			var tsMs int64
-			var content sql.NullString
-			if err := rows.Scan(&sessID, &kind, &tsMs, &content); err != nil {
-				return nil, &Error{Code: InternalError, Message: "search_events: scan: " + err.Error()}
-			}
-			fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n",
-				first8(sessID),
-				formatTS(tsMs),
-				kind,
-				oneLineSnippet(content),
-			)
-			hits++
-		}
-		if err := rows.Err(); err != nil {
-			return nil, &Error{Code: InternalError, Message: "search_events: rows: " + err.Error()}
-		}
-		if hits == 0 {
+		if len(hits) == 0 {
 			return TextResult("(no hits)"), nil
+		}
+		var b strings.Builder
+		for _, h := range hits {
+			fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n",
+				first8(h.SessionID),
+				formatTS(h.TsSourceMs),
+				h.Kind,
+				oneLineSnippet(h.Content),
+			)
 		}
 		return TextResult(b.String()), nil
 	}

@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -132,6 +134,10 @@ type SearchHitJSON struct {
 // internal/searchquery before it ever reaches SQLite. Callers should
 // not pre-escape — that's the parser's job.
 //
+// SQL composition lives in internal/store/search.go; this function
+// is just the CLI's translation between SearchOptions (cobra flags)
+// and store.SearchEventOpts plus the formatting layer.
+//
 // Format=table renders aligned columns (header + tab-separated rows
 // fed through tabwriter), with a "(no hits)" line on an empty result.
 // Format=json emits a JSON array of SearchHitJSON values for jq.
@@ -144,42 +150,32 @@ func RunSearch(s *store.Store, opts SearchOptions, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("parse query: %w", err)
 	}
-	opts.Query = fts
 
-	sqlText, args := buildSearchSQL(opts)
-	rows, err := s.DB().Query(sqlText, args...)
+	hits, err := store.SearchEvents(context.Background(), s.DB(), store.SearchEventOpts{
+		Query:     fts,
+		Kind:      opts.Kind,
+		SessionID: opts.SessionID,
+		SinceMs:   opts.SinceMs,
+		Limit:     opts.Limit,
+		NoDedup:   opts.NoDedup,
+		// CLI defaults to FTS rank ordering (most relevant first);
+		// recency-boosted scoring lands in a follow-up commit.
+		Order: store.OrderRank,
+	})
 	if err != nil {
-		return fmt.Errorf("search query: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	type rawHit struct {
-		sessionID, kind string
-		cwd, content    *string
-		tsSourceMs      int64
-	}
-	var hits []rawHit
-	for rows.Next() {
-		var h rawHit
-		if err := rows.Scan(&h.sessionID, &h.kind, &h.cwd, &h.tsSourceMs, &h.content); err != nil {
-			return fmt.Errorf("scan row: %w", err)
-		}
-		hits = append(hits, h)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate rows: %w", err)
+		return err
 	}
 
 	if opts.Format == FormatJSON {
 		payload := make([]SearchHitJSON, 0, len(hits))
 		for _, h := range hits {
-			full := deref(h.content)
+			full := nullStringValue(h.Content)
 			snippet, truncated := snippetWithTruncation(full)
 			payload = append(payload, SearchHitJSON{
-				SessionID:  h.sessionID,
-				Kind:       h.kind,
-				Cwd:        deref(h.cwd),
-				TsSourceMs: h.tsSourceMs,
+				SessionID:  h.SessionID,
+				Kind:       h.Kind,
+				Cwd:        nullStringValue(h.Cwd),
+				TsSourceMs: h.TsSourceMs,
 				Snippet:    snippet,
 				Truncated:  truncated,
 			})
@@ -198,13 +194,24 @@ func RunSearch(s *store.Store, opts SearchOptions, out io.Writer) error {
 		return err
 	}
 	for _, h := range hits {
-		_, _ = fmt.Fprintln(tw, formatHit(h.sessionID, h.kind, deref(h.cwd), h.tsSourceMs, deref(h.content)))
+		_, _ = fmt.Fprintln(tw, formatHit(h.SessionID, h.Kind,
+			nullStringValue(h.Cwd), h.TsSourceMs, nullStringValue(h.Content)))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
 	}
 	_, err = io.Copy(out, &buf)
 	return err
+}
+
+// nullStringValue returns the string content of a sql.NullString, or
+// empty if NULL. Mirrors the old `deref` helper that operated on
+// *string.
+func nullStringValue(n sql.NullString) string {
+	if !n.Valid {
+		return ""
+	}
+	return n.String
 }
 
 // snippetWithTruncation returns (snippet, truncated). Same rune cap
@@ -221,80 +228,6 @@ func snippetWithTruncation(s string) (string, bool) {
 		return flat, false
 	}
 	return string(runes[:maxSnippetRunes]), true
-}
-
-// buildSearchSQL composes the SQL + args for a SearchOptions value.
-// Factored out so tests can exercise composition without touching SQLite.
-//
-// Default behavior wraps the base FTS result in a CTE + ROW_NUMBER
-// window so logical turns captured through multiple sources (hook +
-// transcript) collapse to one row per (session_id, role, kind,
-// content_text). transport='hook' wins within each partition, then
-// FTS rank breaks ties. ShowAll skips the wrapper and returns every
-// row — useful for auditing what's actually in the store.
-func buildSearchSQL(opts SearchOptions) (string, []any) {
-	var filter strings.Builder
-	args := []any{opts.Query}
-
-	if opts.Kind != "" {
-		filter.WriteString(` AND e.kind = ?`)
-		args = append(args, opts.Kind)
-	}
-	if opts.SessionID != "" {
-		filter.WriteString(` AND e.session_id = ?`)
-		args = append(args, opts.SessionID)
-	}
-	if opts.SinceMs > 0 {
-		filter.WriteString(` AND e.ts_source_ms >= ?`)
-		args = append(args, opts.SinceMs)
-	}
-
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 20
-	}
-
-	if opts.NoDedup {
-		sql := `SELECT e.session_id, e.kind, e.cwd, e.ts_source_ms, e.content_text
-			FROM events_fts f JOIN events e ON e.rowid = f.rowid
-			WHERE events_fts MATCH ?` + filter.String() + `
-			ORDER BY rank LIMIT ?`
-		args = append(args, limit)
-		return sql, args
-	}
-
-	// Deduped path. COALESCE on content_text so NULL partitions don't
-	// collapse into a single group. Kind is included so tool_use and
-	// assistant_message of a turn stay distinct even if they share
-	// (session_id, role, content).
-	sql := `WITH matched AS (
-			SELECT e.rowid, e.session_id, e.role, e.kind, e.cwd,
-				e.ts_source_ms, e.content_text, e.source_agent,
-				(CASE
-					WHEN json_extract(r.envelope_json, '$.transport') = 'hook'
-					THEN 0 ELSE 1
-				END) AS transport_rank,
-				f.rank AS fts_rank
-			FROM events_fts f
-			JOIN events e         ON e.rowid = f.rowid
-			JOIN raw_envelopes r  ON r.event_id = e.event_id
-			WHERE events_fts MATCH ?` + filter.String() + `
-		),
-		ranked AS (
-			SELECT *,
-				ROW_NUMBER() OVER (
-					PARTITION BY session_id, role, kind, COALESCE(content_text, rowid)
-					ORDER BY transport_rank, fts_rank, rowid
-				) AS rn
-			FROM matched
-		)
-		SELECT session_id, kind, cwd, ts_source_ms, content_text
-		FROM ranked
-		WHERE rn = 1
-		ORDER BY fts_rank
-		LIMIT ?`
-	args = append(args, limit)
-	return sql, args
 }
 
 // formatHit renders one row as a tab-separated line. Column alignment
@@ -324,11 +257,4 @@ func truncateSnippet(s string) string {
 		return s
 	}
 	return string(runes[:maxSnippetRunes]) + "…"
-}
-
-func deref(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
 }
