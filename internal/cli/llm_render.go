@@ -6,10 +6,28 @@ import (
 	"io"
 	"strings"
 
+	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
 )
+
+// llmConfigFromFile translates the file-shaped config.LLM into the
+// runtime-shaped llm.Config that the llm package's FromConfig expects.
+// Lives in the cli package so the llm package never imports config —
+// keeps the layering one-way and the llm package independently
+// testable without touching TOML.
+func llmConfigFromFile(in config.LLM) llm.Config {
+	return llm.Config{
+		Provider: llm.Provider(strings.ToLower(strings.TrimSpace(in.Provider))),
+		Anthropic: llm.ProviderConfig{
+			APIKeyCommand: in.Anthropic.APIKeyCommand,
+		},
+		OpenAI: llm.ProviderConfig{
+			APIKeyCommand: in.OpenAI.APIKeyCommand,
+		},
+	}
+}
 
 // parseToolResult unmarshals the first tool_use block in resp into
 // target, but only when its name matches toolName. Returns an error

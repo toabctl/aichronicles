@@ -62,13 +62,14 @@ func newProposeCmd() *cobra.Command {
 			if cfgErr != nil {
 				return cfgErr
 			}
+			llmCfg := llmConfigFromFile(cfg.LLM)
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), metaLLMTimeout)
 			defer cancel()
 
 			_, err = RunPropose(ctx, s,
 				func() (llm.Client, error) {
-					return llm.FromEnvOrCommand(ctx, cfg.LLM.Anthropic.APIKeyCommand)
+					return llm.FromConfig(ctx, llmCfg)
 				},
 				ProposeOptions{Since: since, Limit: limit, Model: model, Force: force, JSON: jsonOut},
 				cmd.OutOrStdout())
