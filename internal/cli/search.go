@@ -287,7 +287,7 @@ func buildSearchSQL(opts SearchOptions) (string, []any) {
 // is handled by the tabwriter in RunSearch; this function only
 // prepares the cells.
 func formatHit(sessionID, kind, cwd string, tsSourceMs int64, content string) string {
-	ts := time.UnixMilli(tsSourceMs).UTC().Format("2006-01-02T15:04:05Z")
+	ts := formatTimeForUser(tsSourceMs, time.Now())
 	sess := sessionID
 	if len(sess) > 8 {
 		sess = sess[:8]

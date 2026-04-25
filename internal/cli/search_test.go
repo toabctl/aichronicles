@@ -193,20 +193,18 @@ func TestRunSearch_RespectsSessionFilter(t *testing.T) {
 		t.Fatalf("RunSearch: %v", err)
 	}
 	got := out.String()
-	// Should only include hits from sess-foo (prefix match in column 2).
-	// Skip the header line. tabwriter pads with spaces; split on
-	// 2-or-more whitespace to reach the second column robustly.
+	// Should only include hits from sess-foo. Skip the header line and
+	// the empty-state line; the timestamp column now contains its own
+	// spaces (relative form), so look for the session-prefix substring
+	// rather than parsing column-by-column.
 	lines := strings.Split(strings.TrimSpace(got), "\n")
+	prefix := sessFooID[:8]
 	for i, line := range lines {
 		if i == 0 || line == "" {
 			continue
 		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			t.Fatalf("malformed line: %q", line)
-		}
-		if !strings.HasPrefix(sessFooID, fields[1]) {
-			t.Errorf("hit from wrong session: line=%q sess_prefix=%q", line, fields[1])
+		if !strings.Contains(line, prefix) {
+			t.Errorf("hit from wrong session: line=%q want session prefix %q", line, prefix)
 		}
 	}
 }

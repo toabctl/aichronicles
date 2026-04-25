@@ -234,7 +234,7 @@ func writeSummaries(w io.Writer, rows []store.LLMOutput, format OutputFormat) er
 		if r.SessionID.Valid && r.SessionID.String != "" {
 			sess = shortSessionID(r.SessionID.String)
 		}
-		when := time.UnixMilli(r.CreatedAtMs).UTC().Format("2006-01-02 15:04")
+		when := formatTimeForUser(r.CreatedAtMs, time.Now())
 		if _, err := fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n",
 			r.ID, r.Kind, sess, when, topic); err != nil {
 			return err

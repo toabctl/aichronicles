@@ -252,7 +252,7 @@ func formatTsNullable(n sql.NullInt64) string {
 	if !n.Valid {
 		return "-"
 	}
-	return time.UnixMilli(n.Int64).UTC().Format("2006-01-02T15:04:05Z")
+	return formatTimeForUser(n.Int64, time.Now())
 }
 
 func nullStringOrDash(s sql.NullString) string {
