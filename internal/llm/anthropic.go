@@ -1,84 +1,80 @@
 package llm
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"math/rand/v2"
 	"net/http"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	anthropicsdk "github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/anthropics/anthropic-sdk-go/packages/param"
 
 	"github.com/toabctl/aichronicles/internal/redact"
 )
 
 // AnthropicEndpoint is the Messages API URL. Exported so tests can
-// override it to point at httptest.
+// override it via Anthropic.Endpoint to point at httptest.
 const AnthropicEndpoint = "https://api.anthropic.com/v1/messages"
-
-// AnthropicAPIVersion is pinned at the version we've tested against.
-// Older versions dropped or renamed fields we depend on; newer versions
-// should be adopted with an explicit bump rather than "whatever today's
-// default is".
-const AnthropicAPIVersion = "2023-06-01"
 
 // DefaultAnthropicModel is the identifier Block B features fall back
 // to when the user has not specified one. Kept conservative; callers
 // can override per-request via Request.Model.
 const DefaultAnthropicModel = "claude-sonnet-4-6"
 
-// DefaultMaxRetries is the number of retry attempts Complete will make
-// on top of the initial request when the provider returns a retryable
-// status (429 or 5xx) or the network call fails. Total attempts =
-// initial + DefaultMaxRetries. A budget of 3 survives a brief 429 or
-// transient upstream hiccup without turning a flaky API into hangs.
+// DefaultMaxRetries is the retry budget the SDK is configured with
+// when a caller leaves Anthropic.MaxRetries at zero. The SDK's own
+// default is 2; we bump to 3 because Block B features (summarize,
+// reflect, propose) are interactive and a brief 429 mid-business-day
+// shouldn't bubble up to the user. Set Anthropic.MaxRetries < 0 to
+// disable retries.
 const DefaultMaxRetries = 3
 
-// defaultRetryBaseDelay is the first-retry wait before jitter. Each
-// subsequent retry doubles until defaultRetryMaxDelay. A server-sent
-// Retry-After (seconds or HTTP-date) overrides this entirely, capped
-// at defaultRetryMaxDelay so a hostile upstream can't pin us.
-const (
-	defaultRetryBaseDelay = 500 * time.Millisecond
-	defaultRetryMaxDelay  = 10 * time.Second
-)
-
-// Anthropic is a Client that talks to the Anthropic Messages API.
-// Safe for concurrent use: http.Client is goroutine-safe and this
-// struct holds no other state that mutates after construction.
-type Anthropic struct {
-	APIKey   string
-	Endpoint string       // overridable for tests; empty means AnthropicEndpoint
-	HTTP     *http.Client // optional; nil means a sensible default
-
-	// MaxRetries overrides DefaultMaxRetries. Zero uses the default;
-	// set negative to disable retries entirely (useful for tests that
-	// want to assert a single attempt).
-	MaxRetries int
-
-	// RetryBaseDelay overrides defaultRetryBaseDelay. Zero uses the
-	// default. Tests set this small (e.g., 1ms) so the retry loop
-	// does not wait real wall-clock time.
-	RetryBaseDelay time.Duration
-}
-
 // APIKeyEnv is the environment variable the CLI subcommands (and
-// `FromEnv`) read when wiring up a production Anthropic client.
+// FromEnv) read when wiring up a production Anthropic client.
 // Exported so user-facing docs can reference it without hard-coding
 // the string.
 const APIKeyEnv = "ANTHROPIC_API_KEY"
 
+// Anthropic is a Client backed by the official anthropic-sdk-go.
+// Safe for concurrent use: the SDK client is built once via sdkOnce
+// and reused across calls. Tests construct an Anthropic{} literal
+// and override Endpoint/HTTP to point at httptest; production code
+// goes through NewAnthropic / FromEnv / FromEnvOrCommand.
+type Anthropic struct {
+	// APIKey is the credential header value. Required; the SDK
+	// rejects empty.
+	APIKey string
+
+	// Endpoint, when non-empty, overrides the SDK's default base
+	// URL. Used by tests to point at httptest.NewServer.
+	Endpoint string
+
+	// HTTP, when non-nil, replaces the SDK's default *http.Client.
+	// Tests use httptest.Server.Client() so test certs validate
+	// cleanly; production callers leave this nil.
+	HTTP *http.Client
+
+	// MaxRetries overrides DefaultMaxRetries. Zero uses the default;
+	// negative disables retries (one attempt only).
+	MaxRetries int
+
+	sdkOnce   sync.Once
+	sdkClient anthropicsdk.Client
+}
+
+// keyCommandTimeout caps how long we'll wait for the user's shell
+// command to produce the API key.
+const keyCommandTimeout = 10 * time.Second
+
 // FromEnv returns a production Anthropic client built from
-// $ANTHROPIC_API_KEY. Returns a non-nil error when the env var is
-// missing; callers in CLI-land surface that as a user-facing error.
-// Tests wanting a different key path should use t.Setenv or construct
-// NewAnthropic directly rather than calling through here.
+// $ANTHROPIC_API_KEY. Errors when the env var is missing.
 func FromEnv() (Client, error) {
 	key := os.Getenv(APIKeyEnv)
 	if key == "" {
@@ -87,26 +83,11 @@ func FromEnv() (Client, error) {
 	return NewAnthropic(key), nil
 }
 
-// keyCommandTimeout caps how long we'll wait for the user's shell
-// command to produce the API key. Keyrings usually answer in ms; a
-// hung `secret-tool` waiting on a locked keyring should fail fast so
-// the user sees an error rather than an apparently-hung CLI.
-const keyCommandTimeout = 10 * time.Second
-
 // FromEnvOrCommand returns a Client whose key comes from
 // $ANTHROPIC_API_KEY, or — when that is empty — from the stdout of
-// `/bin/sh -c <command>`. An empty command combined with an empty
-// env yields the same "not set" error FromEnv does.
-//
-// Trailing whitespace is stripped from the command output. Empty
-// output is rejected — a command that fails to produce a key should
-// error visibly, not hand us an empty string that the API will
-// 401 on later.
-//
-// Stderr from the command is discarded. This is deliberate: some
-// keyring tools write informational prompts to stderr, and we do
-// not want to risk echoing a partial key there either. The user can
-// debug their command outside aichronicles if it misbehaves.
+// `/bin/sh -c <command>`. Empty env + empty command yields the same
+// "not set" error FromEnv does. Stderr from the command is discarded
+// so chatty keyring prompts don't corrupt the resolve.
 func FromEnvOrCommand(ctx context.Context, command string) (Client, error) {
 	if key := os.Getenv(APIKeyEnv); key != "" {
 		return NewAnthropic(key), nil
@@ -122,8 +103,7 @@ func FromEnvOrCommand(ctx context.Context, command string) (Client, error) {
 }
 
 // runKeyCommand executes command via `/bin/sh -c` and returns the
-// trimmed stdout. Exported only via FromEnvOrCommand; direct callers
-// should go through that so the env-first shortcut applies.
+// trimmed stdout.
 func runKeyCommand(parent context.Context, command string) (string, error) {
 	ctx, cancel := context.WithTimeout(parent, keyCommandTimeout)
 	defer cancel()
@@ -147,27 +127,53 @@ func runKeyCommand(parent context.Context, command string) (string, error) {
 	return key, nil
 }
 
-// NewAnthropic returns a Client ready to hit production. The API key
-// is required; an empty string is rejected at call time, not here,
-// so tests that never actually issue a request can skip wiring one up.
+// NewAnthropic returns a Client ready to hit production. Empty key
+// is rejected at call time, not here, so test fixtures that never
+// issue requests can skip wiring one up.
 func NewAnthropic(apiKey string) *Anthropic {
-	return &Anthropic{
-		APIKey: apiKey,
-		HTTP: &http.Client{
-			// Summaries + reflections can take tens of seconds at
-			// the API end. 2 minutes is generous; the caller can set
-			// a tighter context deadline if they want to cap faster.
-			Timeout: 2 * time.Minute,
-		},
-	}
+	return &Anthropic{APIKey: apiKey}
 }
 
-// Complete issues a Messages API call and returns the reply text plus
-// token usage. Retries on 429 and 5xx using exponential backoff with
-// jitter; a server-sent Retry-After header (seconds or HTTP-date)
-// overrides the computed delay. Network errors retry the same way.
-// The ctx deadline is honored both during I/O and during backoff —
-// the loop aborts as soon as ctx is done.
+// ensureSDK lazily constructs the SDK client into a.sdkClient. Built
+// once per Anthropic instance; subsequent mutations to APIKey/
+// Endpoint/HTTP/MaxRetries are NOT picked up — same shape as the
+// previous hand-rolled client. Tests construct fresh instances per
+// case.
+//
+// Stored on the struct (rather than returned) so callers can call
+// methods with pointer receivers like `a.sdkClient.Messages.New(...)`
+// — the SDK's MessageService.New takes a pointer receiver, which
+// requires an addressable value (a struct field qualifies; a
+// returned value does not).
+func (a *Anthropic) ensureSDK() {
+	a.sdkOnce.Do(func() {
+		var opts []option.RequestOption
+		opts = append(opts, option.WithAPIKey(a.APIKey))
+		if a.Endpoint != "" {
+			opts = append(opts, option.WithBaseURL(a.Endpoint))
+		}
+		if a.HTTP != nil {
+			opts = append(opts, option.WithHTTPClient(a.HTTP))
+		}
+		retries := a.MaxRetries
+		if retries == 0 {
+			retries = DefaultMaxRetries
+		}
+		if retries < 0 {
+			retries = 0
+		}
+		opts = append(opts, option.WithMaxRetries(retries))
+		a.sdkClient = anthropicsdk.NewClient(opts...)
+	})
+}
+
+// Complete issues a Messages API call via the SDK and translates the
+// reply into the provider-neutral Response. Retries (429 + 5xx +
+// 408 + 409, with Retry-After honored) are handled internally by
+// the SDK using the budget configured in sdk(). Errors from the
+// upstream are scrubbed through redact.Outbound before being
+// returned, so a misconfigured 401 echoing the API key never lands
+// in a log line.
 func (a *Anthropic) Complete(ctx context.Context, req Request) (*Response, error) {
 	if a.APIKey == "" {
 		return nil, errors.New("anthropic: API key not set (expected in ANTHROPIC_API_KEY)")
@@ -181,187 +187,23 @@ func (a *Anthropic) Complete(ctx context.Context, req Request) (*Response, error
 		model = DefaultAnthropicModel
 	}
 
-	body, err := buildAnthropicBody(req, model)
+	params, err := buildAnthropicParams(req, model)
 	if err != nil {
 		return nil, err
 	}
 
-	endpoint := a.Endpoint
-	if endpoint == "" {
-		endpoint = AnthropicEndpoint
-	}
-
-	client := a.HTTP
-	if client == nil {
-		client = http.DefaultClient
-	}
-
-	maxRetries := a.MaxRetries
-	if maxRetries == 0 {
-		maxRetries = DefaultMaxRetries
-	}
-	if maxRetries < 0 {
-		maxRetries = 0
-	}
-
-	var lastErr error
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		resp, err := a.doOnce(ctx, client, endpoint, body)
-		switch {
-		case err == nil && resp != nil && isRetryableStatus(resp.status):
-			scrubbed, _ := redact.Outbound(truncate(resp.body, 1024))
-			lastErr = fmt.Errorf("anthropic: status %d: %s", resp.status, scrubbed)
-			if attempt == maxRetries {
-				return nil, lastErr
-			}
-			delay := retryDelay(resp.retryAfter, attempt, a.RetryBaseDelay)
-			if err := sleepCtx(ctx, delay); err != nil {
-				return nil, err
-			}
-			continue
-		case err == nil && resp != nil && (resp.status < 200 || resp.status >= 300):
-			scrubbed, _ := redact.Outbound(truncate(resp.body, 1024))
-			return nil, fmt.Errorf("anthropic: status %d: %s", resp.status, scrubbed)
-		case err == nil && resp != nil:
-			return parseAnthropicResponse(resp.body, model)
-		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
-			return nil, err
-		default:
-			// Transport-level failure (DNS, connection reset, TLS…)
-			// — treat as retryable.
-			lastErr = err
-			if attempt == maxRetries {
-				return nil, lastErr
-			}
-			delay := retryDelay("", attempt, a.RetryBaseDelay)
-			if sleepErr := sleepCtx(ctx, delay); sleepErr != nil {
-				return nil, sleepErr
-			}
-		}
-	}
-	// Exhausted retries.
-	return nil, lastErr
-}
-
-// attemptResult is the successful-I/O shape returned by doOnce: the
-// status, the fully-read body, and the raw Retry-After header if set.
-// We return the body instead of an open reader so the retry loop can
-// inspect status + body after the connection has closed.
-type attemptResult struct {
-	status     int
-	body       []byte
-	retryAfter string
-}
-
-// doOnce performs exactly one HTTP attempt. Network / request-build
-// errors come back as the second return. A non-2xx status is NOT an
-// error here — the caller decides whether to retry based on the
-// status code.
-func (a *Anthropic) doOnce(ctx context.Context, client *http.Client, endpoint string, body []byte) (*attemptResult, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	a.ensureSDK()
+	msg, err := a.sdkClient.Messages.New(ctx, params)
 	if err != nil {
-		return nil, fmt.Errorf("anthropic: build request: %w", err)
+		return nil, scrubAnthropicError(err)
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", a.APIKey)
-	httpReq.Header.Set("anthropic-version", AnthropicAPIVersion)
 
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("anthropic: http: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
-	if err != nil {
-		return nil, fmt.Errorf("anthropic: read response: %w", err)
-	}
-	return &attemptResult{
-		status:     resp.StatusCode,
-		body:       respBody,
-		retryAfter: resp.Header.Get("Retry-After"),
-	}, nil
-}
-
-// isRetryableStatus reports whether a response status code justifies a
-// retry. 429 is the rate-limit signal; any 5xx is "server's problem,
-// may clear up". 4xx other than 429 is a client bug — retrying won't
-// help, so we don't.
-func isRetryableStatus(code int) bool {
-	return code == http.StatusTooManyRequests || code >= 500
-}
-
-// retryDelay picks the next backoff duration. If the server sent a
-// Retry-After we honor it (capped at defaultRetryMaxDelay so a hostile
-// upstream can't pin us). Otherwise we use exponential backoff with
-// ±25% jitter so a swarm of clients doesn't synchronize on retry.
-func retryDelay(retryAfter string, attempt int, base time.Duration) time.Duration {
-	if d, ok := parseRetryAfter(retryAfter, time.Now()); ok {
-		if d > defaultRetryMaxDelay {
-			d = defaultRetryMaxDelay
-		}
-		if d < 0 {
-			d = 0
-		}
-		return d
-	}
-	if base <= 0 {
-		base = defaultRetryBaseDelay
-	}
-	// Exponential: base, base*2, base*4, …
-	shift := attempt
-	if shift > 10 {
-		shift = 10 // guard against absurd attempt counts
-	}
-	d := base << shift
-	if d > defaultRetryMaxDelay {
-		d = defaultRetryMaxDelay
-	}
-	// ±25% jitter — rand.Float64() is fine here, we don't need crypto.
-	jitter := 1 + (rand.Float64()*0.5 - 0.25)
-	return time.Duration(float64(d) * jitter)
-}
-
-// parseRetryAfter accepts both RFC 7231 forms: an integer number of
-// seconds, or an HTTP-date. `now` is injectable so the HTTP-date branch
-// is deterministically testable.
-func parseRetryAfter(v string, now time.Time) (time.Duration, bool) {
-	if v == "" {
-		return 0, false
-	}
-	if secs, err := strconv.Atoi(v); err == nil {
-		return time.Duration(secs) * time.Second, true
-	}
-	if t, err := http.ParseTime(v); err == nil {
-		return t.Sub(now), true
-	}
-	return 0, false
-}
-
-// sleepCtx waits for d or ctx.Done, whichever comes first. A
-// non-positive d returns immediately (subject to ctx).
-func sleepCtx(ctx context.Context, d time.Duration) error {
-	if d <= 0 {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			return nil
-		}
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-t.C:
-		return nil
-	}
+	return convertAnthropicMessage(msg, model), nil
 }
 
 // validateRequest enforces the small set of invariants we care about
 // pre-flight. Provider-specific validation (e.g. role alternation)
-// happens at encode time.
+// happens at encode time inside the SDK.
 func validateRequest(req Request) error {
 	if len(req.Messages) == 0 {
 		return errors.New("Request.Messages is empty")
@@ -383,160 +225,148 @@ func validateRequest(req Request) error {
 	return nil
 }
 
-// --- wire types for Anthropic's Messages API ---
-
-// anthropicBody is the request payload. `System` uses the blocks form
-// (not the legacy top-level string) so we can attach cache_control
-// for prompt caching — Block B's system prompts are hardcoded constants
-// reused across every summarize/reflect/propose call, so the input-
-// token cost drops by ~90% on cache hits. The hash in prompts.go
-// deliberately keys on the system string (not the wire block form)
-// so the cache behavior is transparent to callers.
-type anthropicBody struct {
-	Model      string               `json:"model"`
-	MaxTokens  int                  `json:"max_tokens"`
-	System     []systemBlock        `json:"system,omitempty"`
-	Messages   []anthropicMessage   `json:"messages"`
-	Tools      []anthropicTool      `json:"tools,omitempty"`
-	ToolChoice *anthropicToolChoice `json:"tool_choice,omitempty"`
-}
-
-// anthropicTool is one entry of the request `tools` array. The
-// schema field name is `input_schema` on the wire (not `inputSchema`).
-type anthropicTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema"`
-}
-
-// anthropicToolChoice forces a specific tool call. Type is always
-// "tool" for our callers — "auto" and "any" are unused today.
-type anthropicToolChoice struct {
-	Type string `json:"type"`
-	Name string `json:"name"`
-}
-
-// systemBlock is one entry in the Messages API `system` array. We only
-// ever emit a single text block today; the type exists because
-// cache_control attaches at the block level.
-type systemBlock struct {
-	Type         string        `json:"type"`
-	Text         string        `json:"text"`
-	CacheControl *cacheControl `json:"cache_control,omitempty"`
-}
-
-// cacheControl = {"type":"ephemeral"} is the Anthropic prompt-cache
-// directive. Ephemeral caches live ~5 minutes and are keyed by the
-// exact block content. We only attach it to the system block, which
-// is the one part of the prompt that is identical across calls.
-type cacheControl struct {
-	Type string `json:"type"`
-}
-
-type anthropicMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type anthropicResponse struct {
-	ID      string             `json:"id"`
-	Model   string             `json:"model"`
-	Content []anthropicContent `json:"content"`
-	Usage   anthropicUsage     `json:"usage"`
-}
-
-// anthropicContent models one content block in the response. Text
-// blocks populate Text; tool_use blocks populate ID, Name, and Input
-// (the model's JSON arguments). Blocks of other types are ignored.
-type anthropicContent struct {
-	Type  string          `json:"type"`
-	Text  string          `json:"text,omitempty"`
-	ID    string          `json:"id,omitempty"`
-	Name  string          `json:"name,omitempty"`
-	Input json.RawMessage `json:"input,omitempty"`
-}
-
-type anthropicUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
-}
-
-func buildAnthropicBody(req Request, model string) ([]byte, error) {
-	msgs := make([]anthropicMessage, len(req.Messages))
+// buildAnthropicParams maps our provider-neutral Request into the
+// SDK's MessageNewParams. The system prompt rides as a single text
+// block with cache_control=ephemeral so Anthropic's prompt cache
+// kicks in on repeats — Block B's system prompts are constants, so
+// every reuse within a 5-minute window is a cache hit on input
+// tokens. Empty Tools / ForceTool fields produce a wire body
+// without those keys, which matters for prompt-cache stability.
+func buildAnthropicParams(req Request, model string) (anthropicsdk.MessageNewParams, error) {
+	msgs := make([]anthropicsdk.MessageParam, len(req.Messages))
 	for i, m := range req.Messages {
-		msgs[i] = anthropicMessage{Role: string(m.Role), Content: m.Content}
-	}
-	var system []systemBlock
-	if req.System != "" {
-		system = []systemBlock{{
-			Type:         "text",
-			Text:         req.System,
-			CacheControl: &cacheControl{Type: "ephemeral"},
-		}}
-	}
-	var tools []anthropicTool
-	if len(req.Tools) > 0 {
-		tools = make([]anthropicTool, len(req.Tools))
-		for i, t := range req.Tools {
-			// anthropicTool has the same fields as Tool plus JSON
-			// tags; Go allows this conversion despite the tag
-			// difference (spec: field tags are ignored for struct
-			// conversions). Keeps us from drifting if either side
-			// gains a field.
-			tools[i] = anthropicTool(t)
+		switch m.Role {
+		case RoleUser:
+			msgs[i] = anthropicsdk.NewUserMessage(anthropicsdk.NewTextBlock(m.Content))
+		case RoleAssistant:
+			msgs[i] = anthropicsdk.NewAssistantMessage(anthropicsdk.NewTextBlock(m.Content))
+		default:
+			return anthropicsdk.MessageNewParams{}, fmt.Errorf("anthropic: unsupported role %q", m.Role)
 		}
 	}
-	var toolChoice *anthropicToolChoice
-	if req.ForceTool != "" {
-		toolChoice = &anthropicToolChoice{Type: "tool", Name: req.ForceTool}
+
+	params := anthropicsdk.MessageNewParams{
+		Model:     anthropicsdk.Model(model),
+		MaxTokens: int64(req.MaxTokens),
+		Messages:  msgs,
 	}
-	return json.Marshal(anthropicBody{
-		Model:      model,
-		MaxTokens:  req.MaxTokens,
-		System:     system,
-		Messages:   msgs,
-		Tools:      tools,
-		ToolChoice: toolChoice,
-	})
+
+	if req.System != "" {
+		params.System = []anthropicsdk.TextBlockParam{{
+			Text:         req.System,
+			CacheControl: anthropicsdk.NewCacheControlEphemeralParam(),
+		}}
+	}
+
+	if len(req.Tools) > 0 {
+		tools := make([]anthropicsdk.ToolUnionParam, 0, len(req.Tools))
+		for _, t := range req.Tools {
+			schema, err := toAnthropicToolSchema(t.InputSchema)
+			if err != nil {
+				return anthropicsdk.MessageNewParams{}, fmt.Errorf("anthropic: tool %q schema: %w", t.Name, err)
+			}
+			tp := anthropicsdk.ToolParam{
+				Name:        t.Name,
+				InputSchema: schema,
+			}
+			if t.Description != "" {
+				tp.Description = param.NewOpt(t.Description)
+			}
+			tools = append(tools, anthropicsdk.ToolUnionParam{OfTool: &tp})
+		}
+		params.Tools = tools
+	}
+
+	if req.ForceTool != "" {
+		params.ToolChoice = anthropicsdk.ToolChoiceParamOfTool(req.ForceTool)
+	}
+
+	return params, nil
 }
 
-func parseAnthropicResponse(body []byte, model string) (*Response, error) {
-	var r anthropicResponse
-	if err := json.Unmarshal(body, &r); err != nil {
-		return nil, fmt.Errorf("anthropic: decode response: %w", err)
+// toAnthropicToolSchema translates our raw json.RawMessage tool
+// schema into the SDK's typed ToolInputSchemaParam. Top-level
+// `properties` and `required` are extracted into named fields;
+// anything else (additionalProperties, $defs, etc.) lands in
+// ExtraFields so it round-trips. The schema's `type` key is dropped
+// because the SDK pins it to "object" — every tool we ship has
+// type:"object" anyway.
+func toAnthropicToolSchema(raw json.RawMessage) (anthropicsdk.ToolInputSchemaParam, error) {
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return anthropicsdk.ToolInputSchemaParam{}, err
 	}
-	var text bytes.Buffer
+	var schema anthropicsdk.ToolInputSchemaParam
+	if p, ok := m["properties"]; ok {
+		schema.Properties = p
+		delete(m, "properties")
+	}
+	if reqAny, ok := m["required"].([]any); ok {
+		for _, r := range reqAny {
+			if s, ok := r.(string); ok {
+				schema.Required = append(schema.Required, s)
+			}
+		}
+		delete(m, "required")
+	}
+	delete(m, "type") // SDK constant
+	if len(m) > 0 {
+		schema.ExtraFields = m
+	}
+	return schema, nil
+}
+
+// convertAnthropicMessage translates the SDK's *Message into our
+// provider-neutral Response. Text blocks concatenate (preserving
+// order) and tool_use blocks populate Response.ToolUses. Other
+// content types (thinking, server_tool_use, etc.) are ignored by
+// design — Block B does not negotiate them.
+func convertAnthropicMessage(msg *anthropicsdk.Message, requestedModel string) *Response {
+	if msg == nil {
+		return &Response{Model: requestedModel}
+	}
+	var text strings.Builder
 	var toolUses []ToolUse
-	for _, c := range r.Content {
-		switch c.Type {
+	for _, block := range msg.Content {
+		switch block.Type {
 		case "text":
-			text.WriteString(c.Text)
+			text.WriteString(block.Text)
 		case "tool_use":
 			toolUses = append(toolUses, ToolUse{
-				ID:    c.ID,
-				Name:  c.Name,
-				Input: c.Input,
+				ID:    block.ID,
+				Name:  block.Name,
+				Input: block.Input,
 			})
 		}
 	}
-	respModel := r.Model
+	respModel := string(msg.Model)
 	if respModel == "" {
-		respModel = model
+		respModel = requestedModel
 	}
 	return &Response{
 		Text:     text.String(),
 		Model:    respModel,
 		ToolUses: toolUses,
 		Usage: Usage{
-			InputTokens:  r.Usage.InputTokens,
-			OutputTokens: r.Usage.OutputTokens,
+			InputTokens:  int(msg.Usage.InputTokens),
+			OutputTokens: int(msg.Usage.OutputTokens),
 		},
-	}, nil
+	}
 }
 
-func truncate(b []byte, n int) string {
-	if len(b) <= n {
-		return string(b)
+// scrubAnthropicError wraps an SDK error so its message — which
+// includes the raw upstream response body for HTTP failures — never
+// echoes a leaked API key or other secret. We always run the
+// (truncated) message through redact.Outbound; secret detectors
+// rewrite anything that matches.
+func scrubAnthropicError(err error) error {
+	if err == nil {
+		return nil
 	}
-	return string(b[:n]) + "…"
+	msg := err.Error()
+	if len(msg) > 1024 {
+		msg = msg[:1024] + "…"
+	}
+	scrubbed, _ := redact.Outbound(msg)
+	return fmt.Errorf("anthropic: %s", scrubbed)
 }
