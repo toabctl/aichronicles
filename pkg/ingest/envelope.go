@@ -4,6 +4,13 @@
 //
 // This file is the authoritative Go source of truth. A mirror description
 // aimed at third-party agents lives in api/openapi.yaml; keep them in sync.
+//
+// Reuse: this package is the canonical wire schema. Third parties
+// building bridges, importers, or alternate clients should import
+// it directly to produce well-formed Envelopes the daemon will
+// accept. Schema is versioned via Envelope.V (currently 1); breaking
+// changes will bump the version and ship under /v2/ingest rather
+// than mutate v1.
 package ingest
 
 import (

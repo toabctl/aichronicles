@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/toabctl/aichronicles/internal/ingest"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/ingest"
 )
 
 // maxEnvelopeBytes caps the POST body we will read. Real hook

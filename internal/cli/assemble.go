@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/toabctl/aichronicles/internal/ingest"
+	"github.com/toabctl/aichronicles/pkg/ingest"
 )
 
 // claudeCodeAgent is the fixed source_agent slug for Claude Code hooks.

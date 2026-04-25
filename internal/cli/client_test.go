@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/toabctl/aichronicles/internal/ingest"
+	"github.com/toabctl/aichronicles/pkg/ingest"
 )
 
 // startUDSTestServer runs handler on a temp UDS and returns the socket

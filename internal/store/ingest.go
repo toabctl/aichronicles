@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/toabctl/aichronicles/internal/ingest"
-	"github.com/toabctl/aichronicles/internal/ingest/extract"
+	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/ingest/extract"
 )
 
 // ErrRedactionRequired is returned when an envelope reaches the store

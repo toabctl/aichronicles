@@ -18,7 +18,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/toabctl/aichronicles/internal/ingest"
+	"github.com/toabctl/aichronicles/pkg/ingest"
 )
 
 // Kind names for Extraction.Kind. Kept as exported constants so

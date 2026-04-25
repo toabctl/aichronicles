@@ -9,7 +9,7 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/toabctl/aichronicles/internal/ingest"
+	"github.com/toabctl/aichronicles/pkg/ingest"
 )
 
 // Client speaks to the aichroniclesd HTTP API over a Unix domain socket.

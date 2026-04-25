@@ -14,8 +14,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/toabctl/aichronicles/internal/ingest"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/ingest"
 )
 
 // openSeededStore writes a handful of events across two sessions so

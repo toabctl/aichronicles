@@ -10,9 +10,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/toabctl/aichronicles/internal/ingest"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/ingest"
 )
 
 // seedSummariesFixtures writes one of each kind so the list/show

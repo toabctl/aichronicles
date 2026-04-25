@@ -9,9 +9,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/config"
-	"github.com/toabctl/aichronicles/internal/ingest"
 	"github.com/toabctl/aichronicles/internal/notify"
 	"github.com/toabctl/aichronicles/internal/paths"
+	"github.com/toabctl/aichronicles/pkg/ingest"
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
 

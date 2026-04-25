@@ -5,7 +5,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/toabctl/aichronicles/internal/ingest"
+	"github.com/toabctl/aichronicles/pkg/ingest"
 )
 
 // kindValue is a compact (kind, value) pair used for assertion on

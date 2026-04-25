@@ -15,9 +15,9 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/cli"
 	"github.com/toabctl/aichronicles/internal/daemon"
-	"github.com/toabctl/aichronicles/internal/ingest"
 	"github.com/toabctl/aichronicles/internal/mcp"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/ingest"
 )
 
 // TestE2E_IngestSummarizeFetchViaMCP exercises Block A → B → C in a

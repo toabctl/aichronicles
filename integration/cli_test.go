@@ -12,8 +12,8 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/cli"
 	"github.com/toabctl/aichronicles/internal/daemon"
-	"github.com/toabctl/aichronicles/internal/ingest"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/ingest"
 )
 
 // isolateEnv scopes XDG + notification env so RunIngest never reads

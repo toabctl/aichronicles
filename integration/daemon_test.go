@@ -17,8 +17,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/daemon"
-	"github.com/toabctl/aichronicles/internal/ingest"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/ingest"
 )
 
 // spinDaemon wires up a fresh store + UDS listener and returns the
