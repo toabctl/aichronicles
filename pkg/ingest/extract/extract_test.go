@@ -287,11 +287,122 @@ func TestRegistry_EmptySliceYieldsEmpty(t *testing.T) {
 	}
 }
 
-// Compile-time confirmation the three exported extractors satisfy the
+// Compile-time confirmation the exported extractors satisfy the
 // Extractor function type. If someone ever changes a signature this
 // test file stops compiling.
 var (
 	_ Extractor = URLExtractor
 	_ Extractor = FilePathExtractor
 	_ Extractor = ShellCommandExtractor
+	_ Extractor = GrepExtractor
+	_ Extractor = GlobExtractor
+	_ Extractor = WebFetchExtractor
+	_ Extractor = WebSearchExtractor
 )
+
+func TestGrep_PatternOnlyExtracted(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool: &ingest.Tool{Name: "Grep"},
+		Payload: map[string]any{
+			"tool_input": map[string]any{"pattern": "TODO"},
+		},
+	}
+	got := toKV(FromEnvelope(env))
+	want := []kindValue{{KindGrepPattern, "TODO"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestGrep_PatternAndPathPathInExtra(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool: &ingest.Tool{Name: "Grep"},
+		Payload: map[string]any{
+			"tool_input": map[string]any{"pattern": "TODO", "path": "internal/"},
+		},
+	}
+	xs := FromEnvelope(env)
+	if len(xs) != 1 || xs[0].Kind != KindGrepPattern || xs[0].Value != "TODO" {
+		t.Fatalf("got %+v, want one grep_pattern with value TODO", xs)
+	}
+	if xs[0].Extra == nil || xs[0].Extra["path"] != "internal/" {
+		t.Errorf("extra.path: got %+v, want internal/", xs[0].Extra)
+	}
+}
+
+func TestGrep_NonGrepToolSkipped(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool: &ingest.Tool{Name: "Read"},
+		Payload: map[string]any{
+			"tool_input": map[string]any{"pattern": "should not extract"},
+		},
+	}
+	got := FromEnvelope(env)
+	for _, x := range got {
+		if x.Kind == KindGrepPattern {
+			t.Errorf("non-Grep tool should not produce grep_pattern, got %+v", x)
+		}
+	}
+}
+
+func TestGrep_MissingPatternSkipped(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool:    &ingest.Tool{Name: "Grep"},
+		Payload: map[string]any{"tool_input": map[string]any{}},
+	}
+	got := FromEnvelope(env)
+	if len(got) != 0 {
+		t.Errorf("expected no extractions, got %v", got)
+	}
+}
+
+func TestGlob_PatternExtracted(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool: &ingest.Tool{Name: "Glob"},
+		Payload: map[string]any{
+			"tool_input": map[string]any{"pattern": "**/*.go"},
+		},
+	}
+	got := toKV(FromEnvelope(env))
+	want := []kindValue{{KindGlobPattern, "**/*.go"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestWebFetch_URLExtractedAsKindURL(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool: &ingest.Tool{Name: "WebFetch"},
+		Payload: map[string]any{
+			"tool_input": map[string]any{"url": "https://example.com/x"},
+		},
+	}
+	got := toKV(FromEnvelope(env))
+	// WebFetch reuses KindURL so it joins the existing URL pool;
+	// snippets stay labelled `[url] ...` regardless of source.
+	want := []kindValue{{KindURL, "https://example.com/x"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestWebSearch_QueryExtracted(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool: &ingest.Tool{Name: "WebSearch"},
+		Payload: map[string]any{
+			"tool_input": map[string]any{"query": "Go FTS5 trigram"},
+		},
+	}
+	got := toKV(FromEnvelope(env))
+	want := []kindValue{{KindWebQuery, "Go FTS5 trigram"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
