@@ -126,35 +126,33 @@ observability project ships an interactive permission dialog flow,
 but that's an interactive UI feature and aichronicles is a
 read/capture tool, not an agent host.
 
-### Richer content_text and extractions for non-Bash/file tools
+### MCP and sub-agent tool_input extraction
 
-For `tool_use` events, `extractContentText` in
-`internal/cli/assemble.go:117-121` returns just the bare tool name
-(e.g. `"Bash"`, `"Read"`). Two extractors then pull `tool_input`
-into the typed `extractions` table: `ShellCommandExtractor` (Bash
-→ `shell_command`) and `FilePathExtractor` (Read/Write/Edit/
-NotebookEdit → `file_path`). Everything else — Grep, Glob,
-WebFetch, WebSearch, MCP tools, sub-agent tools — drops the
-`tool_input` payload on the floor. After migration 006 added the
-extractions FTS tier, queries can now find Bash command bodies and
-file paths via the typed-fact fallback, but the Grep pattern,
-Glob pattern, fetched URL, etc. remain unsearchable.
+Grep / Glob / WebFetch / WebSearch are now first-class — their
+tool_input feeds both `content_text` (via
+`internal/cli/assemble.go:renderToolContent`) and the typed
+`extractions` table (via `pkg/ingest/extract/{Grep,Glob,WebFetch,
+WebSearch}Extractor`). Still on the floor: MCP tools (`mcp__*`
+namespaced names) and sub-agent invocations (`Task` / Plan / etc.).
 
-Two complementary fixes:
+Each MCP tool defines its own `tool_input` schema, so a single
+hard-coded mapping won't work; we'd need either a per-server
+allowlist or a generic "render the most-string-typed value" rule.
+For sub-agents, the prompt the agent was launched with is the
+high-value field — capturing it would make `aichronicles search`
+surface "I delegated work about X to a sub-agent on Tuesday"
+without the user having to remember the agent name.
 
-- Extend `extractContentText` in `internal/cli/assemble.go` to
-  produce a tool-specific one-liner for the common tools
-  (`Grep pattern=...`, `WebFetch <url>`, `Glob <pattern>`),
-  capped at a sane length. Goes through the existing redaction
-  path automatically.
-- Add an extractor per tool in `pkg/ingest/extract/extract.go`:
-  `WebFetch` → `kind=url`, reusing the existing URL extraction
-  contract; `Grep` / `Glob` → a new `kind=pattern`. Mirror
-  `FilePathExtractor`'s `tool_name` whitelist pattern so the
-  scope stays explicit.
+Scope:
 
-Out of scope (rejected during the search-improvements batch):
-adding `tool_name` as a second indexed FTS5 column in `events_fts`.
-Tool name is already mirrored into `content_text`, so a multi-
-column index would weight the same signal twice without adding
-recall.
+- Decide on the rendering shape: per-MCP-server allow-list keyed
+  off the `mcp__<server>__<tool>` prefix, or a generic fallback
+  that picks the longest string value from `tool_input`. The
+  generic fallback is faster to ship and less brittle.
+- Extend `internal/cli/assemble.go:toolDetail` to handle the
+  generic case for any unknown tool name.
+- Add a `SubagentPromptExtractor` in `pkg/ingest/extract/` that
+  emits `kind=subagent_prompt` from `Task`-shaped tool_input
+  (typically a `prompt` or `description` field).
+- Cover with unit tests parallel to `TestRenderToolContent` and
+  the existing per-tool extractor tests.
