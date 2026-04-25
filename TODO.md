@@ -80,3 +80,48 @@ Scope:
 References:
 - https://developers.openai.com/codex/hooks
 - https://developers.openai.com/codex/config-advanced
+
+### First-class subagent threads
+
+Claude Code's `SubagentStart` / `SubagentStop` already round-trip through
+`internal/cli/assemble.go:29-30` as `subagent_start` / `subagent_stop`
+event kinds, but they're flat — there's no parent/child linkage, no way
+to ask "what did the planner subagent do," and summaries don't
+distinguish a tool call run by the main agent from one run inside a
+subagent. Peer tools (e.g. disler/claude-code-hooks-multi-agent-
+observability) surface this as swim lanes; we should at least make it
+queryable.
+
+Scope:
+
+- Pull `agent_id` and `agent_type` from the hook payload in
+  `Assemble()` and stash them on the envelope. Likely shape: a new
+  optional `Subagent { ID, Type, ParentID }` struct on `ingest.Envelope`,
+  serialized under `subagent` in the JSON; absent for top-level events.
+- Schema migration `004_subagent_threads.sql`: add nullable
+  `subagent_id`, `subagent_type`, `parent_event_id` columns to `events`
+  with an index on `(session_id, subagent_id, ts_source_ms)`. Populate
+  on ingest from the new envelope fields. Older rows keep NULLs.
+- The store-side projection in `internal/store/ingest.go` needs to
+  match envelope start events to their stop events (by `agent_id`
+  within a session) so a subagent's lifetime is queryable as a span,
+  not just two point events.
+- MCP `search_events` grows an optional `subagent_id` filter; a new
+  `list_subagents` tool returns `(session_id, subagent_id, type,
+  started_at, ended_at, event_count)` rows so an agent can ask "what
+  did my planner do last Tuesday."
+- Prompt builders in `pkg/llm/prompts/prompts.go` should label each
+  event with its subagent (e.g. `[planner] tool_use Read ...`) so the
+  summary tool-call output can attribute work to the right thread.
+  Add a `subagents` field to `SummaryResult` listing the threads that
+  ran and what each did.
+- Extend `aichronicles sessions` output to show subagent count next
+  to event count when nonzero. Cheap, makes the structure visible.
+- Tests: golden-file an envelope set with a planner + worker
+  subagent and assert the projection links them correctly. Match the
+  shape of `import_claude_test.go`.
+
+Out of scope (for this entry): live HITL response routing — the
+observability project ships an interactive permission dialog flow,
+but that's an interactive UI feature and aichronicles is a
+read/capture tool, not an agent host.
