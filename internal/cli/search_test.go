@@ -282,6 +282,36 @@ func TestRunSearch_NoMatchesShowsEmptyStateLine(t *testing.T) {
 	}
 }
 
+// TestRunSearch_PrefixMatchFromBareToken proves the user no longer
+// needs to know FTS5 syntax: typing "json" matches "jsonl" because
+// the parser appends *.
+func TestRunSearch_PrefixMatchFromBareToken(t *testing.T) {
+	t.Parallel()
+	s, _ := seedStore(t)
+	var out bytes.Buffer
+	if err := RunSearch(s, SearchOptions{Query: "json"}, &out); err != nil {
+		t.Fatalf("RunSearch: %v", err)
+	}
+	if !strings.Contains(out.String(), "jsonl") {
+		t.Errorf("prefix match failed: %s", out.String())
+	}
+}
+
+// TestRunSearch_UnclosedQuoteIsParseError verifies the parser's
+// ErrSyntax surfaces as a wrapped error rather than an opaque
+// SQLite "fts5: syntax error" string.
+func TestRunSearch_UnclosedQuoteIsParseError(t *testing.T) {
+	t.Parallel()
+	s, _ := seedStore(t)
+	err := RunSearch(s, SearchOptions{Query: `find "this without close`}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error for unclosed quote")
+	}
+	if !strings.Contains(err.Error(), "parse query") {
+		t.Errorf("expected wrapped parse-query error, got: %v", err)
+	}
+}
+
 // seedDuplicateTurn inserts two envelopes for the same logical turn:
 // one with transport="hook" and one with transport="import". Same
 // source_session_id so they collapse into the same derived session_id.

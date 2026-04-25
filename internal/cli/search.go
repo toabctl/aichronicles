@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/paths"
+	"github.com/toabctl/aichronicles/internal/searchquery"
 	"github.com/toabctl/aichronicles/internal/store"
 )
 
@@ -33,9 +34,11 @@ func newSearchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Full-text search over captured envelopes",
-		Long: "Runs an FTS5 MATCH against events.content_text and prints the\n" +
-			"top hits one per line. Query syntax is SQLite FTS5 (phrases in\n" +
-			"quotes, AND/OR/NOT, prefix with *). Pass --format=json for a\n" +
+		Long: "Searches across captured envelopes and prints the top hits\n" +
+			"one per line. Type plain words; bare tokens match by prefix\n" +
+			"(`mongo` finds `mongodb`). Wrap exact matches in double\n" +
+			"quotes (`\"panic stack\"`). Identifiers and paths can be\n" +
+			"typed verbatim (`migrate.go`). Pass --format=json for a\n" +
 			"structured payload suitable for jq.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -124,6 +127,11 @@ type SearchHitJSON struct {
 // to out. Empty query is an error because FTS5 would either error
 // itself or return the whole corpus.
 //
+// The user-facing query (plain words, optionally "quoted phrases")
+// is translated into a syntactically-safe FTS5 MATCH expression by
+// internal/searchquery before it ever reaches SQLite. Callers should
+// not pre-escape — that's the parser's job.
+//
 // Format=table renders aligned columns (header + tab-separated rows
 // fed through tabwriter), with a "(no hits)" line on an empty result.
 // Format=json emits a JSON array of SearchHitJSON values for jq.
@@ -131,6 +139,12 @@ func RunSearch(s *store.Store, opts SearchOptions, out io.Writer) error {
 	if strings.TrimSpace(opts.Query) == "" {
 		return errors.New("search query must not be empty")
 	}
+
+	fts, err := searchquery.ToFTS5(opts.Query)
+	if err != nil {
+		return fmt.Errorf("parse query: %w", err)
+	}
+	opts.Query = fts
 
 	sqlText, args := buildSearchSQL(opts)
 	rows, err := s.DB().Query(sqlText, args...)
