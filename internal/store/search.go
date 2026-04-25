@@ -47,6 +47,16 @@ type SearchEventHit struct {
 	Content    sql.NullString
 }
 
+// FTS index names. Two virtual tables shadow events.content_text:
+//   - events_fts uses unicode61 with code-friendly separators; this
+//     is the primary path for whole-word and identifier-aware queries.
+//   - events_fts_trigram uses the trigram tokenizer for substring
+//     matches, consulted only when the primary returns nothing.
+const (
+	indexPrimary = "events_fts"
+	indexTrigram = "events_fts_trigram"
+)
+
 // SearchEvents runs an FTS5 MATCH against events_fts and returns the
 // matching rows.
 //
@@ -58,6 +68,11 @@ type SearchEventHit struct {
 // see every underlying row — useful for auditing what's actually in
 // the store.
 //
+// If the primary index returns zero hits, SearchEvents transparently
+// retries against the trigram index. The fallback handles the
+// "I typed `MongoD` but the corpus has `MongoDB`" case without
+// paying the trigram cost on every query.
+//
 // Order picks between FTS rank (most relevant first) and recency
 // (newest first); future commits will replace both with a blended
 // score, but the parameter stays so callers can opt in or out.
@@ -65,10 +80,27 @@ func SearchEvents(ctx context.Context, db *sql.DB, opts SearchEventOpts) ([]Sear
 	if strings.TrimSpace(opts.Query) == "" {
 		return nil, fmt.Errorf("SearchEvents: query is required")
 	}
-	sqlText, args := buildSearchSQL(opts)
+	hits, err := searchAgainst(ctx, db, opts, indexPrimary)
+	if err != nil {
+		return nil, err
+	}
+	if len(hits) == 0 {
+		hits, err = searchAgainst(ctx, db, opts, indexTrigram)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return hits, nil
+}
+
+// searchAgainst executes the search SQL against the named FTS5 table.
+// Caller is responsible for ensuring `index` is one of the package
+// constants; we never interpolate user input here.
+func searchAgainst(ctx context.Context, db *sql.DB, opts SearchEventOpts, index string) ([]SearchEventHit, error) {
+	sqlText, args := buildSearchSQL(opts, index)
 	rows, err := db.QueryContext(ctx, sqlText, args...)
 	if err != nil {
-		return nil, fmt.Errorf("SearchEvents: query: %w", err)
+		return nil, fmt.Errorf("SearchEvents: query (%s): %w", index, err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -87,10 +119,10 @@ func SearchEvents(ctx context.Context, db *sql.DB, opts SearchEventOpts) ([]Sear
 }
 
 // buildSearchSQL composes the SQL + bind args for one SearchEvents
-// call. Factored out so tests can exercise the composition without
-// touching SQLite, and so future commits (snippet, recency boost)
-// have one place to evolve the query shape.
-func buildSearchSQL(opts SearchEventOpts) (string, []any) {
+// call against the named FTS5 virtual table. The index argument is
+// interpolated as a SQL identifier; callers must pass a package
+// constant (indexPrimary or indexTrigram), never user input.
+func buildSearchSQL(opts SearchEventOpts, index string) (string, []any) {
 	var filter strings.Builder
 	args := []any{opts.Query}
 
@@ -119,8 +151,8 @@ func buildSearchSQL(opts SearchEventOpts) (string, []any) {
 			order = "ts_source_ms DESC"
 		}
 		sqlText := `SELECT e.session_id, e.kind, e.cwd, e.ts_source_ms, e.content_text
-			FROM events_fts f JOIN events e ON e.rowid = f.rowid
-			WHERE events_fts MATCH ?` + filter.String() + `
+			FROM ` + index + ` f JOIN events e ON e.rowid = f.rowid
+			WHERE ` + index + ` MATCH ?` + filter.String() + `
 			ORDER BY ` + order + ` LIMIT ?`
 		args = append(args, limit)
 		return sqlText, args
@@ -146,10 +178,10 @@ func buildSearchSQL(opts SearchEventOpts) (string, []any) {
 					THEN 0 ELSE 1
 				END) AS transport_rank,
 				f.rank AS fts_rank
-			FROM events_fts f
+			FROM ` + index + ` f
 			JOIN events e         ON e.rowid = f.rowid
 			JOIN raw_envelopes r  ON r.event_id = e.event_id
-			WHERE events_fts MATCH ?` + filter.String() + `
+			WHERE ` + index + ` MATCH ?` + filter.String() + `
 		),
 		ranked AS (
 			SELECT *,

@@ -36,12 +36,12 @@ func TestOpen_FreshCreatesSchema(t *testing.T) {
 	if err := s.DB().QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if v != "4" {
-		t.Errorf("schema_version: got %q, want 4", v)
+	if v != "5" {
+		t.Errorf("schema_version: got %q, want 5", v)
 	}
 
 	// Expected tables all exist
-	for _, name := range []string{"meta", "raw_envelopes", "sessions", "events", "events_fts", "extractions", "llm_outputs"} {
+	for _, name := range []string{"meta", "raw_envelopes", "sessions", "events", "events_fts", "events_fts_trigram", "extractions", "llm_outputs"} {
 		var got string
 		err := s.DB().QueryRow(`SELECT name FROM sqlite_master WHERE name=?`, name).Scan(&got)
 		if err != nil {

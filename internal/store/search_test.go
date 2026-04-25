@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,6 +10,10 @@ import (
 
 	"github.com/toabctl/aichronicles/pkg/ingest"
 )
+
+// contains is a one-letter alias for strings.Contains, kept to
+// shorten the per-row assertions in the table-driven tests above.
+func contains(haystack, needle string) bool { return strings.Contains(haystack, needle) }
 
 // ingestForSearch is the multi-arg cousin of ingestText that lets
 // tests pin transport and timestamp explicitly. Returns the derived
@@ -219,6 +224,94 @@ func TestSearchEvents_NoDedupSurfacesBoth(t *testing.T) {
 	}
 	if len(hits) != 2 {
 		t.Errorf("NoDedup: got %d, want 2", len(hits))
+	}
+}
+
+// TestSearchEvents_TrigramFallbackOnSubstring verifies that a query
+// for which the primary unicode61 index has no hits falls through
+// to the trigram index. Typing `MongoD` with the searchquery prefix
+// `MongoD*` finds nothing in the unicode61 word index (MongoDB is
+// one whole token, not split into mong+oDB), but the trigram index
+// matches because the trigrams of MongoD all appear inside MongoDB.
+func TestSearchEvents_TrigramFallbackOnSubstring(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	ingestForSearch(t, s, "sess-mongo", "user_prompt",
+		"shutting down MongoDB cleanly is non-trivial", "hook", now)
+
+	// `MongoD*` against unicode61 returns nothing — MongoDB is one
+	// token and the prefix `MongoD` doesn't match the token (FTS5's
+	// prefix `*` requires a token boundary, not a substring).
+	// Trigram catches it.
+	hits, err := SearchEvents(t.Context(), s.DB(), SearchEventOpts{Query: "MongoD*"})
+	if err != nil {
+		t.Fatalf("SearchEvents: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("trigram fallback: got %d hits, want 1", len(hits))
+	}
+	if !contains(hits[0].Content.String, "MongoDB") {
+		t.Errorf("expected MongoDB in content, got %q", hits[0].Content.String)
+	}
+}
+
+// TestSearchEvents_PrimaryWinsWhenItHasHits proves the fallback
+// only fires when the primary returns nothing — we don't pay the
+// trigram lookup cost when the primary already answered, and we
+// don't accidentally merge results from both indexes.
+//
+// Setup pins this: row A contains `mongo` as a whole word, row B
+// contains `mongoDB` (one whole token). A literal-token query for
+// `mongo` matches only row A on the primary unicode61 index but
+// matches BOTH rows on the trigram index (the trigrams of "mongo"
+// all appear inside "mongoDB"). If we returned just the primary's
+// hit (1 row, A), the fallback was correctly skipped. If we got 2
+// rows back, the fallback ran and merged.
+func TestSearchEvents_PrimaryWinsWhenItHasHits(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	ingestForSearch(t, s, "sess-pri-a", "user_prompt", "I love mongo", "hook", now)
+	ingestForSearch(t, s, "sess-pri-b", "user_prompt", "deploying mongoDB", "hook", now.Add(time.Second))
+
+	hits, err := SearchEvents(t.Context(), s.DB(), SearchEventOpts{Query: "mongo"})
+	if err != nil {
+		t.Fatalf("SearchEvents: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("primary path: got %d hits, want 1 (trigram fallback should NOT have run)", len(hits))
+	}
+	if !contains(hits[0].Content.String, "I love mongo") {
+		t.Errorf("expected primary's row, got %q", hits[0].Content.String)
+	}
+}
+
+// TestSearchEvents_TrigramFallbackHonorsFilters confirms that the
+// fallback runs the same SearchEventOpts (kind, session, since,
+// limit) as the primary; the user shouldn't see filter changes when
+// the index path silently switches.
+func TestSearchEvents_TrigramFallbackHonorsFilters(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	fooID := ingestForSearch(t, s, "sess-foo", "user_prompt",
+		"shutting down MongoDB cleanly", "hook", now)
+	ingestForSearch(t, s, "sess-bar", "user_prompt",
+		"shutting down MongoDB cleanly", "hook", now)
+
+	hits, err := SearchEvents(t.Context(), s.DB(), SearchEventOpts{
+		Query:     "MongoD*",
+		SessionID: fooID,
+	})
+	if err != nil {
+		t.Fatalf("SearchEvents: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("trigram + filter: got %d hits, want 1", len(hits))
+	}
+	if hits[0].SessionID != fooID {
+		t.Errorf("session filter leaked: got %q, want %q", hits[0].SessionID, fooID)
 	}
 }
 
