@@ -65,7 +65,7 @@ A few non-obvious properties of this flow:
 - **Dedupe happens at the unique index level.** If `event_id`
   already exists in `raw_envelopes`, the `INSERT` is a no-op and
   we skip steps 11-13. The ack comes back with `deduped: true`.
-  This makes re-runs of `import-claude-transcripts` idempotent.
+  This makes re-runs of `import-claude` idempotent.
 
 ### What can go wrong
 

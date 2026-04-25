@@ -58,10 +58,10 @@ var claudeCanonicalTypes = map[string]struct{}{
 // aborting the whole import.
 const maxClaudeLineBytes = 128 << 20
 
-func newImportClaudeTranscriptsCmd() *cobra.Command {
+func newImportClaudeCmd() *cobra.Command {
 	var dbPath string
 	cmd := &cobra.Command{
-		Use:   "import-claude-transcripts [path]",
+		Use:   "import-claude [path]",
 		Short: "Import Claude Code's own ~/.claude transcripts into the store",
 		Long: "Walks one or more Claude Code transcript files (*.jsonl) and\n" +
 			"ingests each conversational line (user/assistant/system) as an\n" +

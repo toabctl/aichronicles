@@ -6,7 +6,7 @@ Auto-generated from the live `cobra.Command.Long` strings via `make docs-cli`. E
 
 - [`aichronicles`](./aichronicles.md)
 - [`aichronicles audit`](./aichronicles_audit.md)
-- [`aichronicles import-claude-transcripts`](./aichronicles_import-claude-transcripts.md)
+- [`aichronicles import-claude`](./aichronicles_import-claude.md)
 - [`aichronicles import-jsonl`](./aichronicles_import-jsonl.md)
 - [`aichronicles ingest`](./aichronicles_ingest.md)
 - [`aichronicles mcp-serve`](./aichronicles_mcp-serve.md)

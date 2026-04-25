@@ -15,7 +15,7 @@ aichronicles is the client binary for the aichroniclesd ingest daemon. It receiv
 ### SEE ALSO
 
 * [aichronicles audit](./aichronicles_audit.md)	 - Scan stored events for credential patterns (read-only)
-* [aichronicles import-claude-transcripts](./aichronicles_import-claude-transcripts.md)	 - Import Claude Code's own ~/.claude transcripts into the store
+* [aichronicles import-claude](./aichronicles_import-claude.md)	 - Import Claude Code's own ~/.claude transcripts into the store
 * [aichronicles import-jsonl](./aichronicles_import-jsonl.md)	 - Replay events.jsonl into the SQLite store
 * [aichronicles ingest](./aichronicles_ingest.md)	 - Read a hook payload on stdin and forward as an envelope
 * [aichronicles mcp-serve](./aichronicles_mcp-serve.md)	 - Run an MCP server over stdio exposing aichronicles data

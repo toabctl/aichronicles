@@ -1,4 +1,4 @@
-## aichronicles import-claude-transcripts
+## aichronicles import-claude
 
 Import Claude Code's own ~/.claude transcripts into the store
 
@@ -20,14 +20,14 @@ path defaults to ~/.claude/projects. A specific file or directory
 works too.
 
 ```
-aichronicles import-claude-transcripts [path] [flags]
+aichronicles import-claude [path] [flags]
 ```
 
 ### Options
 
 ```
       --db string   SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)
-  -h, --help        help for import-claude-transcripts
+  -h, --help        help for import-claude
 ```
 
 ### SEE ALSO
