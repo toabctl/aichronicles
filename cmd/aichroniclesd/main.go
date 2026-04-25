@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,6 +12,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/spf13/cobra"
+
+	"github.com/toabctl/aichronicles/internal/cli"
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/daemon"
 	"github.com/toabctl/aichronicles/internal/notify"
@@ -28,25 +30,46 @@ import (
 const defaultShutdownDrainTimeout = 10 * time.Second
 
 func main() {
-	if err := run(); err != nil {
-		slog.New(slog.NewTextHandler(os.Stderr, nil)).Error("aichroniclesd failed to start", "err", err)
+	if err := newRootCmd().Execute(); err != nil {
+		slog.New(slog.NewTextHandler(os.Stderr, nil)).Error("aichroniclesd failed", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
-	// Empty defaults; final resolution happens after flag.Parse so the
-	// flag value (highest precedence) can override $AICHRONICLES_DB /
-	// $AICHRONICLES_SOCKET, which themselves override the XDG default.
-	sockPath := flag.String("socket", "", "unix socket path (overrides $AICHRONICLES_SOCKET; defaults to XDG_RUNTIME_DIR)")
-	dbPath := flag.String("db", "", "SQLite store path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
-	flag.Parse()
+// newRootCmd builds the cobra command for the daemon. Cobra gets us
+// --version (bound to cli.Version, shared with the aichronicles
+// binary so both stamps line up) and consistent --help formatting,
+// at the cost of dragging cobra's transitive deps in. The runtime
+// behaviour — flags, signal handling, drain — is unchanged.
+func newRootCmd() *cobra.Command {
+	var (
+		sockFlag string
+		dbFlag   string
+	)
+	cmd := &cobra.Command{
+		Use:           "aichroniclesd",
+		Short:         "Ingest daemon for aichronicles",
+		Long:          "aichroniclesd is the ingest daemon. It accepts envelopes on POST /v1/ingest over a Unix domain socket and persists them to SQLite. Run via systemd --user with socket activation, or directly for development.",
+		Version:       cli.Version,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return run(sockFlag, dbFlag)
+		},
+	}
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"unix socket path (overrides $AICHRONICLES_SOCKET; defaults to XDG_RUNTIME_DIR)")
+	cmd.Flags().StringVar(&dbFlag, "db", "",
+		"SQLite store path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	return cmd
+}
 
-	resolvedSock, err := paths.ResolveSocketPath(*sockPath)
+func run(sockFlag, dbFlag string) error {
+	resolvedSock, err := paths.ResolveSocketPath(sockFlag)
 	if err != nil {
 		return fmt.Errorf("resolve socket path: %w", err)
 	}
-	resolvedDB, err := paths.ResolveStorePath(*dbPath)
+	resolvedDB, err := paths.ResolveStorePath(dbFlag)
 	if err != nil {
 		return fmt.Errorf("resolve store path: %w", err)
 	}
