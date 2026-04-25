@@ -12,6 +12,13 @@ BINDIR := $(PREFIX)/bin
 # (e.g. `make GOFLAGS=-trimpath build`) when reproducible builds matter.
 GOFLAGS ?=
 
+# Version stamp injected via `-ldflags -X`. Falls back to "dev" when
+# the tree has no tags or git is unavailable so `make build` still
+# produces a working binary in a fresh checkout. The result lands in
+# `cli.Version` and surfaces via --version on both binaries.
+GIT_DESCRIBE := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS ?= -X 'github.com/toabctl/aichronicles/internal/cli.Version=$(GIT_DESCRIBE)'
+
 # Default target: build the two binaries AND install them. Surprising
 # for a bare `make`, but the user asked for it explicitly so they can
 # rebuild + restart in one keystroke.
@@ -28,8 +35,8 @@ all: build install
 # running it on a tree with uncommitted changes is safe.
 build:
 	@mkdir -p ./bin
-	go build $(GOFLAGS) -o ./bin/aichronicles  ./cmd/aichronicles
-	go build $(GOFLAGS) -o ./bin/aichroniclesd ./cmd/aichroniclesd
+	go build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o ./bin/aichronicles  ./cmd/aichronicles
+	go build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o ./bin/aichroniclesd ./cmd/aichroniclesd
 
 # Copy both binaries into $(BINDIR) (default ~/.local/bin) and bounce
 # the systemd --user service so the running daemon picks up the new
