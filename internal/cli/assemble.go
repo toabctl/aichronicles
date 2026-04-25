@@ -115,10 +115,73 @@ func extractContentText(kind string, hook map[string]any) string {
 			return s
 		}
 	case "tool_use", "tool_failure":
-		// A best-effort rendering of tool invocations for FTS.
-		if toolName, ok := hook["tool_name"].(string); ok {
-			return toolName
-		}
+		return renderToolContent(hook)
 	}
 	return ""
+}
+
+// renderToolContent produces a one-liner suitable for content_text
+// and FTS indexing, derived from a tool_use payload's tool_name and
+// tool_input. The tool name leads as its own token so queries for
+// the tool itself still match; the most informative tool_input
+// field follows so a search like `cluster` finds Bash invocations
+// whose command mentions cluster, or Grep invocations whose pattern
+// contains cluster, without depending on the extractions fallback.
+//
+// Falls back to the bare tool name (or empty) for tools whose
+// tool_input we don't know how to render — preserves the
+// pre-existing behaviour for everything we haven't enumerated.
+func renderToolContent(hook map[string]any) string {
+	name, _ := hook["tool_name"].(string)
+	if name == "" {
+		return ""
+	}
+	input, _ := hook["tool_input"].(map[string]any)
+	detail := toolDetail(name, input)
+	if detail == "" {
+		return name
+	}
+	return name + " " + detail
+}
+
+// toolDetail picks the most informative single string from a known
+// tool's tool_input. Returns empty for unknown tools, which makes
+// renderToolContent fall back to the bare tool name. Adding a new
+// tool here should be paired with a matching extractor in
+// pkg/ingest/extract so the typed-fact tier can also reach it.
+func toolDetail(toolName string, input map[string]any) string {
+	if input == nil {
+		return ""
+	}
+	switch toolName {
+	case "Bash":
+		return stringField(input, "command")
+	case "Read", "Write", "Edit", "NotebookEdit":
+		return stringField(input, "file_path")
+	case "Grep":
+		pat := stringField(input, "pattern")
+		path := stringField(input, "path")
+		if pat != "" && path != "" {
+			return pat + " " + path
+		}
+		return pat
+	case "Glob":
+		return stringField(input, "pattern")
+	case "WebFetch":
+		return stringField(input, "url")
+	case "WebSearch":
+		return stringField(input, "query")
+	}
+	return ""
+}
+
+// stringField returns m[key] as a string when present and non-empty,
+// "" otherwise. Avoids the awkward two-step ok-check at every call
+// site without hiding the type assertion.
+func stringField(m map[string]any, key string) string {
+	s, ok := m[key].(string)
+	if !ok {
+		return ""
+	}
+	return s
 }

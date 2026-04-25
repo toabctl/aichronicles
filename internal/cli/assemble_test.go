@@ -212,6 +212,122 @@ func TestAssemble_MalformedJSON_IsError(t *testing.T) {
 	}
 }
 
+// TestRenderToolContent covers the per-tool tool_input rendering
+// that feeds content_text for tool_use / tool_failure events. Each
+// case asserts (a) the tool name appears as its own token, and (b)
+// the most informative tool_input field is appended so the FTS
+// index sees both. Unknown tools fall back to the bare name.
+func TestRenderToolContent(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		hook        map[string]any
+		want        string
+		wantContain []string // non-empty: substring assertions instead of exact match
+	}{
+		{
+			name: "Bash command in tool_input",
+			hook: map[string]any{
+				"tool_name":  "Bash",
+				"tool_input": map[string]any{"command": "ls -la /tmp"},
+			},
+			want: "Bash ls -la /tmp",
+		},
+		{
+			name: "Read file_path",
+			hook: map[string]any{
+				"tool_name":  "Read",
+				"tool_input": map[string]any{"file_path": "/etc/hosts"},
+			},
+			want: "Read /etc/hosts",
+		},
+		{
+			name: "Edit file_path",
+			hook: map[string]any{
+				"tool_name":  "Edit",
+				"tool_input": map[string]any{"file_path": "internal/store/migrate.go"},
+			},
+			want: "Edit internal/store/migrate.go",
+		},
+		{
+			name: "Grep pattern only",
+			hook: map[string]any{
+				"tool_name":  "Grep",
+				"tool_input": map[string]any{"pattern": "TODO"},
+			},
+			want: "Grep TODO",
+		},
+		{
+			name: "Grep pattern + path",
+			hook: map[string]any{
+				"tool_name":  "Grep",
+				"tool_input": map[string]any{"pattern": "TODO", "path": "internal/"},
+			},
+			want: "Grep TODO internal/",
+		},
+		{
+			name: "Glob pattern",
+			hook: map[string]any{
+				"tool_name":  "Glob",
+				"tool_input": map[string]any{"pattern": "**/*.go"},
+			},
+			want: "Glob **/*.go",
+		},
+		{
+			name: "WebFetch url",
+			hook: map[string]any{
+				"tool_name":  "WebFetch",
+				"tool_input": map[string]any{"url": "https://example.com/x"},
+			},
+			want: "WebFetch https://example.com/x",
+		},
+		{
+			name: "WebSearch query",
+			hook: map[string]any{
+				"tool_name":  "WebSearch",
+				"tool_input": map[string]any{"query": "Go FTS5 trigram"},
+			},
+			want: "WebSearch Go FTS5 trigram",
+		},
+		{
+			name: "unknown tool falls back to bare name",
+			hook: map[string]any{
+				"tool_name":  "MysteryTool",
+				"tool_input": map[string]any{"foo": "bar"},
+			},
+			want: "MysteryTool",
+		},
+		{
+			name: "missing tool_input falls back to bare name",
+			hook: map[string]any{"tool_name": "Bash"},
+			want: "Bash",
+		},
+		{
+			name: "missing tool_name yields empty",
+			hook: map[string]any{"tool_input": map[string]any{"command": "x"}},
+			want: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := renderToolContent(tc.hook)
+			if len(tc.wantContain) == 0 {
+				if got != tc.want {
+					t.Errorf("got %q, want %q", got, tc.want)
+				}
+				return
+			}
+			for _, s := range tc.wantContain {
+				if !strings.Contains(got, s) {
+					t.Errorf("got %q, missing substring %q", got, s)
+				}
+			}
+		})
+	}
+}
+
 func TestRoleForKind(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
