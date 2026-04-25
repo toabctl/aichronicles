@@ -19,7 +19,7 @@ import (
 // returned to stderr so the user sees what failed instead of a bare
 // exit-code-1.
 func Execute() int {
-	return executeCmd(newRootCmd(), os.Stderr)
+	return executeCmd(NewRootCmd(), os.Stderr)
 }
 
 // executeCmd is the testable body of Execute. Splitting it out lets
@@ -33,7 +33,11 @@ func executeCmd(root *cobra.Command, stderr io.Writer) int {
 	return 0
 }
 
-func newRootCmd() *cobra.Command {
+// NewRootCmd builds the root cobra command tree. Exported so the
+// docgen tooling under tools/docgen can introspect the live `Long`
+// strings to produce the reference docs without duplicating the
+// command surface.
+func NewRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "aichronicles",
 		Short:         "Capture AI coding agent session events",

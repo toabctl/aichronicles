@@ -1,5 +1,6 @@
 /aichronicles
 /aichroniclesd
+/docgen
 /bin/
 /aichronicles.db
 *.db-journal

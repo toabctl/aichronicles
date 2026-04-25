@@ -21,6 +21,11 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
+// MigrationsFS exposes the embedded migrations FS so tooling
+// (docgen, audit scripts) can iterate the SQL files without
+// re-embedding them or shelling out to the filesystem. Read-only.
+func MigrationsFS() embed.FS { return migrationsFS }
+
 // Store is the aichronicles persistence handle. Construct with Open;
 // call Close on shutdown. Safe for concurrent use (*sql.DB is; triggers
 // and transactions handle write ordering).

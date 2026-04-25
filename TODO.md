@@ -43,3 +43,40 @@ Scope:
 Implementation hint: opening the store inside a completion func is
 fine — it's read-only, the daemon's WAL handles concurrency, and tab
 completion is interactive (a 50ms query is invisible).
+
+### Codex CLI support (OpenAI's `codex`)
+
+OpenAI's Codex CLI ships a hook system whose shape lines up cleanly
+with ours: stdin JSON per event, exit 0 = continue / exit 2 = block,
+events `PreToolUse` / `PostToolUse` / `UserPromptSubmit` / `Stop`,
+config in `~/.codex/hooks.json` or `<repo>/.codex/hooks.json` with the
+same `{matcher, hooks: [{type: "command", command: "..."}]}` layout.
+Codex hooks must be enabled with `[features] codex_hooks = true` in
+`config.toml`.
+
+The envelope already anticipates this — `source_agent` is a slug field
+and the OpenAPI lists Codex-class agents as intended sources — so the
+work is glue, not redesign.
+
+Scope:
+
+- Adapter in `internal/ingest/` (or inside the `ingest` CLI dispatch)
+  that recognizes Codex's stdin JSON and maps it to an `Envelope` with
+  `source_agent: "codex"`. Field-by-field mapping for `tool_name` /
+  `tool_input` / `hook_event_name` / `session_id` etc. Some fields
+  differ from Claude Code's payload shape — pin them with golden-file
+  tests parallel to `import_claude_test.go`.
+- `aichronicles setup codex-cli` subcommand mirroring `setup
+  claude-code` (`internal/cli/setup.go`). The current
+  `installedHooks` constant becomes per-agent. Idempotently merge our
+  command into `~/.codex/hooks.json`, preserving any existing entries
+  from other tools, exactly like the Claude Code installer does.
+- Matching `teardown codex-cli`.
+- Docs note: instruct users to flip `codex_hooks = true` in
+  `~/.codex/config.toml` (we shouldn't rewrite their TOML for them).
+- Redaction invariant and UDS transport are unchanged — both are
+  agent-neutral.
+
+References:
+- https://developers.openai.com/codex/hooks
+- https://developers.openai.com/codex/config-advanced

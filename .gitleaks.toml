@@ -9,4 +9,9 @@ useDefault = true
 [[allowlists]]
 paths = [
   '''internal/redact/redact_test\.go''',
+  # Auto-generated detector reference reproduces our own regex
+  # patterns inline so users can inspect what each one catches. The
+  # patterns themselves match the same shapes gitleaks looks for —
+  # by design — so the file would otherwise trip on its own table.
+  '''docs/reference/redaction-detectors\.md''',
 ]

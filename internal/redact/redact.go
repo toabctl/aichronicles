@@ -174,6 +174,15 @@ var defaultScanner = NewComposite(builtinDetectors()...)
 // do not mutate it; create a fresh Composite if you need a custom set.
 func Default() Scanner { return defaultScanner }
 
+// BuiltinDetectors returns the production detector list in the same
+// registration order Default uses internally. Exported for docgen
+// tooling that enumerates the patterns without depending on
+// test-only internals — every Scanner is a *Detector, so callers
+// can type-assert to read .Name and .RE.String().
+func BuiltinDetectors() []Scanner {
+	return builtinDetectors()
+}
+
 // builtinDetectors is the ordered list of production detectors.
 // Order matters for overlap resolution: earlier = wins on ties. Most
 // specific / longest-prefix patterns go first.
