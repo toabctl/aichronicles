@@ -23,7 +23,6 @@ aichronicles scrub [flags]
 
 ```
       --db string   SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)
-      --dry-run     report changes without writing (default: on unless --yes)
   -h, --help        help for scrub
       --yes         confirm irreversible writes (required to mutate the DB)
 ```

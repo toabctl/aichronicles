@@ -3,7 +3,6 @@ package cli
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -18,7 +17,6 @@ import (
 
 func newScrubCmd() *cobra.Command {
 	var (
-		dryRun bool
 		yes    bool
 		dbPath string
 	)
@@ -48,15 +46,10 @@ func newScrubCmd() *cobra.Command {
 			}
 			defer func() { _ = s.Close() }()
 
-			opts := ScrubOptions{DryRun: dryRun || !yes}
-			if !opts.DryRun && !yes {
-				return errors.New("scrub: refusing to write without --yes")
-			}
-			_, err = RunScrub(s, redact.Default(), opts, cmd.OutOrStdout())
+			_, err = RunScrub(s, redact.Default(), ScrubOptions{DryRun: !yes}, cmd.OutOrStdout())
 			return err
 		},
 	}
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "report changes without writing (default: on unless --yes)")
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm irreversible writes (required to mutate the DB)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
 	return cmd
