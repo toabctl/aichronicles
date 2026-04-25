@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -25,18 +24,19 @@ const defaultSummarizeTimeout = 3 * time.Minute
 
 func newSummarizeCmd() *cobra.Command {
 	var (
-		sessionID string
-		model     string
-		force     bool
-		jsonOut   bool
-		dbPath    string
+		model   string
+		force   bool
+		jsonOut bool
+		dbPath  string
 	)
 	cmd := &cobra.Command{
-		Use:   "summarize",
+		Use:   "summarize <session>",
 		Short: "Generate an LLM summary for one session",
-		Long: "Pulls every event for --session, asks the LLM for a structured\n" +
-			"summary (topic, what was done, unresolved issues, files touched,\n" +
-			"annotated links), and persists the JSON reply in llm_outputs.\n\n" +
+		Long: "Pulls every event for the given session, asks the LLM for a\n" +
+			"structured summary (topic, what was done, unresolved issues,\n" +
+			"files touched, annotated links), and persists the JSON reply\n" +
+			"in llm_outputs. Session id may be a unique prefix (see\n" +
+			"`aichronicles sessions`).\n\n" +
 			"Idempotent on the full prompt: re-running without --force returns\n" +
 			"the cached summary and does not call the LLM again. Pass --force\n" +
 			"to bypass the cache (e.g. after changing the prompt template).\n\n" +
@@ -44,10 +44,9 @@ func newSummarizeCmd() *cobra.Command {
 			"emit the raw JSON body stored in the database.\n\n" +
 			"Requires " + llm.APIKeyEnv + " to be set unless --force is off AND\n" +
 			"a cached summary exists.",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if sessionID == "" {
-				return errors.New("summarize: --session is required")
-			}
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sessionID := args[0]
 			resolved := dbPath
 			if resolved == "" {
 				p, err := paths.StorePath()
@@ -82,7 +81,6 @@ func newSummarizeCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&sessionID, "session", "", "session id or unique prefix (see `aichronicles sessions`)")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit raw JSON body instead of the human-readable render")

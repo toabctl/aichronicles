@@ -4,9 +4,11 @@ Generate an LLM summary for one session
 
 ### Synopsis
 
-Pulls every event for --session, asks the LLM for a structured
-summary (topic, what was done, unresolved issues, files touched,
-annotated links), and persists the JSON reply in llm_outputs.
+Pulls every event for the given session, asks the LLM for a
+structured summary (topic, what was done, unresolved issues,
+files touched, annotated links), and persists the JSON reply
+in llm_outputs. Session id may be a unique prefix (see
+`aichronicles sessions`).
 
 Idempotent on the full prompt: re-running without --force returns
 the cached summary and does not call the LLM again. Pass --force
@@ -19,18 +21,17 @@ Requires ANTHROPIC_API_KEY to be set unless --force is off AND
 a cached summary exists.
 
 ```
-aichronicles summarize [flags]
+aichronicles summarize <session> [flags]
 ```
 
 ### Options
 
 ```
-      --db string                       SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)
-      --force                           bypass the llm_outputs cache and re-call the LLM
-  -h, --help                            help for summarize
-      --json                            emit raw JSON body instead of the human-readable render
-      --model string                    LLM model id (default: provider's default)
-      --session aichronicles sessions   session id or unique prefix (see aichronicles sessions)
+      --db string      SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)
+      --force          bypass the llm_outputs cache and re-call the LLM
+  -h, --help           help for summarize
+      --json           emit raw JSON body instead of the human-readable render
+      --model string   LLM model id (default: provider's default)
 ```
 
 ### SEE ALSO
