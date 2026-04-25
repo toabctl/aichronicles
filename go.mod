@@ -7,6 +7,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.38.0
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/google/uuid v1.6.0
+	github.com/openai/openai-go v1.12.0
 	github.com/spf13/cobra v1.10.2
 	modernc.org/sqlite v1.49.1
 )

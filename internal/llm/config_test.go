@@ -48,15 +48,45 @@ func TestFromConfig_AnthropicAPIKeyCommandFallback(t *testing.T) {
 	}
 }
 
-func TestFromConfig_OpenAINotImplementedYet(t *testing.T) {
-	// Until SDK-4 lands, asking for OpenAI must error explicitly so
-	// the user sees what's missing rather than getting a nil client.
+func TestFromConfig_OpenAIProvider(t *testing.T) {
+	t.Setenv(OpenAIAPIKeyEnv, "test-openai-key")
+	c, err := FromConfig(context.Background(), Config{Provider: ProviderOpenAI})
+	if err != nil {
+		t.Fatalf("FromConfig: %v", err)
+	}
+	if _, ok := c.(*OpenAI); !ok {
+		t.Errorf("expected *OpenAI, got %T", c)
+	}
+}
+
+func TestFromConfig_OpenAIAPIKeyCommandFallback(t *testing.T) {
+	t.Setenv(OpenAIAPIKeyEnv, "")
+	c, err := FromConfig(context.Background(), Config{
+		Provider: ProviderOpenAI,
+		OpenAI: ProviderConfig{
+			APIKeyCommand: "printf 'oai-cmd-key'",
+		},
+	})
+	if err != nil {
+		t.Fatalf("FromConfig: %v", err)
+	}
+	o, ok := c.(*OpenAI)
+	if !ok {
+		t.Fatalf("expected *OpenAI, got %T", c)
+	}
+	if o.APIKey != "oai-cmd-key" {
+		t.Errorf("APIKey: got %q, want %q", o.APIKey, "oai-cmd-key")
+	}
+}
+
+func TestFromConfig_OpenAIMissingKey(t *testing.T) {
+	t.Setenv(OpenAIAPIKeyEnv, "")
 	_, err := FromConfig(context.Background(), Config{Provider: ProviderOpenAI})
 	if err == nil {
-		t.Fatal("expected error for openai provider before SDK-4")
+		t.Fatal("expected error when OPENAI_API_KEY is unset and no command")
 	}
-	if !strings.Contains(err.Error(), "openai") {
-		t.Errorf("error should name the provider: %v", err)
+	if !strings.Contains(err.Error(), OpenAIAPIKeyEnv) {
+		t.Errorf("error should name the env var: %v", err)
 	}
 }
 

@@ -64,10 +64,9 @@ func FromConfig(ctx context.Context, cfg Config) (Client, error) {
 	}
 }
 
-// openAIFromConfig is a stub until SDK-4 lands the real adapter.
-// Returning a clear error here means the wiring is in place — the
-// CLI can already accept `provider = "openai"` in config without
-// crashing on dispatch.
-func openAIFromConfig(_ context.Context, _ ProviderConfig) (Client, error) {
-	return nil, fmt.Errorf("llm: openai provider is not yet implemented in this build")
+// openAIFromConfig builds a Client backed by the OpenAI SDK using
+// the same env-or-command precedence as the Anthropic adapter:
+// $OPENAI_API_KEY first, fall back to ProviderConfig.APIKeyCommand.
+func openAIFromConfig(ctx context.Context, pc ProviderConfig) (Client, error) {
+	return FromEnvOrCommandOpenAI(ctx, pc.APIKeyCommand)
 }
