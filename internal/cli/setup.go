@@ -12,20 +12,9 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-)
 
-// installedHooks is the fixed list aichronicles wires into Claude Code.
-// Each event fires exactly one command — ours — which forwards to the
-// daemon. Matchers are intentionally omitted so every tool invocation is
-// captured.
-var installedHooks = []string{
-	"UserPromptSubmit",
-	"Stop",
-	"SessionStart",
-	"SessionEnd",
-	"PostToolUse",
-	"PostToolUseFailure",
-}
+	"github.com/toabctl/aichronicles/pkg/ingest"
+)
 
 // defaultHookCommand is what we drop into settings.json's command field.
 // It relies on `aichronicles` being on the user's PATH.
@@ -56,12 +45,12 @@ func newSetupClaudeCodeCmd() *cobra.Command {
 			path := settingsPath
 			if path == "" {
 				var err error
-				path, err = defaultClaudeSettingsPath()
+				path, err = ingest.ClaudeCode.DefaultSettingsPath()
 				if err != nil {
 					return err
 				}
 			}
-			report, err := InstallClaudeCodeHooks(path, hookCommand)
+			report, err := InstallAgentHooks(ingest.ClaudeCode, path, hookCommand)
 			if err != nil {
 				return err
 			}
@@ -74,10 +63,16 @@ func newSetupClaudeCodeCmd() *cobra.Command {
 	return cmd
 }
 
-// InstallClaudeCodeHooks merges our hook entries into the settings.json
-// at path, creating the file if necessary. It returns a human-readable
-// summary of what changed. Safe to run repeatedly.
-func InstallClaudeCodeHooks(path, command string) (string, error) {
+// InstallAgentHooks merges aichronicles hook entries into the agent's
+// settings.json at path, creating the file if necessary. Returns a
+// human-readable summary of what changed. Safe to run repeatedly.
+//
+// The function is agent-neutral: a future Codex CLI integration calls
+// this with ingest.Codex (a sibling of ingest.ClaudeCode) and gets
+// the same install logic for free. The agent supplies which event
+// names to register; everything else — JSON shape, file mode,
+// merge semantics — is shared.
+func InstallAgentHooks(agent ingest.Agent, path, command string) (string, error) {
 	if command == "" {
 		command = defaultHookCommand
 	}
@@ -86,7 +81,7 @@ func InstallClaudeCodeHooks(path, command string) (string, error) {
 		return "", err
 	}
 
-	added, alreadyPresent := mergeAllHooks(settings, installedHooks, command)
+	added, alreadyPresent := mergeAllHooks(settings, agent.HookEvents, command)
 
 	if len(added) > 0 {
 		if err := writeSettingsAtomic(path, settings); err != nil {
@@ -95,6 +90,14 @@ func InstallClaudeCodeHooks(path, command string) (string, error) {
 	}
 
 	return formatReport(path, added, alreadyPresent), nil
+}
+
+// InstallClaudeCodeHooks is a thin wrapper kept for callers (mainly
+// the test suite) that target the Claude Code agent specifically.
+// New code should call InstallAgentHooks directly with the desired
+// ingest.Agent value.
+func InstallClaudeCodeHooks(path, command string) (string, error) {
+	return InstallAgentHooks(ingest.ClaudeCode, path, command)
 }
 
 // readSettings returns the settings.json contents as a generic map, or

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/toabctl/aichronicles/pkg/ingest"
 )
 
 // fixture describes the expected shape of an assembled envelope for a
@@ -233,7 +235,7 @@ func TestRoleForKind(t *testing.T) {
 
 func TestHookKindMap_CoversInstalledHooks(t *testing.T) {
 	t.Parallel()
-	for _, name := range installedHooks {
+	for _, name := range ingest.ClaudeCode.HookEvents {
 		if _, ok := hookKindMap[name]; !ok {
 			t.Errorf("installed hook %q has no kind mapping", name)
 		}

@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/toabctl/aichronicles/pkg/ingest"
 )
 
 func newTeardownCmd() *cobra.Command {
@@ -79,7 +81,7 @@ func RemoveClaudeCodeHooks(path, command string, dryRun bool) (string, error) {
 	}
 
 	var removed []string
-	for _, ev := range installedHooks {
+	for _, ev := range ingest.ClaudeCode.HookEvents {
 		entriesAny, ok := hooksRoot[ev].([]any)
 		if !ok {
 			continue

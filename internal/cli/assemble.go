@@ -14,9 +14,6 @@ import (
 	"github.com/toabctl/aichronicles/pkg/ingest"
 )
 
-// claudeCodeAgent is the fixed source_agent slug for Claude Code hooks.
-const claudeCodeAgent = "claude-code"
-
 // hookKindMap translates Claude Code hook_event_name values to our
 // canonical Envelope.Kind. Anything not listed maps to "unknown" so new
 // hook events surface through observability rather than crashing.
@@ -82,7 +79,7 @@ func Assemble(raw []byte, now time.Time) (ingest.Envelope, error) {
 	env := ingest.Envelope{
 		V:               ingest.CurrentSchemaVersion,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
-		SourceAgent:     claudeCodeAgent,
+		SourceAgent:     ingest.ClaudeCode.Slug,
 		SourceSessionID: sourceSessionID,
 		Kind:            kind,
 		Role:            roleForKind(kind),
