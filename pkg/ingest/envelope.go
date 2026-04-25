@@ -8,9 +8,7 @@
 // Reuse: this package is the canonical wire schema. Third parties
 // building bridges, importers, or alternate clients should import
 // it directly to produce well-formed Envelopes the daemon will
-// accept. The schema carries an explicit version (Envelope.V,
-// currently 1); aichronicles is a work in progress, so the shape may
-// still evolve.
+// accept. aichronicles is a work in progress.
 package ingest
 
 import (
@@ -24,7 +22,6 @@ import (
 )
 
 // CurrentSchemaVersion is the only envelope version accepted today.
-// Breaking changes bump this and are gated by URL version (/v2/...).
 const CurrentSchemaVersion = 1
 
 // agentSlugPattern enforces stable, URL-friendly source_agent identifiers.

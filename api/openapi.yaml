@@ -126,7 +126,7 @@ components:
         v:
           type: integer
           const: 1
-          description: Schema version. Breaking changes bump this and are served under /v2/...
+          description: Schema version. Currently 1.
         event_id:
           type: string
           format: uuid

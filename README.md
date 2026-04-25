@@ -2,6 +2,8 @@
 
 **Capture your AI coding sessions, locally, with secrets scrubbed before they hit disk.**
 
+> **Status: work in progress.**
+
 aichronicles runs as a tiny user-mode daemon that ingests Claude Code
 hook events into a SQLite store, exposes the corpus as an
 [MCP](https://modelcontextprotocol.io) server your agent can query for
