@@ -30,7 +30,7 @@ func newSummariesCmd() *cobra.Command {
 func newSummariesListCmd() *cobra.Command {
 	var (
 		sessionIn string
-		kindIn    string
+		typeIn    string
 		limit     int
 		dbPath    string
 	)
@@ -38,11 +38,11 @@ func newSummariesListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List recent stored LLM outputs",
 		Long: "Prints stored llm_outputs rows newest-first. Without flags, it\n" +
-			"shows the latest 50 across every session and every kind. Filter\n" +
-			"with --session (prefix OK, same rules as `summarize`), --kind\n" +
-			"(summary | reflect | propose), or both.\n\n" +
+			"shows the latest 50 across every session and every output type.\n" +
+			"Filter with --session (prefix OK, same rules as `summarize`),\n" +
+			"--type (summary | reflect | propose), or both.\n\n" +
 			"Topic column is extracted from the stored JSON body when\n" +
-			"possible; rows whose body is not parseable as a known kind\n" +
+			"possible; rows whose body is not parseable as a known type\n" +
 			"show `(unparseable)` so the row is still discoverable by id.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			s, err := openStoreFromFlag(dbPath)
@@ -59,8 +59,8 @@ func newSummariesListCmd() *cobra.Command {
 				}
 				filter.SessionID = sid
 			}
-			if kindIn != "" {
-				k, err := parseOutputKind(kindIn)
+			if typeIn != "" {
+				k, err := parseOutputKind(typeIn)
 				if err != nil {
 					return err
 				}
@@ -75,7 +75,7 @@ func newSummariesListCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&sessionIn, "session", "", "filter by session id or unique prefix")
-	cmd.Flags().StringVar(&kindIn, "kind", "", "filter by kind (summary | reflect | propose)")
+	cmd.Flags().StringVar(&typeIn, "type", "", "filter by output type (summary | reflect | propose)")
 	cmd.Flags().IntVar(&limit, "limit", 0, "max rows to list (default 50)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
 	return cmd
@@ -83,7 +83,7 @@ func newSummariesListCmd() *cobra.Command {
 
 func newSummariesShowCmd() *cobra.Command {
 	var (
-		kindIn  string
+		typeIn  string
 		jsonOut bool
 		dbPath  string
 	)
@@ -91,12 +91,12 @@ func newSummariesShowCmd() *cobra.Command {
 		Use:   "show <session>",
 		Short: "Show the most recent stored LLM output for a session",
 		Long: "Renders the latest llm_outputs row matching the given session\n" +
-			"(prefix OK) and kind (default: summary). Pass --json to emit the\n" +
+			"(prefix OK) and type (default: summary). Pass --json to emit the\n" +
 			"raw JSON body instead of the human-readable render — useful for\n" +
 			"piping into `jq`.\n\n" +
-			"Errors with `no output for session …/kind …` when the session\n" +
+			"Errors with `no output for session …/type …` when the session\n" +
 			"exists but has never been summarized/reflected/proposed under\n" +
-			"the requested kind.",
+			"the requested type.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := openStoreFromFlag(dbPath)
@@ -109,13 +109,9 @@ func newSummariesShowCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("summaries show: %w", err)
 			}
-			kind := store.LLMKindSummary
-			if kindIn != "" {
-				k, err := parseOutputKind(kindIn)
-				if err != nil {
-					return err
-				}
-				kind = k
+			kind, err := parseOutputKind(typeIn)
+			if err != nil {
+				return err
 			}
 
 			rows, err := store.LoadLLMOutputs(cmd.Context(), s.DB(), store.LLMOutputFilter{
@@ -132,7 +128,7 @@ func newSummariesShowCmd() *cobra.Command {
 			return emitLLMBody(cmd.OutOrStdout(), kind, rows[0].Body, jsonOut)
 		},
 	}
-	cmd.Flags().StringVar(&kindIn, "kind", "", "output kind (summary | reflect | propose; default: summary)")
+	cmd.Flags().StringVar(&typeIn, "type", "summary", "output type (summary | reflect | propose)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit raw JSON body instead of the human-readable render")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
 	return cmd

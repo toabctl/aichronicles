@@ -104,14 +104,14 @@ func TestBuildSearchSQL_DefaultIsDeduped(t *testing.T) {
 	}
 }
 
-func TestBuildSearchSQL_ShowAllBypassesCTE(t *testing.T) {
+func TestBuildSearchSQL_NoDedupBypassesCTE(t *testing.T) {
 	t.Parallel()
-	sqlText, _ := buildSearchSQL(SearchOptions{Query: "x", ShowAll: true})
+	sqlText, _ := buildSearchSQL(SearchOptions{Query: "x", NoDedup: true})
 	if strings.Contains(sqlText, "ROW_NUMBER()") {
-		t.Errorf("ShowAll should skip the dedup CTE: %s", sqlText)
+		t.Errorf("NoDedup should skip the dedup CTE: %s", sqlText)
 	}
 	if !strings.Contains(sqlText, "ORDER BY rank LIMIT ?") {
-		t.Errorf("ShowAll should keep the plain ORDER BY rank LIMIT: %s", sqlText)
+		t.Errorf("NoDedup should keep the plain ORDER BY rank LIMIT: %s", sqlText)
 	}
 }
 
@@ -345,13 +345,13 @@ func TestRunSearch_DedupeCollapsesDuplicateTurn(t *testing.T) {
 	}
 }
 
-func TestRunSearch_ShowAllSurfacesBothCopies(t *testing.T) {
+func TestRunSearch_NoDedupSurfacesBothCopies(t *testing.T) {
 	t.Parallel()
 	s, _ := seedStore(t)
 	seedDuplicateTurn(t, s)
 
 	var out bytes.Buffer
-	if err := RunSearch(s, SearchOptions{Query: "duplicated", ShowAll: true}, &out); err != nil {
+	if err := RunSearch(s, SearchOptions{Query: "duplicated", NoDedup: true}, &out); err != nil {
 		t.Fatalf("RunSearch: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")

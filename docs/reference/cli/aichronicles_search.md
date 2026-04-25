@@ -19,8 +19,8 @@ aichronicles search <query> [flags]
   -h, --help             help for search
       --kind string      filter by event kind (user_prompt, tool_use, …)
       --limit int        max number of hits (default 20)
+      --no-dedup         show every row even when the same turn was captured from multiple sources (hook + import)
       --session string   filter by session id or unique prefix
-      --show-all         do not deduplicate same-turn events from multiple sources (hook + import)
       --since duration   only events within this duration (e.g. 24h, 7d)
 ```
 

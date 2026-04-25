@@ -255,7 +255,7 @@ func TestSummariesShow_UnknownKindErrs(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--db", dbPathFromStore(t, s), "--kind", "reflect", sessID[:8]})
+	cmd.SetArgs([]string{"--db", dbPathFromStore(t, s), "--type", "reflect", sessID[:8]})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected error when kind not present on session")

@@ -25,7 +25,7 @@ func newSearchCmd() *cobra.Command {
 		sessionID string
 		since     time.Duration
 		dbPath    string
-		showAll   bool
+		noDedup   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "search <query>",
@@ -67,7 +67,7 @@ func newSearchCmd() *cobra.Command {
 				Kind:      kind,
 				SessionID: resolvedSessionID,
 				Limit:     limit,
-				ShowAll:   showAll,
+				NoDedup:   noDedup,
 			}
 			if since > 0 {
 				opts.SinceMs = time.Now().Add(-since).UnixMilli()
@@ -80,7 +80,7 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sessionID, "session", "", "filter by session id or unique prefix")
 	cmd.Flags().DurationVar(&since, "since", 0, "only events within this duration (e.g. 24h, 7d)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
-	cmd.Flags().BoolVar(&showAll, "show-all", false, "do not deduplicate same-turn events from multiple sources (hook + import)")
+	cmd.Flags().BoolVar(&noDedup, "no-dedup", false, "show every row even when the same turn was captured from multiple sources (hook + import)")
 	return cmd
 }
 
@@ -92,12 +92,12 @@ type SearchOptions struct {
 	SessionID string
 	SinceMs   int64
 	Limit     int
-	// ShowAll disables query-time deduplication. By default, when the
+	// NoDedup disables query-time deduplication. By default, when the
 	// same logical turn is present from multiple sources (e.g. hook
 	// events and transcript imports of the same session), search
 	// collapses them to one row per (session_id, role, kind, content),
 	// preferring transport=hook. Set to true to surface every row.
-	ShowAll bool
+	NoDedup bool
 }
 
 // RunSearch executes an FTS5 query against the store and writes one
@@ -165,7 +165,7 @@ func buildSearchSQL(opts SearchOptions) (string, []any) {
 		limit = 20
 	}
 
-	if opts.ShowAll {
+	if opts.NoDedup {
 		sql := `SELECT e.session_id, e.kind, e.cwd, e.ts_source_ms, e.content_text
 			FROM events_fts f JOIN events e ON e.rowid = f.rowid
 			WHERE events_fts MATCH ?` + filter.String() + `
