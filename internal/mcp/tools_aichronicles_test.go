@@ -121,6 +121,67 @@ func TestSearchEvents_MissingQueryReturnsUserFacingError(t *testing.T) {
 	}
 }
 
+// TestSearchEvents_PrefixMatchFromBareToken proves the agent no
+// longer needs to know FTS5 syntax: a bare token like "json"
+// matches "jsonl" in the seeded data because the parser appends *.
+func TestSearchEvents_PrefixMatchFromBareToken(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "search_events", `{"query":"json"}`)
+	if res.IsError {
+		t.Fatalf("expected success, got %+v", res)
+	}
+	if !strings.Contains(res.Content[0].Text, "jsonl") {
+		t.Errorf("prefix match failed: %s", res.Content[0].Text)
+	}
+}
+
+// TestSearchEvents_PunctuationDoesNotError confirms a query that
+// would have been an FTS5 syntax error before — bare punctuation,
+// embedded specials — now returns either a clean user error or no
+// hits, never a 500.
+func TestSearchEvents_PunctuationDoesNotError(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	for _, q := range []string{
+		`{"query":"foo*bar"}`,
+		`{"query":"foo(bar"}`,
+		`{"query":"-leading-dash"}`,
+	} {
+		res := callTool(t, s, "search_events", q)
+		// Either no hits or a clean user error is fine — what we're
+		// guarding against is an opaque SQLite parse error bubbling
+		// out as a JSON-RPC InternalError.
+		if !res.IsError && res.Content[0].Text == "" {
+			t.Errorf("query %s: empty success response", q)
+		}
+	}
+}
+
+// TestSearchEvents_UnclosedQuoteIsUserError verifies the parser's
+// ErrSyntax surfaces as a user-facing tool error, not a protocol
+// error.
+func TestSearchEvents_UnclosedQuoteIsUserError(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "search_events", `{"query":"find \"this without close"}`)
+	if !res.IsError {
+		t.Fatalf("expected IsError=true for unclosed quote")
+	}
+	if !strings.Contains(res.Content[0].Text, "unclosed quote") {
+		t.Errorf("expected diagnostic to mention unclosed quote: %s", res.Content[0].Text)
+	}
+}
+
 func TestListSessions_ReturnsSessionRows(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)

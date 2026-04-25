@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/searchquery"
 	"github.com/toabctl/aichronicles/internal/store"
 )
 
@@ -25,7 +27,7 @@ func RegisterAichroniclesTools(s *Server, st *store.Store) {
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"query": {"type": "string", "description": "SQLite FTS5 MATCH query"},
+				"query": {"type": "string", "description": "Search words. Bare tokens match by prefix (mongo finds mongodb); wrap exact matches in double quotes (\"panic stack\")."},
 				"limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}
 			},
 			"required": ["query"]
@@ -80,6 +82,23 @@ func searchEventsHandler(st *store.Store) ToolHandler {
 			req.Limit = 20
 		}
 
+		// Translate the user-facing query (plain words, optionally
+		// "quoted phrases") into a syntactically-safe FTS5 MATCH
+		// expression. Surface ErrEmpty / ErrSyntax as user-facing
+		// tool errors so the agent can correct itself rather than
+		// see an opaque SQLite error.
+		ftsQuery, err := searchquery.ToFTS5(req.Query)
+		if err != nil {
+			switch {
+			case errors.Is(err, searchquery.ErrEmpty):
+				return TextError("search_events: query is required"), nil
+			case errors.Is(err, searchquery.ErrSyntax):
+				return TextError("search_events: %v", err), nil
+			default:
+				return nil, &Error{Code: InvalidParams, Message: "search_events: parse query: " + err.Error()}
+			}
+		}
+
 		// Reuse the deduped SQL shape so tools/search and CLI/search
 		// return consistent rows. Duplicating the SQL here keeps the
 		// mcp package free of a cli/* import cycle.
@@ -98,7 +117,7 @@ func searchEventsHandler(st *store.Store) ToolHandler {
 			FROM matched
 			WHERE rn = 1
 			ORDER BY ts_source_ms DESC
-			LIMIT ?`, req.Query, req.Limit)
+			LIMIT ?`, ftsQuery, req.Limit)
 		if err != nil {
 			return nil, &Error{Code: InternalError, Message: "search_events: query: " + err.Error()}
 		}
