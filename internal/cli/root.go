@@ -28,6 +28,9 @@ func Execute() int {
 func executeCmd(root *cobra.Command, stderr io.Writer) int {
 	if err := root.Execute(); err != nil {
 		_, _ = fmt.Fprintln(stderr, styled(stderr, "aichronicles:", ansiRed), err)
+		if hint := hintForError(err); hint != "" {
+			_, _ = fmt.Fprintln(stderr, hint)
+		}
 		return 1
 	}
 	return 0
