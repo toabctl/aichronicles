@@ -27,7 +27,7 @@ func Execute() int {
 // binary or juggling os.Stderr.
 func executeCmd(root *cobra.Command, stderr io.Writer) int {
 	if err := root.Execute(); err != nil {
-		_, _ = fmt.Fprintln(stderr, "aichronicles:", err)
+		_, _ = fmt.Fprintln(stderr, styled(stderr, "aichronicles:", ansiRed), err)
 		return 1
 	}
 	return 0

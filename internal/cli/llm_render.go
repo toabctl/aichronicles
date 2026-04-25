@@ -126,6 +126,13 @@ func writeWithNewline(w io.Writer, s string) error {
 	return nil
 }
 
+// sectionHeader formats "<title>:" in bold when w is a TTY. Used by
+// every llm-output render so section labels stand out against bullet
+// content without changing the layout when piped.
+func sectionHeader(w io.Writer, title string) string {
+	return styled(w, title+":", ansiBold)
+}
+
 // renderSummary pretty-prints a prompts.SummaryResult JSON body.
 func renderSummary(w io.Writer, body string) error {
 	var r prompts.SummaryResult
@@ -133,12 +140,12 @@ func renderSummary(w io.Writer, body string) error {
 		return err
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Topic: %s\n\n", r.Topic)
-	writeBulletSection(&b, "What was done", r.WhatWasDone)
-	writeBulletSection(&b, "Unresolved", r.Unresolved)
-	writeBulletSection(&b, "Key files", r.KeyFiles)
+	fmt.Fprintf(&b, "%s %s\n\n", sectionHeader(w, "Topic"), r.Topic)
+	writeBulletSection(&b, w, "What was done", r.WhatWasDone)
+	writeBulletSection(&b, w, "Unresolved", r.Unresolved)
+	writeBulletSection(&b, w, "Key files", r.KeyFiles)
 	if len(r.Links) > 0 {
-		b.WriteString("Links:\n")
+		fmt.Fprintf(&b, "%s\n", sectionHeader(w, "Links"))
 		for _, l := range r.Links {
 			fmt.Fprintf(&b, "  - %s\n    %s\n", l.URL, l.UsedFor)
 		}
@@ -154,10 +161,10 @@ func renderReflection(w io.Writer, body string) error {
 		return err
 	}
 	var b strings.Builder
-	writeEvidencedSection(&b, "Recurring task types", r.TaskTypes)
-	writeEvidencedSection(&b, "Recurring sources of friction", r.Frictions)
+	writeEvidencedSection(&b, w, "Recurring task types", r.TaskTypes)
+	writeEvidencedSection(&b, w, "Recurring sources of friction", r.Frictions)
 	if r.WorkflowChange != "" {
-		fmt.Fprintf(&b, "Suggested workflow change:\n  %s\n", r.WorkflowChange)
+		fmt.Fprintf(&b, "%s\n  %s\n", sectionHeader(w, "Suggested workflow change"), r.WorkflowChange)
 	}
 	_, err := fmt.Fprint(w, b.String())
 	return err
@@ -171,7 +178,7 @@ func renderProposal(w io.Writer, body string) error {
 	}
 	var b strings.Builder
 	if len(r.Skills) > 0 {
-		b.WriteString("Skills / slash-command ideas:\n")
+		fmt.Fprintf(&b, "%s\n", sectionHeader(w, "Skills / slash-command ideas"))
 		for _, s := range r.Skills {
 			fmt.Fprintf(&b, "  - %s\n    when: %s\n    why:  %s\n    evidence: %s\n",
 				s.Name, s.WhenToUse, s.Why, strings.Join(s.SessionIDs, ", "))
@@ -179,7 +186,7 @@ func renderProposal(w io.Writer, body string) error {
 		b.WriteByte('\n')
 	}
 	if len(r.ClaudeMdEntries) > 0 {
-		b.WriteString("CLAUDE.md entries worth adding:\n")
+		fmt.Fprintf(&b, "%s\n", sectionHeader(w, "CLAUDE.md entries worth adding"))
 		for _, e := range r.ClaudeMdEntries {
 			fmt.Fprintf(&b, "  - %s\n    why:      %s\n    evidence: %s\n",
 				e.Rule, e.Why, strings.Join(e.SessionIDs, ", "))
@@ -187,7 +194,7 @@ func renderProposal(w io.Writer, body string) error {
 		b.WriteByte('\n')
 	}
 	if len(r.Scripts) > 0 {
-		b.WriteString("Pre-built scripts worth keeping:\n")
+		fmt.Fprintf(&b, "%s\n", sectionHeader(w, "Pre-built scripts worth keeping"))
 		for _, s := range r.Scripts {
 			fmt.Fprintf(&b, "  - %s — %s\n    evidence: %s\n",
 				s.Name, s.Purpose, strings.Join(s.SessionIDs, ", "))
@@ -197,22 +204,22 @@ func renderProposal(w io.Writer, body string) error {
 	return err
 }
 
-func writeBulletSection(b *strings.Builder, header string, items []string) {
+func writeBulletSection(b *strings.Builder, w io.Writer, header string, items []string) {
 	if len(items) == 0 {
 		return
 	}
-	fmt.Fprintf(b, "%s:\n", header)
+	fmt.Fprintf(b, "%s\n", sectionHeader(w, header))
 	for _, s := range items {
 		fmt.Fprintf(b, "  - %s\n", s)
 	}
 	b.WriteByte('\n')
 }
 
-func writeEvidencedSection(b *strings.Builder, header string, items []prompts.Evidenced) {
+func writeEvidencedSection(b *strings.Builder, w io.Writer, header string, items []prompts.Evidenced) {
 	if len(items) == 0 {
 		return
 	}
-	fmt.Fprintf(b, "%s:\n", header)
+	fmt.Fprintf(b, "%s\n", sectionHeader(w, header))
 	for _, it := range items {
 		fmt.Fprintf(b, "  - %s\n    evidence: %s\n", it.Label, strings.Join(it.SessionIDs, ", "))
 	}
