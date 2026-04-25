@@ -17,10 +17,11 @@ import (
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
-// summarizeTimeout caps the whole subcommand (prompt build + LLM
-// round-trip + persist). 3 minutes is well inside Anthropic's own
-// deadline for a 1K-token summary but still bounds a wedged network.
-const summarizeTimeout = 3 * time.Minute
+// defaultSummarizeTimeout caps the whole subcommand (prompt build +
+// LLM round-trip + persist) when [limits].summarize_timeout isn't
+// set. 3 minutes is well inside Anthropic's own deadline for a
+// 1K-token summary but still bounds a wedged network.
+const defaultSummarizeTimeout = 3 * time.Minute
 
 func newSummarizeCmd() *cobra.Command {
 	var (
@@ -72,7 +73,8 @@ func newSummarizeCmd() *cobra.Command {
 				return llm.FromConfig(cmd.Context(), llmCfg)
 			}
 
-			ctx, cancel := context.WithTimeout(cmd.Context(), summarizeTimeout)
+			ctx, cancel := context.WithTimeout(cmd.Context(),
+				cfg.Limits.SummarizeTimeout.Or(defaultSummarizeTimeout))
 			defer cancel()
 			_, err = RunSummarize(ctx, s, newClient, SummarizeOptions{
 				SessionID: sessionID, Model: model, Force: force, JSON: jsonOut,

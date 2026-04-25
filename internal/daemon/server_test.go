@@ -211,7 +211,7 @@ func TestIngest_Rejects_OversizedEnvelope(t *testing.T) {
 	// Build a body just over the 16MB cap. A single oversized JSON
 	// string is enough; don't bother validating its shape — the size
 	// check must fire before JSON decode.
-	huge := bytes.Repeat([]byte("x"), maxEnvelopeBytes+10)
+	huge := bytes.Repeat([]byte("x"), DefaultMaxEnvelopeBytes+10)
 	req := httptest.NewRequest(http.MethodPost, "/v1/ingest", bytes.NewReader(huge))
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
@@ -317,6 +317,42 @@ func TestListenAndServe_ShutdownDrainsInflightRequest(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("shutdown did not complete")
+	}
+}
+
+// TestWithMaxEnvelopeBytes_Override proves daemon main can shrink
+// the body cap via config without touching exported fields, and
+// that the override is honoured by the ingest handler.
+func TestWithMaxEnvelopeBytes_Override(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+
+	// Pick a cap below a real validBody. Anything we POST must 413.
+	srv.WithMaxEnvelopeBytes(8)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/ingest", bytes.NewReader(validBody(t)))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 with shrunken cap, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestWithMaxEnvelopeBytes_NonPositiveIgnored ensures a zero-valued
+// config never wipes out DefaultMaxEnvelopeBytes.
+func TestWithMaxEnvelopeBytes_NonPositiveIgnored(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	srv.WithMaxEnvelopeBytes(0)
+	srv.WithMaxEnvelopeBytes(-1)
+
+	// Default should still hold: a normal body is accepted.
+	req := httptest.NewRequest(http.MethodPost, "/v1/ingest", bytes.NewReader(validBody(t)))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 after no-op overrides, got %d body=%s", rr.Code, rr.Body.String())
 	}
 }
 

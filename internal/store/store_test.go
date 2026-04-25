@@ -407,3 +407,28 @@ func TestParseMigrationVersion(t *testing.T) {
 		}
 	}
 }
+
+// TestSetMaxOpenConns_Override proves the daemon can replace the
+// default pool cap from a config-driven value, and that non-positive
+// inputs leave the existing setting untouched.
+func TestSetMaxOpenConns_Override(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	// Default applied by Open is 4. Bumping should take effect.
+	s.SetMaxOpenConns(8)
+	if got := s.DB().Stats().MaxOpenConnections; got != 8 {
+		t.Errorf("after SetMaxOpenConns(8): MaxOpenConnections=%d, want 8", got)
+	}
+
+	// Non-positive must be a no-op so a zero-valued config never wipes
+	// out the open-time default.
+	s.SetMaxOpenConns(0)
+	if got := s.DB().Stats().MaxOpenConnections; got != 8 {
+		t.Errorf("after SetMaxOpenConns(0): MaxOpenConnections=%d, want unchanged 8", got)
+	}
+	s.SetMaxOpenConns(-3)
+	if got := s.DB().Stats().MaxOpenConnections; got != 8 {
+		t.Errorf("after SetMaxOpenConns(-3): MaxOpenConnections=%d, want unchanged 8", got)
+	}
+}

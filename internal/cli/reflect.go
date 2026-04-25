@@ -16,9 +16,10 @@ import (
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
-// metaLLMTimeout covers both reflect and propose: same network
-// pattern, slightly larger prompts than summarize.
-const metaLLMTimeout = 5 * time.Minute
+// defaultMetaLLMTimeout covers both reflect and propose when
+// [limits].reflect_timeout isn't set. Same network pattern as
+// summarize, slightly larger prompts, so we give it a longer budget.
+const defaultMetaLLMTimeout = 5 * time.Minute
 
 // defaultReflectWindow is what `--since` falls back to when unset.
 // A week strikes a balance between "enough sessions to see patterns"
@@ -72,7 +73,8 @@ func newReflectCmd() *cobra.Command {
 			}
 			llmCfg := llmConfigFromFile(cfg.LLM)
 
-			ctx, cancel := context.WithTimeout(cmd.Context(), metaLLMTimeout)
+			ctx, cancel := context.WithTimeout(cmd.Context(),
+				cfg.Limits.ReflectTimeout.Or(defaultMetaLLMTimeout))
 			defer cancel()
 
 			_, err = RunReflect(ctx, s,

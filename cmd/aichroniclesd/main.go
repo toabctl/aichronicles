@@ -20,11 +20,12 @@ import (
 	"github.com/toabctl/aichronicles/internal/store"
 )
 
-// shutdownDrainTimeout caps how long the daemon will wait for
+// defaultShutdownDrainTimeout caps how long the daemon will wait for
 // in-flight requests to finish after SIGTERM / SIGINT. systemd's
 // default TimeoutStopSec is 90s; 10s is comfortably under that while
-// still letting a slow SQLite write commit.
-const shutdownDrainTimeout = 10 * time.Second
+// still letting a slow SQLite write commit. Operators can override
+// via [limits].shutdown_drain_timeout in the config file.
+const defaultShutdownDrainTimeout = 10 * time.Second
 
 func main() {
 	if err := run(); err != nil {
@@ -64,8 +65,9 @@ func run() error {
 		return err
 	}
 	defer func() { _ = st.Close() }()
+	st.SetMaxOpenConns(cfg.Limits.SQLiteMaxOpenConns)
 
-	srv := daemon.NewServer(st, logger)
+	srv := daemon.NewServer(st, logger).WithMaxEnvelopeBytes(cfg.Limits.MaxEnvelopeBytes)
 
 	var shutdown func(context.Context) error
 	activationListener, err := daemon.ListenFromSystemd()
@@ -96,9 +98,10 @@ func run() error {
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	<-sigCtx.Done()
-	logger.Info("aichroniclesd shutting down", "drain_timeout", shutdownDrainTimeout)
+	drainTimeout := cfg.Limits.ShutdownDrainTimeout.Or(defaultShutdownDrainTimeout)
+	logger.Info("aichroniclesd shutting down", "drain_timeout", drainTimeout)
 
-	drainCtx, cancel := context.WithTimeout(context.Background(), shutdownDrainTimeout)
+	drainCtx, cancel := context.WithTimeout(context.Background(), drainTimeout)
 	defer cancel()
 	return shutdown(drainCtx)
 }

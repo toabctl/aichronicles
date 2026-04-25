@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDefault_BothNotificationsEnabled(t *testing.T) {
@@ -342,6 +343,120 @@ api_key_command = "echo o"
 	}
 	if cfg.LLM.OpenAI.APIKeyCommand != "echo o" {
 		t.Errorf("openai: got %q", cfg.LLM.OpenAI.APIKeyCommand)
+	}
+}
+
+func TestLoadFrom_ParsesLimits(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := `
+[limits]
+max_envelope_bytes      = 67108864
+ingest_timeout          = "500ms"
+summarize_timeout       = "2m"
+reflect_timeout         = "10m"
+shutdown_drain_timeout  = "30s"
+sqlite_max_open_conns   = 8
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	cfg, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if got, want := cfg.Limits.MaxEnvelopeBytes, 67108864; got != want {
+		t.Errorf("MaxEnvelopeBytes: got %d, want %d", got, want)
+	}
+	if got, want := cfg.Limits.IngestTimeout.Or(0), 500*time.Millisecond; got != want {
+		t.Errorf("IngestTimeout: got %v, want %v", got, want)
+	}
+	if got, want := cfg.Limits.SummarizeTimeout.Or(0), 2*time.Minute; got != want {
+		t.Errorf("SummarizeTimeout: got %v, want %v", got, want)
+	}
+	if got, want := cfg.Limits.ReflectTimeout.Or(0), 10*time.Minute; got != want {
+		t.Errorf("ReflectTimeout: got %v, want %v", got, want)
+	}
+	if got, want := cfg.Limits.ShutdownDrainTimeout.Or(0), 30*time.Second; got != want {
+		t.Errorf("ShutdownDrainTimeout: got %v, want %v", got, want)
+	}
+	if got, want := cfg.Limits.SQLiteMaxOpenConns, 8; got != want {
+		t.Errorf("SQLiteMaxOpenConns: got %d, want %d", got, want)
+	}
+}
+
+func TestLoadFrom_LimitsMissingYieldsZero(t *testing.T) {
+	t.Parallel()
+	// Empty config: every Limits field must be zero so callers fall
+	// through to the built-in defaults via Duration.Or / int sentinel.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte{}, 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	cfg, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if cfg.Limits.MaxEnvelopeBytes != 0 {
+		t.Errorf("MaxEnvelopeBytes: want 0, got %d", cfg.Limits.MaxEnvelopeBytes)
+	}
+	for name, d := range map[string]Duration{
+		"IngestTimeout":        cfg.Limits.IngestTimeout,
+		"SummarizeTimeout":     cfg.Limits.SummarizeTimeout,
+		"ReflectTimeout":       cfg.Limits.ReflectTimeout,
+		"ShutdownDrainTimeout": cfg.Limits.ShutdownDrainTimeout,
+	} {
+		if d != 0 {
+			t.Errorf("%s: want zero, got %v", name, time.Duration(d))
+		}
+	}
+	if cfg.Limits.SQLiteMaxOpenConns != 0 {
+		t.Errorf("SQLiteMaxOpenConns: want 0, got %d", cfg.Limits.SQLiteMaxOpenConns)
+	}
+}
+
+func TestLoadFrom_LimitsRejectsBadDuration(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := `
+[limits]
+ingest_timeout = "not-a-duration"
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	_, err := LoadFrom(path)
+	if err == nil {
+		t.Fatal("expected error on malformed duration")
+	}
+	if !strings.Contains(err.Error(), "not-a-duration") {
+		t.Errorf("error should mention the bad value: %v", err)
+	}
+}
+
+func TestDuration_OrFallsBackOnZero(t *testing.T) {
+	t.Parallel()
+	var z Duration
+	if got := z.Or(7 * time.Second); got != 7*time.Second {
+		t.Errorf("zero.Or(7s): got %v, want 7s", got)
+	}
+	d := Duration(3 * time.Second)
+	if got := d.Or(7 * time.Second); got != 3*time.Second {
+		t.Errorf("3s.Or(7s): got %v, want 3s", got)
+	}
+}
+
+func TestDuration_UnmarshalText_EmptyIsZero(t *testing.T) {
+	t.Parallel()
+	var d Duration
+	if err := d.UnmarshalText([]byte("   ")); err != nil {
+		t.Fatalf("whitespace-only should not error: %v", err)
+	}
+	if d != 0 {
+		t.Errorf("whitespace-only should yield zero, got %v", time.Duration(d))
 	}
 }
 

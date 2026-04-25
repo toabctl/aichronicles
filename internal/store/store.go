@@ -79,6 +79,24 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// SetMaxOpenConns overrides the connection-pool cap that Open
+// configured (default 4). Non-positive values are ignored. Designed
+// for the daemon to forward [limits].sqlite_max_open_conns from the
+// config file without exposing the *sql.DB. SetMaxIdleConns is
+// proportionally scaled to half the cap (min 1) so the pool can
+// actually keep more than the previous default warm.
+func (s *Store) SetMaxOpenConns(n int) {
+	if n <= 0 {
+		return
+	}
+	s.db.SetMaxOpenConns(n)
+	idle := n / 2
+	if idle < 1 {
+		idle = 1
+	}
+	s.db.SetMaxIdleConns(idle)
+}
+
 // DB returns the underlying *sql.DB. Exposed so callers (daemon
 // handlers, CLI subcommands, tests) can run their own SQL — the
 // package deliberately does not wrap every query in a typed method.

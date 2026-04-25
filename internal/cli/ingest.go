@@ -15,9 +15,10 @@ import (
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
-// ingestTimeout caps the daemon round-trip so a wedged daemon can never
-// block a Claude hook for long. 250ms is the CLAUDE.md hook-latency cap.
-const ingestTimeout = 250 * time.Millisecond
+// defaultIngestTimeout caps the daemon round-trip so a wedged daemon
+// can never block a Claude hook for long when [limits].ingest_timeout
+// isn't set. 250ms is the CLAUDE.md hook-latency cap.
+const defaultIngestTimeout = 250 * time.Millisecond
 
 func newIngestCmd() *cobra.Command {
 	var socketFlag string
@@ -104,7 +105,8 @@ func RunIngest(stdin io.Reader, stderr io.Writer, socketFlag string) error {
 
 	tracker := outageTracker(log)
 
-	ctx, cancel := context.WithTimeout(context.Background(), ingestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(),
+		cfg.Limits.IngestTimeout.Or(defaultIngestTimeout))
 	defer cancel()
 
 	client := NewClient(sockPath)

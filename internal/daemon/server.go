@@ -17,30 +17,47 @@ import (
 	"github.com/toabctl/aichronicles/pkg/ingest"
 )
 
-// maxEnvelopeBytes caps the POST body we will read. Real hook
-// envelopes are usually tiny, but a single assistant_message carrying
-// an inlined large tool result can legitimately exceed 16 MiB — we
-// have observed real transcripts with ~49 MB single lines. Keep this
-// in lockstep with maxClaudeLineBytes in cli/import_claude.go so the
-// live-hook path and the backfill path accept the same shape of
-// envelope. 128 MiB is a sanity bound against a pathological payload.
-const maxEnvelopeBytes = 128 << 20
+// DefaultMaxEnvelopeBytes is the body cap NewServer applies when the
+// caller doesn't override it. Real hook envelopes are usually tiny,
+// but a single assistant_message carrying an inlined large tool
+// result can legitimately exceed 16 MiB — we have observed real
+// transcripts with ~49 MB single lines. Keep this in lockstep with
+// maxClaudeLineBytes in cli/import_claude.go so the live-hook path
+// and the backfill path accept the same shape of envelope. 128 MiB
+// is a sanity bound against a pathological payload; operators can
+// override via [limits].max_envelope_bytes in the config file (the
+// daemon main wires it through to NewServer).
+const DefaultMaxEnvelopeBytes = 128 << 20
 
 // Server implements the aichronicles ingest HTTP surface backed by
 // the SQLite store. Transport-agnostic — wire it to a net.Listener
 // of any kind (UDS locally, HTTPS later).
 type Server struct {
-	store *store.Store
-	slog  *slog.Logger
+	store            *store.Store
+	slog             *slog.Logger
+	maxEnvelopeBytes int
 }
 
 // NewServer returns a Server that persists accepted envelopes through
 // the store. If log is nil, a default slog.Logger to stderr is used.
+// If maxEnvelopeBytes <= 0, DefaultMaxEnvelopeBytes is used.
 func NewServer(s *store.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
-	return &Server{store: s, slog: log}
+	return &Server{store: s, slog: log, maxEnvelopeBytes: DefaultMaxEnvelopeBytes}
+}
+
+// WithMaxEnvelopeBytes overrides the body cap on the receiver.
+// Returns the receiver for chaining; non-positive values are
+// ignored (DefaultMaxEnvelopeBytes stays in effect). Designed for
+// daemon main to pipe cfg.Limits.MaxEnvelopeBytes through without
+// mutating exported fields.
+func (s *Server) WithMaxEnvelopeBytes(n int) *Server {
+	if n > 0 {
+		s.maxEnvelopeBytes = n
+	}
+	return s
 }
 
 // Handler returns the HTTP multiplexer with every /v1 route mounted.
@@ -111,12 +128,16 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	// Buffer the body so we can strict-decode AND also store the
 	// original bytes verbatim in raw_envelopes.envelope_json. io.ReadAll
 	// is fine: our limit bounds memory.
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxEnvelopeBytes+1))
+	cap := int64(s.maxEnvelopeBytes)
+	if cap <= 0 {
+		cap = DefaultMaxEnvelopeBytes
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, cap+1))
 	if err != nil {
 		writeProblem(w, http.StatusBadRequest, "Read request body failed", err.Error())
 		return
 	}
-	if int64(len(body)) > maxEnvelopeBytes {
+	if int64(len(body)) > cap {
 		writeProblem(w, http.StatusRequestEntityTooLarge, "Envelope too large", "")
 		return
 	}

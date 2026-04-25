@@ -64,7 +64,8 @@ func newProposeCmd() *cobra.Command {
 			}
 			llmCfg := llmConfigFromFile(cfg.LLM)
 
-			ctx, cancel := context.WithTimeout(cmd.Context(), metaLLMTimeout)
+			ctx, cancel := context.WithTimeout(cmd.Context(),
+				cfg.Limits.ReflectTimeout.Or(defaultMetaLLMTimeout))
 			defer cancel()
 
 			_, err = RunPropose(ctx, s,

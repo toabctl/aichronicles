@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 
@@ -23,6 +24,90 @@ type Config struct {
 	Notifications Notifications `toml:"notifications"`
 	Capture       Capture       `toml:"capture"`
 	LLM           LLM           `toml:"llm"`
+	Limits        Limits        `toml:"limits"`
+}
+
+// Limits exposes operationally-tunable defaults that previously lived
+// as hardcoded constants throughout the codebase. Each field is
+// optional; zero values mean "use the built-in default" so older
+// config files (or empty config files) keep working unchanged.
+//
+// A new constant graduates to a Limits field when an operator might
+// reasonably need to tune it — slow disks, low-memory boxes, slower-
+// than-expected LLM providers, large enterprise transcripts, etc.
+// Internal implementation knobs (response-body truncation, MCP
+// buffer sizes, prompt-cache TTLs) stay as constants because tuning
+// them changes the program's contract, not its operating envelope.
+type Limits struct {
+	// MaxEnvelopeBytes overrides the daemon's POST body cap.
+	// Zero uses the built-in default (128 MiB). Real Claude
+	// transcripts can carry single 50 MB+ assistant turns when a
+	// large tool result is inlined; bump higher only if you
+	// regularly see 413s in the daemon log.
+	MaxEnvelopeBytes int `toml:"max_envelope_bytes"`
+
+	// IngestTimeout caps the daemon round-trip the hook
+	// subprocess will wait for. Zero uses the built-in default
+	// (250ms — tight, by design: a wedged daemon must never
+	// block the user's editing flow). Tune up if you observe
+	// repeated outage notifications under sustained CPU load.
+	IngestTimeout Duration `toml:"ingest_timeout"`
+
+	// SummarizeTimeout caps a single `summarize` LLM round-trip.
+	// Zero uses the built-in default (3 minutes — generous for
+	// any 1k-token summary, even on slow providers).
+	SummarizeTimeout Duration `toml:"summarize_timeout"`
+
+	// ReflectTimeout caps `reflect` and `propose` LLM
+	// round-trips (both share the larger budget). Zero uses the
+	// built-in default (5 minutes).
+	ReflectTimeout Duration `toml:"reflect_timeout"`
+
+	// ShutdownDrainTimeout caps how long the daemon will wait
+	// for in-flight POSTs to complete after SIGTERM/SIGINT.
+	// Zero uses the built-in default (10 seconds — comfortably
+	// under systemd's TimeoutStopSec=90s).
+	ShutdownDrainTimeout Duration `toml:"shutdown_drain_timeout"`
+
+	// SQLiteMaxOpenConns caps the connection pool the store
+	// uses against the SQLite file. Zero uses the built-in
+	// default (4 — modest because SQLite serializes writes
+	// internally; more connections mostly means more waiting).
+	// Bump only if profiling shows pool contention.
+	SQLiteMaxOpenConns int `toml:"sqlite_max_open_conns"`
+}
+
+// Duration is a time.Duration that round-trips through TOML's
+// string syntax (e.g. "250ms", "3m"). The standard time.Duration
+// only marshals as nanoseconds, which is unfriendly to humans
+// editing config files by hand.
+type Duration time.Duration
+
+// UnmarshalText parses Duration values written as Go duration
+// strings ("250ms", "3m", "5m30s"). Empty input yields zero
+// (interpreted as "use the default" by callers).
+func (d *Duration) UnmarshalText(text []byte) error {
+	s := strings.TrimSpace(string(text))
+	if s == "" {
+		*d = 0
+		return nil
+	}
+	parsed, err := time.ParseDuration(s)
+	if err != nil {
+		return fmt.Errorf("limits duration %q: %w", s, err)
+	}
+	*d = Duration(parsed)
+	return nil
+}
+
+// Or returns d's value if non-zero, fallback otherwise. Lets callers
+// write `cfg.Limits.IngestTimeout.Or(defaultIngestTimeout)` without
+// branching at every call site.
+func (d Duration) Or(fallback time.Duration) time.Duration {
+	if d == 0 {
+		return fallback
+	}
+	return time.Duration(d)
 }
 
 // LLM controls how the CLI subcommands (summarize, reflect, propose)
