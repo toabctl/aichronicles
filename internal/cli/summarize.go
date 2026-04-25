@@ -24,10 +24,10 @@ const defaultSummarizeTimeout = 3 * time.Minute
 
 func newSummarizeCmd() *cobra.Command {
 	var (
-		model   string
-		force   bool
-		jsonOut bool
-		dbPath  string
+		model    string
+		force    bool
+		dbPath   string
+		formatIn string
 	)
 	cmd := &cobra.Command{
 		Use:   "summarize <session>",
@@ -40,13 +40,18 @@ func newSummarizeCmd() *cobra.Command {
 			"Idempotent on the full prompt: re-running without --force returns\n" +
 			"the cached summary and does not call the LLM again. Pass --force\n" +
 			"to bypass the cache (e.g. after changing the prompt template).\n\n" +
-			"Output is rendered for the terminal by default; pass --json to\n" +
-			"emit the raw JSON body stored in the database.\n\n" +
+			"Output is rendered for the terminal by default; pass\n" +
+			"--format=json to emit the raw JSON body stored in the\n" +
+			"database.\n\n" +
 			"Requires " + llm.APIKeyEnv + " to be set unless --force is off AND\n" +
 			"a cached summary exists.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sessionID := args[0]
+			format, err := ParseOutputFormat(formatIn)
+			if err != nil {
+				return err
+			}
 			resolved, err := paths.ResolveStorePath(dbPath)
 			if err != nil {
 				return err
@@ -72,15 +77,15 @@ func newSummarizeCmd() *cobra.Command {
 				cfg.Limits.SummarizeTimeout.Or(defaultSummarizeTimeout))
 			defer cancel()
 			_, err = RunSummarize(ctx, s, newClient, SummarizeOptions{
-				SessionID: sessionID, Model: model, Force: force, JSON: jsonOut,
+				SessionID: sessionID, Model: model, Force: force, JSON: format == FormatJSON,
 			}, cmd.OutOrStdout())
 			return err
 		},
 	}
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit raw JSON body instead of the human-readable render")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
 

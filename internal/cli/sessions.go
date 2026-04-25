@@ -21,11 +21,12 @@ const maxPromptRunes = 80
 
 func newSessionsCmd() *cobra.Command {
 	var (
-		limit  int
-		cwd    string
-		agent  string
-		since  time.Duration
-		dbPath string
+		limit    int
+		cwd      string
+		agent    string
+		since    time.Duration
+		dbPath   string
+		formatIn string
 	)
 	cmd := &cobra.Command{
 		Use:   "sessions",
@@ -33,9 +34,14 @@ func newSessionsCmd() *cobra.Command {
 		Long: "One row per session, columns:\n\n" +
 			"  SESSION  STARTED  ENDED  EVENTS  CWD  FIRST_PROMPT\n\n" +
 			"On a TTY columns are aligned for reading; when piped or\n" +
-			"redirected they emit as tab-separated values for awk/cut/jq.\n" +
+			"redirected they emit as tab-separated values for awk/cut.\n" +
+			"Pass --format=json for a structured payload suitable for jq.\n" +
 			"Filters stack.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			format, err := ParseOutputFormat(formatIn)
+			if err != nil {
+				return err
+			}
 			resolved, err := paths.ResolveStorePath(dbPath)
 			if err != nil {
 				return err
@@ -47,9 +53,10 @@ func newSessionsCmd() *cobra.Command {
 			defer func() { _ = s.Close() }()
 
 			opts := SessionsOptions{
-				Cwd:   cwd,
-				Agent: agent,
-				Limit: limit,
+				Cwd:    cwd,
+				Agent:  agent,
+				Limit:  limit,
+				Format: format,
 			}
 			if since > 0 {
 				opts.SinceMs = time.Now().Add(-since).UnixMilli()
@@ -62,6 +69,7 @@ func newSessionsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&agent, "agent", "", "filter by source_agent (e.g. claude-code)")
 	cmd.Flags().DurationVar(&since, "since", 0, "only sessions whose ended_at is within this duration (search/audit filter on per-event ts_source)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
 
@@ -72,17 +80,31 @@ type SessionsOptions struct {
 	Agent   string
 	SinceMs int64 // only sessions ended_at_ms >= this
 	Limit   int
+	Format  OutputFormat // empty == FormatTable
+}
+
+// SessionRowJSON is the JSON shape emitted by `sessions --format=json`.
+// Field names are snake_case so they line up with the on-disk schema
+// and with the rest of the JSON we emit (envelope, llm_outputs body).
+// Nullable timestamps render as null rather than dash so jq pipelines
+// can branch with `select(.ended_at_ms != null)`.
+type SessionRowJSON struct {
+	SessionID   string  `json:"session_id"`
+	StartedAtMs *int64  `json:"started_at_ms"`
+	EndedAtMs   *int64  `json:"ended_at_ms"`
+	EventCount  int     `json:"event_count"`
+	Cwd         *string `json:"cwd"`
+	FirstPrompt *string `json:"first_prompt"`
 }
 
 // RunListSessions queries the store and writes one row per session
 // to out. Filters stack; ordering is always most-recently-ended first.
 //
-// On a TTY the rows pass through tabwriter for aligned columns; when
-// piped or redirected (or written to an in-memory buffer in tests),
-// the same logical content lands as tab-separated values for grep,
-// awk, and column -t. Empty result sets print a "(no sessions
-// matched)" line so the user can distinguish "nothing to show" from
-// "command silently failed."
+// Format=table (default) renders aligned columns + tab-separated
+// underneath for awk/cut. Format=json emits a JSON array of
+// SessionRowJSON values for jq pipelines. Empty result sets print a
+// "(no sessions matched)" line in table mode and an empty array in
+// JSON mode so consumers always see well-formed output.
 func RunListSessions(s *store.Store, opts SessionsOptions, out io.Writer) error {
 	sqlText, args := buildSessionsSQL(opts)
 	rows, err := s.DB().Query(sqlText, args...)
@@ -91,44 +113,82 @@ func RunListSessions(s *store.Store, opts SessionsOptions, out io.Writer) error 
 	}
 	defer func() { _ = rows.Close() }()
 
-	// Buffer rows so the empty-state branch can print "(no sessions
-	// matched)" without dumping the header above it. tw column widths
-	// are computed from buf contents at Flush time, so streaming
-	// straight to out would also lose alignment.
+	type rawRow struct {
+		id          string
+		startedMs   sql.NullInt64
+		endedMs     sql.NullInt64
+		eventCount  int
+		cwd         sql.NullString
+		firstPrompt sql.NullString
+	}
+	var collected []rawRow
+	for rows.Next() {
+		var r rawRow
+		if err := rows.Scan(&r.id, &r.startedMs, &r.endedMs, &r.eventCount, &r.cwd, &r.firstPrompt); err != nil {
+			return fmt.Errorf("scan row: %w", err)
+		}
+		collected = append(collected, r)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if opts.Format == FormatJSON {
+		payload := make([]SessionRowJSON, 0, len(collected))
+		for _, r := range collected {
+			payload = append(payload, SessionRowJSON{
+				SessionID:   r.id,
+				StartedAtMs: nullableInt64(r.startedMs),
+				EndedAtMs:   nullableInt64(r.endedMs),
+				EventCount:  r.eventCount,
+				Cwd:         nullableString(r.cwd),
+				FirstPrompt: nullableString(r.firstPrompt),
+			})
+		}
+		return emitJSON(out, payload)
+	}
+
+	if len(collected) == 0 {
+		_, err := fmt.Fprintln(out, "(no sessions matched)")
+		return err
+	}
+
+	// Buffer through tabwriter so column widths line up across all
+	// rows; otherwise streaming straight to out would lose alignment.
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
 	if _, err := fmt.Fprintln(tw, "SESSION\tSTARTED\tENDED\tEVENTS\tCWD\tFIRST_PROMPT"); err != nil {
 		return err
 	}
-
-	count := 0
-	for rows.Next() {
-		var (
-			id          string
-			startedMs   sql.NullInt64
-			endedMs     sql.NullInt64
-			eventCount  int
-			cwd         sql.NullString
-			firstPrompt sql.NullString
-		)
-		if err := rows.Scan(&id, &startedMs, &endedMs, &eventCount, &cwd, &firstPrompt); err != nil {
-			return fmt.Errorf("scan row: %w", err)
-		}
-		count++
-		_, _ = fmt.Fprintln(tw, formatSessionRow(id, startedMs, endedMs, eventCount, cwd, firstPrompt))
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if count == 0 {
-		_, err := fmt.Fprintln(out, "(no sessions matched)")
-		return err
+	for _, r := range collected {
+		_, _ = fmt.Fprintln(tw, formatSessionRow(r.id, r.startedMs, r.endedMs, r.eventCount, r.cwd, r.firstPrompt))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
 	}
 	_, err = io.Copy(out, &buf)
 	return err
+}
+
+// nullableInt64 lifts sql.NullInt64 into *int64 so JSON output renders
+// missing timestamps as `null` rather than `0`.
+func nullableInt64(n sql.NullInt64) *int64 {
+	if !n.Valid {
+		return nil
+	}
+	v := n.Int64
+	return &v
+}
+
+// nullableString lifts sql.NullString into *string. Empty-but-valid is
+// preserved as "" (distinct from null) — the schema treats empty cwd
+// as legitimately absent of a working directory rather than missing.
+func nullableString(n sql.NullString) *string {
+	if !n.Valid {
+		return nil
+	}
+	v := n.String
+	return &v
 }
 
 // buildSessionsSQL composes the list query. Factored out for unit

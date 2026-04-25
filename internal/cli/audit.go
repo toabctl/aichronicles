@@ -23,9 +23,10 @@ const auditSnippetRunes = 120
 
 func newAuditCmd() *cobra.Command {
 	var (
-		limit  int
-		since  time.Duration
-		dbPath string
+		limit    int
+		since    time.Duration
+		dbPath   string
+		formatIn string
 	)
 	cmd := &cobra.Command{
 		Use:   "audit",
@@ -34,8 +35,13 @@ func newAuditCmd() *cobra.Command {
 			"event and reports matches. Use it to find leaks that predate\n" +
 			"the redactor, or to validate that a new detector catches what\n" +
 			"you expect. This command never modifies the store — see\n" +
-			"`aichronicles scrub` for that.",
+			"`aichronicles scrub` for that.\n\n" +
+			"Pass --format=json for a structured payload suitable for jq.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			format, err := ParseOutputFormat(formatIn)
+			if err != nil {
+				return err
+			}
 			resolved, err := paths.ResolveStorePath(dbPath)
 			if err != nil {
 				return err
@@ -46,7 +52,7 @@ func newAuditCmd() *cobra.Command {
 			}
 			defer func() { _ = s.Close() }()
 
-			opts := AuditOptions{Limit: limit}
+			opts := AuditOptions{Limit: limit, Format: format}
 			if since > 0 {
 				opts.SinceMs = time.Now().Add(-since).UnixMilli()
 			}
@@ -57,6 +63,7 @@ func newAuditCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "max events to scan, newest first (0 = scan all)")
 	cmd.Flags().DurationVar(&since, "since", 0, "only scan events with ts_source newer than this duration (e.g. 168h)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
 
@@ -65,6 +72,29 @@ func newAuditCmd() *cobra.Command {
 type AuditOptions struct {
 	SinceMs int64
 	Limit   int
+	Format  OutputFormat // empty == FormatTable
+}
+
+// AuditFindingJSON is the JSON shape emitted by `audit --format=json`.
+// Snippet is always the marker form (raw secret bytes never appear),
+// matching the table-mode contract.
+type AuditFindingJSON struct {
+	SessionID  string   `json:"session_id"`
+	TsSourceMs *int64   `json:"ts_source_ms"`
+	Kind       string   `json:"kind"`
+	Patterns   []string `json:"patterns"`
+	Snippet    string   `json:"snippet"`
+}
+
+// AuditReportJSON is the top-level shape: a list of findings plus the
+// aggregate counts. Lets jq pipelines either iterate `.findings[]` or
+// `.scanned`/`.flagged` for the summary in one call.
+type AuditReportJSON struct {
+	Findings      []AuditFindingJSON `json:"findings"`
+	Scanned       int                `json:"scanned"`
+	Flagged       int                `json:"flagged"`
+	TotalFindings int                `json:"total_findings"`
+	PatternHits   map[string]int     `json:"pattern_hits"`
 }
 
 // AuditReport is the running tally returned alongside per-row output.
@@ -93,6 +123,7 @@ func RunAudit(s *store.Store, scanner redact.Scanner, opts AuditOptions, out io.
 	defer func() { _ = rows.Close() }()
 
 	report := &AuditReport{PatternHits: map[string]int{}}
+	var jsonHits []AuditFindingJSON
 
 	// Buffer rows so an empty-findings run can print "(no findings)"
 	// without the header floating above it.
@@ -127,18 +158,45 @@ func RunAudit(s *store.Store, scanner redact.Scanner, opts AuditOptions, out io.
 		for _, n := range names {
 			report.PatternHits[n]++
 		}
+		snippet := auditSnippet(content.String, findings[0])
+
+		if opts.Format == FormatJSON {
+			jsonHits = append(jsonHits, AuditFindingJSON{
+				SessionID:  sess,
+				TsSourceMs: nullableInt64(tsMs),
+				Kind:       kind,
+				Patterns:   names,
+				Snippet:    snippet,
+			})
+			continue
+		}
 
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
 			firstN(sess, 8),
 			formatTsNullable(tsMs),
 			kind,
 			strings.Join(names, ","),
-			auditSnippet(content.String, findings[0]),
+			snippet,
 		)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+
+	if opts.Format == FormatJSON {
+		if jsonHits == nil {
+			jsonHits = []AuditFindingJSON{}
+		}
+		err := emitJSON(out, AuditReportJSON{
+			Findings:      jsonHits,
+			Scanned:       report.Scanned,
+			Flagged:       report.Flagged,
+			TotalFindings: report.TotalFindings,
+			PatternHits:   report.PatternHits,
+		})
+		return report, err
+	}
+
 	if report.Flagged == 0 {
 		_, _ = fmt.Fprintln(out, "(no findings)")
 		return report, nil

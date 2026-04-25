@@ -33,6 +33,7 @@ func newSummariesListCmd() *cobra.Command {
 		typeIn    string
 		limit     int
 		dbPath    string
+		formatIn  string
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -43,8 +44,13 @@ func newSummariesListCmd() *cobra.Command {
 			"--type (summary | reflect | propose), or both.\n\n" +
 			"Topic column is extracted from the stored JSON body when\n" +
 			"possible; rows whose body is not parseable as a known type\n" +
-			"show `(unparseable)` so the row is still discoverable by id.",
+			"show `(unparseable)` so the row is still discoverable by id.\n\n" +
+			"Pass --format=json for a structured payload suitable for jq.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			format, err := ParseOutputFormat(formatIn)
+			if err != nil {
+				return err
+			}
 			s, err := openStoreFromFlag(dbPath)
 			if err != nil {
 				return err
@@ -71,34 +77,39 @@ func newSummariesListCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("summaries list: %w", err)
 			}
-			return writeSummariesTable(cmd.OutOrStdout(), rows)
+			return writeSummaries(cmd.OutOrStdout(), rows, format)
 		},
 	}
 	cmd.Flags().StringVar(&sessionIn, "session", "", "filter by session id or unique prefix")
 	cmd.Flags().StringVar(&typeIn, "type", "", "filter by output type (summary | reflect | propose)")
 	cmd.Flags().IntVar(&limit, "limit", 0, "max rows to list (default 50)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
 
 func newSummariesShowCmd() *cobra.Command {
 	var (
-		typeIn  string
-		jsonOut bool
-		dbPath  string
+		typeIn   string
+		dbPath   string
+		formatIn string
 	)
 	cmd := &cobra.Command{
 		Use:   "show <session>",
 		Short: "Show the most recent stored LLM output for a session",
 		Long: "Renders the latest llm_outputs row matching the given session\n" +
-			"(prefix OK) and type (default: summary). Pass --json to emit the\n" +
-			"raw JSON body instead of the human-readable render — useful for\n" +
-			"piping into `jq`.\n\n" +
+			"(prefix OK) and type (default: summary). Pass --format=json to\n" +
+			"emit the raw JSON body instead of the human-readable render —\n" +
+			"useful for piping into `jq`.\n\n" +
 			"Errors with `no output for session …/type …` when the session\n" +
 			"exists but has never been summarized/reflected/proposed under\n" +
 			"the requested type.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			format, err := ParseOutputFormat(formatIn)
+			if err != nil {
+				return err
+			}
 			s, err := openStoreFromFlag(dbPath)
 			if err != nil {
 				return err
@@ -125,12 +136,12 @@ func newSummariesShowCmd() *cobra.Command {
 			if len(rows) == 0 {
 				return fmt.Errorf("no %s output for session %s", kind, sid)
 			}
-			return emitLLMBody(cmd.OutOrStdout(), kind, rows[0].Body, jsonOut)
+			return emitLLMBody(cmd.OutOrStdout(), kind, rows[0].Body, format == FormatJSON)
 		},
 	}
 	cmd.Flags().StringVar(&typeIn, "type", "summary", "output type (summary | reflect | propose)")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit raw JSON body instead of the human-readable render")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
 
@@ -161,10 +172,54 @@ func parseOutputKind(s string) (store.LLMOutputKind, error) {
 	}
 }
 
-// writeSummariesTable renders a tab-aligned table of the rows. Empty
-// result set produces a single "(no outputs)" line so the user sees
-// that the command ran but found nothing.
-func writeSummariesTable(w io.Writer, rows []store.LLMOutput) error {
+// LLMOutputRowJSON is the JSON shape emitted by `summaries list
+// --format=json`. The body field carries the stored llm_outputs.body
+// verbatim — already JSON, so we round-trip it through json.RawMessage
+// to keep the output a single tree rather than embedding a quoted
+// string. Topic is the same scannable label the table renders.
+type LLMOutputRowJSON struct {
+	ID           int64           `json:"id"`
+	Kind         string          `json:"kind"`
+	SessionID    *string         `json:"session_id"`
+	CreatedAtMs  int64           `json:"created_at_ms"`
+	Topic        string          `json:"topic"`
+	Model        string          `json:"model,omitempty"`
+	InputTokens  *int64          `json:"input_tokens,omitempty"`
+	OutputTokens *int64          `json:"output_tokens,omitempty"`
+	Body         json.RawMessage `json:"body"`
+}
+
+// writeSummaries renders rows in either format. Format=table is the
+// human-readable tab-aligned table; format=json is a JSON array of
+// LLMOutputRowJSON for jq pipelines. Empty result is "(no outputs)"
+// in table mode and "[]" in JSON mode.
+func writeSummaries(w io.Writer, rows []store.LLMOutput, format OutputFormat) error {
+	if format == FormatJSON {
+		payload := make([]LLMOutputRowJSON, 0, len(rows))
+		for _, r := range rows {
+			row := LLMOutputRowJSON{
+				ID:           r.ID,
+				Kind:         string(r.Kind),
+				SessionID:    nullableString(r.SessionID),
+				CreatedAtMs:  r.CreatedAtMs,
+				Topic:        extractTopic(r.Kind, r.Body),
+				Model:        r.Model,
+				InputTokens:  nullableInt64(r.InputTokens),
+				OutputTokens: nullableInt64(r.OutputTokens),
+				Body:         json.RawMessage(r.Body),
+			}
+			// Body may have been stored as plain text (legacy or
+			// unparseable) — wrap as a JSON string so the array still
+			// validates instead of erroring on emit.
+			if !json.Valid([]byte(r.Body)) {
+				escaped, _ := json.Marshal(r.Body)
+				row.Body = escaped
+			}
+			payload = append(payload, row)
+		}
+		return emitJSON(w, payload)
+	}
+
 	if len(rows) == 0 {
 		_, err := fmt.Fprintln(w, "(no outputs)")
 		return err

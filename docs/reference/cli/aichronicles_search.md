@@ -6,7 +6,8 @@ Full-text search over captured envelopes
 
 Runs an FTS5 MATCH against events.content_text and prints the
 top hits one per line. Query syntax is SQLite FTS5 (phrases in
-quotes, AND/OR/NOT, prefix with *).
+quotes, AND/OR/NOT, prefix with *). Pass --format=json for a
+structured payload suitable for jq.
 
 ```
 aichronicles search <query> [flags]
@@ -16,6 +17,7 @@ aichronicles search <query> [flags]
 
 ```
       --db string        SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
+      --format string    output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help             help for search
       --kind string      filter by event kind (user_prompt, tool_use, …)
       --limit int        max number of hits (default 20)

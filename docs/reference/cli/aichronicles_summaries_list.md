@@ -13,6 +13,8 @@ Topic column is extracted from the stored JSON body when
 possible; rows whose body is not parseable as a known type
 show `(unparseable)` so the row is still discoverable by id.
 
+Pass --format=json for a structured payload suitable for jq.
+
 ```
 aichronicles summaries list [flags]
 ```
@@ -21,6 +23,7 @@ aichronicles summaries list [flags]
 
 ```
       --db string        SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
+      --format string    output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help             help for list
       --limit int        max rows to list (default 50)
       --session string   filter by session id or unique prefix

@@ -33,12 +33,12 @@ const defaultReflectLimit = 25
 
 func newReflectCmd() *cobra.Command {
 	var (
-		since   time.Duration
-		limit   int
-		model   string
-		force   bool
-		jsonOut bool
-		dbPath  string
+		since    time.Duration
+		limit    int
+		model    string
+		force    bool
+		dbPath   string
+		formatIn string
 	)
 	cmd := &cobra.Command{
 		Use:   "reflect",
@@ -48,11 +48,15 @@ func newReflectCmd() *cobra.Command {
 			"recurring sources of friction, and one workflow change worth\n" +
 			"trying. Existing per-session summaries (from `aichronicles\n" +
 			"summarize`) are preferred to raw first prompts.\n\n" +
-			"Cached like summarize: same digest list = same prompt_hash = same\n" +
-			"cached body. Use --force to re-call. Use --json to emit the raw\n" +
-			"JSON body instead of the human-readable render.\n\n" +
+			"Cached like summarize: same digest list = same prompt_hash =\n" +
+			"same cached body. Use --force to re-call. Use --format=json to\n" +
+			"emit the raw JSON body instead of the human-readable render.\n\n" +
 			"Requires " + llm.APIKeyEnv + " unless the cache hits.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			format, err := ParseOutputFormat(formatIn)
+			if err != nil {
+				return err
+			}
 			resolved, err := paths.ResolveStorePath(dbPath)
 			if err != nil {
 				return err
@@ -77,7 +81,7 @@ func newReflectCmd() *cobra.Command {
 				func() (llm.Client, error) {
 					return llm.FromConfig(ctx, llmCfg)
 				},
-				ReflectOptions{Since: since, Limit: limit, Model: model, Force: force, JSON: jsonOut},
+				ReflectOptions{Since: since, Limit: limit, Model: model, Force: force, JSON: format == FormatJSON},
 				cmd.OutOrStdout())
 			return err
 		},
@@ -86,8 +90,8 @@ func newReflectCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", defaultReflectLimit, "max sessions to feed the LLM, newest first")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit raw JSON body instead of the human-readable render")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
 

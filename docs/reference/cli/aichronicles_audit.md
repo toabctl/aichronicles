@@ -10,6 +10,8 @@ the redactor, or to validate that a new detector catches what
 you expect. This command never modifies the store — see
 `aichronicles scrub` for that.
 
+Pass --format=json for a structured payload suitable for jq.
+
 ```
 aichronicles audit [flags]
 ```
@@ -18,6 +20,7 @@ aichronicles audit [flags]
 
 ```
       --db string        SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
+      --format string    output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help             help for audit
       --limit int        max events to scan, newest first (0 = scan all)
       --since duration   only scan events with ts_source newer than this duration (e.g. 168h)

@@ -105,7 +105,7 @@ func TestSummariesList_ShowsEveryKindWithTopic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if err := writeSummariesTable(&out, rows); err != nil {
+	if err := writeSummaries(&out, rows, FormatTable); err != nil {
 		t.Fatalf("writeSummariesTable: %v", err)
 	}
 	rendered := out.String()
@@ -128,7 +128,7 @@ func TestSummariesList_EmptyResultGivesPlaceholder(t *testing.T) {
 	s := testStore(t)
 	var out bytes.Buffer
 	rows, _ := store.LoadLLMOutputs(t.Context(), s.DB(), store.LLMOutputFilter{})
-	if err := writeSummariesTable(&out, rows); err != nil {
+	if err := writeSummaries(&out, rows, FormatTable); err != nil {
 		t.Fatalf("writeSummariesTable: %v", err)
 	}
 	if !strings.Contains(out.String(), "(no outputs)") {
@@ -231,7 +231,7 @@ func TestSummariesShow_JSONFlagEmitsRawBody(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--db", dbPathFromStore(t, s), "--json", sessID[:8]})
+	cmd.SetArgs([]string{"--db", dbPathFromStore(t, s), "--format", "json", sessID[:8]})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
 	}

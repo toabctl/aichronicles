@@ -25,12 +25,12 @@ const (
 
 func newProposeCmd() *cobra.Command {
 	var (
-		since   time.Duration
-		limit   int
-		model   string
-		force   bool
-		jsonOut bool
-		dbPath  string
+		since    time.Duration
+		limit    int
+		model    string
+		force    bool
+		dbPath   string
+		formatIn string
 	)
 	cmd := &cobra.Command{
 		Use:   "propose",
@@ -41,9 +41,13 @@ func newProposeCmd() *cobra.Command {
 			"scripts to pre-build. The system prompt forbids generic advice —\n" +
 			"every suggestion must cite at least one session as evidence.\n\n" +
 			"Cached on prompt_hash in llm_outputs with kind=propose. Use\n" +
-			"--force to re-call. Use --json to emit the raw JSON body.\n\n" +
+			"--force to re-call. Use --format=json to emit the raw JSON body.\n\n" +
 			"Requires " + llm.APIKeyEnv + " unless the cache hits.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			format, err := ParseOutputFormat(formatIn)
+			if err != nil {
+				return err
+			}
 			resolved, err := paths.ResolveStorePath(dbPath)
 			if err != nil {
 				return err
@@ -68,7 +72,7 @@ func newProposeCmd() *cobra.Command {
 				func() (llm.Client, error) {
 					return llm.FromConfig(ctx, llmCfg)
 				},
-				ProposeOptions{Since: since, Limit: limit, Model: model, Force: force, JSON: jsonOut},
+				ProposeOptions{Since: since, Limit: limit, Model: model, Force: force, JSON: format == FormatJSON},
 				cmd.OutOrStdout())
 			return err
 		},
@@ -77,8 +81,8 @@ func newProposeCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", defaultProposeLimit, "max sessions to feed the LLM, newest first")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit raw JSON body instead of the human-readable render")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
 

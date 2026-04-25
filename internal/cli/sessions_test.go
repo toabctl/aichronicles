@@ -200,6 +200,37 @@ func TestRunListSessions_EmptyStoreShowsEmptyStateLine(t *testing.T) {
 	}
 }
 
+func TestRunListSessions_JSONFormatIsArray(t *testing.T) {
+	t.Parallel()
+	s := seedStoreForSessions(t)
+	var out bytes.Buffer
+	if err := RunListSessions(s, SessionsOptions{Format: FormatJSON}, &out); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	body := out.String()
+	if !strings.HasPrefix(strings.TrimSpace(body), "[") {
+		t.Fatalf("expected JSON array, got %q", body)
+	}
+	// Three seeded sessions → three session_id keys in the payload.
+	if got := strings.Count(body, "\"session_id\""); got != 3 {
+		t.Errorf("session_id count: got %d, want 3:\n%s", got, body)
+	}
+}
+
+func TestRunListSessions_JSONEmptyStoreReturnsArray(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	var out bytes.Buffer
+	if err := RunListSessions(s, SessionsOptions{Format: FormatJSON}, &out); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	// Must be a valid (empty) array, not the "(no sessions matched)" line.
+	got := strings.TrimSpace(out.String())
+	if got != "[]" {
+		t.Errorf("empty JSON output should be [], got %q", got)
+	}
+}
+
 func TestFormatSessionRow_ColumnsAndNullHandling(t *testing.T) {
 	t.Parallel()
 	// Typical row

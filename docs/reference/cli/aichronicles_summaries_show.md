@@ -5,9 +5,9 @@ Show the most recent stored LLM output for a session
 ### Synopsis
 
 Renders the latest llm_outputs row matching the given session
-(prefix OK) and type (default: summary). Pass --json to emit the
-raw JSON body instead of the human-readable render — useful for
-piping into `jq`.
+(prefix OK) and type (default: summary). Pass --format=json to
+emit the raw JSON body instead of the human-readable render —
+useful for piping into `jq`.
 
 Errors with `no output for session …/type …` when the session
 exists but has never been summarized/reflected/proposed under
@@ -20,10 +20,10 @@ aichronicles summaries show <session> [flags]
 ### Options
 
 ```
-      --db string     SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
-  -h, --help          help for show
-      --json          emit raw JSON body instead of the human-readable render
-      --type string   output type (summary | reflect | propose) (default "summary")
+      --db string       SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
+      --format string   output format: table (human-readable) or json (for jq / scripts) (default "table")
+  -h, --help            help for show
+      --type string     output type (summary | reflect | propose) (default "summary")
 ```
 
 ### SEE ALSO

@@ -14,8 +14,9 @@ Idempotent on the full prompt: re-running without --force returns
 the cached summary and does not call the LLM again. Pass --force
 to bypass the cache (e.g. after changing the prompt template).
 
-Output is rendered for the terminal by default; pass --json to
-emit the raw JSON body stored in the database.
+Output is rendered for the terminal by default; pass
+--format=json to emit the raw JSON body stored in the
+database.
 
 Requires ANTHROPIC_API_KEY to be set unless --force is off AND
 a cached summary exists.
@@ -27,11 +28,11 @@ aichronicles summarize <session> [flags]
 ### Options
 
 ```
-      --db string      SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
-      --force          bypass the llm_outputs cache and re-call the LLM
-  -h, --help           help for summarize
-      --json           emit raw JSON body instead of the human-readable render
-      --model string   LLM model id (default: provider's default)
+      --db string       SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
+      --force           bypass the llm_outputs cache and re-call the LLM
+      --format string   output format: table (human-readable) or json (for jq / scripts) (default "table")
+  -h, --help            help for summarize
+      --model string    LLM model id (default: provider's default)
 ```
 
 ### SEE ALSO
