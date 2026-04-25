@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/ingest"
-	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 // seedScrubStore plants two poisoned events + one clean event, all

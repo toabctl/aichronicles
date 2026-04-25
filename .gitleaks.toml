@@ -8,7 +8,7 @@ useDefault = true
 # as test data). Fixtures must remain synthetic — no live secrets.
 [[allowlists]]
 paths = [
-  '''internal/redact/redact_test\.go''',
+  '''pkg/redact/redact_test\.go''',
   # Auto-generated detector reference reproduces our own regex
   # patterns inline so users can inspect what each one catches. The
   # patterns themselves match the same shapes gitleaks looks for —

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/toabctl/aichronicles/internal/redact"
+	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 // Tool is one registered tool. Handler is invoked with the raw

@@ -16,7 +16,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 
-	"github.com/toabctl/aichronicles/internal/redact"
+	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 // AnthropicEndpoint is the Messages API URL. Exported so tests can

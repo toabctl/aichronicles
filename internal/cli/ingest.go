@@ -12,7 +12,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/ingest"
 	"github.com/toabctl/aichronicles/internal/notify"
 	"github.com/toabctl/aichronicles/internal/paths"
-	"github.com/toabctl/aichronicles/internal/redact"
+	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 // ingestTimeout caps the daemon round-trip so a wedged daemon can never

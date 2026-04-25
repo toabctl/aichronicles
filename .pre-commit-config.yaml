@@ -14,7 +14,7 @@ repos:
         # reference reproduces the regex pattern (which embeds the
         # literal BEGIN/END markers) for users to inspect. Neither
         # file carries live key material.
-        exclude: ^(internal/redact/redact_test\.go|docs/reference/redaction-detectors\.md)$
+        exclude: ^(pkg/redact/redact_test\.go|docs/reference/redaction-detectors\.md)$
       - id: check-yaml
         # mkdocs.yml uses pymdownx.superfences's `!!python/name:`
         # tag, which the default safe loader rejects. --unsafe

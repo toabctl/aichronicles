@@ -3,7 +3,7 @@ package ingest
 import (
 	"sort"
 
-	"github.com/toabctl/aichronicles/internal/redact"
+	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 // ApplyRedaction scans every free-text field on env with scanner and

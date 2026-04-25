@@ -14,7 +14,7 @@ import (
 	"github.com/openai/openai-go/packages/param"
 	"github.com/openai/openai-go/shared"
 
-	"github.com/toabctl/aichronicles/internal/redact"
+	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 // OpenAIAPIKeyEnv is the environment variable read by FromEnvOpenAI

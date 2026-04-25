@@ -12,8 +12,8 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/ingest"
 	"github.com/toabctl/aichronicles/internal/paths"
-	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 func newScrubCmd() *cobra.Command {
