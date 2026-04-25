@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
 	"io"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -74,12 +76,14 @@ type AuditReport struct {
 }
 
 // RunAudit scans events.content_text with scanner and prints one
-// tab-separated row per event that contains any finding. A summary
-// report is returned for callers that want aggregate numbers.
+// row per event that contains any finding. A summary report is
+// returned for callers that want aggregate numbers.
 //
-// Row format:
+// Output format: a header row followed by one row per finding,
+// column-aligned via tabwriter so the snippet column lines up. When
+// piped, the same content remains tab-separated for grep / awk.
 //
-//	sess8  ts_utc  kind  patterns,csv  snippet
+// Row columns: SESSION  WHEN  KIND  PATTERNS  SNIPPET.
 func RunAudit(s *store.Store, scanner redact.Scanner, opts AuditOptions, out io.Writer) (*AuditReport, error) {
 	sqlText, args := buildAuditSQL(opts)
 	rows, err := s.DB().Query(sqlText, args...)
@@ -89,6 +93,15 @@ func RunAudit(s *store.Store, scanner redact.Scanner, opts AuditOptions, out io.
 	defer func() { _ = rows.Close() }()
 
 	report := &AuditReport{PatternHits: map[string]int{}}
+
+	// Buffer rows so an empty-findings run can print "(no findings)"
+	// without the header floating above it.
+	var buf bytes.Buffer
+	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "SESSION\tWHEN\tKIND\tPATTERNS\tSNIPPET"); err != nil {
+		return nil, err
+	}
+
 	for rows.Next() {
 		var (
 			sess    string
@@ -115,7 +128,7 @@ func RunAudit(s *store.Store, scanner redact.Scanner, opts AuditOptions, out io.
 			report.PatternHits[n]++
 		}
 
-		_, _ = fmt.Fprintf(out, "%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
 			firstN(sess, 8),
 			formatTsNullable(tsMs),
 			kind,
@@ -124,6 +137,16 @@ func RunAudit(s *store.Store, scanner redact.Scanner, opts AuditOptions, out io.
 		)
 	}
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if report.Flagged == 0 {
+		_, _ = fmt.Fprintln(out, "(no findings)")
+		return report, nil
+	}
+	if err := tw.Flush(); err != nil {
+		return nil, err
+	}
+	if _, err := io.Copy(out, &buf); err != nil {
 		return nil, err
 	}
 	return report, nil

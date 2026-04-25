@@ -90,14 +90,14 @@ func TestRunAudit_FindsSeededSecrets(t *testing.T) {
 		t.Errorf("anthropic hits: got %d, want 1", report.PatternHits["anthropic_api_key"])
 	}
 
-	// Two rows written.
+	// Header + 2 rows = 3 lines.
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("expected 2 output lines, got %d:\n%s", len(lines), out.String())
+	if len(lines) != 3 {
+		t.Fatalf("expected header + 2 output lines = 3, got %d:\n%s", len(lines), out.String())
 	}
 	// Snippet must NEVER contain the raw secret — that's the whole
 	// point of audit: produce safely-copyable output.
-	for _, l := range lines {
+	for _, l := range lines[1:] {
 		if strings.Contains(l, "AKIAIOSFODNN7EXAMPLE") {
 			t.Errorf("audit row leaked raw aws key: %q", l)
 		}
@@ -152,7 +152,7 @@ func TestRunAudit_RespectsSinceFilter(t *testing.T) {
 	}
 }
 
-func TestRunAudit_EmptyStoreNoRowsNoError(t *testing.T) {
+func TestRunAudit_EmptyStoreShowsEmptyStateLine(t *testing.T) {
 	t.Parallel()
 	s := testStore(t)
 	var out bytes.Buffer
@@ -163,8 +163,8 @@ func TestRunAudit_EmptyStoreNoRowsNoError(t *testing.T) {
 	if report.Scanned != 0 || report.Flagged != 0 {
 		t.Errorf("empty store: %+v", report)
 	}
-	if out.Len() != 0 {
-		t.Errorf("empty store should produce no output, got %q", out.String())
+	if !strings.Contains(out.String(), "(no findings)") {
+		t.Errorf("expected empty-state line, got %q", out.String())
 	}
 }
 

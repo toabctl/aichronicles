@@ -115,15 +115,16 @@ func TestRunListSessions_OrdersMostRecentFirst(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("expected 3 sessions, got %d:\n%s", len(lines), out.String())
+	// Header + 3 data rows.
+	if len(lines) != 4 {
+		t.Fatalf("expected header + 3 sessions = 4 lines, got %d:\n%s", len(lines), out.String())
 	}
-	// First line should be the newest session (/work/baz).
-	if !strings.Contains(lines[0], "/work/baz") {
-		t.Errorf("newest session should be first: %s", lines[0])
+	// Header is lines[0]; lines[1] is newest, lines[3] is oldest.
+	if !strings.Contains(lines[1], "/work/baz") {
+		t.Errorf("newest session should be first data row: %s", lines[1])
 	}
-	if !strings.Contains(lines[2], "/work/foo") {
-		t.Errorf("oldest session should be last: %s", lines[2])
+	if !strings.Contains(lines[3], "/work/foo") {
+		t.Errorf("oldest session should be last: %s", lines[3])
 	}
 }
 
@@ -147,11 +148,12 @@ func TestRunListSessions_RespectsCwdFilter(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 1 {
-		t.Fatalf("expected 1 hit for /work/bar, got %d", len(lines))
+	// Header + 1 data row.
+	if len(lines) != 2 {
+		t.Fatalf("expected header + 1 hit for /work/bar = 2 lines, got %d", len(lines))
 	}
-	if !strings.Contains(lines[0], "/work/bar") {
-		t.Errorf("cwd filter mismatch: %s", lines[0])
+	if !strings.Contains(lines[1], "/work/bar") {
+		t.Errorf("cwd filter mismatch: %s", lines[1])
 	}
 }
 
@@ -179,21 +181,22 @@ func TestRunListSessions_RespectsLimit(t *testing.T) {
 	if err := RunListSessions(s, SessionsOptions{Limit: 2}, &out); err != nil {
 		t.Fatalf("run: %v", err)
 	}
+	// One header line + N data rows.
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 2 {
-		t.Errorf("limit=2 should return 2 rows, got %d", len(lines))
+	if len(lines) != 3 {
+		t.Errorf("limit=2 should return header + 2 rows = 3 lines, got %d", len(lines))
 	}
 }
 
-func TestRunListSessions_EmptyStoreProducesNoOutput(t *testing.T) {
+func TestRunListSessions_EmptyStoreShowsEmptyStateLine(t *testing.T) {
 	t.Parallel()
 	s := testStore(t)
 	var out bytes.Buffer
 	if err := RunListSessions(s, SessionsOptions{}, &out); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if out.Len() != 0 {
-		t.Errorf("empty store should produce no output, got %q", out.String())
+	if !strings.Contains(out.String(), "(no sessions matched)") {
+		t.Errorf("expected empty-state line, got %q", out.String())
 	}
 }
 

@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
 	"io"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -28,10 +30,11 @@ func newSessionsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sessions",
 		Short: "List sessions in the store, most-recently-ended first",
-		Long: "One tab-separated line per session:\n\n" +
-			"  sess8  started_at  ended_at  event_count  cwd  first_prompt_snippet\n\n" +
-			"Filters stack. Output is grep-friendly; pipe through column -t\n" +
-			"for aligned columns.",
+		Long: "One row per session, columns:\n\n" +
+			"  SESSION  STARTED  ENDED  EVENTS  CWD  FIRST_PROMPT\n\n" +
+			"On a TTY columns are aligned for reading; when piped or\n" +
+			"redirected they emit as tab-separated values for awk/cut/jq.\n" +
+			"Filters stack.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			resolved, err := paths.ResolveStorePath(dbPath)
 			if err != nil {
@@ -73,6 +76,13 @@ type SessionsOptions struct {
 
 // RunListSessions queries the store and writes one row per session
 // to out. Filters stack; ordering is always most-recently-ended first.
+//
+// On a TTY the rows pass through tabwriter for aligned columns; when
+// piped or redirected (or written to an in-memory buffer in tests),
+// the same logical content lands as tab-separated values for grep,
+// awk, and column -t. Empty result sets print a "(no sessions
+// matched)" line so the user can distinguish "nothing to show" from
+// "command silently failed."
 func RunListSessions(s *store.Store, opts SessionsOptions, out io.Writer) error {
 	sqlText, args := buildSessionsSQL(opts)
 	rows, err := s.DB().Query(sqlText, args...)
@@ -81,6 +91,17 @@ func RunListSessions(s *store.Store, opts SessionsOptions, out io.Writer) error 
 	}
 	defer func() { _ = rows.Close() }()
 
+	// Buffer rows so the empty-state branch can print "(no sessions
+	// matched)" without dumping the header above it. tw column widths
+	// are computed from buf contents at Flush time, so streaming
+	// straight to out would also lose alignment.
+	var buf bytes.Buffer
+	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "SESSION\tSTARTED\tENDED\tEVENTS\tCWD\tFIRST_PROMPT"); err != nil {
+		return err
+	}
+
+	count := 0
 	for rows.Next() {
 		var (
 			id          string
@@ -93,9 +114,21 @@ func RunListSessions(s *store.Store, opts SessionsOptions, out io.Writer) error 
 		if err := rows.Scan(&id, &startedMs, &endedMs, &eventCount, &cwd, &firstPrompt); err != nil {
 			return fmt.Errorf("scan row: %w", err)
 		}
-		_, _ = fmt.Fprintln(out, formatSessionRow(id, startedMs, endedMs, eventCount, cwd, firstPrompt))
+		count++
+		_, _ = fmt.Fprintln(tw, formatSessionRow(id, startedMs, endedMs, eventCount, cwd, firstPrompt))
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if count == 0 {
+		_, err := fmt.Fprintln(out, "(no sessions matched)")
+		return err
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	_, err = io.Copy(out, &buf)
+	return err
 }
 
 // buildSessionsSQL composes the list query. Factored out for unit

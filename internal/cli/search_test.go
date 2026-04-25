@@ -156,10 +156,10 @@ func TestRunSearch_FindsByKeyword(t *testing.T) {
 	if !strings.Contains(out.String(), "what is jsonl format") {
 		t.Errorf("expected jsonl hit in output:\n%s", out.String())
 	}
-	// one hit, one line
+	// header + 1 data row.
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 1 {
-		t.Errorf("expected 1 hit, got %d:\n%s", len(lines), out.String())
+	if len(lines) != 2 {
+		t.Errorf("expected header + 1 hit = 2 lines, got %d:\n%s", len(lines), out.String())
 	}
 }
 
@@ -174,11 +174,12 @@ func TestRunSearch_RespectsKindFilter(t *testing.T) {
 		t.Fatalf("RunSearch: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 1 {
-		t.Fatalf("expected 1 hit, got %d:\n%s", len(lines), out.String())
+	// header + 1 data row.
+	if len(lines) != 2 {
+		t.Fatalf("expected header + 1 hit = 2 lines, got %d:\n%s", len(lines), out.String())
 	}
-	if !strings.Contains(lines[0], "user_prompt") {
-		t.Errorf("hit line should be user_prompt: %s", lines[0])
+	if !strings.Contains(lines[1], "user_prompt") {
+		t.Errorf("hit line should be user_prompt: %s", lines[1])
 	}
 }
 
@@ -193,11 +194,14 @@ func TestRunSearch_RespectsSessionFilter(t *testing.T) {
 	}
 	got := out.String()
 	// Should only include hits from sess-foo (prefix match in column 2).
-	for _, line := range strings.Split(strings.TrimSpace(got), "\n") {
-		if line == "" {
+	// Skip the header line. tabwriter pads with spaces; split on
+	// 2-or-more whitespace to reach the second column robustly.
+	lines := strings.Split(strings.TrimSpace(got), "\n")
+	for i, line := range lines {
+		if i == 0 || line == "" {
 			continue
 		}
-		fields := strings.Split(line, "\t")
+		fields := strings.Fields(line)
 		if len(fields) < 2 {
 			t.Fatalf("malformed line: %q", line)
 		}
@@ -253,8 +257,9 @@ func TestRunSearch_RespectsLimit(t *testing.T) {
 		t.Fatalf("RunSearch: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 5 {
-		t.Errorf("expected 5 hits (limit), got %d", len(lines))
+	// header + 5 data rows.
+	if len(lines) != 6 {
+		t.Errorf("expected header + 5 hits = 6 lines, got %d", len(lines))
 	}
 }
 
@@ -267,15 +272,15 @@ func TestRunSearch_EmptyQueryIsError(t *testing.T) {
 	}
 }
 
-func TestRunSearch_NoMatchesProducesNoOutput(t *testing.T) {
+func TestRunSearch_NoMatchesShowsEmptyStateLine(t *testing.T) {
 	t.Parallel()
 	s, _ := seedStore(t)
 	var out bytes.Buffer
 	if err := RunSearch(s, SearchOptions{Query: "thisdoesnotappear"}, &out); err != nil {
 		t.Fatalf("RunSearch: %v", err)
 	}
-	if out.Len() != 0 {
-		t.Errorf("expected no output, got %q", out.String())
+	if !strings.Contains(out.String(), "(no hits") {
+		t.Errorf("expected empty-state line, got %q", out.String())
 	}
 }
 
@@ -337,11 +342,12 @@ func TestRunSearch_DedupeCollapsesDuplicateTurn(t *testing.T) {
 		t.Fatalf("RunSearch: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 1 {
-		t.Fatalf("expected 1 deduped hit, got %d:\n%s", len(lines), out.String())
+	// header + 1 deduped row.
+	if len(lines) != 2 {
+		t.Fatalf("expected header + 1 deduped hit = 2 lines, got %d:\n%s", len(lines), out.String())
 	}
-	if !strings.Contains(lines[0], "duplicated turn text marker") {
-		t.Errorf("unexpected hit: %s", lines[0])
+	if !strings.Contains(lines[1], "duplicated turn text marker") {
+		t.Errorf("unexpected hit: %s", lines[1])
 	}
 }
 
@@ -355,8 +361,9 @@ func TestRunSearch_NoDedupSurfacesBothCopies(t *testing.T) {
 		t.Fatalf("RunSearch: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("--show-all expected 2 hits, got %d:\n%s", len(lines), out.String())
+	// header + 2 (un-deduped) rows.
+	if len(lines) != 3 {
+		t.Fatalf("--no-dedup expected header + 2 hits = 3 lines, got %d:\n%s", len(lines), out.String())
 	}
 }
 
@@ -434,8 +441,9 @@ func TestRunSearch_DedupeDoesNotCollapseDistinctContent(t *testing.T) {
 		t.Fatalf("RunSearch: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 2 {
-		t.Errorf("distinct-content rows should both surface, got %d:\n%s", len(lines), out.String())
+	// header + 2 distinct-content rows.
+	if len(lines) != 3 {
+		t.Errorf("distinct-content rows should both surface (header + 2 = 3 lines), got %d:\n%s", len(lines), out.String())
 	}
 }
 

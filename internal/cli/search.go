@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -99,6 +101,10 @@ type SearchOptions struct {
 // RunSearch executes an FTS5 query against the store and writes one
 // hit per line to out. Empty query is an error because FTS5 would
 // either error itself or return the whole corpus.
+//
+// Output is column-aligned (header + tab-separated rows fed through
+// tabwriter); empty result sets surface a "(no hits)" line so the
+// user sees that the query actually ran.
 func RunSearch(s *store.Store, opts SearchOptions, out io.Writer) error {
 	if strings.TrimSpace(opts.Query) == "" {
 		return errors.New("search query must not be empty")
@@ -111,6 +117,13 @@ func RunSearch(s *store.Store, opts SearchOptions, out io.Writer) error {
 	}
 	defer func() { _ = rows.Close() }()
 
+	var buf bytes.Buffer
+	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "WHEN\tSESSION\tKIND\tCWD\tCONTENT"); err != nil {
+		return err
+	}
+
+	count := 0
 	for rows.Next() {
 		var (
 			sessionID  string
@@ -122,12 +135,21 @@ func RunSearch(s *store.Store, opts SearchOptions, out io.Writer) error {
 		if err := rows.Scan(&sessionID, &kind, &cwd, &tsSourceMs, &content); err != nil {
 			return fmt.Errorf("scan row: %w", err)
 		}
-		_, _ = fmt.Fprintln(out, formatHit(sessionID, kind, deref(cwd), tsSourceMs, deref(content)))
+		count++
+		_, _ = fmt.Fprintln(tw, formatHit(sessionID, kind, deref(cwd), tsSourceMs, deref(content)))
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate rows: %w", err)
 	}
-	return nil
+	if count == 0 {
+		_, err := fmt.Fprintf(out, "(no hits for %q)\n", opts.Query)
+		return err
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	_, err = io.Copy(out, &buf)
+	return err
 }
 
 // buildSearchSQL composes the SQL + args for a SearchOptions value.
@@ -204,15 +226,19 @@ func buildSearchSQL(opts SearchOptions) (string, []any) {
 	return sql, args
 }
 
-// formatHit renders one row as a single grep-like line. Columns are
-// tab-separated so downstream tools (awk, column -t) can re-align.
+// formatHit renders one row as a tab-separated line. Column alignment
+// is handled by the tabwriter in RunSearch; this function only
+// prepares the cells.
 func formatHit(sessionID, kind, cwd string, tsSourceMs int64, content string) string {
 	ts := time.UnixMilli(tsSourceMs).UTC().Format("2006-01-02T15:04:05Z")
 	sess := sessionID
 	if len(sess) > 8 {
 		sess = sess[:8]
 	}
-	return fmt.Sprintf("%s\t%s\t%-17s\t%s\t%s", ts, sess, kind, cwd, truncateSnippet(content))
+	if cwd == "" {
+		cwd = "-"
+	}
+	return fmt.Sprintf("%s\t%s\t%s\t%s\t%s", ts, sess, kind, cwd, truncateSnippet(content))
 }
 
 // truncateSnippet flattens newlines and caps rune length so hits fit
