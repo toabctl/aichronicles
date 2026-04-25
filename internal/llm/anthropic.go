@@ -201,30 +201,6 @@ func (a *Anthropic) Complete(ctx context.Context, req Request) (*Response, error
 	return convertAnthropicMessage(msg, model), nil
 }
 
-// validateRequest enforces the small set of invariants we care about
-// pre-flight. Provider-specific validation (e.g. role alternation)
-// happens at encode time inside the SDK.
-func validateRequest(req Request) error {
-	if len(req.Messages) == 0 {
-		return errors.New("Request.Messages is empty")
-	}
-	if req.Messages[0].Role != RoleUser {
-		return errors.New("Request.Messages must start with a user turn")
-	}
-	if req.MaxTokens <= 0 {
-		return errors.New("Request.MaxTokens must be positive")
-	}
-	for i, m := range req.Messages {
-		if m.Role != RoleUser && m.Role != RoleAssistant {
-			return fmt.Errorf("Request.Messages[%d].Role %q not recognised", i, m.Role)
-		}
-		if m.Content == "" {
-			return fmt.Errorf("Request.Messages[%d].Content is empty", i)
-		}
-	}
-	return nil
-}
-
 // buildAnthropicParams maps our provider-neutral Request into the
 // SDK's MessageNewParams. The system prompt rides as a single text
 // block with cache_control=ephemeral so Anthropic's prompt cache
