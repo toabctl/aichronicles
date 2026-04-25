@@ -25,4 +25,3 @@ Auto-generated from the live `cobra.Command.Long` strings via `make docs-cli`. E
 - [`aichronicles teardown`](./aichronicles_teardown.md)
 - [`aichronicles teardown claude-code`](./aichronicles_teardown_claude-code.md)
 - [`aichronicles teardown systemd`](./aichronicles_teardown_systemd.md)
-- [`aichronicles version`](./aichronicles_version.md)

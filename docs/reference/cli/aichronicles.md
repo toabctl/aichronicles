@@ -28,4 +28,3 @@ aichronicles is the client binary for the aichroniclesd ingest daemon. It receiv
 * [aichronicles summaries](./aichronicles_summaries.md)	 - Inspect stored LLM outputs (summaries, reflections, proposals)
 * [aichronicles summarize](./aichronicles_summarize.md)	 - Generate an LLM summary for one session
 * [aichronicles teardown](./aichronicles_teardown.md)	 - Remove aichronicles integration from an AI coding agent or the OS
-* [aichronicles version](./aichronicles_version.md)	 - Print build version, commit, and Go toolchain
