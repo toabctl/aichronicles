@@ -6,10 +6,8 @@
 //
 // Reuse: this package is provider-neutral and aichronicles-agnostic;
 // any Go program needing pattern-based credential redaction can
-// import it directly. The public surface (Scanner, Detector,
-// Composite, Replace, Outbound, Default, BuiltinDetectors) is
-// stable — additions land via new exported names rather than
-// breaking changes.
+// import it directly. aichronicles is a work in progress, so the
+// public surface may still change.
 //
 // Scope is deliberate: credential patterns only. User PII (names,
 // emails, addresses) is NOT in scope — that data is already in

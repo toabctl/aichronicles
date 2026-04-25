@@ -17,10 +17,8 @@
 // Reuse: this package is provider-neutral and aichronicles-agnostic.
 // Any Go program needing structured-output LLM calls (forced tool
 // use, schema-validated JSON inputs, provider-portable cache keys)
-// can import it directly. Public surface (Client, Request, Response,
-// Tool, ToolUse, Provider, Config, FromConfig, plus the Anthropic
-// and OpenAI adapter constructors) is stable; additions land via
-// new exported names rather than breaking changes.
+// can import it directly. aichronicles is a work in progress, so
+// the public surface may still change.
 package llm
 
 import (
