@@ -395,6 +395,110 @@ func TestSearchEvents_SnippetEllipsisOnTruncation(t *testing.T) {
 	}
 }
 
+// TestSearchEvents_RecencyBoostBreaksTies pins the OrderRank
+// behaviour: when two events have identical content (and therefore
+// identical bm25 scores), the more recent one ranks first.
+func TestSearchEvents_RecencyBoostBreaksTies(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	older := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+
+	// Identical content → identical bm25. Recency must pick the winner.
+	ingestForSearch(t, s, "sess-old", "user_prompt", "tiebreaker payload here", "hook", older)
+	ingestForSearch(t, s, "sess-new", "user_prompt", "tiebreaker payload here", "hook", newer)
+
+	hits, err := SearchEvents(t.Context(), s.DB(), SearchEventOpts{
+		Query: "tiebreaker",
+		Order: OrderRank,
+		NowMs: newer.UnixMilli(), // anchor at the newer event
+	})
+	if err != nil {
+		t.Fatalf("SearchEvents: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("hits: got %d, want 2", len(hits))
+	}
+	if hits[0].TsSourceMs <= hits[1].TsSourceMs {
+		t.Errorf("recency boost: expected newer first, got ts[%d, %d]",
+			hits[0].TsSourceMs, hits[1].TsSourceMs)
+	}
+}
+
+// TestSearchEvents_RecencyBoostInsideHalfDaysKeepsRelevance proves
+// the boost is gentle enough within the recency-half-days window
+// that a much-more-relevant slightly-older document still beats a
+// barely-relevant new one. Outside that window the boost
+// (correctly, by design) starts to dominate — recent work in this
+// corpus is the user's likely target — but it shouldn't be doing so
+// for last week's results.
+//
+// Math sanity: at 14 days old the boost factor is 1 + 14/30 ≈ 1.47.
+// A bm25 advantage of ~3× clears that ratio comfortably.
+func TestSearchEvents_RecencyBoostInsideHalfDaysKeepsRelevance(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	twoWeeksAgo := now.Add(-14 * 24 * time.Hour)
+
+	// "rare" appears 3 times in the older focused row → strong bm25.
+	// "rare" appears once buried in noise in the new row → weak score.
+	ingestForSearch(t, s, "sess-strong", "user_prompt",
+		"rare rare rare keyword in a focused recent document", "hook", twoWeeksAgo)
+	ingestForSearch(t, s, "sess-weak", "user_prompt",
+		"a long mostly unrelated wall of text "+strings.Repeat("noise ", 30)+"rare just once",
+		"hook", now)
+
+	hits, err := SearchEvents(t.Context(), s.DB(), SearchEventOpts{
+		Query: "rare",
+		Order: OrderRank,
+		NowMs: now.UnixMilli(),
+	})
+	if err != nil {
+		t.Fatalf("SearchEvents: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("hits: got %d, want 2", len(hits))
+	}
+	if !contains(hits[0].Content.String, "focused recent document") {
+		t.Errorf("strong-relevance row 14d old should win, got first hit %q",
+			hits[0].Content.String)
+	}
+}
+
+// TestSearchEvents_OrderRecencyIgnoresRelevance contrasts with the
+// boosted OrderRank behaviour: with OrderRecency the bm25 score is
+// not consulted at all, so even a less-relevant new event ranks
+// before a much-more-relevant old one.
+func TestSearchEvents_OrderRecencyIgnoresRelevance(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	old := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+
+	ingestForSearch(t, s, "sess-strong", "user_prompt",
+		"rare rare keyword in a focused old document", "hook", old)
+	ingestForSearch(t, s, "sess-weak", "user_prompt",
+		"a long unrelated wall of text "+strings.Repeat("noise ", 30)+"rare just once",
+		"hook", now)
+
+	hits, err := SearchEvents(t.Context(), s.DB(), SearchEventOpts{
+		Query: "rare",
+		Order: OrderRecency,
+	})
+	if err != nil {
+		t.Fatalf("SearchEvents: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("hits: got %d, want 2", len(hits))
+	}
+	// New row should come first regardless of its weak relevance.
+	if !contains(hits[0].Content.String, "rare just once") {
+		t.Errorf("OrderRecency should put new row first, got %q",
+			hits[0].Content.String)
+	}
+}
+
 func TestSearchEvents_OrderRecencyReturnsNewestFirst(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)

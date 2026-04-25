@@ -5,21 +5,36 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // SearchOrder selects how SearchEvents orders its result rows.
 type SearchOrder int
 
 const (
-	// OrderRank sorts by FTS5 relevance (most relevant first).
-	// Default for the CLI's interactive search.
+	// OrderRank sorts by a recency-boosted FTS5 relevance score.
+	// Concretely: bm25(...) / (1 + days_old / 30). bm25 is
+	// lower-is-better (typically negative); dividing by a value
+	// > 1 pushes older rows toward zero (worse) without flipping
+	// the sign, so a strongly relevant old event still beats a
+	// weakly relevant new one but two equally relevant events
+	// resolve in favour of the more recent. Default for the CLI.
 	OrderRank SearchOrder = iota
 
-	// OrderRecency sorts by ts_source_ms DESC (newest first).
-	// Default for the MCP search_events tool, where an agent asking
-	// "did I work on X recently?" wants chronological order.
+	// OrderRecency sorts by ts_source_ms DESC (newest first),
+	// ignoring relevance entirely. Default for the MCP
+	// search_events tool, where an agent asking "did I work on X
+	// recently?" wants chronological order.
 	OrderRecency
 )
+
+// recencyHalfDays is the divisor in the recency-boost denominator
+// (days_old / recencyHalfDays). Larger values flatten the recency
+// curve (older rows penalised less); smaller values steepen it.
+// 30 days picked as a default — week-old work still ranks well,
+// month-plus-old work starts to drop. Exposed as a const so it can
+// be tuned without grepping for magic numbers.
+const recencyHalfDays = 30.0
 
 // SearchEventOpts is the input contract for SearchEvents.
 //
@@ -34,6 +49,11 @@ type SearchEventOpts struct {
 	Limit     int
 	NoDedup   bool
 	Order     SearchOrder
+
+	// NowMs anchors the recency-boost calculation for OrderRank.
+	// Zero means use time.Now().UnixMilli() at call time. Set
+	// explicitly in tests so result ordering is deterministic.
+	NowMs int64
 }
 
 // SearchEventHit is one row returned by SearchEvents. Cwd, Content,
@@ -85,6 +105,9 @@ const (
 func SearchEvents(ctx context.Context, db *sql.DB, opts SearchEventOpts) ([]SearchEventHit, error) {
 	if strings.TrimSpace(opts.Query) == "" {
 		return nil, fmt.Errorf("SearchEvents: query is required")
+	}
+	if opts.NowMs == 0 {
+		opts.NowMs = time.Now().UnixMilli()
 	}
 	hits, err := searchAgainst(ctx, db, opts, indexPrimary)
 	if err != nil {
@@ -162,10 +185,20 @@ func buildSearchSQL(opts SearchEventOpts, index string) (string, []any) {
 	)
 
 	if opts.NoDedup {
-		// Bare path: f.rank is the FTS5 special column.
-		order := "rank"
-		if opts.Order == OrderRecency {
-			order = "ts_source_ms DESC"
+		// Bare path. f.rank is the FTS5 bm25 score (lower-is-better).
+		// For OrderRank we divide by (1 + days_old / recencyHalfDays)
+		// so older rows drift toward zero without flipping sign.
+		// `?` for now_ms is appended to args before LIMIT.
+		var order string
+		switch opts.Order {
+		case OrderRecency:
+			order = "e.ts_source_ms DESC"
+		default:
+			order = fmt.Sprintf(
+				`f.rank / (1.0 + ((? - e.ts_source_ms) / 86400000.0) / %.1f)`,
+				recencyHalfDays,
+			)
+			args = append(args, opts.NowMs)
 		}
 		sqlText := `SELECT e.session_id, e.kind, e.cwd, e.ts_source_ms, e.content_text,
 				` + snippetExpr + ` AS snip
@@ -182,11 +215,19 @@ func buildSearchSQL(opts SearchEventOpts, index string) (string, []any) {
 	// (session_id, role, content). Within a partition, hook beats
 	// import; FTS rank then rowid break ties.
 	//
-	// Outer ORDER BY references fts_rank (alias from the CTE) for
-	// rank ordering, or ts_source_ms for recency.
-	order := "fts_rank"
-	if opts.Order == OrderRecency {
+	// Outer ORDER BY uses the recency-boosted bm25 score for
+	// OrderRank, or pure ts_source_ms for OrderRecency. The boosted
+	// formula divides bm25 by (1 + days_old/recencyHalfDays) so old
+	// rows drift toward zero (worse) without sign flip.
+	var order string
+	switch opts.Order {
+	case OrderRecency:
 		order = "ts_source_ms DESC"
+	default:
+		order = fmt.Sprintf(
+			`fts_rank / (1.0 + ((? - ts_source_ms) / 86400000.0) / %.1f)`,
+			recencyHalfDays,
+		)
 	}
 	sqlText := `WITH matched AS (
 			SELECT e.rowid, e.session_id, e.role, e.kind, e.cwd,
@@ -215,6 +256,11 @@ func buildSearchSQL(opts SearchEventOpts, index string) (string, []any) {
 		WHERE rn = 1
 		ORDER BY ` + order + `
 		LIMIT ?`
+	if opts.Order != OrderRecency {
+		// Boosted formula has a `?` for now_ms; matches the position
+		// in the SELECT clause's ORDER BY.
+		args = append(args, opts.NowMs)
+	}
 	args = append(args, limit)
 	return sqlText, args
 }
