@@ -34,13 +34,9 @@ func newAuditCmd() *cobra.Command {
 			"you expect. This command never modifies the store — see\n" +
 			"`aichronicles scrub` for that.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			resolved := dbPath
-			if resolved == "" {
-				p, err := paths.StorePath()
-				if err != nil {
-					return err
-				}
-				resolved = p
+			resolved, err := paths.ResolveStorePath(dbPath)
+			if err != nil {
+				return err
 			}
 			s, err := store.Open(resolved)
 			if err != nil {
@@ -58,7 +54,7 @@ func newAuditCmd() *cobra.Command {
 	}
 	cmd.Flags().IntVar(&limit, "limit", 0, "max events to scan, newest first (0 = scan all)")
 	cmd.Flags().DurationVar(&since, "since", 0, "only scan events with ts_source newer than this duration (e.g. 168h)")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
+	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	return cmd
 }
 

@@ -30,13 +30,9 @@ func newImportJSONLCmd() *cobra.Command {
 			"historical events into SQLite, or to replay a backup.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resolvedDB := dbPath
-			if resolvedDB == "" {
-				p, err := paths.StorePath()
-				if err != nil {
-					return err
-				}
-				resolvedDB = p
+			resolvedDB, err := paths.ResolveStorePath(dbPath)
+			if err != nil {
+				return err
 			}
 			s, err := store.Open(resolvedDB)
 			if err != nil {
@@ -58,7 +54,7 @@ func newImportJSONLCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
+	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	return cmd
 }
 

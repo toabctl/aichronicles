@@ -22,7 +22,7 @@ aichronicles scrub [flags]
 ### Options
 
 ```
-      --db string   SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)
+      --db string   SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
   -h, --help        help for scrub
       --yes         confirm irreversible writes (required to mutate the DB)
 ```

@@ -82,13 +82,9 @@ func newImportClaudeCmd() *cobra.Command {
 				target = args[0]
 			}
 
-			resolvedDB := dbPath
-			if resolvedDB == "" {
-				p, err := paths.StorePath()
-				if err != nil {
-					return err
-				}
-				resolvedDB = p
+			resolvedDB, err := paths.ResolveStorePath(dbPath)
+			if err != nil {
+				return err
 			}
 			s, err := store.Open(resolvedDB)
 			if err != nil {
@@ -104,7 +100,7 @@ func newImportClaudeCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
+	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	return cmd
 }
 

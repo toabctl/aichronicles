@@ -33,13 +33,9 @@ func newSessionsCmd() *cobra.Command {
 			"Filters stack. Output is grep-friendly; pipe through column -t\n" +
 			"for aligned columns.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			resolved := dbPath
-			if resolved == "" {
-				p, err := paths.StorePath()
-				if err != nil {
-					return err
-				}
-				resolved = p
+			resolved, err := paths.ResolveStorePath(dbPath)
+			if err != nil {
+				return err
 			}
 			s, err := store.Open(resolved)
 			if err != nil {
@@ -62,7 +58,7 @@ func newSessionsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cwd, "cwd", "", "filter by cwd (exact match)")
 	cmd.Flags().StringVar(&agent, "agent", "", "filter by source_agent (e.g. claude-code)")
 	cmd.Flags().DurationVar(&since, "since", 0, "only sessions whose ended_at is within this duration (search/audit filter on per-event ts_source)")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
+	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	return cmd
 }
 

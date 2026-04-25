@@ -15,7 +15,7 @@ aichronicles search <query> [flags]
 ### Options
 
 ```
-      --db string        SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)
+      --db string        SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
   -h, --help             help for search
       --kind string      filter by event kind (user_prompt, tool_use, …)
       --limit int        max number of hits (default 20)

@@ -37,13 +37,9 @@ func newMCPServeCmd() *cobra.Command {
 			"Desktop's own log window surfaces them. Stdin close (client\n" +
 			"disconnect) ends the process cleanly.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			resolved := dbPath
-			if resolved == "" {
-				p, err := paths.StorePath()
-				if err != nil {
-					return err
-				}
-				resolved = p
+			resolved, err := paths.ResolveStorePath(dbPath)
+			if err != nil {
+				return err
 			}
 			s, err := store.Open(resolved)
 			if err != nil {
@@ -67,6 +63,6 @@ func newMCPServeCmd() *cobra.Command {
 			return srv.Run(cmd.Context(), cmd.InOrStdin(), os.Stdout)
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
+	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	return cmd
 }

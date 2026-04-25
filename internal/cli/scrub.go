@@ -32,13 +32,9 @@ func newScrubCmd() *cobra.Command {
 			"truth layer; once rewritten, the original bytes are gone. Take a\n" +
 			"backup of the DB file first if you care about forensics.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			resolved := dbPath
-			if resolved == "" {
-				p, err := paths.StorePath()
-				if err != nil {
-					return err
-				}
-				resolved = p
+			resolved, err := paths.ResolveStorePath(dbPath)
+			if err != nil {
+				return err
 			}
 			s, err := store.Open(resolved)
 			if err != nil {
@@ -51,7 +47,7 @@ func newScrubCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm irreversible writes (required to mutate the DB)")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
+	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	return cmd
 }
 

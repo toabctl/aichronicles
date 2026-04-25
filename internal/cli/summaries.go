@@ -77,7 +77,7 @@ func newSummariesListCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sessionIn, "session", "", "filter by session id or unique prefix")
 	cmd.Flags().StringVar(&typeIn, "type", "", "filter by output type (summary | reflect | propose)")
 	cmd.Flags().IntVar(&limit, "limit", 0, "max rows to list (default 50)")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
+	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	return cmd
 }
 
@@ -130,20 +130,17 @@ func newSummariesShowCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&typeIn, "type", "summary", "output type (summary | reflect | propose)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit raw JSON body instead of the human-readable render")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
+	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	return cmd
 }
 
-// openStoreFromFlag factors the dbPath-or-default resolution every
-// subcommand in this file repeats. Callers defer s.Close().
+// openStoreFromFlag resolves the store path with paths.ResolveStorePath
+// (CLI flag > $AICHRONICLES_DB > XDG default) and opens the result.
+// Callers defer s.Close().
 func openStoreFromFlag(dbPath string) (*store.Store, error) {
-	resolved := dbPath
-	if resolved == "" {
-		p, err := paths.StorePath()
-		if err != nil {
-			return nil, err
-		}
-		resolved = p
+	resolved, err := paths.ResolveStorePath(dbPath)
+	if err != nil {
+		return nil, err
 	}
 	return store.Open(resolved)
 }

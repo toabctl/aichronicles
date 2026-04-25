@@ -114,3 +114,66 @@ func TestStorePath_FallsBackToHome(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+func TestResolveStorePath_FlagBeatsEnvBeatsDefault(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", "/state")
+	t.Setenv(EnvStore, "/from/env/store.db")
+
+	// Flag wins.
+	got, err := ResolveStorePath("/from/flag/store.db")
+	if err != nil {
+		t.Fatalf("ResolveStorePath flag: %v", err)
+	}
+	if want := "/from/flag/store.db"; got != want {
+		t.Errorf("flag: got %q, want %q", got, want)
+	}
+
+	// Empty flag → env.
+	got, err = ResolveStorePath("")
+	if err != nil {
+		t.Fatalf("ResolveStorePath env: %v", err)
+	}
+	if want := "/from/env/store.db"; got != want {
+		t.Errorf("env: got %q, want %q", got, want)
+	}
+
+	// Empty flag, empty env → XDG default.
+	t.Setenv(EnvStore, "")
+	got, err = ResolveStorePath("")
+	if err != nil {
+		t.Fatalf("ResolveStorePath default: %v", err)
+	}
+	if want := "/state/aichronicles/store.db"; got != want {
+		t.Errorf("default: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveSocketPath_FlagBeatsEnvBeatsDefault(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1234")
+	t.Setenv(EnvSocket, "/from/env/sock")
+
+	got, err := ResolveSocketPath("/from/flag/sock")
+	if err != nil {
+		t.Fatalf("flag: %v", err)
+	}
+	if want := "/from/flag/sock"; got != want {
+		t.Errorf("flag: got %q, want %q", got, want)
+	}
+
+	got, err = ResolveSocketPath("")
+	if err != nil {
+		t.Fatalf("env: %v", err)
+	}
+	if want := "/from/env/sock"; got != want {
+		t.Errorf("env: got %q, want %q", got, want)
+	}
+
+	t.Setenv(EnvSocket, "")
+	got, err = ResolveSocketPath("")
+	if err != nil {
+		t.Fatalf("default: %v", err)
+	}
+	if want := "/run/user/1234/aichronicles/sock"; got != want {
+		t.Errorf("default: got %q, want %q", got, want)
+	}
+}

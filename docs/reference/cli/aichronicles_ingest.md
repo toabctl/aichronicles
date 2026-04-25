@@ -19,7 +19,7 @@ aichronicles ingest [flags]
 
 ```
   -h, --help            help for ingest
-      --socket string   daemon UDS path (default: $XDG_RUNTIME_DIR/aichronicles/sock)
+      --socket string   daemon UDS path (overrides $AICHRONICLES_SOCKET; defaults to XDG_RUNTIME_DIR)
 ```
 
 ### SEE ALSO

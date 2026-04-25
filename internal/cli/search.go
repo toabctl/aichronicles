@@ -35,13 +35,9 @@ func newSearchCmd() *cobra.Command {
 			"quotes, AND/OR/NOT, prefix with *).",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resolved := dbPath
-			if resolved == "" {
-				p, err := paths.StorePath()
-				if err != nil {
-					return err
-				}
-				resolved = p
+			resolved, err := paths.ResolveStorePath(dbPath)
+			if err != nil {
+				return err
 			}
 			s, err := store.Open(resolved)
 			if err != nil {
@@ -79,7 +75,7 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&kind, "kind", "", "filter by event kind (user_prompt, tool_use, …)")
 	cmd.Flags().StringVar(&sessionID, "session", "", "filter by session id or unique prefix")
 	cmd.Flags().DurationVar(&since, "since", 0, "only events within this duration (e.g. 24h, 7d)")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
+	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	cmd.Flags().BoolVar(&noDedup, "no-dedup", false, "show every row even when the same turn was captured from multiple sources (hook + import)")
 	return cmd
 }

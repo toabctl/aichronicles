@@ -35,18 +35,21 @@ func main() {
 }
 
 func run() error {
-	defaultSock, err := paths.Socket()
+	// Empty defaults; final resolution happens after flag.Parse so the
+	// flag value (highest precedence) can override $AICHRONICLES_DB /
+	// $AICHRONICLES_SOCKET, which themselves override the XDG default.
+	sockPath := flag.String("socket", "", "unix socket path (overrides $AICHRONICLES_SOCKET; defaults to XDG_RUNTIME_DIR)")
+	dbPath := flag.String("db", "", "SQLite store path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	flag.Parse()
+
+	resolvedSock, err := paths.ResolveSocketPath(*sockPath)
 	if err != nil {
 		return fmt.Errorf("resolve socket path: %w", err)
 	}
-	defaultDB, err := paths.StorePath()
+	resolvedDB, err := paths.ResolveStorePath(*dbPath)
 	if err != nil {
 		return fmt.Errorf("resolve store path: %w", err)
 	}
-
-	sockPath := flag.String("socket", defaultSock, "unix socket path")
-	dbPath := flag.String("db", defaultDB, "SQLite store path")
-	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
@@ -57,10 +60,10 @@ func run() error {
 		cfg = &d
 	}
 
-	if err := os.MkdirAll(filepath.Dir(*dbPath), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(resolvedDB), 0o700); err != nil {
 		return fmt.Errorf("ensure store dir: %w", err)
 	}
-	st, err := store.Open(*dbPath)
+	st, err := store.Open(resolvedDB)
 	if err != nil {
 		return err
 	}
@@ -78,14 +81,14 @@ func run() error {
 	if activationListener != nil {
 		shutdown = daemon.Serve(activationListener, srv.Handler())
 		startMsg = "socket-activated by systemd"
-		logger.Info("aichroniclesd started (socket-activated by systemd)", "db", *dbPath)
+		logger.Info("aichroniclesd started (socket-activated by systemd)", "db", resolvedDB)
 	} else {
-		shutdown, err = daemon.ListenAndServe(*sockPath, srv.Handler())
+		shutdown, err = daemon.ListenAndServe(resolvedSock, srv.Handler())
 		if err != nil {
 			return err
 		}
-		startMsg = "listener at " + *sockPath
-		logger.Info("aichroniclesd started", "socket", *sockPath, "db", *dbPath)
+		startMsg = "listener at " + resolvedSock
+		logger.Info("aichroniclesd started", "socket", resolvedSock, "db", resolvedDB)
 	}
 
 	if err := notify.New(cfg.Notifications.DaemonStart).Send("aichronicles started", startMsg); err != nil {

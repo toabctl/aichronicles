@@ -26,7 +26,7 @@ aichronicles mcp-serve [flags]
 ### Options
 
 ```
-      --db string   SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)
+      --db string   SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
   -h, --help        help for mcp-serve
 ```
 

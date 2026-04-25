@@ -34,7 +34,7 @@ func newIngestCmd() *cobra.Command {
 			return RunIngest(cmd.InOrStdin(), cmd.ErrOrStderr(), socketFlag)
 		},
 	}
-	cmd.Flags().StringVar(&socketFlag, "socket", "", "daemon UDS path (default: $XDG_RUNTIME_DIR/aichronicles/sock)")
+	cmd.Flags().StringVar(&socketFlag, "socket", "", "daemon UDS path (overrides $AICHRONICLES_SOCKET; defaults to XDG_RUNTIME_DIR)")
 	return cmd
 }
 
@@ -94,13 +94,10 @@ func RunIngest(stdin io.Reader, stderr io.Writer, socketFlag string) error {
 	// this step ran.
 	ingest.ApplyRedaction(&env, redact.Default())
 
-	sockPath := socketFlag
-	if sockPath == "" {
-		sockPath, err = paths.Socket()
-		if err != nil {
-			log.Error("resolve socket path", "err", err)
-			return nil
-		}
+	sockPath, err := paths.ResolveSocketPath(socketFlag)
+	if err != nil {
+		log.Error("resolve socket path", "err", err)
+		return nil
 	}
 
 	tracker := outageTracker(log)

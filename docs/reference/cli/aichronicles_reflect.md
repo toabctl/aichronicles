@@ -23,7 +23,7 @@ aichronicles reflect [flags]
 ### Options
 
 ```
-      --db string        SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)
+      --db string        SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
       --force            bypass the llm_outputs cache and re-call the LLM
   -h, --help             help for reflect
       --json             emit raw JSON body instead of the human-readable render

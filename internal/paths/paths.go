@@ -73,6 +73,40 @@ func ConfigFile() (string, error) {
 	return filepath.Join(home, ".config", "aichronicles", "config.toml"), nil
 }
 
+// EnvStore is the environment variable that overrides the SQLite
+// store path when --db isn't given on the command line. Used by every
+// subcommand and by [paths.ResolveStorePath].
+const EnvStore = "AICHRONICLES_DB"
+
+// EnvSocket is the environment variable that overrides the daemon
+// Unix-socket path when --socket isn't given on the command line.
+const EnvSocket = "AICHRONICLES_SOCKET"
+
+// ResolveStorePath picks the SQLite store path with the conventional
+// precedence: CLI flag > AICHRONICLES_DB env var > XDG default. Empty
+// flag and empty env mean "use the XDG default."
+func ResolveStorePath(flag string) (string, error) {
+	if flag != "" {
+		return flag, nil
+	}
+	if env := os.Getenv(EnvStore); env != "" {
+		return env, nil
+	}
+	return StorePath()
+}
+
+// ResolveSocketPath mirrors ResolveStorePath for the daemon UDS path.
+// Precedence: CLI flag > AICHRONICLES_SOCKET env var > XDG default.
+func ResolveSocketPath(flag string) (string, error) {
+	if flag != "" {
+		return flag, nil
+	}
+	if env := os.Getenv(EnvSocket); env != "" {
+		return env, nil
+	}
+	return Socket()
+}
+
 // StorePath returns the SQLite database path. Persistent state belongs
 // under XDG_STATE_HOME (same bucket as events.jsonl), with the
 // conventional ~/.local/state fallback.

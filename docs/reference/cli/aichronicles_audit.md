@@ -17,7 +17,7 @@ aichronicles audit [flags]
 ### Options
 
 ```
-      --db string        SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)
+      --db string        SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
   -h, --help             help for audit
       --limit int        max events to scan, newest first (0 = scan all)
       --since duration   only scan events with ts_source newer than this duration (e.g. 168h)

@@ -20,7 +20,7 @@ aichronicles sessions [flags]
 ```
       --agent string     filter by source_agent (e.g. claude-code)
       --cwd string       filter by cwd (exact match)
-      --db string        SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)
+      --db string        SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
   -h, --help             help for sessions
       --limit int        max sessions to return (default 30)
       --since duration   only sessions whose ended_at is within this duration (search/audit filter on per-event ts_source)

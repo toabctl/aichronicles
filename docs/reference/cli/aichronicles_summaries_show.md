@@ -20,7 +20,7 @@ aichronicles summaries show <session> [flags]
 ### Options
 
 ```
-      --db string     SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)
+      --db string     SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
   -h, --help          help for show
       --json          emit raw JSON body instead of the human-readable render
       --type string   output type (summary | reflect | propose) (default "summary")

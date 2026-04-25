@@ -53,13 +53,9 @@ func newReflectCmd() *cobra.Command {
 			"JSON body instead of the human-readable render.\n\n" +
 			"Requires " + llm.APIKeyEnv + " unless the cache hits.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			resolved := dbPath
-			if resolved == "" {
-				p, err := paths.StorePath()
-				if err != nil {
-					return err
-				}
-				resolved = p
+			resolved, err := paths.ResolveStorePath(dbPath)
+			if err != nil {
+				return err
 			}
 			s, err := store.Open(resolved)
 			if err != nil {
@@ -91,7 +87,7 @@ func newReflectCmd() *cobra.Command {
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit raw JSON body instead of the human-readable render")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (default: $XDG_STATE_HOME/aichronicles/store.db)")
+	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	return cmd
 }
 
