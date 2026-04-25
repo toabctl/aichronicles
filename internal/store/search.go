@@ -36,15 +36,21 @@ type SearchEventOpts struct {
 	Order     SearchOrder
 }
 
-// SearchEventHit is one row returned by SearchEvents. Cwd and Content
-// are nullable to mirror the underlying schema; callers decide how to
-// render NULLs for their format.
+// SearchEventHit is one row returned by SearchEvents. Cwd, Content,
+// and Snippet are nullable to mirror the underlying schema and FTS5
+// helper output; callers decide how to render NULLs for their format.
+//
+// Snippet is computed by SQLite's snippet() function and centers on
+// the matched terms, capped at a fixed token count. Prefer it over
+// Content for hit display: it's tokenizer-aware and shows what the
+// user was looking for rather than the start of the document.
 type SearchEventHit struct {
 	SessionID  string
 	Kind       string
 	Cwd        sql.NullString
 	TsSourceMs int64
 	Content    sql.NullString
+	Snippet    sql.NullString
 }
 
 // FTS index names. Two virtual tables shadow events.content_text:
@@ -107,7 +113,7 @@ func searchAgainst(ctx context.Context, db *sql.DB, opts SearchEventOpts, index 
 	var hits []SearchEventHit
 	for rows.Next() {
 		var h SearchEventHit
-		if err := rows.Scan(&h.SessionID, &h.Kind, &h.Cwd, &h.TsSourceMs, &h.Content); err != nil {
+		if err := rows.Scan(&h.SessionID, &h.Kind, &h.Cwd, &h.TsSourceMs, &h.Content, &h.Snippet); err != nil {
 			return nil, fmt.Errorf("SearchEvents: scan: %w", err)
 		}
 		hits = append(hits, h)
@@ -144,13 +150,25 @@ func buildSearchSQL(opts SearchEventOpts, index string) (string, []any) {
 		limit = 20
 	}
 
+	// snippet() centers on the matched terms, ≤ snippetTokens tokens,
+	// with `…` ellipsis on either side when truncation occurs. Empty
+	// delimiters keep the output compatible with the existing
+	// table/JSON formats (callers can wrap the snippet themselves).
+	// First arg must be the FTS5 table identifier — interpolated
+	// from `index`, never user input.
+	const snippetTokens = 16
+	snippetExpr := fmt.Sprintf(
+		`snippet(%s, 0, '', '', '…', %d)`, index, snippetTokens,
+	)
+
 	if opts.NoDedup {
 		// Bare path: f.rank is the FTS5 special column.
 		order := "rank"
 		if opts.Order == OrderRecency {
 			order = "ts_source_ms DESC"
 		}
-		sqlText := `SELECT e.session_id, e.kind, e.cwd, e.ts_source_ms, e.content_text
+		sqlText := `SELECT e.session_id, e.kind, e.cwd, e.ts_source_ms, e.content_text,
+				` + snippetExpr + ` AS snip
 			FROM ` + index + ` f JOIN events e ON e.rowid = f.rowid
 			WHERE ` + index + ` MATCH ?` + filter.String() + `
 			ORDER BY ` + order + ` LIMIT ?`
@@ -177,7 +195,8 @@ func buildSearchSQL(opts SearchEventOpts, index string) (string, []any) {
 					WHEN json_extract(r.envelope_json, '$.transport') = 'hook'
 					THEN 0 ELSE 1
 				END) AS transport_rank,
-				f.rank AS fts_rank
+				f.rank AS fts_rank,
+				` + snippetExpr + ` AS snip
 			FROM ` + index + ` f
 			JOIN events e         ON e.rowid = f.rowid
 			JOIN raw_envelopes r  ON r.event_id = e.event_id
@@ -191,7 +210,7 @@ func buildSearchSQL(opts SearchEventOpts, index string) (string, []any) {
 				) AS rn
 			FROM matched
 		)
-		SELECT session_id, kind, cwd, ts_source_ms, content_text
+		SELECT session_id, kind, cwd, ts_source_ms, content_text, snip
 		FROM ranked
 		WHERE rn = 1
 		ORDER BY ` + order + `

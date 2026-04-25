@@ -315,6 +315,86 @@ func TestSearchEvents_TrigramFallbackHonorsFilters(t *testing.T) {
 	}
 }
 
+// TestSearchEvents_SnippetPopulated proves SQLite's snippet() is
+// returned alongside content_text for every FTS hit. The snippet
+// should be non-empty and contain the matched term.
+func TestSearchEvents_SnippetPopulated(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	ingestForSearch(t, s, "sess-snip", "user_prompt",
+		"a long preface and then somewhere here is the keyword cluster, plus more text after it",
+		"hook", now)
+
+	hits, err := SearchEvents(t.Context(), s.DB(), SearchEventOpts{Query: "cluster"})
+	if err != nil {
+		t.Fatalf("SearchEvents: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("hits: got %d, want 1", len(hits))
+	}
+	if !hits[0].Snippet.Valid || hits[0].Snippet.String == "" {
+		t.Fatalf("snippet should be populated, got %+v", hits[0].Snippet)
+	}
+	if !strings.Contains(hits[0].Snippet.String, "cluster") {
+		t.Errorf("snippet should contain matched term, got %q", hits[0].Snippet.String)
+	}
+}
+
+// TestSearchEvents_SnippetCentersOnMatch verifies that for content
+// where the match is far from the start, the snippet shows context
+// around the match (not just the first N tokens). The point of
+// using SQLite's snippet() over a head-of-content preview.
+func TestSearchEvents_SnippetCentersOnMatch(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	prefix := strings.Repeat("alpha beta gamma delta epsilon ", 20) // ~600 chars of filler
+	ingestForSearch(t, s, "sess-far", "user_prompt",
+		prefix+"the unique payload word is here in the middle "+prefix,
+		"hook", now)
+
+	hits, err := SearchEvents(t.Context(), s.DB(), SearchEventOpts{Query: "payload"})
+	if err != nil {
+		t.Fatalf("SearchEvents: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("hits: got %d, want 1", len(hits))
+	}
+	snip := hits[0].Snippet.String
+	if !strings.Contains(snip, "payload") {
+		t.Errorf("snippet must contain match: %q", snip)
+	}
+	// The preface is ~600 chars; a head-preview would never reach
+	// "payload". Any reasonable snippet length must be << 600.
+	if len(snip) > 250 {
+		t.Errorf("snippet should be a snippet, not the whole doc (got %d chars)", len(snip))
+	}
+}
+
+// TestSearchEvents_SnippetEllipsisOnTruncation confirms the `…`
+// marker fires when the snippet had to clip context to fit the
+// token budget. Both sides are clipped on a center match.
+func TestSearchEvents_SnippetEllipsisOnTruncation(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	ingestForSearch(t, s, "sess-elip", "user_prompt",
+		strings.Repeat("filler ", 50)+"target "+strings.Repeat("filler ", 50),
+		"hook", now)
+
+	hits, err := SearchEvents(t.Context(), s.DB(), SearchEventOpts{Query: "target"})
+	if err != nil {
+		t.Fatalf("SearchEvents: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("hits: got %d, want 1", len(hits))
+	}
+	if !strings.Contains(hits[0].Snippet.String, "…") {
+		t.Errorf("snippet should carry ellipsis on truncation: %q", hits[0].Snippet.String)
+	}
+}
+
 func TestSearchEvents_OrderRecencyReturnsNewestFirst(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)

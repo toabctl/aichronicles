@@ -115,11 +115,19 @@ func searchEventsHandler(st *store.Store) ToolHandler {
 		}
 		var b strings.Builder
 		for _, h := range hits {
+			// Prefer SQLite's snippet (centered on the match,
+			// tokenizer-aware) over the raw content_text. The
+			// trigger keeps it filled for FTS hits; the empty
+			// fallback is just defensive.
+			preview := h.Snippet
+			if !preview.Valid || preview.String == "" {
+				preview = h.Content
+			}
 			fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n",
 				first8(h.SessionID),
 				formatTS(h.TsSourceMs),
 				h.Kind,
-				oneLineSnippet(h.Content),
+				oneLineSnippet(preview),
 			)
 		}
 		return TextResult(b.String()), nil

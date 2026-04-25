@@ -169,8 +169,7 @@ func RunSearch(s *store.Store, opts SearchOptions, out io.Writer) error {
 	if opts.Format == FormatJSON {
 		payload := make([]SearchHitJSON, 0, len(hits))
 		for _, h := range hits {
-			full := nullStringValue(h.Content)
-			snippet, truncated := snippetWithTruncation(full)
+			snippet, truncated := pickSnippet(h)
 			payload = append(payload, SearchHitJSON{
 				SessionID:  h.SessionID,
 				Kind:       h.Kind,
@@ -194,8 +193,9 @@ func RunSearch(s *store.Store, opts SearchOptions, out io.Writer) error {
 		return err
 	}
 	for _, h := range hits {
+		snippet, _ := pickSnippet(h)
 		_, _ = fmt.Fprintln(tw, formatHit(h.SessionID, h.Kind,
-			nullStringValue(h.Cwd), h.TsSourceMs, nullStringValue(h.Content)))
+			nullStringValue(h.Cwd), h.TsSourceMs, snippet))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -212,6 +212,22 @@ func nullStringValue(n sql.NullString) string {
 		return ""
 	}
 	return n.String
+}
+
+// pickSnippet chooses the best available text for a search hit.
+// SQLite's snippet() (when present and non-empty) is BM25-aware and
+// centers on the matched terms; the Go-side first-N-runes preview
+// is the fallback for the rare case where snippet() returned empty.
+//
+// Returns (display, truncated). truncated is true iff the displayed
+// text is shorter than the full content_text — i.e., the user is
+// looking at a preview, not the whole row.
+func pickSnippet(h store.SearchEventHit) (string, bool) {
+	full := nullStringValue(h.Content)
+	if h.Snippet.Valid && h.Snippet.String != "" {
+		return h.Snippet.String, h.Snippet.String != full
+	}
+	return snippetWithTruncation(full)
 }
 
 // snippetWithTruncation returns (snippet, truncated). Same rune cap
