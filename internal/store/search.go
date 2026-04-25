@@ -73,14 +73,19 @@ type SearchEventHit struct {
 	Snippet    sql.NullString
 }
 
-// FTS index names. Two virtual tables shadow events.content_text:
+// FTS index names. Three virtual tables back search:
 //   - events_fts uses unicode61 with code-friendly separators; this
 //     is the primary path for whole-word and identifier-aware queries.
 //   - events_fts_trigram uses the trigram tokenizer for substring
-//     matches, consulted only when the primary returns nothing.
+//     matches, consulted when the primary returns nothing.
+//   - extractions_fts indexes the typed-facts table (URLs, file
+//     paths, shell commands), consulted last so a search like
+//     `migrate.go` finds sessions that touched the file via Read
+//     even when no message text mentions it.
 const (
-	indexPrimary = "events_fts"
-	indexTrigram = "events_fts_trigram"
+	indexPrimary     = "events_fts"
+	indexTrigram     = "events_fts_trigram"
+	indexExtractions = "extractions_fts"
 )
 
 // SearchEvents runs an FTS5 MATCH against events_fts and returns the
@@ -113,13 +118,17 @@ func SearchEvents(ctx context.Context, db *sql.DB, opts SearchEventOpts) ([]Sear
 	if err != nil {
 		return nil, err
 	}
-	if len(hits) == 0 {
-		hits, err = searchAgainst(ctx, db, opts, indexTrigram)
-		if err != nil {
-			return nil, err
-		}
+	if len(hits) > 0 {
+		return hits, nil
 	}
-	return hits, nil
+	hits, err = searchAgainst(ctx, db, opts, indexTrigram)
+	if err != nil {
+		return nil, err
+	}
+	if len(hits) > 0 {
+		return hits, nil
+	}
+	return searchExtractions(ctx, db, opts)
 }
 
 // searchAgainst executes the search SQL against the named FTS5 table.
@@ -263,4 +272,91 @@ func buildSearchSQL(opts SearchEventOpts, index string) (string, []any) {
 	}
 	args = append(args, limit)
 	return sqlText, args
+}
+
+// searchExtractions runs MATCH against extractions_fts and synthesises
+// SearchEventHit rows by joining the matching extractions back to
+// their events. The snippet is labelled with the extraction kind so
+// the caller knows the hit came via a typed fact rather than message
+// text — e.g. `[file_path] internal/store/migrate.go`.
+//
+// Multiple extractions on the same event collapse to one row (best
+// fts_rank wins). Filters (kind, session_id, since_ms, limit) and
+// Order behave the same as the events-FTS path.
+func searchExtractions(ctx context.Context, db *sql.DB, opts SearchEventOpts) ([]SearchEventHit, error) {
+	var filter strings.Builder
+	args := []any{opts.Query}
+
+	if opts.Kind != "" {
+		filter.WriteString(` AND e.kind = ?`)
+		args = append(args, opts.Kind)
+	}
+	if opts.SessionID != "" {
+		filter.WriteString(` AND e.session_id = ?`)
+		args = append(args, opts.SessionID)
+	}
+	if opts.SinceMs > 0 {
+		filter.WriteString(` AND e.ts_source_ms >= ?`)
+		args = append(args, opts.SinceMs)
+	}
+
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+
+	var order string
+	switch opts.Order {
+	case OrderRecency:
+		order = "e.ts_source_ms DESC"
+	default:
+		order = fmt.Sprintf(
+			`fts_rank / (1.0 + ((? - e.ts_source_ms) / 86400000.0) / %.1f)`,
+			recencyHalfDays,
+		)
+	}
+
+	sqlText := `WITH ext_matched AS (
+			SELECT x.event_id, x.kind AS ext_kind, x.value AS ext_value,
+				ef.rank AS fts_rank
+			FROM extractions_fts ef
+			JOIN extractions x ON x.rowid = ef.rowid
+			WHERE extractions_fts MATCH ?
+		),
+		event_picked AS (
+			SELECT event_id, ext_kind, ext_value, fts_rank,
+				ROW_NUMBER() OVER (PARTITION BY event_id ORDER BY fts_rank) AS rn
+			FROM ext_matched
+		)
+		SELECT e.session_id, e.kind, e.cwd, e.ts_source_ms, e.content_text,
+			'[' || ep.ext_kind || '] ' || ep.ext_value AS snip
+		FROM event_picked ep
+		JOIN events e ON e.event_id = ep.event_id
+		WHERE ep.rn = 1` + filter.String() + `
+		ORDER BY ` + order + `
+		LIMIT ?`
+
+	if opts.Order != OrderRecency {
+		args = append(args, opts.NowMs)
+	}
+	args = append(args, limit)
+
+	rows, err := db.QueryContext(ctx, sqlText, args...)
+	if err != nil {
+		return nil, fmt.Errorf("SearchEvents: extractions query: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var hits []SearchEventHit
+	for rows.Next() {
+		var h SearchEventHit
+		if err := rows.Scan(&h.SessionID, &h.Kind, &h.Cwd, &h.TsSourceMs, &h.Content, &h.Snippet); err != nil {
+			return nil, fmt.Errorf("SearchEvents: extractions scan: %w", err)
+		}
+		hits = append(hits, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("SearchEvents: extractions iterate: %w", err)
+	}
+	return hits, nil
 }

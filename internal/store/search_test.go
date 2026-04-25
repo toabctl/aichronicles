@@ -15,6 +15,48 @@ import (
 // shorten the per-row assertions in the table-driven tests above.
 func contains(haystack, needle string) bool { return strings.Contains(haystack, needle) }
 
+// ingestFileTouch ingests a tool_use envelope for a file-touching
+// tool (Read/Write/Edit/NotebookEdit). Returns the derived
+// session_id. The point of this helper is to seed an `extractions`
+// row of kind=file_path WITHOUT the path appearing in content_text,
+// so the extractions_fts fallback can be exercised in isolation.
+func ingestFileTouch(t *testing.T, s *Store, sourceSession, toolName, filePath, content string, ts time.Time) string {
+	t.Helper()
+	env := &ingest.Envelope{
+		V:               1,
+		EventID:         uuid.Must(uuid.NewV7()).String(),
+		SourceAgent:     "claude-code",
+		SourceSessionID: sourceSession,
+		Kind:            "tool_use",
+		Role:            "tool",
+		TsSource:        ts.UTC(),
+		Cwd:             "/work/" + sourceSession,
+		ContentText:     content,
+		Tool:            &ingest.Tool{Name: toolName},
+		Payload: map[string]any{
+			"tool_input": map[string]any{"file_path": filePath},
+		},
+		Transport: "hook",
+		Redaction: &ingest.Redaction{Applied: true},
+	}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	tx, err := s.DB().Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := IngestEnvelope(t.Context(), tx, env, raw, time.Now().UnixMilli()); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("IngestEnvelope: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	return ingest.DeriveSessionID("claude-code", sourceSession)
+}
+
 // ingestForSearch is the multi-arg cousin of ingestText that lets
 // tests pin transport and timestamp explicitly. Returns the derived
 // session_id so callers can filter by it.
@@ -519,5 +561,159 @@ func TestSearchEvents_OrderRecencyReturnsNewestFirst(t *testing.T) {
 	if hits[0].TsSourceMs <= hits[1].TsSourceMs {
 		t.Errorf("OrderRecency: expected newer first, got ts[%d, %d]",
 			hits[0].TsSourceMs, hits[1].TsSourceMs)
+	}
+}
+
+// TestSearchEvents_ExtractionsFallbackFindsByFilePath proves the
+// third-tier fallback fires: an event whose content_text never
+// mentions the file path is still findable when the extractions
+// table holds it. Pre-fallback this returned no hits.
+func TestSearchEvents_ExtractionsFallbackFindsByFilePath(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	ingestFileTouch(t, s, "sess-touch", "Read",
+		"internal/store/migrate.go",
+		"opening that source file", // content_text deliberately path-free
+		now)
+
+	hits, err := SearchEvents(t.Context(), s.DB(), SearchEventOpts{
+		Query: `"internal/store/migrate.go"`,
+	})
+	if err != nil {
+		t.Fatalf("SearchEvents: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("extractions fallback: got %d hits, want 1", len(hits))
+	}
+	// Snippet must be the labelled extraction-kind preview, not the
+	// content_text — that's how the caller knows it came via the
+	// typed-fact path.
+	if !strings.HasPrefix(hits[0].Snippet.String, "[file_path] ") {
+		t.Errorf("snippet should be labelled with extraction kind, got %q",
+			hits[0].Snippet.String)
+	}
+	if !contains(hits[0].Snippet.String, "internal/store/migrate.go") {
+		t.Errorf("snippet should carry the matched extraction value, got %q",
+			hits[0].Snippet.String)
+	}
+}
+
+// TestSearchEvents_ExtractionsFallbackSkippedWhenPrimaryHits confirms
+// the fallback is gated on the primary returning zero — when
+// content_text already matches, we don't pay the join cost.
+func TestSearchEvents_ExtractionsFallbackSkippedWhenPrimaryHits(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	// Row A: content_text mentions the path → primary hits.
+	ingestFileTouch(t, s, "sess-pri", "Read",
+		"internal/store/migrate.go",
+		"opening internal/store/migrate.go for review",
+		now)
+	// Row B: only the extraction has the path. Would surface only
+	// via the fallback. If we returned both, fallback ran; if just
+	// A, it didn't.
+	ingestFileTouch(t, s, "sess-only-ext", "Read",
+		"internal/store/migrate.go",
+		"unrelated commentary",
+		now.Add(time.Second))
+
+	hits, err := SearchEvents(t.Context(), s.DB(), SearchEventOpts{
+		Query: `"internal/store/migrate.go"`,
+	})
+	if err != nil {
+		t.Fatalf("SearchEvents: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("primary should suppress fallback: got %d hits, want 1", len(hits))
+	}
+	if !contains(hits[0].Content.String, "for review") {
+		t.Errorf("expected primary's row, got %q", hits[0].Content.String)
+	}
+}
+
+// TestSearchEvents_ExtractionsFallbackHonorsFilters keeps the third
+// tier consistent with the first two: kind, session, since-ms, and
+// limit must still apply when the index path silently switches.
+func TestSearchEvents_ExtractionsFallbackHonorsFilters(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	fooID := ingestFileTouch(t, s, "sess-foo", "Read",
+		"internal/store/migrate.go", "no path in text", now)
+	ingestFileTouch(t, s, "sess-bar", "Read",
+		"internal/store/migrate.go", "no path in text", now.Add(time.Second))
+
+	hits, err := SearchEvents(t.Context(), s.DB(), SearchEventOpts{
+		Query:     `"internal/store/migrate.go"`,
+		SessionID: fooID,
+	})
+	if err != nil {
+		t.Fatalf("SearchEvents: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("extractions fallback + session filter: got %d, want 1", len(hits))
+	}
+	if hits[0].SessionID != fooID {
+		t.Errorf("session filter leaked across extractions path: got %q want %q",
+			hits[0].SessionID, fooID)
+	}
+}
+
+// TestSearchEvents_ExtractionsFallbackDedupsPerEvent makes sure
+// multiple extractions on the same event collapse to one row in
+// the result. (Today only file_path emits per Read, but URLs and
+// shell commands can both produce multiple entries per event.)
+func TestSearchEvents_ExtractionsFallbackDedupsPerEvent(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+
+	// Single envelope carrying a Bash tool_use with a command that
+	// itself contains a URL — two extractions on the same event:
+	// one shell_command, one url. Search for the shared substring
+	// the trigram path can't catch (extraction-only fallback).
+	env := &ingest.Envelope{
+		V:               1,
+		EventID:         uuid.Must(uuid.NewV7()).String(),
+		SourceAgent:     "claude-code",
+		SourceSessionID: "sess-multi",
+		Kind:            "tool_use",
+		Role:            "tool",
+		TsSource:        now.UTC(),
+		Cwd:             "/work/multi",
+		ContentText:     "running a curl",
+		Tool:            &ingest.Tool{Name: "Bash"},
+		Payload: map[string]any{
+			"tool_input": map[string]any{
+				"command": "curl https://example.com/uniquefactpath/ok.json",
+			},
+		},
+		Transport: "hook",
+		Redaction: &ingest.Redaction{Applied: true},
+	}
+	raw, _ := json.Marshal(env)
+	tx, err := s.DB().Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := IngestEnvelope(t.Context(), tx, env, raw, time.Now().UnixMilli()); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("IngestEnvelope: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	hits, err := SearchEvents(t.Context(), s.DB(), SearchEventOpts{
+		Query: "uniquefactpath",
+	})
+	if err != nil {
+		t.Fatalf("SearchEvents: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Errorf("dedup per event: got %d hits, want 1 (two extractions on one event)",
+			len(hits))
 	}
 }
