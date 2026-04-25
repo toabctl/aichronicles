@@ -16,6 +16,11 @@ repos:
         # file carries live key material.
         exclude: ^(internal/redact/redact_test\.go|docs/reference/redaction-detectors\.md)$
       - id: check-yaml
+        # mkdocs.yml uses pymdownx.superfences's `!!python/name:`
+        # tag, which the default safe loader rejects. --unsafe
+        # accepts custom tags without executing them. See
+        # https://www.mkdocs.org/user-guide/configuration/.
+        args: [--unsafe]
       - id: check-json
       - id: check-toml
       - id: trailing-whitespace

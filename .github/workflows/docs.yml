@@ -1,0 +1,78 @@
+# Builds the MkDocs Material site and deploys it to GitHub Pages.
+#
+# Triggers on:
+#   - push to main that touches docs/, mkdocs.yml, or any source the
+#     auto-generated reference pages derive from (so docs always
+#     reflect the deployed code).
+#   - manual dispatch from the Actions tab (useful for re-deploying
+#     after a Pages config change).
+#
+# `make docs-check` runs *before* the build to fail fast when a
+# committer forgot to regenerate the autogen pages — the deploy
+# uses what's committed, so drift would publish stale references
+# otherwise. The local pre-commit story (running `make docs-check`
+# yourself) is preferred; CI is the safety net.
+
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "requirements-docs.txt"
+      - "README.md"                       # transcluded into docs/index.md
+      - "internal/cli/**"                 # source for autogen CLI reference
+      - "internal/redact/redact.go"       # source for autogen detectors
+      - "internal/store/migrations/**"    # source for autogen schema
+      - "tools/docgen/**"                 # generator itself
+      - "Makefile"                        # in case targets change
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+# GitHub Pages requires writes on the gh-pages branch.
+permissions:
+  contents: write
+
+# Serialize concurrent runs so two pushes don't race the deploy.
+concurrency:
+  group: docs
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # mkdocs gh-deploy needs full history
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements-docs.txt
+
+      - name: Install MkDocs + plugins
+        run: python -m pip install -r requirements-docs.txt
+
+      - name: Verify autogen docs are up to date
+        # Fails the build if the committed docs/reference/* pages
+        # disagree with what `make docs` would produce from the
+        # current source — caught here before we publish a stale
+        # reference page to the live site.
+        run: make docs-check
+
+      - name: Build site
+        # --strict turns warnings (broken internal links, missing
+        # nav targets, etc.) into errors so we don't publish a
+        # broken site silently.
+        run: mkdocs build --strict
+
+      - name: Deploy to gh-pages
+        run: mkdocs gh-deploy --force
