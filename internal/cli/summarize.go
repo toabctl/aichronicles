@@ -11,10 +11,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/config"
-	"github.com/toabctl/aichronicles/internal/llm"
-	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/llm"
+	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 // summarizeTimeout caps the whole subcommand (prompt build + LLM

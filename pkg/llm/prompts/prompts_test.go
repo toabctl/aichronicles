@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/llm"
 )
 
 func nullS(s string) sql.NullString { return sql.NullString{String: s, Valid: s != ""} }

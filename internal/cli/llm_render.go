@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"github.com/toabctl/aichronicles/internal/config"
-	"github.com/toabctl/aichronicles/internal/llm"
-	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/llm"
+	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 // llmConfigFromFile translates the file-shaped config.LLM into the

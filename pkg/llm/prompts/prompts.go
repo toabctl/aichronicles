@@ -31,8 +31,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
 

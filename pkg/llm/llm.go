@@ -9,10 +9,18 @@
 //
 // Block A's redact.Outbound is the last line of defense before a
 // prompt leaves the process. That shim is invoked by the prompt
-// builders in internal/llm/prompts, NOT here — this package is the
+// builders in pkg/llm/prompts, NOT here — this package is the
 // dumb transport layer. Keeping the egress scrub at prompt-build time
 // lets callers choose to abort (via redact.MustClean) if a sensitive
 // pattern appears, before anything crosses the network.
+//
+// Reuse: this package is provider-neutral and aichronicles-agnostic.
+// Any Go program needing structured-output LLM calls (forced tool
+// use, schema-validated JSON inputs, provider-portable cache keys)
+// can import it directly. Public surface (Client, Request, Response,
+// Tool, ToolUse, Provider, Config, FromConfig, plus the Anthropic
+// and OpenAI adapter constructors) is stable; additions land via
+// new exported names rather than breaking changes.
 package llm
 
 import (
