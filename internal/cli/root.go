@@ -42,6 +42,7 @@ func NewRootCmd() *cobra.Command {
 		Use:           "aichronicles",
 		Short:         "Capture AI coding agent session events",
 		Long:          "aichronicles is the client binary for the aichroniclesd ingest daemon. It receives hook payloads, wraps them in the canonical Envelope, and forwards to the daemon over a Unix domain socket.",
+		Version:       Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -61,5 +62,6 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newProposeCmd())
 	cmd.AddCommand(newMCPServeCmd())
 	cmd.AddCommand(newSummariesCmd())
+	cmd.AddCommand(newVersionCmd())
 	return cmd
 }
