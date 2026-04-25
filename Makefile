@@ -1,11 +1,57 @@
 # aichronicles build helpers.
 #
-# Production code is built with plain `go build`/`go install`; this
-# Makefile only carries developer-facing helpers (doc regeneration,
-# drift checks). Targets are intentionally short — when a step grows
-# beyond two commands, promote it to a Go program under tools/.
+# Targets are intentionally short — when a step grows beyond two
+# commands, promote it to a Go program under tools/.
 
-.PHONY: docs docs-cli docs-schema docs-detectors docs-check
+# Where binaries land. ~/.local/bin matches the path the systemd unit
+# expects (assets/aichronicles.service ExecStart=%h/.local/bin/...).
+PREFIX ?= $(HOME)/.local
+BINDIR := $(PREFIX)/bin
+
+# Extra flags passed to every `go build`. Override on the command line
+# (e.g. `make GOFLAGS=-trimpath build`) when reproducible builds matter.
+GOFLAGS ?=
+
+# Default target: build the two binaries AND install them. Surprising
+# for a bare `make`, but the user asked for it explicitly so they can
+# rebuild + restart in one keystroke.
+.DEFAULT_GOAL := all
+
+.PHONY: all build install clean docs docs-cli docs-schema docs-detectors docs-check
+
+# Build then install. Restart of the systemd --user service is part
+# of `install`, so `make` end-to-end gets the running daemon onto the
+# new binary.
+all: build install
+
+# Compile both binaries into ./bin. Cleans only what it produces, so
+# running it on a tree with uncommitted changes is safe.
+build:
+	@mkdir -p ./bin
+	go build $(GOFLAGS) -o ./bin/aichronicles  ./cmd/aichronicles
+	go build $(GOFLAGS) -o ./bin/aichroniclesd ./cmd/aichroniclesd
+
+# Copy both binaries into $(BINDIR) (default ~/.local/bin) and bounce
+# the systemd --user service so the running daemon picks up the new
+# code. The bounce is a no-op when the socket isn't installed yet
+# (first-time install) — we just print a one-liner pointing at
+# `aichronicles setup systemd`.
+install: build
+	@install -d $(BINDIR)
+	install -m 0755 ./bin/aichronicles  $(BINDIR)/aichronicles
+	install -m 0755 ./bin/aichroniclesd $(BINDIR)/aichroniclesd
+	@if systemctl --user is-enabled aichronicles.socket >/dev/null 2>&1; then \
+	  echo "restarting aichronicles.service (systemd --user)"; \
+	  systemctl --user restart aichronicles.service; \
+	else \
+	  echo "aichronicles.socket not installed — skipping restart."; \
+	  echo "  run \`aichronicles setup systemd\` to wire up the socket."; \
+	fi
+
+# Remove only what build/install produces locally.
+clean:
+	rm -rf ./bin
+
 
 # Regenerate every auto-generated reference page. Run after editing
 # command Long strings, schema migrations, or the redaction detector
