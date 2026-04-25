@@ -125,3 +125,36 @@ Out of scope (for this entry): live HITL response routing — the
 observability project ships an interactive permission dialog flow,
 but that's an interactive UI feature and aichronicles is a
 read/capture tool, not an agent host.
+
+### Richer content_text and extractions for non-Bash/file tools
+
+For `tool_use` events, `extractContentText` in
+`internal/cli/assemble.go:117-121` returns just the bare tool name
+(e.g. `"Bash"`, `"Read"`). Two extractors then pull `tool_input`
+into the typed `extractions` table: `ShellCommandExtractor` (Bash
+→ `shell_command`) and `FilePathExtractor` (Read/Write/Edit/
+NotebookEdit → `file_path`). Everything else — Grep, Glob,
+WebFetch, WebSearch, MCP tools, sub-agent tools — drops the
+`tool_input` payload on the floor. After migration 006 added the
+extractions FTS tier, queries can now find Bash command bodies and
+file paths via the typed-fact fallback, but the Grep pattern,
+Glob pattern, fetched URL, etc. remain unsearchable.
+
+Two complementary fixes:
+
+- Extend `extractContentText` in `internal/cli/assemble.go` to
+  produce a tool-specific one-liner for the common tools
+  (`Grep pattern=...`, `WebFetch <url>`, `Glob <pattern>`),
+  capped at a sane length. Goes through the existing redaction
+  path automatically.
+- Add an extractor per tool in `pkg/ingest/extract/extract.go`:
+  `WebFetch` → `kind=url`, reusing the existing URL extraction
+  contract; `Grep` / `Glob` → a new `kind=pattern`. Mirror
+  `FilePathExtractor`'s `tool_name` whitelist pattern so the
+  scope stays explicit.
+
+Out of scope (rejected during the search-improvements batch):
+adding `tool_name` as a second indexed FTS5 column in `events_fts`.
+Tool name is already mirrored into `content_text`, so a multi-
+column index would weight the same signal twice without adding
+recall.
