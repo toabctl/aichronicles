@@ -211,12 +211,12 @@ daemon_future_event = true
 	}
 }
 
-func TestLoadFrom_LLMAPIKeyCommand_Parses(t *testing.T) {
+func TestLoadFrom_AnthropicAPIKeyCommand_Parses(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	body := `
-[llm]
+[llm.anthropic]
 api_key_command = "secret-tool lookup service anthropic user default"
 `
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -226,40 +226,82 @@ api_key_command = "secret-tool lookup service anthropic user default"
 	if err != nil {
 		t.Fatalf("LoadFrom: %v", err)
 	}
-	if !strings.HasPrefix(cfg.LLM.APIKeyCommand, "secret-tool") {
-		t.Errorf("api_key_command: got %q", cfg.LLM.APIKeyCommand)
+	if !strings.HasPrefix(cfg.LLM.Anthropic.APIKeyCommand, "secret-tool") {
+		t.Errorf("anthropic api_key_command: got %q", cfg.LLM.Anthropic.APIKeyCommand)
 	}
 }
 
-func TestLoadFrom_LLMAPIKeyCommand_RefusesGroupReadableFile(t *testing.T) {
+func TestLoadFrom_OpenAIAPIKeyCommand_Parses(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	body := `
 [llm]
+provider = "openai"
+
+[llm.openai]
+api_key_command = "secret-tool lookup service openai user default"
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	cfg, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if cfg.LLM.Provider != "openai" {
+		t.Errorf("provider: got %q, want openai", cfg.LLM.Provider)
+	}
+	if !strings.HasPrefix(cfg.LLM.OpenAI.APIKeyCommand, "secret-tool") {
+		t.Errorf("openai api_key_command: got %q", cfg.LLM.OpenAI.APIKeyCommand)
+	}
+}
+
+func TestLoadFrom_AnthropicAPIKeyCommand_RefusesGroupReadableFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := `
+[llm.anthropic]
 api_key_command = "echo secret"
 `
-	// Mode 0644 — group + other readable. Since api_key_command is
-	// a trust boundary, LoadFrom must refuse rather than silently
-	// trusting a world/group-readable file.
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	_, err := LoadFrom(path)
 	if err == nil {
-		t.Fatal("expected error on 0644 config with api_key_command")
+		t.Fatal("expected error on 0644 config with anthropic api_key_command")
 	}
 	if !strings.Contains(err.Error(), "chmod 600") {
 		t.Errorf("error should suggest fix, got: %v", err)
 	}
 }
 
-func TestLoadFrom_LLMAPIKeyCommand_AcceptsOwnerOnlyFile(t *testing.T) {
+func TestLoadFrom_OpenAIAPIKeyCommand_RefusesGroupReadableFile(t *testing.T) {
+	t.Parallel()
+	// Same trust-boundary rule applies to the OpenAI block — the
+	// mode check fires whenever ANY provider has a key command set.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := `
+[llm.openai]
+api_key_command = "echo secret"
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	_, err := LoadFrom(path)
+	if err == nil {
+		t.Fatal("expected error on 0644 config with openai api_key_command")
+	}
+}
+
+func TestLoadFrom_AnthropicAPIKeyCommand_AcceptsOwnerOnlyFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	body := `
-[llm]
+[llm.anthropic]
 api_key_command = "echo secret"
 `
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -269,8 +311,37 @@ api_key_command = "echo secret"
 	if err != nil {
 		t.Fatalf("LoadFrom on 0600: %v", err)
 	}
-	if cfg.LLM.APIKeyCommand != "echo secret" {
-		t.Errorf("api_key_command: got %q", cfg.LLM.APIKeyCommand)
+	if cfg.LLM.Anthropic.APIKeyCommand != "echo secret" {
+		t.Errorf("api_key_command: got %q", cfg.LLM.Anthropic.APIKeyCommand)
+	}
+}
+
+func TestLoadFrom_BothProvidersConfigured(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := `
+[llm]
+provider = "anthropic"
+
+[llm.anthropic]
+api_key_command = "echo a"
+
+[llm.openai]
+api_key_command = "echo o"
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	cfg, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if cfg.LLM.Anthropic.APIKeyCommand != "echo a" {
+		t.Errorf("anthropic: got %q", cfg.LLM.Anthropic.APIKeyCommand)
+	}
+	if cfg.LLM.OpenAI.APIKeyCommand != "echo o" {
+		t.Errorf("openai: got %q", cfg.LLM.OpenAI.APIKeyCommand)
 	}
 }
 

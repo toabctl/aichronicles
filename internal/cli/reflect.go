@@ -76,7 +76,7 @@ func newReflectCmd() *cobra.Command {
 
 			_, err = RunReflect(ctx, s,
 				func() (llm.Client, error) {
-					return llm.FromEnvOrCommand(ctx, cfg.LLM.APIKeyCommand)
+					return llm.FromEnvOrCommand(ctx, cfg.LLM.Anthropic.APIKeyCommand)
 				},
 				ReflectOptions{Since: since, Limit: limit, Model: model, Force: force, JSON: jsonOut},
 				cmd.OutOrStdout())

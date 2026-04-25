@@ -68,7 +68,7 @@ func newSummarizeCmd() *cobra.Command {
 				return cfgErr
 			}
 			newClient := func() (llm.Client, error) {
-				return llm.FromEnvOrCommand(cmd.Context(), cfg.LLM.APIKeyCommand)
+				return llm.FromEnvOrCommand(cmd.Context(), cfg.LLM.Anthropic.APIKeyCommand)
 			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), summarizeTimeout)

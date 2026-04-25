@@ -26,18 +26,55 @@ type Config struct {
 }
 
 // LLM controls how the CLI subcommands (summarize, reflect, propose)
-// obtain API credentials. Fields are optional; when everything is
-// zero the CLI falls back to the plain ANTHROPIC_API_KEY env var.
+// pick a provider and obtain API credentials. Fields are optional;
+// when everything is zero the CLI falls back to ANTHROPIC_API_KEY.
 type LLM struct {
+	// Provider names the LLM backend used by Block B features.
+	// Recognized values: "anthropic" (default), "openai". Spelled
+	// in lowercase; case is normalised at parse time.
+	Provider string `toml:"provider"`
+
+	// Anthropic groups Anthropic-specific knobs (the only one today
+	// is the api_key_command, but more — model overrides, beta
+	// headers — can land here without touching every caller).
+	Anthropic AnthropicProvider `toml:"anthropic"`
+
+	// OpenAI groups OpenAI-specific knobs.
+	OpenAI OpenAIProvider `toml:"openai"`
+}
+
+// AnthropicProvider configures the Anthropic adapter. Empty fields
+// fall back to env vars and built-in defaults.
+type AnthropicProvider struct {
 	// APIKeyCommand is a shell command (run via `/bin/sh -c`) whose
-	// stdout yields the API key. Used only when the env var is
-	// unset. Typical values: `secret-tool lookup service anthropic`,
-	// `pass show anthropic/api-key`, `cat ~/.config/aichronicles/key`.
+	// stdout yields the Anthropic API key. Used only when
+	// ANTHROPIC_API_KEY is unset. Typical values:
+	// `secret-tool lookup service anthropic user default`,
+	// `pass show anthropic/api-key`,
+	// `cat ~/.config/aichronicles/anthropic-key`.
 	//
 	// Trailing newlines are stripped. Runs with a 10-second timeout.
-	// Stderr is discarded — a command that writes the key to stderr
-	// will fail the resolve, by design.
+	// Stderr is discarded so a chatty keyring unlock prompt cannot
+	// corrupt the resolve.
 	APIKeyCommand string `toml:"api_key_command"`
+}
+
+// OpenAIProvider configures the OpenAI adapter. Same shape as the
+// Anthropic block; kept separate so each provider can grow its own
+// knobs without polluting the other.
+type OpenAIProvider struct {
+	// APIKeyCommand is a shell command whose stdout yields the OpenAI
+	// API key. Used only when OPENAI_API_KEY is unset. Same execution
+	// rules as AnthropicProvider.APIKeyCommand.
+	APIKeyCommand string `toml:"api_key_command"`
+}
+
+// HasAPIKeyCommand reports whether any provider has an api_key_command
+// set — used by LoadFrom to decide whether to enforce the 0600 mode
+// check on the file. Adding a new provider here makes its presence
+// trip the trust-boundary check automatically.
+func (l LLM) HasAPIKeyCommand() bool {
+	return l.Anthropic.APIKeyCommand != "" || l.OpenAI.APIKeyCommand != ""
 }
 
 // Capture controls what the client CLI is willing to forward to the
@@ -140,10 +177,10 @@ func LoadFrom(path string) (*Config, error) {
 	if err := toml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	if cfg.LLM.APIKeyCommand != "" {
+	if cfg.LLM.HasAPIKeyCommand() {
 		if perm := info.Mode().Perm(); perm&0o077 != 0 {
 			return nil, fmt.Errorf(
-				"%s has mode %04o but `[llm].api_key_command` is set; "+
+				"%s has mode %04o but a provider api_key_command is set; "+
 					"refuse to trust a world/group-accessible config. "+
 					"run `chmod 600 %s` to proceed",
 				path, perm, path)

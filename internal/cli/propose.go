@@ -68,7 +68,7 @@ func newProposeCmd() *cobra.Command {
 
 			_, err = RunPropose(ctx, s,
 				func() (llm.Client, error) {
-					return llm.FromEnvOrCommand(ctx, cfg.LLM.APIKeyCommand)
+					return llm.FromEnvOrCommand(ctx, cfg.LLM.Anthropic.APIKeyCommand)
 				},
 				ProposeOptions{Since: since, Limit: limit, Model: model, Force: force, JSON: jsonOut},
 				cmd.OutOrStdout())
