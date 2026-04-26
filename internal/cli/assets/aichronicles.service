@@ -2,15 +2,38 @@
 Description=aichronicles ingest daemon
 Requires=aichronicles.socket
 After=aichronicles.socket
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 # systemd's spawned-service environment does not reliably inherit the
 # user manager's PATH, so we reference the binary by absolute path via
 # the %h (home) specifier. The XDG convention ~/.local/bin is assumed.
 ExecStart=%h/.local/bin/aichroniclesd
-Type=simple
+
+# Type=notify: the daemon sends READY=1 once it has bound its
+# listener and STOPPING=1 on clean shutdown, so systemd can sequence
+# dependent units accurately and tell a graceful exit apart from a
+# watchdog kill in the journal.
+Type=notify
+NotifyAccess=main
+
+# WatchdogSec gates the daemon's accept loop on a real
+# in-process probe (GET /v1/healthz over its own UDS) every
+# WatchdogSec/2 seconds. If the loop wedges — process alive,
+# kernel says LISTEN, but no accept ever returns, the failure
+# mode that lost ~30 hours of events in production — the
+# probe times out, no WATCHDOG=1 ping fires, systemd kills
+# the unit, and Restart=on-failure brings up a fresh one
+# behind the same socket-activation fd.
+#
+# 30s is loose on purpose. The probe itself caps at 500ms
+# inside the daemon, so even back-to-back GC pauses can't
+# trip the deadline; we'd rather spuriously not-restart than
+# loop the daemon during a transient hiccup.
+WatchdogSec=30s
 Restart=on-failure
-RestartSec=5s
+RestartSec=2s
 
 [Install]
 WantedBy=default.target
