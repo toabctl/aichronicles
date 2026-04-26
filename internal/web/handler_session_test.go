@@ -101,6 +101,33 @@ func TestSessionDetail_RendersCachedSummary(t *testing.T) {
 	}
 }
 
+// TestSessionDetail_IncludesLiveBannerWiring confirms the
+// session-detail page subscribes to /stream filtered by its own
+// session_id, so a new event for THIS session lands in the banner
+// while events for other sessions don't.
+func TestSessionDetail_IncludesLiveBannerWiring(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	id := seedSession(t, st, "sess-banner", "anything", now)
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	_, body := fetch(t, base+"/sessions/"+id)
+	for _, want := range []string{
+		`hx-ext="sse"`,
+		`sse-connect="/stream?session_id=` + id + `"`,
+		`sse-swap="event"`,
+		`hx-swap="afterbegin"`,
+		`id="livebanner-target"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
+		}
+	}
+}
+
 func TestSessionDetail_UnknownIDIs404(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)

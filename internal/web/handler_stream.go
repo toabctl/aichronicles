@@ -1,8 +1,8 @@
 package web
 
 import (
-	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"strconv"
 	"strings"
@@ -42,20 +42,6 @@ const (
 	// useful preview inline.
 	streamSnippetMaxRunes = 200
 )
-
-// streamEvent is the JSON payload for one SSE message. The shape
-// matches what the frontend list templates render so an htmx
-// SSE-swap can substitute it directly.
-type streamEvent struct {
-	IngestSeq  int64  `json:"ingest_seq"`
-	EventID    string `json:"event_id"`
-	SessionID  string `json:"session_id"`
-	ShortID    string `json:"short_id"`
-	Kind       string `json:"kind"`
-	TsSourceMs int64  `json:"ts_source_ms"`
-	Cwd        string `json:"cwd,omitempty"`
-	Snippet    string `json:"snippet,omitempty"`
-}
 
 // streamHandler serves Server-Sent Events with the latest event
 // stream. One goroutine per connection, polling every
@@ -153,26 +139,38 @@ func (s *Server) streamHandler(w http.ResponseWriter, r *http.Request) {
 // The `id:` line lets the browser's EventSource send a
 // Last-Event-ID header on reconnect, matching the ?since_seq
 // resume parameter — no events are missed across a disconnect.
+//
+// Payload is an HTML fragment ready for htmx-ext-sse to swap
+// directly into the DOM. Single-line so the SSE data field
+// stays in one frame.
 func writeStreamEvent(w http.ResponseWriter, e store.LiveEvent) error {
-	payload := streamEvent{
-		IngestSeq:  e.IngestSeq,
-		EventID:    e.EventID,
-		SessionID:  e.SessionID,
-		ShortID:    shortID(e.SessionID),
-		Kind:       e.Kind,
-		TsSourceMs: e.TsSourceMs,
-		Cwd:        e.Cwd.String,
-		Snippet:    truncateForStream(e.Snippet.String),
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshal stream event: %w", err)
-	}
+	frag := renderLiveEventFragment(e)
 	// SSE frame: id (for resume), event (for hx-ext sse-swap
 	// routing), data (one line). End with double-newline.
-	_, err = fmt.Fprintf(w, "id: %d\nevent: event\ndata: %s\n\n",
-		e.IngestSeq, body)
+	_, err := fmt.Fprintf(w, "id: %d\nevent: event\ndata: %s\n\n",
+		e.IngestSeq, frag)
 	return err
+}
+
+// renderLiveEventFragment produces the one-line HTML row that
+// appears in the live feed. Output is escaped via html.EscapeString
+// at every interpolation point so neither the snippet nor the cwd
+// can break out of the markup. Kept inline (not a template) so the
+// SSE hot path doesn't pay template-lookup cost per event.
+func renderLiveEventFragment(e store.LiveEvent) string {
+	short := shortID(e.SessionID)
+	cwd := "-"
+	if e.Cwd.Valid && e.Cwd.String != "" {
+		cwd = e.Cwd.String
+	}
+	snippet := truncateForStream(e.Snippet.String)
+	return `<li class="livefeed-row">` +
+		`<span class="ts">` + html.EscapeString(time.UnixMilli(e.TsSourceMs).UTC().Format("15:04:05")) + `</span> ` +
+		`<span class="badge">` + html.EscapeString(e.Kind) + `</span> ` +
+		`<a class="sid" href="/sessions/` + html.EscapeString(e.SessionID) + `">` + html.EscapeString(short) + `</a> ` +
+		`<span class="cwd">` + html.EscapeString(cwd) + `</span> ` +
+		`<span class="snippet">` + html.EscapeString(snippet) + `</span>` +
+		`</li>`
 }
 
 // truncateForStream flattens whitespace and rune-caps the snippet

@@ -3,7 +3,6 @@ package web
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"net/http"
 	"strings"
 	"sync"
@@ -12,16 +11,16 @@ import (
 )
 
 // readSSEFrames reads SSE-formatted bytes from r until ctx is done
-// or n frames arrive. Returns the parsed event payloads. Used by
-// the stream tests to inspect what reached the wire without baking
-// in tight timing assumptions.
-func readSSEFrames(t *testing.T, ctx context.Context, r *http.Response, n int) []map[string]any {
+// or n frames arrive. Returns the raw `data:` payloads as strings —
+// frames carry HTML fragments that htmx-ext-sse swaps into the DOM,
+// so tests assert on substrings.
+func readSSEFrames(t *testing.T, ctx context.Context, r *http.Response, n int) []string {
 	t.Helper()
 	scanner := bufio.NewScanner(r.Body)
 	scanner.Buffer(make([]byte, 0, 1<<20), 1<<20)
 
 	var (
-		frames  []map[string]any
+		frames  []string
 		curData strings.Builder
 	)
 	doneCh := make(chan struct{})
@@ -39,12 +38,9 @@ func readSSEFrames(t *testing.T, ctx context.Context, r *http.Response, n int) [
 		case line == "":
 			// Frame terminator.
 			if curData.Len() > 0 {
-				var m map[string]any
-				if err := json.Unmarshal([]byte(strings.TrimSpace(curData.String())), &m); err == nil {
-					frames = append(frames, m)
-					if len(frames) >= n {
-						return frames
-					}
+				frames = append(frames, strings.TrimSpace(curData.String()))
+				if len(frames) >= n {
+					return frames
 				}
 				curData.Reset()
 			}
@@ -94,13 +90,15 @@ func TestStream_PushesNewEvents(t *testing.T) {
 	if len(frames) == 0 {
 		t.Fatalf("no SSE frames received")
 	}
-	got := frames[0]
-	if got["kind"] != "user_prompt" {
-		t.Errorf("kind: got %v, want user_prompt", got["kind"])
-	}
-	snippet, _ := got["snippet"].(string)
-	if !strings.Contains(snippet, "live event content") {
-		t.Errorf("snippet: got %q, want substring 'live event content'", snippet)
+	frag := frames[0]
+	for _, want := range []string{
+		`class="livefeed-row"`,
+		`>user_prompt<`,
+		`live event content`,
+	} {
+		if !strings.Contains(frag, want) {
+			t.Errorf("fragment missing %q:\n%s", want, frag)
+		}
 	}
 }
 
@@ -132,8 +130,11 @@ func TestStream_RespectsSessionIDFilter(t *testing.T) {
 	if len(frames) != 1 {
 		t.Fatalf("expected exactly 1 frame for filtered session, got %d", len(frames))
 	}
-	if frames[0]["session_id"] != wantedID {
-		t.Errorf("filter leaked: got session_id %v, want %s", frames[0]["session_id"], wantedID)
+	if !strings.Contains(frames[0], wantedID) {
+		t.Errorf("filter leaked: fragment didn't carry %s\n%s", wantedID, frames[0])
+	}
+	if strings.Contains(frames[0], "should be filtered out") {
+		t.Errorf("filter leaked the unwanted snippet:\n%s", frames[0])
 	}
 }
 

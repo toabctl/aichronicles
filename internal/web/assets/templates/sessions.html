@@ -4,6 +4,15 @@
   <p>Most recently active first. Click a row to see events and the cached summary.</p>
 </hgroup>
 
+<details class="livefeed-wrap" open>
+  <summary><strong>Live feed</strong> <small>— new events arrive here as they ingest</small></summary>
+  <div hx-ext="sse" sse-connect="/stream">
+    <ul id="livefeed" class="livefeed" hx-swap="afterbegin" sse-swap="event">
+      <li class="livefeed-empty">(waiting for new events…)</li>
+    </ul>
+  </div>
+</details>
+
 {{if .Sessions}}
 <table class="sessions">
   <thead>

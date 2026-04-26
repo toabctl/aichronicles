@@ -52,3 +52,82 @@ table.sessions td.ts {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+
+/* Live feed: a tight, monospace-flavoured list of incoming events
+   that prepends new rows as they arrive over SSE. Capped visual
+   height with overflow so the page doesn't grow without bound. */
+.livefeed-wrap {
+  margin: 1rem 0;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 0.25rem;
+  padding: 0.5rem 0.75rem;
+}
+.livefeed {
+  list-style: none;
+  margin: 0.5rem 0 0 0;
+  padding: 0;
+  max-height: 14rem;
+  overflow-y: auto;
+  font-size: 0.875em;
+}
+.livefeed-row {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.15rem 0;
+  border-bottom: 1px dashed var(--pico-muted-border-color);
+}
+.livefeed-row:last-child {
+  border-bottom: none;
+}
+.livefeed-row .ts,
+.livefeed-row .sid {
+  font-family: var(--pico-font-family-monospace);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.livefeed-row .cwd {
+  color: var(--pico-muted-color);
+  font-style: italic;
+  flex-shrink: 0;
+}
+.livefeed-row .snippet {
+  color: var(--pico-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.livefeed-empty {
+  color: var(--pico-muted-color);
+  font-style: italic;
+  padding: 0.25rem 0;
+}
+
+/* Live banner on the session detail page — same event-row markup
+   as the live feed, but styled as a stack of recent events that
+   sits above the events table. Only the most recent few are
+   visible; older ones scroll. The banner uses the same
+   .livefeed-row class so colour/typography match. */
+.livebanner {
+  margin: 0 0 1rem 0;
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid var(--pico-primary);
+  background: var(--pico-secondary-background);
+  border-radius: 0 0.25rem 0.25rem 0;
+}
+.livebanner-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 8rem;
+  overflow-y: auto;
+  font-size: 0.875em;
+}
+/* The first child is the freshest event — pulse it briefly so the
+   user catches motion in their peripheral vision. */
+@keyframes livefeed-pulse {
+  0%   { background: var(--pico-primary-background); }
+  100% { background: transparent; }
+}
+.livebanner-list .livefeed-row:first-child {
+  animation: livefeed-pulse 1.5s ease-out;
+}

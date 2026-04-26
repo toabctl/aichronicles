@@ -94,6 +94,26 @@ func TestSessionsPage_RendersAllSessions(t *testing.T) {
 	}
 }
 
+func TestSessionsPage_IncludesLiveFeedWiring(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	_, body := fetch(t, base+"/")
+	for _, want := range []string{
+		`hx-ext="sse"`,
+		`sse-connect="/stream"`,
+		`sse-swap="event"`,
+		`hx-swap="afterbegin"`,
+		`id="livefeed"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q\n--- body ---\n%s", want, body)
+		}
+	}
+}
+
 func TestSessionsPage_EmptyStoreShowsEmptyMessage(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)

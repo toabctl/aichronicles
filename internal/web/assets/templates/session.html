@@ -4,6 +4,12 @@
   <p><a href="/">← all sessions</a></p>
 </hgroup>
 
+<div class="livebanner" hx-ext="sse" sse-connect="/stream?session_id={{.ID}}">
+  <ul id="livebanner-target" class="livebanner-list" hx-swap="afterbegin" sse-swap="event">
+    <li class="livefeed-empty">(no new events since you opened this page)</li>
+  </ul>
+</div>
+
 <article>
   <table>
     <tbody>
