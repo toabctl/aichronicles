@@ -81,13 +81,13 @@ func callTool(t *testing.T, s *Server, name string, args string) *ToolResult {
 	return res
 }
 
-func TestRegisterAichroniclesTools_InstallsAllThree(t *testing.T) {
+func TestRegisterAichroniclesTools_InstallsAllFour(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
 	RegisterAichroniclesTools(s, st)
 
-	for _, want := range []string{"search_events", "list_sessions", "get_summary"} {
+	for _, want := range []string{"search_events", "list_sessions", "get_summary", "list_subagents"} {
 		if _, ok := s.tools[want]; !ok {
 			t.Errorf("tool %q not registered", want)
 		}
@@ -437,6 +437,117 @@ func TestToolsCall_PassesUnredactedContentThrough(t *testing.T) {
 	}
 }
 
+// seedSubagentEvents drops a top-level event plus two events
+// from the same sub-agent thread into a fresh store. Returns the
+// store and the subagent_id so callers can drive the relevant
+// tools.
+func seedSubagentEvents(t *testing.T) (*store.Store, string) {
+	t.Helper()
+	s, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	ingestOne := func(sa *ingest.Subagent, content string, tsOffset time.Duration) {
+		t.Helper()
+		env := ingest.Envelope{
+			V:               1,
+			EventID:         uuid.Must(uuid.NewV7()).String(),
+			SourceAgent:     "claude-code",
+			SourceSessionID: "sess-sa",
+			Kind:            "user_prompt",
+			Role:            "user",
+			TsSource:        time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC).Add(tsOffset),
+			Cwd:             "/work/sess-sa",
+			ContentText:     content,
+			Payload:         map[string]any{},
+			Subagent:        sa,
+			Redaction:       &ingest.Redaction{Applied: true},
+		}
+		raw, _ := json.Marshal(&env)
+		tx, _ := s.DB().Begin()
+		if _, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli()); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("seed: %v", err)
+		}
+		_ = tx.Commit()
+	}
+
+	const subagentID = "agent-7"
+	ingestOne(nil, "main agent prompt", 0)
+	ingestOne(&ingest.Subagent{ID: subagentID, Type: "planner"}, "planner step one", time.Second)
+	ingestOne(&ingest.Subagent{ID: subagentID, Type: "planner"}, "planner step two", 2*time.Second)
+	return s, subagentID
+}
+
+func TestListSubagents_AggregatesSpan(t *testing.T) {
+	t.Parallel()
+	st, subID := seedSubagentEvents(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "list_subagents", `{}`)
+	if res.IsError {
+		t.Fatalf("unexpected error: %+v", res)
+	}
+	out := res.Content[0].Text
+	if !strings.Contains(out, subID) {
+		t.Errorf("expected subagent_id %q in output:\n%s", subID, out)
+	}
+	if !strings.Contains(out, "planner") {
+		t.Errorf("expected subagent_type label in output:\n%s", out)
+	}
+	// Two events for that thread; output should mention 2 in the
+	// event_count column. Crude substring check is enough.
+	if !strings.Contains(out, "\t2\n") {
+		t.Errorf("expected event_count=2 in output:\n%s", out)
+	}
+}
+
+func TestListSubagents_EmptyStore(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "list_subagents", `{}`)
+	if res.IsError {
+		t.Fatalf("unexpected error: %+v", res)
+	}
+	if res.Content[0].Text != "(no subagent threads)" {
+		t.Errorf("unexpected output: %q", res.Content[0].Text)
+	}
+}
+
+func TestSearchEvents_SubagentIDFilterNarrows(t *testing.T) {
+	t.Parallel()
+	st, subID := seedSubagentEvents(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	// Without filter: matches the main-agent and the two
+	// subagent rows when query is broad enough.
+	resAll := callTool(t, s, "search_events", `{"query":"prompt"}`)
+	if !strings.Contains(resAll.Content[0].Text, "main agent") {
+		t.Errorf("unfiltered search should still see top-level rows:\n%s", resAll.Content[0].Text)
+	}
+
+	// With subagent_id filter: top-level row must be excluded.
+	res := callTool(t, s, "search_events",
+		`{"query":"step","subagent_id":"`+subID+`"}`)
+	if res.IsError {
+		t.Fatalf("unexpected error: %+v", res)
+	}
+	out := res.Content[0].Text
+	if strings.Contains(out, "main agent") {
+		t.Errorf("subagent_id filter should exclude top-level rows:\n%s", out)
+	}
+	if !strings.Contains(out, "planner step") {
+		t.Errorf("expected subagent rows in filtered output:\n%s", out)
+	}
+}
+
 func TestToolsList_IncludesInputSchema(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
@@ -459,8 +570,8 @@ func TestToolsList_IncludesInputSchema(t *testing.T) {
 	}
 	result := resp["result"].(map[string]any)
 	tools := result["tools"].([]any)
-	if len(tools) != 3 {
-		t.Errorf("expected 3 tools, got %d", len(tools))
+	if len(tools) != 4 {
+		t.Errorf("expected 4 tools, got %d", len(tools))
 	}
 	for _, t0 := range tools {
 		tool := t0.(map[string]any)

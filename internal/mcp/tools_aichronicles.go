@@ -27,8 +27,9 @@ func RegisterAichroniclesTools(s *Server, st *store.Store) {
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"query": {"type": "string", "description": "Search words. Bare tokens match by prefix (mongo finds mongodb); wrap exact matches in double quotes (\"panic stack\")."},
-				"limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}
+				"query":        {"type": "string", "description": "Search words. Bare tokens match by prefix (mongo finds mongodb); wrap exact matches in double quotes (\"panic stack\")."},
+				"subagent_id":  {"type": "string", "description": "Narrow to events run inside one sub-agent thread; pair with list_subagents to discover ids."},
+				"limit":        {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}
 			},
 			"required": ["query"]
 		}`),
@@ -62,6 +63,19 @@ func RegisterAichroniclesTools(s *Server, st *store.Store) {
 		}`),
 		Handler: getSummaryHandler(st),
 	})
+
+	s.RegisterTool(Tool{
+		Name:        "list_subagents",
+		Description: "List sub-agent threads (events with a non-NULL subagent_id) aggregated as spans. Use the subagent_id from a row as a filter on search_events to drill into one thread.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"session_id": {"type": "string", "description": "narrow to one session (full UUID or unique prefix)"},
+				"limit":      {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}
+			}
+		}`),
+		Handler: listSubagentsHandler(st),
+	})
 }
 
 // --- search_events ---
@@ -69,8 +83,9 @@ func RegisterAichroniclesTools(s *Server, st *store.Store) {
 func searchEventsHandler(st *store.Store) ToolHandler {
 	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
 		var req struct {
-			Query string `json:"query"`
-			Limit int    `json:"limit"`
+			Query      string `json:"query"`
+			SubagentID string `json:"subagent_id"`
+			Limit      int    `json:"limit"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, &Error{Code: InvalidParams, Message: "search_events: bad args: " + err.Error()}
@@ -100,8 +115,9 @@ func searchEventsHandler(st *store.Store) ToolHandler {
 		}
 
 		hits, err := store.SearchEvents(ctx, st.DB(), store.SearchEventOpts{
-			Query: ftsQuery,
-			Limit: req.Limit,
+			Query:      ftsQuery,
+			SubagentID: req.SubagentID,
+			Limit:      req.Limit,
 			// MCP defaults to chronological — an agent asking
 			// "did I work on X recently?" wants newest first.
 			Order: store.OrderRecency,
@@ -198,6 +214,56 @@ func listSessionsHandler(st *store.Store) ToolHandler {
 		}
 		if b.Len() == 0 {
 			return TextResult("(no sessions)"), nil
+		}
+		return TextResult(b.String()), nil
+	}
+}
+
+// --- list_subagents ---
+
+func listSubagentsHandler(st *store.Store) ToolHandler {
+	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
+		var req struct {
+			SessionID string `json:"session_id"`
+			Limit     int    `json:"limit"`
+		}
+		if len(args) > 0 {
+			if err := json.Unmarshal(args, &req); err != nil {
+				return nil, &Error{Code: InvalidParams, Message: "list_subagents: bad args: " + err.Error()}
+			}
+		}
+		if req.Limit <= 0 || req.Limit > 100 {
+			req.Limit = 50
+		}
+
+		// Resolve a session-id prefix to its full UUID so callers
+		// can pass the 8-char preview list_sessions emits.
+		sessionID := req.SessionID
+		if sessionID != "" {
+			full, err := store.ResolveSessionIDPrefix(ctx, st.DB(), sessionID)
+			if err != nil {
+				return TextError("list_subagents: %v", err), nil
+			}
+			sessionID = full
+		}
+
+		spans, err := store.LoadSubagentSpans(ctx, st.DB(), sessionID, req.Limit)
+		if err != nil {
+			return nil, &Error{Code: InternalError, Message: "list_subagents: query: " + err.Error()}
+		}
+		if len(spans) == 0 {
+			return TextResult("(no subagent threads)"), nil
+		}
+		var b strings.Builder
+		for _, s := range spans {
+			fmt.Fprintf(&b, "%s\t%s\t%s\t%s\t%s\t%d\n",
+				first8(s.SessionID),
+				s.SubagentID,
+				nullOrDash(s.SubagentType),
+				formatTS(s.StartedAtMs),
+				formatTS(s.EndedAtMs),
+				s.EventCount,
+			)
 		}
 		return TextResult(b.String()), nil
 	}

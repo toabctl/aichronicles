@@ -176,6 +176,79 @@ func formatCompletionDescription(cwd, firstPrompt string) string {
 	return cwd + " — " + preview
 }
 
+// SubagentSpan is one row from LoadSubagentSpans: a sub-agent
+// thread aggregated from the subagent_id-bearing events that
+// share a (session_id, subagent_id) pair.
+type SubagentSpan struct {
+	SessionID    string
+	SubagentID   string
+	SubagentType sql.NullString
+	StartedAtMs  int64
+	EndedAtMs    int64
+	EventCount   int
+}
+
+// LoadSubagentSpans returns aggregated sub-agent threads, newest
+// (last-event) first. When sessionID is non-empty, narrows to
+// threads in that session; otherwise returns spans across the
+// whole store.
+//
+// Backed by the partial index idx_events_subagent introduced in
+// migration 007. The aggregate is cheap because the index covers
+// (session_id, subagent_id, ts_source_ms) and only top-level
+// events (subagent_id IS NULL) are skipped.
+func LoadSubagentSpans(ctx context.Context, db *sql.DB, sessionID string, limit int) ([]SubagentSpan, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var (
+		q    string
+		args []any
+	)
+	if sessionID == "" {
+		q = `SELECT session_id, subagent_id, subagent_type,
+		            MIN(ts_source_ms) AS started_at_ms,
+		            MAX(ts_source_ms) AS ended_at_ms,
+		            COUNT(*) AS event_count
+		       FROM events
+		      WHERE subagent_id IS NOT NULL
+		      GROUP BY session_id, subagent_id, subagent_type
+		      ORDER BY ended_at_ms DESC
+		      LIMIT ?`
+		args = []any{limit}
+	} else {
+		q = `SELECT session_id, subagent_id, subagent_type,
+		            MIN(ts_source_ms) AS started_at_ms,
+		            MAX(ts_source_ms) AS ended_at_ms,
+		            COUNT(*) AS event_count
+		       FROM events
+		      WHERE subagent_id IS NOT NULL AND session_id = ?
+		      GROUP BY session_id, subagent_id, subagent_type
+		      ORDER BY ended_at_ms DESC
+		      LIMIT ?`
+		args = []any{sessionID, limit}
+	}
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query subagent spans: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []SubagentSpan
+	for rows.Next() {
+		var s SubagentSpan
+		if err := rows.Scan(&s.SessionID, &s.SubagentID, &s.SubagentType,
+			&s.StartedAtMs, &s.EndedAtMs, &s.EventCount); err != nil {
+			return nil, fmt.Errorf("scan subagent span: %w", err)
+		}
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate subagent spans: %w", err)
+	}
+	return out, nil
+}
+
 // EventView is the read-only shape used by code that walks stored
 // events (prompt builders, export, audit). Nullable fields are
 // modelled with sql.Null* so callers can distinguish "empty string"

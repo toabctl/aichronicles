@@ -42,13 +42,14 @@ const recencyHalfDays = 30.0
 // pass it through internal/searchquery.ToFTS5 first if it came from
 // human or agent input.
 type SearchEventOpts struct {
-	Query     string
-	Kind      string
-	SessionID string
-	SinceMs   int64
-	Limit     int
-	NoDedup   bool
-	Order     SearchOrder
+	Query      string
+	Kind       string
+	SessionID  string
+	SubagentID string
+	SinceMs    int64
+	Limit      int
+	NoDedup    bool
+	Order      SearchOrder
 
 	// NowMs anchors the recency-boost calculation for OrderRank.
 	// Zero means use time.Now().UnixMilli() at call time. Set
@@ -172,6 +173,10 @@ func buildSearchSQL(opts SearchEventOpts, index string) (string, []any) {
 		filter.WriteString(` AND e.session_id = ?`)
 		args = append(args, opts.SessionID)
 	}
+	if opts.SubagentID != "" {
+		filter.WriteString(` AND e.subagent_id = ?`)
+		args = append(args, opts.SubagentID)
+	}
 	if opts.SinceMs > 0 {
 		filter.WriteString(` AND e.ts_source_ms >= ?`)
 		args = append(args, opts.SinceMs)
@@ -294,6 +299,10 @@ func searchExtractions(ctx context.Context, db *sql.DB, opts SearchEventOpts) ([
 	if opts.SessionID != "" {
 		filter.WriteString(` AND e.session_id = ?`)
 		args = append(args, opts.SessionID)
+	}
+	if opts.SubagentID != "" {
+		filter.WriteString(` AND e.subagent_id = ?`)
+		args = append(args, opts.SubagentID)
 	}
 	if opts.SinceMs > 0 {
 		filter.WriteString(` AND e.ts_source_ms >= ?`)
