@@ -18,10 +18,19 @@ import (
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
-// defaults mirror reflect: same window/limit semantics, same
-// "enough-sessions-for-patterns, recent-enough-to-matter" balance.
+// defaultProposeWindow defaults to 24h: short enough that the
+// "what should I tackle next" answer reflects today's loose
+// threads rather than week-old ones, long enough that an
+// overnight or weekend break still leaves something to chew on.
+// Override with --since for a wider net (e.g. --since 168h to
+// match the previous week-wide default).
+//
+// defaultProposeLimit caps how many sessions feed the prompt
+// before we send it to the model — same balance as reflect:
+// enough sessions to expose patterns, few enough to fit a
+// reasonable prompt budget.
 const (
-	defaultProposeWindow = 7 * 24 * time.Hour
+	defaultProposeWindow = 24 * time.Hour
 	defaultProposeLimit  = 25
 )
 
