@@ -189,6 +189,97 @@ func TestParseSinceWindow(t *testing.T) {
 	}
 }
 
+func TestSearchHits_CompactCapsRowsAndAddsSeeAllLink(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	// Seed 12 prompts that all share a common token so a single
+	// query returns more than the compact limit (8).
+	for i := 0; i < 12; i++ {
+		seedSession(t, st,
+			"sess-compact-"+string(rune('a'+i)),
+			"compactmarker prompt number x", // shared token "compactmarker"
+			now.Add(time.Duration(i)*time.Minute))
+	}
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	// Compact mode caps results.
+	_, compactBody := fetch(t, base+"/search/hits?"+url.Values{
+		"q":       {"compactmarker"},
+		"compact": {"1"},
+	}.Encode())
+	rowCountCompact := strings.Count(compactBody, `<a href="/sessions/`)
+	if rowCountCompact != searchCompactLimit {
+		t.Errorf("compact mode: got %d rows, want %d", rowCountCompact, searchCompactLimit)
+	}
+	// "see all" link carries the original query so /search continues
+	// it on the full-page view.
+	if !strings.Contains(compactBody, `href="/search?q=compactmarker"`) {
+		t.Errorf("compact mode missing see-all link with original query:\n%s", compactBody)
+	}
+
+	// Default (non-compact) mode returns the full set, no see-all link.
+	_, fullBody := fetch(t, base+"/search/hits?"+url.Values{
+		"q": {"compactmarker"},
+	}.Encode())
+	rowCountFull := strings.Count(fullBody, `<a href="/sessions/`)
+	if rowCountFull != 12 {
+		t.Errorf("non-compact mode: got %d rows, want 12", rowCountFull)
+	}
+	if strings.Contains(fullBody, "see all results") {
+		t.Errorf("non-compact mode should not render see-all link:\n%s", fullBody)
+	}
+}
+
+func TestSearchHits_CompactDropsTableHeader(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	seedSession(t, st, "sess-hdr", "headerprobe content", now)
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	_, body := fetch(t, base+"/search/hits?"+url.Values{
+		"q":       {"headerprobe"},
+		"compact": {"1"},
+	}.Encode())
+	// The popover hides the table header to keep the dropdown
+	// dense — verify the <thead> element is absent.
+	if strings.Contains(body, "<thead>") {
+		t.Errorf("compact mode should omit <thead>:\n%s", body)
+	}
+}
+
+func TestNavSearch_PresentOnEveryPage(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	// The nav-bar search input rides in base.html, so every page
+	// the layout wraps must include the htmx wiring. Sample a few
+	// representative routes — empty store is fine, we're checking
+	// markup, not data.
+	for _, path := range []string{"/", "/search"} {
+		_, body := fetch(t, base+path)
+		for _, want := range []string{
+			`class="navsearch"`,                // form wrapper
+			`id="navsearch-popover"`,           // hx-target
+			`hx-get="/search/hits?compact=1"`,  // compact-mode endpoint
+			`hx-trigger="input changed delay:`, // type-as-you-search
+			`hx-target="#navsearch-popover"`,   // popover swap target
+			`action="/search"`,                 // submit falls through to full page
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s missing %q\n--- body ---\n%s", path, want, body)
+			}
+		}
+	}
+}
+
 func TestStaticAssets_HtmxAvailable(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)

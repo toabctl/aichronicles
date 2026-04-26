@@ -90,9 +90,16 @@ type SearchPage struct {
 // consumes. Either Error is non-empty (parse failure, query is
 // empty) and the template renders it as a muted line, or Hits
 // holds the matching rows. Both empty == empty-state line.
+//
+// Compact is set when the fragment is rendered for the nav-bar
+// popover: row count is capped tighter and the template appends a
+// "see all in /search" link that re-runs the query in the full
+// search page. Query is echoed back so that link can carry it.
 type SearchHits struct {
-	Hits  []SearchHitRow
-	Error string
+	Hits    []SearchHitRow
+	Error   string
+	Compact bool
+	Query   string
 }
 
 // SearchHitRow is one matching event for the search fragment.

@@ -16,6 +16,18 @@
       <li><strong><a href="/">aichronicles</a></strong></li>
     </ul>
     <ul>
+      <li>
+        <form class="navsearch" role="search" action="/search" method="get">
+          <input type="search"
+                 name="q"
+                 placeholder="search…"
+                 aria-label="Search"
+                 hx-get="/search/hits?compact=1"
+                 hx-trigger="input changed delay:200ms, search"
+                 hx-target="#navsearch-popover">
+          <div id="navsearch-popover" class="navsearch-popover"></div>
+        </form>
+      </li>
       <li><a href="/">Sessions</a></li>
       <li><a href="/search">Search</a></li>
     </ul>

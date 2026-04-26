@@ -3,6 +3,7 @@
 <p class="empty">{{.Error}}</p>
 {{else if .Hits}}
 <table>
+  {{if not .Compact}}
   <thead>
     <tr>
       <th>Session</th>
@@ -11,6 +12,7 @@
       <th>Snippet</th>
     </tr>
   </thead>
+  {{end}}
   <tbody>
     {{range .Hits}}
     <tr>
@@ -22,6 +24,7 @@
     {{end}}
   </tbody>
 </table>
+{{if .Compact}}<p class="navsearch-seeall"><a href="/search?q={{.Query | urlquery}}">see all results in /search →</a></p>{{end}}
 {{else}}
 <p class="empty">(no hits for that query)</p>
 {{end}}

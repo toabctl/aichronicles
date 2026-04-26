@@ -15,6 +15,12 @@ import (
 // right track without rendering huge tables.
 const searchPageLimit = 50
 
+// searchCompactLimit caps results in the nav-bar popover variant.
+// 8 rows fit comfortably below the input without scrolling and
+// keep the popover from covering the page; users who want more
+// follow the "see all" link to /search.
+const searchCompactLimit = 8
+
 // searchHandler renders the /search page itself: a form with the
 // htmx-driven input and an empty hits container. The hits
 // fragment populates the container as the user types.
@@ -23,46 +29,52 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // searchHitsHandler is the htmx fragment endpoint at
-// /search/hits. Reads ?q= (and optional ?kind / ?since),
-// translates q into FTS5 via internal/searchquery, and renders
-// the hits fragment template — no layout, just the table or
-// empty-state line that gets swapped into #hits on the page.
+// /search/hits. Reads ?q= (and optional ?kind / ?since /
+// ?compact=1), translates q into FTS5 via internal/searchquery,
+// and renders the hits fragment template — no layout, just the
+// table or empty-state line that gets swapped into #hits on the
+// page (or the nav-bar popover, when ?compact=1).
 func (s *Server) searchHitsHandler(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	kind := r.URL.Query().Get("kind")
 	since := r.URL.Query().Get("since")
+	compact := r.URL.Query().Get("compact") == "1"
 
-	view := buildSearchHits(r, s.store, q, kind, since, s.now())
+	view := buildSearchHits(r, s.store, q, kind, since, compact, s.now())
 	s.renderFragment(w, "hits", view)
 }
 
 // buildSearchHits performs the search and shapes the result for
 // the hits fragment. Extracted from the handler so tests can
 // drive it directly without going through the HTTP layer.
-func buildSearchHits(r *http.Request, st *store.Store, q, kind, since string, now time.Time) SearchHits {
+func buildSearchHits(r *http.Request, st *store.Store, q, kind, since string, compact bool, now time.Time) SearchHits {
 	if q == "" {
 		// Empty query is the page's initial state — render an
 		// empty Hits with no Error so the template falls through
 		// to the empty-state line.
-		return SearchHits{}
+		return SearchHits{Compact: compact, Query: q}
 	}
 
 	fts, err := searchquery.ToFTS5(q)
 	if err != nil {
 		switch {
 		case errors.Is(err, searchquery.ErrEmpty):
-			return SearchHits{}
+			return SearchHits{Compact: compact, Query: q}
 		case errors.Is(err, searchquery.ErrSyntax):
-			return SearchHits{Error: "query: " + err.Error()}
+			return SearchHits{Error: "query: " + err.Error(), Compact: compact, Query: q}
 		default:
-			return SearchHits{Error: "could not parse query"}
+			return SearchHits{Error: "could not parse query", Compact: compact, Query: q}
 		}
 	}
 
+	limit := searchPageLimit
+	if compact {
+		limit = searchCompactLimit
+	}
 	opts := store.SearchEventOpts{
 		Query: fts,
 		Kind:  kind,
-		Limit: searchPageLimit,
+		Limit: limit,
 		// Web defaults to relevance-with-recency-boost, same as
 		// the CLI. Agents asking via MCP get OrderRecency; humans
 		// browsing the web UI get rank.
@@ -76,18 +88,25 @@ func buildSearchHits(r *http.Request, st *store.Store, q, kind, since string, no
 			// dropping the filter. Otherwise a typo like
 			// `since=24hr` returns all-time results and the user
 			// thinks the filter ran.
-			return SearchHits{Error: "since: unrecognised window " + since +
-				"; valid: 24h, 7d, 30d (or empty for all time)"}
+			return SearchHits{
+				Error:   "since: unrecognised window " + since + "; valid: 24h, 7d, 30d (or empty for all time)",
+				Compact: compact,
+				Query:   q,
+			}
 		}
 		opts.SinceMs = now.Add(-d).UnixMilli()
 	}
 
 	hits, err := store.SearchEvents(r.Context(), st.DB(), opts)
 	if err != nil {
-		return SearchHits{Error: "search failed: " + err.Error()}
+		return SearchHits{Error: "search failed: " + err.Error(), Compact: compact, Query: q}
 	}
 
-	out := SearchHits{Hits: make([]SearchHitRow, 0, len(hits))}
+	out := SearchHits{
+		Hits:    make([]SearchHitRow, 0, len(hits)),
+		Compact: compact,
+		Query:   q,
+	}
 	for _, h := range hits {
 		row := SearchHitRow{
 			SessionID: h.SessionID,
