@@ -9,8 +9,11 @@
 
 main.container {
   /* Pico defaults to centered fixed-width; let session tables
-     breathe without scrolling on desktop. */
-  max-width: 1200px;
+     breathe without scrolling on desktop. The live-feed and the
+     per-row latest-event column both want as much horizontal
+     space as we can give them — at 1200px the latest snippet
+     was clipped within ~10 chars on most rows. */
+  max-width: 1600px;
 }
 
 /* Session-id prefix renders as a monospace token everywhere. */
@@ -76,14 +79,16 @@ table.sessions td.status-cell {
 }
 /* Latest-event cell: dense single-line preview that updates over
    SSE. Cap width so a long snippet doesn't push every other column
-   to the right. The cell itself listens for sse-swap="session-<id>"
-   and replaces its innerHTML on each new event. */
+   to the right, but generous enough that the typical snippet ("Bash
+   systemctl --user restart …") isn't clipped at the first space.
+   The cell itself listens for sse-swap="session-<id>" and replaces
+   its innerHTML on each new event. */
 table.sessions td.latest {
   font-size: 0.875em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 32rem;
+  max-width: 48rem;
 }
 table.sessions td.latest .ts {
   font-family: var(--pico-font-family-monospace);
