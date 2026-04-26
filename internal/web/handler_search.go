@@ -117,6 +117,42 @@ func buildSearchHits(r *http.Request, st *store.Store, q, kind, since string, co
 		}
 		out.Hits = append(out.Hits, row)
 	}
+
+	// Annotate each row with its session's cached summary topic so
+	// the user can see "this hit is from a session about X". Skipped
+	// in compact mode — the popover stays dense, one line per row.
+	if !compact && len(out.Hits) > 0 {
+		ids := uniqueSessionIDs(out.Hits)
+		summaries, err := store.LoadSummariesIndexedByID(r.Context(), st.DB(), ids)
+		if err == nil {
+			for i := range out.Hits {
+				if s, ok := summaries[out.Hits[i].SessionID]; ok {
+					out.Hits[i].SummaryTopic = parseSummaryTopic(s.Body)
+				}
+			}
+		}
+		// Soft-fail on summary lookup: render hits without the topic
+		// rather than hide a working search behind an annotation
+		// failure. The session detail page will surface the
+		// underlying error if it persists.
+	}
+	return out
+}
+
+// uniqueSessionIDs returns the set of distinct session IDs across
+// hits in stable encounter order, so the IN-clause query in
+// LoadSummariesIndexedByID stays bounded even when many hits share
+// a session.
+func uniqueSessionIDs(hits []SearchHitRow) []string {
+	seen := make(map[string]struct{}, len(hits))
+	out := make([]string, 0, len(hits))
+	for _, h := range hits {
+		if _, ok := seen[h.SessionID]; ok {
+			continue
+		}
+		seen[h.SessionID] = struct{}{}
+		out = append(out, h.SessionID)
+	}
 	return out
 }
 

@@ -105,9 +105,10 @@ type SearchHits struct {
 
 // SearchHitRow is one matching event for the search fragment.
 type SearchHitRow struct {
-	SessionID string // full UUID for the /sessions/{id} link
-	ShortID   string
-	When      string // relative time
-	Kind      string
-	Snippet   string // SQL snippet() output, falls back to truncated content
+	SessionID    string // full UUID for the /sessions/{id} link
+	ShortID      string
+	When         string // relative time
+	Kind         string
+	Snippet      string // SQL snippet() output, falls back to truncated content
+	SummaryTopic string // parsed `topic` field from the session's summary; empty if none
 }

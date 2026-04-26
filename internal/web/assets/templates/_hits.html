@@ -19,7 +19,10 @@
       <td class="sid"><a href="/sessions/{{.SessionID}}">{{.ShortID}}</a></td>
       <td class="ts">{{.When}}</td>
       <td><span class="badge">{{.Kind}}</span></td>
-      <td>{{.Snippet}}</td>
+      <td>
+        {{.Snippet}}
+        {{if and .SummaryTopic (not $.Compact)}}<br><small class="topic">{{.SummaryTopic}}</small>{{end}}
+      </td>
     </tr>
     {{end}}
   </tbody>

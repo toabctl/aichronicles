@@ -1,11 +1,14 @@
 package web
 
 import (
+	"database/sql"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/toabctl/aichronicles/internal/store"
 )
 
 func TestSearchPage_RendersForm(t *testing.T) {
@@ -276,6 +279,108 @@ func TestNavSearch_PresentOnEveryPage(t *testing.T) {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s missing %q\n--- body ---\n%s", path, want, body)
 			}
+		}
+	}
+}
+
+func TestSearchHits_FullModeShowsSummaryTopic(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	id := seedSession(t, st, "sess-search-topic", "topicquery prompt body", now)
+
+	tx, err := st.DB().Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
+		SessionID:   sql.NullString{String: id, Valid: true},
+		Kind:        store.LLMKindSummary,
+		Model:       "claude-sonnet-4-6",
+		PromptHash:  "h-search-topic",
+		Body:        `{"topic":"Investigate the topicquery edge case"}`,
+		CreatedAtMs: now.UnixMilli(),
+	}); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("seed summary: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	// Full search-page mode — topic line should appear under the snippet.
+	_, fullBody := fetch(t, base+"/search/hits?"+url.Values{
+		"q": {"topicquery"},
+	}.Encode())
+	if !strings.Contains(fullBody, "Investigate the topicquery edge case") {
+		t.Errorf("full mode: expected topic line to render:\n%s", fullBody)
+	}
+	if !strings.Contains(fullBody, `<small class="topic">`) {
+		t.Errorf("full mode: expected <small class=\"topic\"> wrapper:\n%s", fullBody)
+	}
+}
+
+func TestSearchHits_CompactModeOmitsSummaryTopic(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	id := seedSession(t, st, "sess-popover", "popoverquery probe text", now)
+
+	tx, err := st.DB().Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
+		SessionID:   sql.NullString{String: id, Valid: true},
+		Kind:        store.LLMKindSummary,
+		Model:       "claude-sonnet-4-6",
+		PromptHash:  "h-popover",
+		Body:        `{"topic":"Investigate the popoverquery edge case"}`,
+		CreatedAtMs: now.UnixMilli(),
+	}); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("seed summary: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	// Compact mode (popover) keeps rows dense — topic suppressed.
+	_, compactBody := fetch(t, base+"/search/hits?"+url.Values{
+		"q":       {"popoverquery"},
+		"compact": {"1"},
+	}.Encode())
+	if strings.Contains(compactBody, "Investigate the popoverquery edge case") {
+		t.Errorf("compact mode should not render topic:\n%s", compactBody)
+	}
+	if strings.Contains(compactBody, `<small class="topic">`) {
+		t.Errorf("compact mode should not include topic <small> wrapper:\n%s", compactBody)
+	}
+}
+
+func TestUniqueSessionIDs(t *testing.T) {
+	t.Parallel()
+	hits := []SearchHitRow{
+		{SessionID: "a"},
+		{SessionID: "b"},
+		{SessionID: "a"}, // dup
+		{SessionID: "c"},
+		{SessionID: "b"}, // dup
+	}
+	got := uniqueSessionIDs(hits)
+	want := []string{"a", "b", "c"}
+	if len(got) != len(want) {
+		t.Fatalf("len: got %d, want %d", len(got), len(want))
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("idx %d: got %q, want %q", i, got[i], w)
 		}
 	}
 }
