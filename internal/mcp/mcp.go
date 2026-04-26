@@ -5,8 +5,6 @@
 //
 // We deliberately do not depend on an external MCP SDK:
 //   - the protocol surface we use is small and stable
-//   - every string aichronicles ships over MCP has to pass through
-//     redact.Outbound, so we need control over the serialization path
 //   - keeping the dependency set tight (only stdlib + a few leaf
 //     packages already present) matches the rest of the tree
 //

@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-
-	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 // Tool is one registered tool. Handler is invoked with the raw
@@ -79,12 +77,14 @@ func (s *Server) handleToolsList(_ context.Context, _ json.RawMessage) (any, *Er
 	return map[string]any{"tools": list}, nil
 }
 
-// handleToolsCall dispatches to a specific tool. All text emitted to
-// the client passes through redact.Outbound — a defense-in-depth
-// copy of the egress scrub Block B applied for LLM calls. Even for
-// read-only tools hitting already-scrubbed data, re-scanning at the
-// egress boundary means a detector added AFTER the data landed still
-// works.
+// handleToolsCall dispatches to a specific tool and returns its
+// ToolResult verbatim. Content text is NOT scrubbed here — every
+// envelope that reaches the store has already passed through the
+// edge redactor (rejected by the daemon otherwise), and re-scanning
+// on every read just doubled the per-byte cost without catching
+// anything ingest hadn't seen. Detector-set changes are handled
+// operationally by `aichronicles scrub`, which rewrites stored
+// rows in place; see docs/explanation/threat-model.md.
 func (s *Server) handleToolsCall(ctx context.Context, params json.RawMessage) (any, *Error) {
 	var req struct {
 		Name      string          `json:"name"`
@@ -103,16 +103,6 @@ func (s *Server) handleToolsCall(ctx context.Context, params json.RawMessage) (a
 	}
 	if result == nil {
 		return &ToolResult{Content: []ToolContent{{Type: "text", Text: ""}}}, nil
-	}
-	// Scrub every text block before handing it back to the client.
-	// This is cheap (regex scan) relative to the DB query that
-	// produced the content.
-	for i, c := range result.Content {
-		if c.Type != "text" || c.Text == "" {
-			continue
-		}
-		scrubbed, _ := redact.Outbound(c.Text)
-		result.Content[i].Text = scrubbed
 	}
 	return result, nil
 }

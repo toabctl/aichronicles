@@ -16,6 +16,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 // openSeededStore writes a handful of events across two sessions so
@@ -327,12 +328,90 @@ func TestGetSummary_AcceptsPrefix(t *testing.T) {
 	}
 }
 
-func TestToolsCall_ScrubsEgressText(t *testing.T) {
+// TestToolsCall_PassesIngestRedactedContentThrough encodes the
+// new redaction contract: ingest is the single point of truth.
+// Drive a real envelope (carrying a planted secret) through the
+// edge redactor + IngestEnvelope, then call search_events via
+// the JSON-RPC dispatcher and assert (a) the raw secret never
+// reaches the wire because ingest already replaced it, and (b)
+// the resulting <redacted:...> marker survives untouched — the
+// dispatcher does NOT re-scrub on the read path.
+func TestToolsCall_PassesIngestRedactedContentThrough(t *testing.T) {
 	t.Parallel()
-	// Plant a secret directly in the store (bypassing the ingest
-	// redact, like a pre-redactor store). The egress scrub at the
-	// tools/call boundary MUST rewrite it to a marker before it
-	// reaches the client.
+
+	st := openSeededStore(t)
+
+	// Ingest one user_prompt that contains a secret. The edge
+	// redactor inside ApplyRedaction rewrites it to the
+	// <redacted:aws_access_key> marker before the row lands in
+	// the store.
+	const planted = "the leak is AKIAIOSFODNN7EXAMPLE right there"
+	env := ingest.Envelope{
+		V:               1,
+		EventID:         uuid.Must(uuid.NewV7()).String(),
+		SourceAgent:     "claude-code",
+		SourceSessionID: "sess-leak",
+		Kind:            "user_prompt",
+		Role:            "user",
+		TsSource:        time.Now().UTC(),
+		Cwd:             "/work/leak",
+		ContentText:     planted,
+		Payload:         map[string]any{"prompt": planted},
+	}
+	ingest.ApplyRedaction(&env, redact.Default())
+	if !env.Redaction.Applied {
+		t.Fatalf("ApplyRedaction did not flag the envelope: %+v", env.Redaction)
+	}
+	raw, _ := json.Marshal(&env)
+	tx, _ := st.DB().Begin()
+	if _, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli()); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("IngestEnvelope: %v", err)
+	}
+	_ = tx.Commit()
+
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	// Exercise via the JSON-RPC dispatcher — search_events would
+	// route every byte through the old egress wrapper if it still
+	// existed.
+	in, inW := io.Pipe()
+	out := &bytes.Buffer{}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { defer wg.Done(); _ = s.Run(context.Background(), in, out) }()
+
+	_, _ = io.WriteString(inW,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":`+
+			`{"name":"search_events","arguments":{"query":"leak"}}}`+"\n")
+	_ = inW.Close()
+	wg.Wait()
+
+	wire := out.String()
+	if strings.Contains(wire, "AKIAIOSFODNN7EXAMPLE") {
+		t.Fatalf("ingest-redacted secret leaked to MCP wire:\n%s", wire)
+	}
+	// JSON encoder HTML-escapes < and >; the on-wire form is
+	// <redacted:aws_access_key> or escaped HTML.
+	// Either way the pattern name is the load-bearing substring.
+	if !strings.Contains(wire, "redacted:aws_access_key") {
+		t.Errorf("expected ingest-installed redaction marker on the wire:\n%s", wire)
+	}
+}
+
+// TestToolsCall_PassesUnredactedContentThrough makes the new
+// contract bite both ways: when a tool registers a handler that
+// returns a raw secret (bypassing the store entirely — like a
+// future custom tool would), the dispatcher does not protect
+// against that. Ingress is the single point of truth.
+//
+// Why we test this: we deliberately removed the read-path
+// safety net. The test pins the decision so a future "let's
+// just add it back, what could go wrong" PR has to delete this
+// test (and someone reviews why).
+func TestToolsCall_PassesUnredactedContentThrough(t *testing.T) {
+	t.Parallel()
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
 	s.RegisterTool(Tool{
 		Name:        "leaky",
@@ -343,8 +422,6 @@ func TestToolsCall_ScrubsEgressText(t *testing.T) {
 		},
 	})
 
-	// Exercise via the JSON-RPC dispatcher so the scrub in
-	// handleToolsCall actually runs.
 	in, inW := io.Pipe()
 	out := &bytes.Buffer{}
 	var wg sync.WaitGroup
@@ -355,14 +432,8 @@ func TestToolsCall_ScrubsEgressText(t *testing.T) {
 	_ = inW.Close()
 	wg.Wait()
 
-	if strings.Contains(out.String(), "AKIAIOSFODNN7EXAMPLE") {
-		t.Fatalf("egress leaked secret:\n%s", out.String())
-	}
-	// JSON encoder HTML-escapes < and > so the marker reads as
-	// <redacted:aws_access_key> on the wire. Check for
-	// the pattern name either way.
-	if !strings.Contains(out.String(), "redacted:aws_access_key") {
-		t.Errorf("expected redaction marker:\n%s", out.String())
+	if !strings.Contains(out.String(), "AKIAIOSFODNN7EXAMPLE") {
+		t.Errorf("dispatcher should pass tool content verbatim — read path no longer scrubs:\n%s", out.String())
 	}
 }
 

@@ -295,35 +295,44 @@ read-only tools:
 | `get_summary` | Latest `llm_outputs` body for a (session, kind) pair |
 
 All three accept session-id prefixes (resolved via
-`store.ResolveSessionIDPrefix`), and all three pipe their output
-through `redact.Outbound` before sending it to the client — the
-egress boundary applies even though the data is already scrubbed
-at ingest. This is defense-in-depth: a detector added after a row
-was stored still scrubs that row when read out via MCP.
+`store.ResolveSessionIDPrefix`). Output is rendered verbatim from
+the store: ingest is the single point of redaction truth, and
+re-scanning every byte on every read was removed in favour of
+the explicit `aichronicles scrub` operational primitive when the
+detector set changes. See the "Ingest is the single point of
+redaction truth" section in
+[`threat-model.md`](threat-model.md) for the full rationale.
 
 We deliberately do not depend on an external MCP SDK. The
-protocol surface we use is small and stable, and keeping the
-serializer in our hands is what lets `redact.Outbound` run on
-every byte that leaves the process. Source:
-`internal/mcp/mcp.go:1-15` for the rationale.
+protocol surface we use is small and stable, and keeping it
+self-contained matches the rest of the tree's tight dependency
+posture. Source: `internal/mcp/mcp.go:1-13` for the rationale.
 
 ## Trust boundaries (in code terms)
 
 The threat model page describes trust boundaries narratively. Here's
 where they're enforced in code:
 
-- **Edge redaction (boundary 1):** `internal/cli/ingest.go:94`,
+- **Edge redaction (hook write path):** `internal/cli/ingest.go:94`,
   `ingest.ApplyRedaction(&env, redact.Default())`.
-- **Daemon refusal (boundary 2):** `internal/daemon/server.go:123`,
+- **Daemon refusal (hook write path):** `internal/daemon/server.go:123`,
   rejects envelopes where `Redaction.Applied != true` with HTTP 400.
-- **Store enforcement (boundary 3):** `internal/store/ingest.go:36-38`,
-  returns `ErrRedactionRequired` even for callers that bypass the
-  daemon.
-- **Egress redaction (boundary 4):** prompt builders in
-  `internal/llm/prompts/prompts.go` route every user-content string
+- **Store enforcement, envelopes (hook write path):**
+  `internal/store/ingest.go:36-38`, returns `ErrRedactionRequired`
+  even for callers that bypass the daemon.
+- **Store enforcement, LLM outputs (LLM-response write path):**
+  `internal/store/llm_outputs.go:SaveLLMOutput`, scrubs the body
+  through `redact.Outbound` before insertion. The edge redactor
+  never sees an LLM response — it doesn't go through /v1/ingest
+  — so the store is the enforcement point.
+- **LLM-egress redaction (outbound network):** prompt builders in
+  `pkg/llm/prompts/prompts.go` route every user-content string
   through `redact.Outbound` before composing the user message.
-- **API error scrub:** `internal/llm/anthropic.go:scrubAnthropicError`
-  and `internal/llm/openai.go:scrubOpenAIError`.
+  Different threat model from the local read paths (MCP, CLI,
+  web): this layer protects content crossing to a third-party LLM
+  provider over HTTPS.
+- **API error scrub:** `pkg/llm/anthropic.go:scrubAnthropicError`
+  and `pkg/llm/openai.go:scrubOpenAIError`.
 - **Config-file mode check:** `internal/config/config.go:LoadFrom`,
   refuses 0644-or-permissive files when any provider has
   `api_key_command` set.

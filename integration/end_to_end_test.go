@@ -81,10 +81,12 @@ func TestE2E_IngestSummarizeFetchViaMCP(t *testing.T) {
 	}
 
 	// --- Block B simulation: a summary whose body hallucinates a key ---
-	// We skip the actual LLM round-trip and plant the result directly.
-	// The fresh secret here is different from the one in the prompt —
-	// it's exactly the "LLM makes one up" scenario Block C's egress
-	// scrub exists for.
+	// We skip the actual LLM round-trip and plant the result directly
+	// via SaveLLMOutput. The fresh secret here is different from the
+	// one in the prompt — it's exactly the "LLM makes one up" scenario
+	// the SaveLLMOutput body-scrub exists for. Read paths (MCP, web,
+	// CLI) no longer re-scrub; the write path is the single
+	// enforcement point.
 	hallucinated := "sk-ant-" + strings.Repeat("h", 40)
 	summaryBody := "Topic: API key handling.\n" +
 		"Example of the format that was discussed: " + hallucinated + ".\n" +
@@ -109,12 +111,18 @@ func TestE2E_IngestSummarizeFetchViaMCP(t *testing.T) {
 		t.Fatalf("commit: %v", err)
 	}
 
-	// --- Block C: fetch via MCP, assert egress scrub catches both ---
+	// --- Block C: fetch via MCP, assert nothing leaks ---
+	// Both secrets (the originally-pasted one scrubbed at edge, and
+	// the LLM-hallucinated one scrubbed at SaveLLMOutput) should be
+	// gone by the time the wire sees them. The MCP dispatcher itself
+	// passes content through verbatim — the protection is upstream
+	// at the two write paths.
 	mcpSrv := mcp.New(mcp.ServerInfo{Name: "e2e", Version: "0.0.1"}, nil)
 	mcp.RegisterAichroniclesTools(mcpSrv, s)
 
-	// Drive the MCP server through the JSON-RPC wire so the egress
-	// scrub in handleToolsCall actually runs (the unit tests bypass it).
+	// Drive the MCP server through the JSON-RPC wire as a real
+	// client would. The dispatcher passes content through verbatim
+	// — secrets must already be gone by the time data reaches it.
 	in, inW := io.Pipe()
 	out := &bytes.Buffer{}
 	var wg sync.WaitGroup
@@ -136,8 +144,9 @@ func TestE2E_IngestSummarizeFetchViaMCP(t *testing.T) {
 	if strings.Contains(wire, "sk-ant-a") {
 		t.Fatalf("originally-pasted key substring reached the MCP wire:\n%s", wire)
 	}
-	// Block C guarantee: the hallucinated key (never seen by Block A
-	// or B's scrubbers) is caught at the egress boundary.
+	// SaveLLMOutput guarantee: the hallucinated key (never seen by
+	// the edge redactor at ingest, since LLM responses don't go
+	// through /v1/ingest) is caught at the llm_outputs write path.
 	if strings.Contains(wire, hallucinated) {
 		t.Fatalf("LLM-hallucinated key leaked to MCP client:\n%s", wire)
 	}

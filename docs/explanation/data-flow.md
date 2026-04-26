@@ -182,10 +182,13 @@ list_sessions  →  SELECT … FROM sessions WHERE … LIMIT ?
 get_summary    →  SELECT body FROM llm_outputs WHERE …
 ```
 
-All three pipe their output through `redact.Outbound` before
-returning. The MCP client gets no raw bytes from the store, even
-if the store somehow contains a credential the detectors caught
-late.
+All three return rows from the store verbatim. Ingest is the
+single point of redaction truth — every envelope was scrubbed at
+the edge and the daemon refused anything that wasn't, so what
+the MCP client sees is what was already safe to store. When the
+detector set changes, `aichronicles scrub` rewrites old rows in
+place; the MCP path then surfaces the rewritten content
+unchanged.
 
 This is why the README diagram shows the `mcp-serve` arrow as
 *read-only SQL* — there is no insert path through MCP. An

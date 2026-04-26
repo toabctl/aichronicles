@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 // LLMOutputKind is the discriminator for llm_outputs.kind. Application
@@ -38,6 +40,14 @@ type LLMOutput struct {
 // existing row and (false, nil) — never errors. This is the caching
 // primitive the summarize/reflect/propose commands lean on to avoid
 // re-paying for identical prompts.
+//
+// Body is scrubbed through redact.Outbound before storage. This is
+// the LLM-output equivalent of IngestEnvelope's ErrRedactionRequired:
+// the store layer enforces the redaction invariant for the write
+// path that DOES NOT go through the daemon — anything an LLM
+// hallucinates lands here, not via /v1/ingest, so we can't rely on
+// the edge redactor having seen it. Callers do not need to scrub
+// before calling; the input struct is not mutated.
 func SaveLLMOutput(ctx context.Context, tx *sql.Tx, out *LLMOutput) (id int64, inserted bool, err error) {
 	if out == nil {
 		return 0, false, errors.New("SaveLLMOutput: nil output")
@@ -52,13 +62,15 @@ func SaveLLMOutput(ctx context.Context, tx *sql.Tx, out *LLMOutput) (id int64, i
 		return 0, false, errors.New("SaveLLMOutput: body is required")
 	}
 
+	scrubbedBody, _ := redact.Outbound(out.Body)
+
 	res, err := tx.ExecContext(ctx,
 		`INSERT OR IGNORE INTO llm_outputs(
 			session_id, kind, model, prompt_hash,
 			input_tokens, output_tokens, body, created_at_ms
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		out.SessionID, string(out.Kind), out.Model, out.PromptHash,
-		out.InputTokens, out.OutputTokens, out.Body, out.CreatedAtMs,
+		out.InputTokens, out.OutputTokens, scrubbedBody, out.CreatedAtMs,
 	)
 	if err != nil {
 		return 0, false, fmt.Errorf("insert llm_output: %w", err)

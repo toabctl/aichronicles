@@ -62,17 +62,23 @@ not a supported posture.
 
 Inside the box: untrusted *between* boundaries (the daemon doesn't
 trust the CLI's redaction claim; the egress redactor scrubs again
-before talking to the LLM), but unauthenticated *across UID* — any
-process running as your UID can read everything aichronicles
-writes. We don't defend against an attacker already on your
-account.
+before talking to a third-party LLM), but unauthenticated *across
+UID* — any process running as your UID can read everything
+aichronicles writes. We don't defend against an attacker already
+on your account.
 
 ## What aichronicles promises
 
-### 1. Three independent redaction passes
+### 1. Ingest is the single point of redaction truth
 
-Defense-in-depth. A failure at any layer doesn't compromise the
-data passing through the others.
+The store has two distinct write paths, each with its own
+enforcement layer. Read paths (MCP `tools/call`, the CLI's
+`search` / `sessions` / `summaries show`, the `aichronicles web`
+server) render content directly without re-scanning. A separate
+egress layer protects the read path that *does* leave the local
+trust boundary — the LLM call.
+
+**Hook write path** — events:
 
 - **Edge (in `aichronicles ingest`):** Every hook payload is
   scrubbed via `redact.Default()` *before* the envelope is
@@ -83,17 +89,46 @@ data passing through the others.
   `redaction.applied != true`. The daemon does not silently
   re-scrub — that would mask a broken client. It rejects with
   HTTP 400 and logs the source agent.
-- **Egress (in `prompts.Build*`):** Every user-content string
-  routed into an LLM prompt — event content, tool names, session
-  digests, URLs — passes through `redact.Outbound()` *before* it
-  joins the prompt. Even data that landed in the store unredacted
-  is scrubbed before it reaches the network.
+
+**LLM-response write path** — `llm_outputs`:
+
+- **Store (`SaveLLMOutput` in `internal/store/llm_outputs.go`):**
+  Body is run through `redact.Outbound` before insertion. The
+  edge redactor never sees an LLM response — it lands here, not
+  via /v1/ingest — so the store is the enforcement point. An
+  LLM that hallucinates a credential into its `summarize` reply
+  cannot land it in the store unscrubbed.
+
+**LLM-egress to third party** — outbound network:
+
+- **Prompt builders (`prompts.Build*`):** Every user-content
+  string routed into an LLM prompt — event content, tool names,
+  session digests, URLs — passes through `redact.Outbound()`
+  *before* it joins the prompt. This layer protects data
+  crossing to a third-party (Anthropic / OpenAI), a different
+  trust boundary from the local read paths above.
 
 A fourth scrub happens on **error bodies** from the LLM provider:
 the SDK's error message includes the upstream response verbatim,
 which would leak your API key if the provider ever echoed it back.
 The Anthropic and OpenAI adapters both run `redact.Outbound` over
 the error message before returning it.
+
+#### When the detector set changes
+
+Adding a new detector pattern doesn't retroactively scrub rows
+that landed before it existed. `aichronicles scrub` is the
+operational primitive: it walks the store, runs the current
+detector set over every event's `content_text`, and rewrites rows
+that match. Run it once after any pattern change — the read paths
+then surface the rewritten content unchanged.
+
+The previous design wrapped MCP `tools/call` (and was planned for
+the web server) in a second `redact.Outbound` pass on every byte
+that left those paths, providing automatic retroactive coverage.
+That layer was removed in favour of explicit scrub: cheaper, with
+behaviour the operator can observe rather than a silent fix-up
+applied at every read.
 
 ### 2. Detection coverage
 
@@ -263,9 +298,11 @@ strictly read-only — no `INSERT`, no `DELETE`. But they expose:
 
 The client process that reads from the MCP server has access to
 your entire corpus while it's connected. **If you don't trust the
-client, don't connect it.** All output passes through
-`redact.Outbound` before reaching the client, which means stored
-secrets we missed at ingest still get scrubbed at this boundary.
+client, don't connect it.** Output is rendered verbatim from the
+store; ingest is the single point of redaction truth, and
+`aichronicles scrub` is the operational primitive when the
+detector set changes (see "Ingest is the single point of redaction
+truth" above).
 
 ## Recommended hygiene
 
