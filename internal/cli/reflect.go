@@ -167,8 +167,20 @@ func digestsFromRowsWithLinks(
 	rows []store.SessionDigestRow,
 ) ([]prompts.SessionDigest, error) {
 	out := make([]prompts.SessionDigest, 0, len(rows))
+	skipped := make([]string, 0)
 	for _, r := range rows {
-		d := prompts.SessionDigest{ID: r.ID}
+		// Mandatory summary policy: a digest without a cached LLM
+		// summary has only first_prompt + cwd to ground a claim,
+		// and short prompts ("/loop", "go ahead", "what's next?")
+		// don't ground anything. Rather than feed the LLM
+		// unusable rows we drop them here and surface a count so
+		// the user knows what to summarize for the next run.
+		if !r.LatestSummary.Valid || strings.TrimSpace(r.LatestSummary.String) == "" {
+			skipped = append(skipped, r.ID)
+			continue
+		}
+
+		d := prompts.SessionDigest{ID: r.ID, Summary: r.LatestSummary.String}
 		if r.StartedAtMs.Valid {
 			d.StartedAtMs = r.StartedAtMs.Int64
 		}
@@ -181,9 +193,6 @@ func digestsFromRowsWithLinks(
 		if r.FirstPrompt.Valid {
 			d.FirstPrompt = r.FirstPrompt.String
 		}
-		if r.LatestSummary.Valid {
-			d.Summary = r.LatestSummary.String
-		}
 		urls, err := store.LoadExtractionsForSession(ctx, s.DB(), r.ID, "url")
 		if err != nil {
 			return nil, fmt.Errorf("links for %s: %w", r.ID, err)
@@ -195,6 +204,18 @@ func digestsFromRowsWithLinks(
 			}
 		}
 		out = append(out, d)
+	}
+	if len(skipped) > 0 {
+		slog.Info("digests: skipped sessions without summary",
+			"count", len(skipped),
+			"hint", "run `aichronicles summarize <session-id>` to include them next time")
+	}
+	if len(out) < 2 {
+		return nil, fmt.Errorf(
+			"need ≥2 sessions with summaries to reflect/propose; %d of %d in window are summarized. "+
+				"Run `aichronicles summaries missing --since <window>` to see candidates, "+
+				"then `aichronicles summarize <id>` for each",
+			len(out), len(rows))
 	}
 	return out, nil
 }

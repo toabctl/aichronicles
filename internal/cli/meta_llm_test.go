@@ -56,6 +56,24 @@ func seedSessionsForMeta(t *testing.T, count int) *store.Store {
 			}
 			_ = tx.Commit()
 		}
+		// Seed a minimal summary for every session so digests pass
+		// the mandatory-summary filter introduced in 60a8e7…. Tests
+		// that need to exercise the unsummarized-session path
+		// should clear summaries explicitly after this helper.
+		sessID := ingest.DeriveSessionID("claude-code", sessNative)
+		tx, _ := s.DB().Begin()
+		if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
+			SessionID:   sql.NullString{String: sessID, Valid: true},
+			Kind:        store.LLMKindSummary,
+			Model:       "test",
+			PromptHash:  fmt.Sprintf("hash-meta-%d", i),
+			Body:        fmt.Sprintf(`{"topic":"meta test %d","what_was_done":["x"]}`, i),
+			CreatedAtMs: time.Now().UnixMilli(),
+		}); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("seed summary %d: %v", i, err)
+		}
+		_ = tx.Commit()
 	}
 	return s
 }
@@ -160,12 +178,16 @@ func TestRunReflect_PrefersExistingSummaryOverFirstPrompt(t *testing.T) {
 	_ = s.DB().QueryRow(`SELECT id FROM sessions LIMIT 1`).Scan(&sessID)
 	tx, _ := s.DB().Begin()
 	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
-		SessionID:   sqlStringValid(sessID),
-		Kind:        store.LLMKindSummary,
-		Model:       "m",
-		PromptHash:  "hash-for-summary",
-		Body:        "SUMMARY_MARKER_XYZ",
-		CreatedAtMs: time.Now().UnixMilli(),
+		SessionID:  sqlStringValid(sessID),
+		Kind:       store.LLMKindSummary,
+		Model:      "m",
+		PromptHash: "hash-for-summary",
+		Body:       "SUMMARY_MARKER_XYZ",
+		// 1 second after the seed-helper's created_at_ms so this
+		// summary wins LoadRecentSessionDigests's "latest by
+		// created_at_ms" pick. Without the offset both rows land
+		// on the same millisecond and either could win.
+		CreatedAtMs: time.Now().Add(time.Second).UnixMilli(),
 	}); err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("seed summary: %v", err)
@@ -235,10 +257,14 @@ func TestRunPropose_LLMErrorLeavesDBClean(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
+	// Filter by kind: the seed plants per-session summaries so the
+	// total llm_outputs count is non-zero even on a clean propose
+	// failure. The contract the test cares about is "propose failure
+	// leaves no propose row behind", not "the table is empty".
 	var n int
-	_ = s.DB().QueryRow(`SELECT COUNT(*) FROM llm_outputs`).Scan(&n)
+	_ = s.DB().QueryRow(`SELECT COUNT(*) FROM llm_outputs WHERE kind = 'propose'`).Scan(&n)
 	if n != 0 {
-		t.Errorf("expected 0 rows after failure, got %d", n)
+		t.Errorf("expected 0 propose rows after failure, got %d", n)
 	}
 }
 
@@ -256,8 +282,11 @@ func TestRunPropose_ReflectAndProposeCoexistUnderSameInput(t *testing.T) {
 		t.Fatalf("propose: %v", err)
 	}
 
+	// Same kind-filter as TestRunPropose_LLMErrorLeavesDBClean: the
+	// seed plants summary rows, so we count only the meta-prompt
+	// outputs this test produced.
 	var n int
-	_ = s.DB().QueryRow(`SELECT COUNT(*) FROM llm_outputs`).Scan(&n)
+	_ = s.DB().QueryRow(`SELECT COUNT(*) FROM llm_outputs WHERE kind IN ('reflect', 'propose')`).Scan(&n)
 	if n != 2 {
 		t.Errorf("expected 2 rows (one reflect, one propose), got %d", n)
 	}
