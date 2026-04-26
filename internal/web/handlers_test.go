@@ -397,8 +397,8 @@ func TestSessionsPage_LatestEventCellRendersInitialContent(t *testing.T) {
 	if !strings.Contains(body, "latestmarkerprompt") {
 		t.Errorf("latest cell should include the event snippet:\n%s", body)
 	}
-	if !strings.Contains(body, `<span class="badge">user_prompt</span>`) {
-		t.Errorf("latest cell should include the kind badge:\n%s", body)
+	if !strings.Contains(body, `<span class="badge badge-user_prompt">user_prompt</span>`) {
+		t.Errorf("latest cell should include the kind-coloured badge:\n%s", body)
 	}
 }
 

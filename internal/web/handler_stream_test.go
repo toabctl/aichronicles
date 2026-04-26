@@ -313,7 +313,7 @@ func TestStream_EmitsLiveFeedAndPerSessionFrames(t *testing.T) {
 	// Per-session frame carries the latest-cell renderer's output
 	// (kind badge + snippet) AND an OOB status span.
 	for _, want := range []string{
-		`<span class="badge">user_prompt</span>`,
+		`<span class="badge badge-user_prompt">user_prompt</span>`,
 		`live event content`,
 		`id="status-` + id + `"`,
 		`hx-swap-oob="true"`,

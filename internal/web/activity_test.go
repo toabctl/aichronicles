@@ -149,7 +149,7 @@ func TestRenderLatestEventCell(t *testing.T) {
 	got := renderLatestEventCell(e)
 	for _, want := range []string{
 		`<span class="ts">15:42:01</span>`,
-		`<span class="badge">user_prompt</span>`,
+		`<span class="badge badge-user_prompt">user_prompt</span>`,
 		`<span class="snippet">how do I parse jsonl in Go</span>`,
 	} {
 		if !strings.Contains(got, want) {

@@ -199,9 +199,10 @@ func renderLiveEventFragment(e store.LiveEvent) string {
 		cwd = e.Cwd.String
 	}
 	snippet := truncateForStream(e.Snippet.String)
+	kind := html.EscapeString(e.Kind)
 	return `<li class="livefeed-row">` +
 		`<span class="ts">` + html.EscapeString(time.UnixMilli(e.TsSourceMs).UTC().Format("15:04:05")) + `</span> ` +
-		`<span class="badge">` + html.EscapeString(e.Kind) + `</span> ` +
+		`<span class="badge badge-` + kind + `">` + kind + `</span> ` +
 		`<a class="sid" href="/sessions/` + html.EscapeString(e.SessionID) + `">` + html.EscapeString(short) + `</a> ` +
 		`<span class="cwd">` + html.EscapeString(cwd) + `</span> ` +
 		`<span class="snippet">` + html.EscapeString(snippet) + `</span>` +

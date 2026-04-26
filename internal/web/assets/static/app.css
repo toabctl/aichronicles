@@ -8,11 +8,10 @@
 }
 
 main.container {
-  /* Pico defaults to centered fixed-width; let session tables
-     breathe without scrolling on desktop. The live-feed and the
-     per-row latest-event column both want as much horizontal
-     space as we can give them — at 1200px the latest snippet
-     was clipped within ~10 chars on most rows. */
+  /* Pico defaults to a centered, ~1200px reading width. The
+     sessions list is data-dense (status dot + sid + ts + count
+     + prompt+cwd + latest-event + summary) and benefits hugely
+     from a wider canvas. */
   max-width: 1600px;
 }
 
@@ -37,6 +36,68 @@ main.container {
 .badge-summary {
   background: var(--pico-primary-background);
   color: var(--pico-primary-inverse);
+}
+
+/* Per-kind badge colours so the live feed and event tables are
+   scannable at a glance. Picked for contrast against both light
+   and dark Pico themes — the alpha-blended backgrounds ride the
+   page background and the foregrounds stay well above WCAG AA. */
+.badge-user_prompt {
+  background: rgba(59, 130, 246, 0.18);
+  color: #1e40af;
+}
+.badge-assistant_message {
+  background: rgba(139, 92, 246, 0.18);
+  color: #6b21a8;
+}
+.badge-tool_use {
+  background: rgba(16, 185, 129, 0.18);
+  color: #047857;
+}
+.badge-tool_result {
+  background: rgba(20, 184, 166, 0.18);
+  color: #115e59;
+}
+.badge-tool_failure {
+  background: rgba(239, 68, 68, 0.22);
+  color: #991b1b;
+  font-weight: 700;
+}
+.badge-session_start,
+.badge-session_end {
+  background: var(--pico-muted-border-color);
+  color: var(--pico-muted-color);
+  font-style: italic;
+}
+
+/* Dark-mode equivalents. Pico flips data-theme automatically and
+   honours prefers-color-scheme; both are covered. The light-mode
+   colours have low contrast on dark backgrounds, so brighten the
+   foregrounds and let the alpha bg ride the dark page. */
+@media (prefers-color-scheme: dark) {
+  .badge-user_prompt        { color: #93c5fd; }
+  .badge-assistant_message  { color: #c4b5fd; }
+  .badge-tool_use           { color: #6ee7b7; }
+  .badge-tool_result        { color: #5eead4; }
+  .badge-tool_failure       { color: #fca5a5; }
+}
+[data-theme="dark"] .badge-user_prompt        { color: #93c5fd; }
+[data-theme="dark"] .badge-assistant_message  { color: #c4b5fd; }
+[data-theme="dark"] .badge-tool_use           { color: #6ee7b7; }
+[data-theme="dark"] .badge-tool_result        { color: #5eead4; }
+[data-theme="dark"] .badge-tool_failure       { color: #fca5a5; }
+
+/* Tool-call snippets are usually a shell command or a path —
+   render them in monospace so they read like the thing they are
+   instead of like prose. The sibling combinator picks up any
+   .snippet that follows a tool-flavoured badge in any of the
+   places we render event rows (live feed, latest-event cell,
+   live banner). */
+.badge-tool_use ~ .snippet,
+.badge-tool_result ~ .snippet,
+.badge-tool_failure ~ .snippet {
+  font-family: var(--pico-font-family-monospace);
+  font-size: 0.92em;
 }
 
 /* "(no hits)" / "(no sessions)" empty states render as muted text
