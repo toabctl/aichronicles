@@ -275,6 +275,159 @@ func TestSessionsPage_MalformedSummaryBodyOmitsTopic(t *testing.T) {
 	}
 }
 
+func TestSessionsPage_StatusDotAndLatestColumnPresent(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	id := seedSession(t, st, "sess-row", "anything", time.Now().Add(-1*time.Minute))
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	_, body := fetch(t, base+"/")
+	for _, want := range []string{
+		// Status dot wiring per row — id must be "status-<sessionID>"
+		// so the SSE OOB swap can target it.
+		`id="status-` + id + `"`,
+		`class="status status-`,
+		// Latest-event cell must declare its SSE event name + swap
+		// strategy so live updates can replace its content.
+		`sse-swap="session-` + id + `"`,
+		`hx-swap="innerHTML"`,
+		// Single shared SSE container wraps the live feed AND the
+		// table — one connection drives all updates.
+		`hx-ext="sse"`,
+		`sse-connect="/stream"`,
+		// The new column header.
+		"<th>Latest event</th>",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q\n--- body ---\n%s", want, body)
+		}
+	}
+}
+
+func TestSessionsPage_StatusActiveForRecentSession(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	// Seed an event within the activity window so the row is active.
+	seedSession(t, st, "sess-active", "fresh prompt", time.Now().Add(-30*time.Second))
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	_, body := fetch(t, base+"/")
+	if !strings.Contains(body, "status-active") {
+		t.Errorf("expected status-active class for recent session:\n%s", body)
+	}
+}
+
+func TestSessionsPage_StatusIdleForStaleSession(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	// Seed an event well outside the 5-min window. now := time.Now()
+	// is a moving target, so use a fixed-ish offset.
+	seedSession(t, st, "sess-stale", "old prompt", time.Now().Add(-1*time.Hour))
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	_, body := fetch(t, base+"/")
+	if !strings.Contains(body, "status-idle") {
+		t.Errorf("expected status-idle class for stale session:\n%s", body)
+	}
+}
+
+func TestSessionsPage_StatusEndedWhenSessionEndEventPresent(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	// Seed a normal user_prompt first, then a session_end event. The
+	// session_end event becomes the "latest event" and flips the
+	// status dot — same path the SessionEnd hook fires on real claude
+	// sessions.
+	seedSession(t, st, "sess-ended", "wrapping up", time.Now().Add(-1*time.Minute))
+	seedEnv := &ingest.Envelope{
+		V:               1,
+		EventID:         uuid.Must(uuid.NewV7()).String(),
+		SourceAgent:     "claude-code",
+		SourceSessionID: "sess-ended",
+		Kind:            "session_end",
+		Role:            "system",
+		TsSource:        time.Now().UTC(),
+		Cwd:             "/work/sess-ended",
+		Payload:         map[string]any{"reason": "user-quit"},
+		Transport:       "hook",
+		Redaction:       &ingest.Redaction{Applied: true},
+	}
+	rawBytes, _ := json.Marshal(seedEnv)
+	tx, err := st.DB().Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := store.IngestEnvelope(t.Context(), tx, seedEnv, rawBytes, time.Now().UnixMilli()); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("ingest session_end: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	_, body := fetch(t, base+"/")
+	if !strings.Contains(body, "status-ended") {
+		t.Errorf("expected status-ended class for ended session:\n%s", body)
+	}
+	if strings.Contains(body, "status-active") {
+		t.Errorf("ended session should not also render status-active:\n%s", body)
+	}
+}
+
+func TestSessionsPage_LatestEventCellRendersInitialContent(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	seedSession(t, st, "sess-latest", "latestmarkerprompt content", time.Now().Add(-10*time.Second))
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	_, body := fetch(t, base+"/")
+	// The latest-event cell should contain the kind badge and the
+	// truncated snippet — same renderer the SSE handler will use.
+	if !strings.Contains(body, "latestmarkerprompt") {
+		t.Errorf("latest cell should include the event snippet:\n%s", body)
+	}
+	if !strings.Contains(body, `<span class="badge">user_prompt</span>`) {
+		t.Errorf("latest cell should include the kind badge:\n%s", body)
+	}
+}
+
+func TestSessionsPage_LatestCellEmptyForSessionWithNoEvents(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+
+	// Insert a session row directly without going through ingest, so
+	// it has zero events. This is how an empty session would show up
+	// if (somehow) the row existed before any event landed.
+	if _, err := st.DB().Exec(
+		`INSERT INTO sessions(id, source_agent, source_session_id, started_at_ms, event_count)
+		 VALUES (?, ?, ?, ?, ?)`,
+		"empty-session-id", "claude-code", "empty", time.Now().UnixMilli(), 0,
+	); err != nil {
+		t.Fatalf("seed empty session: %v", err)
+	}
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	_, body := fetch(t, base+"/")
+	// Empty-state placeholder lives inside the latest cell so the
+	// table has no awkward blank cells.
+	if !strings.Contains(body, `<span class="empty">—</span>`) {
+		t.Errorf("expected em-dash placeholder for session with no events:\n%s", body)
+	}
+}
+
 func TestStaticAssets_Served(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)

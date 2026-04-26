@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
 	"strings"
 	"time"
@@ -95,13 +96,29 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int) ([]Ses
 	if err != nil {
 		return nil, fmt.Errorf("load summaries: %w", err)
 	}
+	latestEvents, err := store.LoadLatestEventsIndexedByID(ctx, st.DB(), ids)
+	if err != nil {
+		return nil, fmt.Errorf("load latest events: %w", err)
+	}
+
 	for i := range out {
-		summary, ok := summaries[out[i].ID]
-		if !ok {
-			continue
+		if summary, ok := summaries[out[i].ID]; ok {
+			out[i].HasSummary = true
+			out[i].SummaryTopic = parseSummaryTopic(summary.Body)
 		}
-		out[i].HasSummary = true
-		out[i].SummaryTopic = parseSummaryTopic(summary.Body)
+
+		// Status dot: ended / active / idle. Driven by the latest
+		// event — its kind tells us whether the session has
+		// formally ended (session_end), its timestamp tells us
+		// whether activity is fresh enough to count as "active".
+		// Sessions without any events fall to "idle".
+		var latestPtr *store.LiveEvent
+		if e, ok := latestEvents[out[i].ID]; ok {
+			latestPtr = &e
+			out[i].LatestEventHTML = template.HTML(renderLatestEventCell(e))
+		}
+		status, title := sessionStatus(latestPtr, now)
+		out[i].StatusDotHTML = template.HTML(renderStatusDot(out[i].ID, status, title, false))
 	}
 	return out, nil
 }

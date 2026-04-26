@@ -1,5 +1,7 @@
 package web
 
+import "html/template"
+
 // Page is the common envelope every route's view data sits inside.
 // Title flows into the <title> tag in base.html.
 type Page struct {
@@ -30,6 +32,18 @@ type SessionRow struct {
 	FirstPrompt  string // truncated first user_prompt content_text
 	HasSummary   bool   // an llm_outputs(kind='summary') row exists for this session
 	SummaryTopic string // parsed `topic` field from the cached summary; empty when none
+
+	// StatusDotHTML is the pre-rendered <span class="status …">●</span>
+	// for the activity dot. Pre-rendered so the same Go-side renderer
+	// powers both initial server-side render and SSE-driven OOB
+	// updates; the template just embeds it via {{.StatusDotHTML}}.
+	StatusDotHTML template.HTML
+
+	// LatestEventHTML is the pre-rendered inner content of the
+	// "Latest event" cell (ts + kind badge + snippet). Empty when
+	// the session has no events yet — the template falls through
+	// to a muted placeholder in that case.
+	LatestEventHTML template.HTML
 }
 
 // SessionDetail is the data shape the session detail template

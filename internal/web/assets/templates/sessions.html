@@ -4,44 +4,51 @@
   <p>Most recently active first. Click a row to see events and the cached summary.</p>
 </hgroup>
 
-<details class="livefeed-wrap" open>
-  <summary><strong>Live feed</strong> <small>— new events arrive here as they ingest</small></summary>
-  <div hx-ext="sse" sse-connect="/stream">
+<div hx-ext="sse" sse-connect="/stream">
+
+  <details class="livefeed-wrap" open>
+    <summary><strong>Live feed</strong> <small>— new events arrive here as they ingest</small></summary>
     <ul id="livefeed" class="livefeed" hx-swap="afterbegin" sse-swap="event">
       <li class="livefeed-empty">(waiting for new events…)</li>
     </ul>
-  </div>
-</details>
+  </details>
 
-{{if .Sessions}}
-<table class="sessions">
-  <thead>
-    <tr>
-      <th>Session</th>
-      <th>Last activity</th>
-      <th>Events</th>
-      <th>Cwd</th>
-      <th>First prompt</th>
-      <th></th>
-    </tr>
-  </thead>
-  <tbody>
-    {{range .Sessions}}
-    <tr>
-      <td class="sid"><a href="/sessions/{{.ID}}">{{.ShortID}}</a></td>
-      <td class="ts">{{.LastActivity}}</td>
-      <td>{{.EventCount}}</td>
-      <td class="cwd">{{.Cwd}}</td>
-      <td>
-        {{.FirstPrompt}}
-        {{if .SummaryTopic}}<br><small class="topic">{{.SummaryTopic}}</small>{{end}}
-      </td>
-      <td>{{if .HasSummary}}<span class="badge badge-summary">summary</span>{{end}}</td>
-    </tr>
-    {{end}}
-  </tbody>
-</table>
-{{else}}
-<p class="empty">(no sessions in the store yet — run <code>aichronicles import-claude</code> to backfill, or hook up the daemon and capture a fresh session)</p>
-{{end}}
+  {{if .Sessions}}
+  <table class="sessions">
+    <thead>
+      <tr>
+        <th></th>
+        <th>Session</th>
+        <th>Last activity</th>
+        <th>Events</th>
+        <th>First prompt &amp; cwd</th>
+        <th>Latest event</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Sessions}}
+      <tr>
+        <td class="status-cell">{{.StatusDotHTML}}</td>
+        <td class="sid"><a href="/sessions/{{.ID}}">{{.ShortID}}</a></td>
+        <td class="ts">{{.LastActivity}}</td>
+        <td>{{.EventCount}}</td>
+        <td class="prompt-cell">
+          {{.FirstPrompt}}
+          <br><small class="cwd">{{.Cwd}}</small>
+          {{if .SummaryTopic}}<br><small class="topic">{{.SummaryTopic}}</small>{{end}}
+        </td>
+        <td class="latest"
+            sse-swap="session-{{.ID}}"
+            hx-swap="innerHTML">{{if .LatestEventHTML}}{{.LatestEventHTML}}{{else}}<span class="empty">—</span>{{end}}</td>
+        <td>{{if .HasSummary}}<span class="badge badge-summary">summary</span>{{end}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="empty">(no sessions in the store yet — run <code>aichronicles import-claude</code> to backfill, or hook up the daemon and capture a fresh session)</p>
+  {{end}}
+
+</div>
 {{end}}

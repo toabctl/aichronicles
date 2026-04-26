@@ -1,7 +1,6 @@
 package web
 
 import (
-	"database/sql"
 	"html"
 	"time"
 
@@ -16,31 +15,42 @@ import (
 const activityWindow = 5 * time.Minute
 
 // sessionStatus categorises a session into one of three buckets the
-// sessions-list UI surfaces as a coloured dot. ended_at_ms wins
-// over recency: a session can be both ended and stale, but the
-// user cares first that it's done. title is a tooltip the dot
-// carries via the title attribute.
+// sessions-list UI surfaces as a coloured dot. The signal is
+// derived from the session's most recent event: the kind tells us
+// whether the session has formally ended (session_end), and the
+// timestamp tells us whether it's still humming along. title is a
+// tooltip the dot carries via the title attribute.
+//
+// Why not check sessions.ended_at_ms? The INSERT trigger on
+// `events` updates ended_at_ms to MAX(existing, new.ts_source_ms)
+// for every event, so the column is always populated and means
+// "timestamp of latest event", not "session formally ended". The
+// SessionEnd hook fires a kind='session_end' event — that's the
+// real signal.
 //
 // Statuses:
-//   - "ended"  → ended_at_ms set; tooltip names the end time.
-//   - "active" → still open && most recent event is within
-//     activityWindow.
-//   - "idle"   → still open but the most recent event is older
-//     than activityWindow (likely Claude crashed or the user
-//     wandered off without ending the session); also the
-//     fallback for a session with no events at all.
-func sessionStatus(endedMs sql.NullInt64, latestTsMs int64, now time.Time) (status, title string) {
-	if endedMs.Valid && endedMs.Int64 > 0 {
-		return "ended", "ended " + relativeTime(endedMs.Int64, now)
-	}
-	if latestTsMs <= 0 {
+//   - "ended"  → latest event kind is session_end.
+//   - "active" → latest event is within activityWindow and not
+//     a session_end.
+//   - "idle"   → latest event is older than activityWindow (or
+//     missing entirely): Claude probably crashed or the user
+//     wandered off without ending cleanly.
+//
+// latest may be nil for a session with no events yet; in that
+// case the fallback is "idle" with a tooltip distinguishing it
+// from a stale session.
+func sessionStatus(latest *store.LiveEvent, now time.Time) (status, title string) {
+	if latest == nil || latest.TsSourceMs <= 0 {
 		return "idle", "no events yet"
 	}
-	age := now.Sub(time.UnixMilli(latestTsMs))
-	if age < 0 || age >= activityWindow {
-		return "idle", "idle — last event " + relativeTime(latestTsMs, now)
+	if latest.Kind == "session_end" {
+		return "ended", "ended " + relativeTime(latest.TsSourceMs, now)
 	}
-	return "active", "active — last event " + relativeTime(latestTsMs, now)
+	age := now.Sub(time.UnixMilli(latest.TsSourceMs))
+	if age < 0 || age >= activityWindow {
+		return "idle", "idle — last event " + relativeTime(latest.TsSourceMs, now)
+	}
+	return "active", "active — last event " + relativeTime(latest.TsSourceMs, now)
 }
 
 // renderStatusDot produces the coloured status dot for one session.
@@ -79,20 +89,4 @@ func renderLatestEventCell(e store.LiveEvent) string {
 	return `<span class="ts">` + html.EscapeString(time.UnixMilli(e.TsSourceMs).UTC().Format("15:04:05")) + `</span> ` +
 		`<span class="badge">` + html.EscapeString(e.Kind) + `</span> ` +
 		`<span class="snippet">` + html.EscapeString(snippet) + `</span>`
-}
-
-// statusForLiveEvent picks the activity status driven by an
-// incoming SSE event. Used by the stream handler when emitting
-// per-session updates: a normal event means the session is
-// freshly active; the SessionEnd kind flips it to ended.
-//
-// The "idle" state is intentionally never returned here — idle
-// is computed only from passing time, and SSE only fires when
-// new activity exists. Decay from active back to idle requires
-// a page refresh (documented trade-off in the architecture).
-func statusForLiveEvent(e store.LiveEvent, now time.Time) (status, title string) {
-	if e.Kind == "session_end" {
-		return "ended", "ended " + relativeTime(e.TsSourceMs, now)
-	}
-	return "active", "active — last event " + relativeTime(e.TsSourceMs, now)
 }

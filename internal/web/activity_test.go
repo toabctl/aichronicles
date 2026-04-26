@@ -13,66 +13,70 @@ func TestSessionStatus(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
 
+	mk := func(kind string, ageBack time.Duration) *store.LiveEvent {
+		return &store.LiveEvent{
+			Kind:       kind,
+			TsSourceMs: now.Add(-ageBack).UnixMilli(),
+		}
+	}
+
 	cases := []struct {
 		name        string
-		endedMs     sql.NullInt64
-		latestTsMs  int64
+		latest      *store.LiveEvent
 		wantStatus  string
 		wantInTitle string
 	}{
 		{
-			name:        "ended takes priority over recency",
-			endedMs:     sql.NullInt64{Int64: now.Add(-time.Hour).UnixMilli(), Valid: true},
-			latestTsMs:  now.Add(-30 * time.Second).UnixMilli(),
+			name:        "session_end kind flips to ended even if recent",
+			latest:      mk("session_end", 30*time.Second),
 			wantStatus:  "ended",
 			wantInTitle: "ended",
 		},
 		{
-			name:        "ended_at_ms zero treated as not-ended",
-			endedMs:     sql.NullInt64{Int64: 0, Valid: true},
-			latestTsMs:  now.Add(-1 * time.Minute).UnixMilli(),
-			wantStatus:  "active",
-			wantInTitle: "active",
+			name:        "session_end kind on stale event still ends",
+			latest:      mk("session_end", 7*24*time.Hour),
+			wantStatus:  "ended",
+			wantInTitle: "ended",
 		},
 		{
 			name:        "active when latest event within window",
-			endedMs:     sql.NullInt64{},
-			latestTsMs:  now.Add(-1 * time.Minute).UnixMilli(),
+			latest:      mk("user_prompt", 1*time.Minute),
 			wantStatus:  "active",
 			wantInTitle: "active",
 		},
 		{
 			name:        "active right at window boundary minus epsilon",
-			endedMs:     sql.NullInt64{},
-			latestTsMs:  now.Add(-(activityWindow - time.Second)).UnixMilli(),
+			latest:      mk("user_prompt", activityWindow-time.Second),
 			wantStatus:  "active",
 			wantInTitle: "active",
 		},
 		{
 			name:        "idle once outside the window",
-			endedMs:     sql.NullInt64{},
-			latestTsMs:  now.Add(-(activityWindow + time.Second)).UnixMilli(),
+			latest:      mk("user_prompt", activityWindow+time.Second),
 			wantStatus:  "idle",
 			wantInTitle: "idle",
 		},
 		{
 			name:        "idle for very old session",
-			endedMs:     sql.NullInt64{},
-			latestTsMs:  now.Add(-30 * 24 * time.Hour).UnixMilli(),
+			latest:      mk("tool_use", 30*24*time.Hour),
 			wantStatus:  "idle",
 			wantInTitle: "idle",
 		},
 		{
-			name:        "no events yet → idle",
-			endedMs:     sql.NullInt64{},
-			latestTsMs:  0,
+			name:        "nil latest → idle, no events yet",
+			latest:      nil,
+			wantStatus:  "idle",
+			wantInTitle: "no events yet",
+		},
+		{
+			name:        "zero ts on latest → idle, no events yet",
+			latest:      &store.LiveEvent{Kind: "user_prompt", TsSourceMs: 0},
 			wantStatus:  "idle",
 			wantInTitle: "no events yet",
 		},
 		{
 			name:        "future timestamp falls back to idle (defensive)",
-			endedMs:     sql.NullInt64{},
-			latestTsMs:  now.Add(time.Hour).UnixMilli(),
+			latest:      mk("user_prompt", -1*time.Hour),
 			wantStatus:  "idle",
 			wantInTitle: "idle",
 		},
@@ -80,7 +84,7 @@ func TestSessionStatus(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			gotStatus, gotTitle := sessionStatus(tc.endedMs, tc.latestTsMs, now)
+			gotStatus, gotTitle := sessionStatus(tc.latest, now)
 			if gotStatus != tc.wantStatus {
 				t.Errorf("status: got %q, want %q", gotStatus, tc.wantStatus)
 			}
@@ -182,30 +186,5 @@ func TestRenderLatestEventCell_FlattenSnippetWhitespace(t *testing.T) {
 	// data field stays on one line.
 	if strings.Contains(got, "\n") || strings.Contains(got, "\t") {
 		t.Errorf("expected whitespace flattened to single line:\n%q", got)
-	}
-}
-
-func TestStatusForLiveEvent(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
-
-	cases := []struct {
-		name       string
-		kind       string
-		wantStatus string
-	}{
-		{"normal event makes session active", "user_prompt", "active"},
-		{"tool_use also active", "tool_use", "active"},
-		{"session_end flips to ended", "session_end", "ended"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			e := store.LiveEvent{Kind: tc.kind, TsSourceMs: now.UnixMilli()}
-			gotStatus, _ := statusForLiveEvent(e, now)
-			if gotStatus != tc.wantStatus {
-				t.Errorf("status: got %q, want %q", gotStatus, tc.wantStatus)
-			}
-		})
 	}
 }

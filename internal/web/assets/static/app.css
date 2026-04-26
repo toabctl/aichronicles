@@ -51,14 +51,65 @@ main.container {
   font-style: italic;
 }
 
-/* Sessions table — let the cwd column wrap on long paths but
-   keep the timestamp column tight. */
-table.sessions td.cwd {
+/* Sessions table — let the prompt cell breathe (it carries the
+   first prompt + cwd + topic) and keep the timestamp column tight.
+   The cwd is a sub-line of the prompt cell rather than its own
+   column because a column-wide cwd ate into the prompt + latest
+   columns at any reasonable page width. */
+table.sessions td.prompt-cell {
+  min-width: 18rem;
+}
+table.sessions td.prompt-cell .cwd {
+  color: var(--pico-muted-color);
+  font-family: var(--pico-font-family-monospace);
+  font-size: 0.85em;
   word-break: break-all;
 }
 table.sessions td.ts {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+table.sessions td.status-cell {
+  width: 1.4rem;
+  text-align: center;
+  padding-right: 0;
+}
+/* Latest-event cell: dense single-line preview that updates over
+   SSE. Cap width so a long snippet doesn't push every other column
+   to the right. The cell itself listens for sse-swap="session-<id>"
+   and replaces its innerHTML on each new event. */
+table.sessions td.latest {
+  font-size: 0.875em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 32rem;
+}
+table.sessions td.latest .ts {
+  font-family: var(--pico-font-family-monospace);
+  color: var(--pico-muted-color);
+  margin-right: 0.25em;
+}
+
+/* Activity status dot: ● coloured by state. green ≈ active in the
+   last 5 minutes; muted ≈ idle/no recent activity; grey ≈ ended.
+   The same span is rendered server-side for the initial page and
+   swapped over SSE (with hx-swap-oob="true") when new events
+   arrive. Title attribute carries a human-friendly tooltip. */
+.status {
+  display: inline-block;
+  font-size: 1em;
+  line-height: 1;
+  vertical-align: middle;
+}
+.status-active {
+  color: #2c8a4a;
+}
+.status-idle {
+  color: var(--pico-muted-color);
+}
+.status-ended {
+  color: var(--pico-muted-border-color);
 }
 
 /* Live feed: a tight, monospace-flavoured list of incoming events
