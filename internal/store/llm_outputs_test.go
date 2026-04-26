@@ -313,6 +313,128 @@ func TestLoadLLMOutputsForSession_NewestFirst(t *testing.T) {
 	}
 }
 
+func TestLoadSummariesIndexedByID_EmptyInputReturnsEmptyMap(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	got, err := LoadSummariesIndexedByID(t.Context(), s.DB(), nil)
+	if err != nil {
+		t.Fatalf("LoadSummariesIndexedByID(nil): %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty map, got %v", got)
+	}
+
+	got, err = LoadSummariesIndexedByID(t.Context(), s.DB(), []string{})
+	if err != nil {
+		t.Fatalf("LoadSummariesIndexedByID(empty): %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty map, got %v", got)
+	}
+}
+
+func TestLoadSummariesIndexedByID_OnePerSessionNewestWins(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	// Three sessions: A has two summaries (we expect the newest),
+	// B has one, C has none — C must be absent from the result map.
+	for _, id := range []string{"sess-A", "sess-B", "sess-C"} {
+		if _, err := s.DB().Exec(
+			`INSERT INTO sessions(id, source_agent, source_session_id) VALUES (?, ?, ?)`,
+			id, "claude-code", id,
+		); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+
+	mkSummary := func(sessID, hash, body string, ts int64) *LLMOutput {
+		o := newOutput(LLMKindSummary, hash, body)
+		o.SessionID = sql.NullString{String: sessID, Valid: true}
+		o.CreatedAtMs = ts
+		return o
+	}
+
+	withTx(t, s, func(tx *sql.Tx) {
+		fixtures := []*LLMOutput{
+			mkSummary("sess-A", "A-old", "A-OLD-BODY", 100),
+			mkSummary("sess-A", "A-new", "A-NEW-BODY", 200),
+			mkSummary("sess-B", "B-only", "B-BODY", 150),
+			// sess-C: no summary
+		}
+		for _, fx := range fixtures {
+			if _, _, err := SaveLLMOutput(t.Context(), tx, fx); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+		}
+	})
+
+	got, err := LoadSummariesIndexedByID(t.Context(), s.DB(),
+		[]string{"sess-A", "sess-B", "sess-C"})
+	if err != nil {
+		t.Fatalf("LoadSummariesIndexedByID: %v", err)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("entry count: got %d, want 2 (A and B; C has no summary)", len(got))
+	}
+	if a, ok := got["sess-A"]; !ok {
+		t.Error("missing sess-A entry")
+	} else if a.PromptHash != "A-new" {
+		t.Errorf("sess-A: expected newest summary; got hash %q body %q", a.PromptHash, a.Body)
+	}
+	if b, ok := got["sess-B"]; !ok {
+		t.Error("missing sess-B entry")
+	} else if b.PromptHash != "B-only" {
+		t.Errorf("sess-B: got hash %q", b.PromptHash)
+	}
+	if _, ok := got["sess-C"]; ok {
+		t.Error("sess-C has no summary; should be absent from map")
+	}
+}
+
+func TestLoadSummariesIndexedByID_IgnoresNonSummaryKinds(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	if _, err := s.DB().Exec(
+		`INSERT INTO sessions(id, source_agent, source_session_id) VALUES (?, ?, ?)`,
+		"sess-mix", "claude-code", "mix",
+	); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	// Plant a reflect output AND a propose output for sess-mix —
+	// neither should appear in the result. No summary → absent.
+	withTx(t, s, func(tx *sql.Tx) {
+		for _, fx := range []*LLMOutput{
+			func() *LLMOutput {
+				o := newOutput(LLMKindReflect, "r1", "reflect body")
+				o.SessionID = sql.NullString{String: "sess-mix", Valid: true}
+				return o
+			}(),
+			func() *LLMOutput {
+				o := newOutput(LLMKindPropose, "p1", "propose body")
+				o.SessionID = sql.NullString{String: "sess-mix", Valid: true}
+				return o
+			}(),
+		} {
+			if _, _, err := SaveLLMOutput(t.Context(), tx, fx); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+		}
+	})
+
+	got, err := LoadSummariesIndexedByID(t.Context(), s.DB(), []string{"sess-mix"})
+	if err != nil {
+		t.Fatalf("LoadSummariesIndexedByID: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("non-summary kinds must be ignored; got %v", got)
+	}
+}
+
 func TestLLMOutputs_SessionDeleteDetachesNotCascades(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)

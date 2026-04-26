@@ -210,6 +210,64 @@ func LoadLLMOutputsForSession(ctx context.Context, db *sql.DB, sessionID string)
 	return out, rows.Err()
 }
 
+// LoadSummariesIndexedByID returns the most-recent kind='summary'
+// output for each session in sessionIDs, keyed by session_id.
+// Sessions without any cached summary are absent from the returned
+// map (no entry rather than a zero-value entry, so callers can
+// distinguish "not yet summarised" from "summary with empty body").
+//
+// One indexed query — the alternative of calling
+// LoadLLMOutputsForSession per session is N+1 and the sessions
+// list / search results call this on every render. ORDER BY
+// created_at_ms DESC means the first row we see for any given
+// session wins, which is exactly the newest summary.
+//
+// Empty input returns an empty map and no query.
+func LoadSummariesIndexedByID(ctx context.Context, db *sql.DB, sessionIDs []string) (map[string]LLMOutput, error) {
+	if len(sessionIDs) == 0 {
+		return map[string]LLMOutput{}, nil
+	}
+
+	placeholders := strings.Repeat(",?", len(sessionIDs))[1:]
+	args := make([]any, 0, len(sessionIDs)+1)
+	for _, id := range sessionIDs {
+		args = append(args, id)
+	}
+	args = append(args, string(LLMKindSummary))
+
+	q := `SELECT id, session_id, kind, model, prompt_hash,
+			input_tokens, output_tokens, body, created_at_ms
+		FROM llm_outputs
+		WHERE session_id IN (` + placeholders + `) AND kind = ?
+		ORDER BY created_at_ms DESC`
+
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query summaries: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make(map[string]LLMOutput, len(sessionIDs))
+	for rows.Next() {
+		item, err := scanLLMOutput(rows)
+		if err != nil {
+			return nil, err
+		}
+		// Newest-first ORDER BY: first row per session wins.
+		// Skip session_id NULL defensively — should never appear
+		// here since we filter by IN(non-null-list), but a NULL
+		// would map to the empty key and clobber.
+		if !item.SessionID.Valid {
+			continue
+		}
+		if _, seen := out[item.SessionID.String]; seen {
+			continue
+		}
+		out[item.SessionID.String] = *item
+	}
+	return out, rows.Err()
+}
+
 // rowScanner unifies *sql.Row and *sql.Rows for scanLLMOutput.
 type rowScanner interface {
 	Scan(dest ...any) error
