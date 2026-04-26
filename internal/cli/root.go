@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -29,6 +30,13 @@ func Execute() int {
 // binary or juggling os.Stderr.
 func executeCmd(root *cobra.Command, stderr io.Writer) int {
 	if err := root.Execute(); err != nil {
+		// Sentinel: the subcommand already wrote a user-facing line
+		// and only wants a non-zero exit. doctor uses this so its
+		// own "FAIL daemon ..." message isn't followed by a redundant
+		// "aichronicles: daemon unhealthy".
+		if errors.Is(err, errExitCodeOne) {
+			return 1
+		}
 		_, _ = fmt.Fprintln(stderr, styled(stderr, "aichronicles:", ansiRed), err)
 		if hint := hintForError(err); hint != "" {
 			_, _ = fmt.Fprintln(stderr, hint)
@@ -54,6 +62,7 @@ func NewRootCmd() *cobra.Command {
 	cmd.SetOut(os.Stdout)
 	cmd.SetErr(os.Stderr)
 	cmd.AddCommand(newIngestCmd())
+	cmd.AddCommand(newDoctorCmd())
 	cmd.AddCommand(newSetupCmd())
 	cmd.AddCommand(newTeardownCmd())
 	cmd.AddCommand(newImportJSONLCmd())
