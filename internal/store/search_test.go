@@ -437,6 +437,48 @@ func TestSearchEvents_SnippetEllipsisOnTruncation(t *testing.T) {
 	}
 }
 
+// TestSearchEvents_RecencyBoostClampsFutureTimestamps locks in the
+// B1 audit fix: a clock-skewed event dated in the future can't
+// rank above present-day events that are genuinely more
+// relevant. Without the MAX(1.0, ...) clamp, days_old goes
+// negative for future events, the denominator drops below 1 (or
+// negative), and the boosted score balloons — a barely-relevant
+// future row would beat a strongly-relevant present-day one.
+//
+// Setup: a present event with strong relevance (term repeated)
+// vs a future event with weak relevance (term once, buried).
+// The clamp guarantees strong+present wins; without it, the
+// future event would have been pushed to the top by the
+// underflowing denominator.
+func TestSearchEvents_RecencyBoostClampsFutureTimestamps(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+
+	ingestForSearch(t, s, "sess-strong-now", "user_prompt",
+		"clamptest clamptest clamptest in a focused present doc",
+		"hook", now)
+	ingestForSearch(t, s, "sess-weak-future", "user_prompt",
+		"a long mostly-unrelated wall of text "+strings.Repeat("noise ", 30)+"clamptest just once",
+		"hook", now.Add(90*24*time.Hour))
+
+	hits, err := SearchEvents(t.Context(), s.DB(), SearchEventOpts{
+		Query: "clamptest",
+		Order: OrderRank,
+		NowMs: now.UnixMilli(),
+	})
+	if err != nil {
+		t.Fatalf("SearchEvents: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("hits: got %d, want 2", len(hits))
+	}
+	if !contains(hits[0].Content.String, "focused present doc") {
+		t.Errorf("strong-relevance present row should win; recency clamp broken\nfirst: %q",
+			hits[0].Content.String)
+	}
+}
+
 // TestSearchEvents_RecencyBoostBreaksTies pins the OrderRank
 // behaviour: when two events have identical content (and therefore
 // identical bm25 scores), the more recent one ranks first.

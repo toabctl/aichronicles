@@ -37,13 +37,24 @@ type Store struct {
 // its parent directories are created if missing. Migrations are applied
 // idempotently so calling Open on an existing DB is safe.
 //
-// Pragmas applied once at open:
+// Pragmas applied to every pooled connection via the DSN:
 //   - journal_mode=WAL (concurrent readers during writes)
 //   - foreign_keys=ON  (cascade deletes work; referential integrity)
 //   - busy_timeout=5000 (absorb short contention without ERR)
 //   - synchronous=NORMAL (durable enough with WAL, faster than FULL)
+//
+// Pragmas in the DSN apply at connection open, so every connection
+// in the pool gets them — vs `db.Exec("PRAGMA …")` which only
+// affects whichever single connection happened to handle that
+// statement. busy_timeout in particular MUST be set per-connection
+// for the pool to avoid SQLITE_BUSY under concurrent writers.
 func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	dsn := "file:" + path +
+		"?_pragma=journal_mode(WAL)" +
+		"&_pragma=foreign_keys(ON)" +
+		"&_pragma=busy_timeout(5000)" +
+		"&_pragma=synchronous(NORMAL)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
@@ -52,19 +63,6 @@ func Open(path string) (*Store, error) {
 	// serializes writes internally — more connections = more waiting.
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(2)
-
-	pragmas := []string{
-		"PRAGMA journal_mode = WAL;",
-		"PRAGMA foreign_keys = ON;",
-		"PRAGMA busy_timeout = 5000;",
-		"PRAGMA synchronous = NORMAL;",
-	}
-	for _, p := range pragmas {
-		if _, err := db.Exec(p); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("exec %q: %w", p, err)
-		}
-	}
 
 	s := &Store{db: db}
 	if err := s.migrate(); err != nil {

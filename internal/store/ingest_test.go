@@ -148,6 +148,77 @@ func jsonMarshalEnvelope(env *ingest.Envelope) ([]byte, error) {
 	return json.Marshal(env)
 }
 
+// TestIngestEnvelope_ConcurrentAllocatesUniqueSeqs pins the B3
+// audit fix: concurrent ingests against the same store must each
+// receive a unique ingest_seq. Pre-fix, two transactions could
+// both compute the same MAX(ingest_seq)+1 from their snapshots,
+// the second's INSERT would hit the UNIQUE constraint and INSERT
+// OR IGNORE would silently drop it — the caller saw "deduped"
+// even though no event_id collision occurred.
+//
+// This test runs N parallel goroutines each ingesting one
+// envelope. After they complete, every envelope must be in
+// raw_envelopes (no silent drops) and every ingest_seq must be
+// unique (the schema's UNIQUE constraint enforces that, but we
+// also assert n distinct seqs to make the contract loud).
+func TestIngestEnvelope_ConcurrentAllocatesUniqueSeqs(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	const n = 20
+	envs := make([]*ingest.Envelope, n)
+	raws := make([][]byte, n)
+	for i := 0; i < n; i++ {
+		envs[i], raws[i] = newValidEnvelope(t)
+		envs[i].SourceSessionID = "concurrent-" + string(rune('a'+i%26)) + string(rune('a'+i/26))
+		// Re-marshal so envelope_json carries the unique
+		// SourceSessionID; otherwise dedup folds them.
+		var err error
+		raws[i], err = json.Marshal(envs[i])
+		if err != nil {
+			t.Fatalf("marshal %d: %v", i, err)
+		}
+	}
+
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		i := i
+		go func() {
+			tx, err := s.DB().Begin()
+			if err != nil {
+				errs <- err
+				return
+			}
+			if _, err := IngestEnvelope(t.Context(), tx, envs[i], raws[i], int64(i)); err != nil {
+				_ = tx.Rollback()
+				errs <- err
+				return
+			}
+			if err := tx.Commit(); err != nil {
+				errs <- err
+				return
+			}
+			errs <- nil
+		}()
+	}
+	for i := 0; i < n; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("goroutine %d: %v", i, err)
+		}
+	}
+
+	var stored, distinctSeqs int
+	if err := s.DB().QueryRow(`SELECT COUNT(*), COUNT(DISTINCT ingest_seq) FROM raw_envelopes`).
+		Scan(&stored, &distinctSeqs); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if stored != n {
+		t.Errorf("stored: got %d, want %d (events were silently dropped)", stored, n)
+	}
+	if distinctSeqs != n {
+		t.Errorf("distinct ingest_seqs: got %d, want %d", distinctSeqs, n)
+	}
+}
+
 func TestIngestEnvelope_HappyPath(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)

@@ -181,11 +181,77 @@ func TestFTSTokenizer_ReopenIsClean(t *testing.T) {
 	if err := s2.DB().QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil {
 		t.Fatalf("read version: %v", err)
 	}
-	if v != "7" {
-		t.Errorf("schema_version after reopen: %q want 7", v)
+	if v != "8" {
+		t.Errorf("schema_version after reopen: %q want 8", v)
 	}
 	if got := matchCount(t, s2, "migrate"); got != 1 {
 		t.Errorf("MATCH migrate after reopen: got %d, want 1", got)
+	}
+}
+
+// ingestSubagentEvent ingests one event with explicit subagent
+// fields. Returns the derived session_id. Used by tests that need
+// to populate the subagent_id / subagent_type columns directly.
+func ingestSubagentEvent(t *testing.T, s *Store, sourceSession, content, subID, subType string, ts time.Time) string {
+	t.Helper()
+	env := &ingest.Envelope{
+		V:               1,
+		EventID:         uuid.Must(uuid.NewV7()).String(),
+		SourceAgent:     "claude-code",
+		SourceSessionID: sourceSession,
+		Kind:            "user_prompt",
+		Role:            "user",
+		TsSource:        ts.UTC(),
+		Cwd:             "/work/" + sourceSession,
+		ContentText:     content,
+		Payload:         map[string]any{},
+		Subagent:        &ingest.Subagent{ID: subID, Type: subType},
+		Transport:       "hook",
+		Redaction:       &ingest.Redaction{Applied: true},
+	}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	tx, err := s.DB().Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := IngestEnvelope(t.Context(), tx, env, raw, time.Now().UnixMilli()); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("IngestEnvelope: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	return ingest.DeriveSessionID("claude-code", sourceSession)
+}
+
+// TestLoadSubagentSpans_DoesNotFragmentOnTypeChange pins the B2
+// audit fix: a host reporting two different subagent_type values
+// for the same subagent_id must surface as ONE thread with the
+// most-recent type, not two phantom threads.
+func TestLoadSubagentSpans_DoesNotFragmentOnTypeChange(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+
+	const subID = "agent-7"
+	ingestSubagentEvent(t, s, "sess-frag", "step one", subID, "planner", now)
+	ingestSubagentEvent(t, s, "sess-frag", "step two", subID, "research-planner", now.Add(time.Second))
+
+	spans, err := LoadSubagentSpans(t.Context(), s.DB(), "", 10)
+	if err != nil {
+		t.Fatalf("LoadSubagentSpans: %v", err)
+	}
+	if len(spans) != 1 {
+		t.Fatalf("got %d spans, want 1 (subagent_type change must not fragment)", len(spans))
+	}
+	if spans[0].SubagentID != subID {
+		t.Errorf("SubagentID: got %q, want %q", spans[0].SubagentID, subID)
+	}
+	if spans[0].EventCount != 2 {
+		t.Errorf("EventCount: got %d, want 2", spans[0].EventCount)
 	}
 }
 

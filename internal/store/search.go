@@ -208,8 +208,13 @@ func buildSearchSQL(opts SearchEventOpts, index string) (string, []any) {
 		case OrderRecency:
 			order = "e.ts_source_ms DESC"
 		default:
+			// Clamp the denominator at 1.0 so a future-dated
+			// ts_source_ms (clock skew, time-zone glitches)
+			// can't flip the sign or push the divisor below 1
+			// — that would invert ranking and let bogus rows
+			// rank infinitely high.
 			order = fmt.Sprintf(
-				`f.rank / (1.0 + ((? - e.ts_source_ms) / 86400000.0) / %.1f)`,
+				`f.rank / MAX(1.0, 1.0 + ((? - e.ts_source_ms) / 86400000.0) / %.1f)`,
 				recencyHalfDays,
 			)
 			args = append(args, opts.NowMs)
@@ -238,8 +243,10 @@ func buildSearchSQL(opts SearchEventOpts, index string) (string, []any) {
 	case OrderRecency:
 		order = "ts_source_ms DESC"
 	default:
+		// Clamp denominator at 1.0 — see the matching note in
+		// the NoDedup branch above.
 		order = fmt.Sprintf(
-			`fts_rank / (1.0 + ((? - ts_source_ms) / 86400000.0) / %.1f)`,
+			`fts_rank / MAX(1.0, 1.0 + ((? - ts_source_ms) / 86400000.0) / %.1f)`,
 			recencyHalfDays,
 		)
 	}
@@ -320,7 +327,7 @@ func searchExtractions(ctx context.Context, db *sql.DB, opts SearchEventOpts) ([
 		order = "e.ts_source_ms DESC"
 	default:
 		order = fmt.Sprintf(
-			`fts_rank / (1.0 + ((? - e.ts_source_ms) / 86400000.0) / %.1f)`,
+			`fts_rank / MAX(1.0, 1.0 + ((? - e.ts_source_ms) / 86400000.0) / %.1f)`,
 			recencyHalfDays,
 		)
 	}

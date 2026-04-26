@@ -205,25 +205,32 @@ func LoadSubagentSpans(ctx context.Context, db *sql.DB, sessionID string, limit 
 		q    string
 		args []any
 	)
+	// GROUP BY only the identity keys (session_id, subagent_id).
+	// subagent_type is descriptive metadata and a host CAN report
+	// inconsistent types for the same thread (e.g. "planner"
+	// during start, "research-planner" mid-flight). Including
+	// type in GROUP BY would fragment one logical thread into
+	// multiple rows; MAX() picks one deterministic value
+	// (lexicographically last non-null) without fragmenting.
 	if sessionID == "" {
-		q = `SELECT session_id, subagent_id, subagent_type,
+		q = `SELECT session_id, subagent_id, MAX(subagent_type) AS subagent_type,
 		            MIN(ts_source_ms) AS started_at_ms,
 		            MAX(ts_source_ms) AS ended_at_ms,
 		            COUNT(*) AS event_count
 		       FROM events
 		      WHERE subagent_id IS NOT NULL
-		      GROUP BY session_id, subagent_id, subagent_type
+		      GROUP BY session_id, subagent_id
 		      ORDER BY ended_at_ms DESC
 		      LIMIT ?`
 		args = []any{limit}
 	} else {
-		q = `SELECT session_id, subagent_id, subagent_type,
+		q = `SELECT session_id, subagent_id, MAX(subagent_type) AS subagent_type,
 		            MIN(ts_source_ms) AS started_at_ms,
 		            MAX(ts_source_ms) AS ended_at_ms,
 		            COUNT(*) AS event_count
 		       FROM events
 		      WHERE subagent_id IS NOT NULL AND session_id = ?
-		      GROUP BY session_id, subagent_id, subagent_type
+		      GROUP BY session_id, subagent_id
 		      ORDER BY ended_at_ms DESC
 		      LIMIT ?`
 		args = []any{sessionID, limit}

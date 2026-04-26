@@ -41,15 +41,34 @@ func IngestEnvelope(ctx context.Context, tx *sql.Tx, env *ingest.Envelope, envel
 		return false, ErrRedactionRequired
 	}
 
+	// Race-free ingest_seq allocation: claim the next value via
+	// UPDATE...RETURNING on the seq table (migration 008). The
+	// UPDATE acquires SQLite's write lock; concurrent transactions
+	// serialise here, each getting a unique value. The previous
+	// MAX(ingest_seq)+1 sub-query was racy under SetMaxOpenConns>1
+	// and could lose events to a UNIQUE constraint violation that
+	// INSERT OR IGNORE silently swallowed.
+	var nextSeq int64
+	if err := tx.QueryRowContext(ctx,
+		`UPDATE seq SET next_value = next_value + 1
+		  WHERE name = 'ingest_seq'
+		  RETURNING next_value - 1`,
+	).Scan(&nextSeq); err != nil {
+		return false, fmt.Errorf("allocate ingest_seq: %w", err)
+	}
+
+	// INSERT OR IGNORE on event_id collision (the dedup path —
+	// real duplicate envelopes from upstream retries). Note we
+	// already paid for one ingest_seq value in the seq counter
+	// above; on duplicate the value is "burned" but the resulting
+	// gap is harmless (ingest_seq is monotonic but not required to
+	// be contiguous).
 	res, err := tx.ExecContext(ctx,
 		`INSERT OR IGNORE INTO raw_envelopes(
 			event_id, ingest_seq, source_agent, source_session_id,
 			ts_source_ms, ts_server_ms, envelope_json
-		) VALUES (
-			?, (SELECT COALESCE(MAX(ingest_seq), 0) + 1 FROM raw_envelopes),
-			?, ?, ?, ?, ?
-		)`,
-		env.EventID, env.SourceAgent, env.SourceSessionID,
+		) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		env.EventID, nextSeq, env.SourceAgent, env.SourceSessionID,
 		env.TsSource.UnixMilli(), tsServerMs, string(envelopeJSON),
 	)
 	if err != nil {
@@ -60,6 +79,9 @@ func IngestEnvelope(ctx context.Context, tx *sql.Tx, env *ingest.Envelope, envel
 		return false, fmt.Errorf("raw insert rows affected: %w", err)
 	}
 	if n == 0 {
+		// Event_id collision — real duplicate from upstream retry.
+		// Distinct from the silent-loss path the previous
+		// implementation could fall into.
 		return true, nil
 	}
 
