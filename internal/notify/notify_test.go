@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestNoop_SendNeverErrors(t *testing.T) {
@@ -96,5 +97,79 @@ func TestOutageTracker_MarkIsIdempotent(t *testing.T) {
 	}
 	if err := tr.MarkNotified(); err != nil {
 		t.Errorf("second MarkNotified should also succeed, got %v", err)
+	}
+}
+
+func TestOutageTracker_ShouldNotifyAgainAfterTTL(t *testing.T) {
+	t.Parallel()
+	flag := filepath.Join(t.TempDir(), "outage.flag")
+	tr := NewOutageTrackerWithRenotify(flag, 1*time.Hour)
+
+	if err := tr.MarkNotified(); err != nil {
+		t.Fatalf("MarkNotified: %v", err)
+	}
+	// Immediately after marking, we are inside the TTL.
+	if tr.ShouldNotify() {
+		t.Fatal("ShouldNotify true immediately after MarkNotified — TTL ignored")
+	}
+
+	// Age the flag file past the TTL via os.Chtimes — the only way
+	// to time-travel deterministically without a clock injection.
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(flag, old, old); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+	if !tr.ShouldNotify() {
+		t.Error("after TTL elapses, ShouldNotify should permit a re-notification")
+	}
+}
+
+func TestOutageTracker_MarkNotifiedRefreshesMtime(t *testing.T) {
+	t.Parallel()
+	flag := filepath.Join(t.TempDir(), "outage.flag")
+	tr := NewOutageTrackerWithRenotify(flag, 1*time.Hour)
+
+	if err := tr.MarkNotified(); err != nil {
+		t.Fatalf("first MarkNotified: %v", err)
+	}
+	// Pretend the flag got stale.
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(flag, old, old); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+	// Re-marking must restart the TTL clock — otherwise a long outage
+	// would keep emitting back-to-back notifications because each
+	// MarkNotified saw a flag still aged past TTL.
+	if err := tr.MarkNotified(); err != nil {
+		t.Fatalf("second MarkNotified: %v", err)
+	}
+	info, err := os.Stat(flag)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if time.Since(info.ModTime()) > time.Minute {
+		t.Errorf("MarkNotified did not refresh mtime; flag is %v old", time.Since(info.ModTime()))
+	}
+	if tr.ShouldNotify() {
+		t.Error("after refresh, ShouldNotify should be false again")
+	}
+}
+
+func TestOutageTracker_TTLZeroDisablesRenotify(t *testing.T) {
+	t.Parallel()
+	flag := filepath.Join(t.TempDir(), "outage.flag")
+	tr := NewOutageTrackerWithRenotify(flag, 0)
+
+	if err := tr.MarkNotified(); err != nil {
+		t.Fatalf("MarkNotified: %v", err)
+	}
+	// Even after deeply-aging the flag, ShouldNotify must stay false
+	// — TTL=0 is the explicit "legacy one-shot" mode.
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	if err := os.Chtimes(flag, old, old); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+	if tr.ShouldNotify() {
+		t.Error("TTL=0 must disable re-notification regardless of age")
 	}
 }
