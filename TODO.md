@@ -5,33 +5,38 @@ Everything here is fair game; pick one off, sketch a plan, ship it.
 
 ## Open
 
-### MCP and sub-agent tool_input extraction
+### Surface LLM token usage and rough cost
 
-Grep / Glob / WebFetch / WebSearch are now first-class — their
-tool_input feeds both `content_text` (via
-`internal/cli/assemble.go:renderToolContent`) and the typed
-`extractions` table (via `pkg/ingest/extract/{Grep,Glob,WebFetch,
-WebSearch}Extractor`). Still on the floor: MCP tools (`mcp__*`
-namespaced names) and sub-agent invocations (`Task` / Plan / etc.).
-
-Each MCP tool defines its own `tool_input` schema, so a single
-hard-coded mapping won't work; we'd need either a per-server
-allowlist or a generic "render the most-string-typed value" rule.
-For sub-agents, the prompt the agent was launched with is the
-high-value field — capturing it would make `aichronicles search`
-surface "I delegated work about X to a sub-agent on Tuesday"
-without the user having to remember the agent name.
+Per-row token counts are already persisted —
+`llm_outputs.input_tokens` and `output_tokens` (see
+`internal/store/llm_outputs.go:24-34`) get filled from
+`resp.Usage` in every summarize / reflect / propose call. What's
+missing is a user-facing way to see the totals: today the only
+way to ask "how many tokens did I burn last week?" is to drop
+to SQL.
 
 Scope:
 
-- Decide on the rendering shape: per-MCP-server allow-list keyed
-  off the `mcp__<server>__<tool>` prefix, or a generic fallback
-  that picks the longest string value from `tool_input`. The
-  generic fallback is faster to ship and less brittle.
-- Extend `internal/cli/assemble.go:toolDetail` to handle the
-  generic case for any unknown tool name.
-- Add a `SubagentPromptExtractor` in `pkg/ingest/extract/` that
-  emits `kind=subagent_prompt` from `Task`-shaped tool_input
-  (typically a `prompt` or `description` field).
-- Cover with unit tests parallel to `TestRenderToolContent` and
-  the existing per-tool extractor tests.
+- New CLI command `aichronicles tokens` (or `usage`) that
+  aggregates `llm_outputs` rows. Default view: per-day totals
+  for the last 30 days, broken down by `kind` (summary /
+  reflect / propose) and `model`. `--since 7d` / `--month`
+  flags for windows; `--format=json` for jq.
+- Optional cost estimation. The provider name is in
+  `llm_outputs.model`; ccusage maintains a curated price table
+  we could borrow (it pulls from LiteLLM's pricing dataset). Or
+  start with a simple TOML config under
+  `~/.config/aichronicles/prices.toml` listing $/Mtok per model
+  — explicit, no network at runtime, easy to override when
+  Anthropic changes prices.
+- Web UI: a `/usage` page using the same aggregation, pico-
+  styled table. Same shape as the sessions page.
+- MCP tool? Probably not v1 — agents asking "how much have I
+  cost the user this week" is a niche use case. Surface via CLI
+  / web first, add MCP later if it earns it.
+- Out of scope: per-conversation cost tracking. Would need a
+  way to attribute prompt tokens to specific events (which we
+  don't have today; tokens are recorded per-llm-output, not
+  per-event). ccusage solves a different problem (parsing
+  Claude Code's JSONL for cost) and is the right tool when you
+  want that view.
