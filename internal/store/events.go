@@ -86,6 +86,96 @@ func ResolveSessionIDPrefix(ctx context.Context, db *sql.DB, prefix string) (str
 	}
 }
 
+// SessionCompletion is one row returned by LoadSessionsForCompletion.
+// ID is the full session UUID (callers passing 8-char prefixes still
+// get the canonical form back); Description is a single human-
+// readable line composed of cwd + first user_prompt preview, suitable
+// for shells that surface descriptions next to each candidate (zsh,
+// fish).
+type SessionCompletion struct {
+	ID          string
+	Description string
+}
+
+const sessionCompletionPreviewMax = 80
+
+// LoadSessionsForCompletion returns up to limit sessions whose id
+// starts with prefix, newest-first, with a one-line description.
+// Designed for cobra completion functions: opens a read-only path,
+// expects to be called interactively, must return fast.
+//
+// The query uses the same idx_sessions_effective_ts expression
+// index as the MCP list_sessions tool, so a blank prefix is just
+// "the most recent N sessions" without a sort. Prefix is validated
+// before reaching SQL so LIKE wildcards can't slip in.
+func LoadSessionsForCompletion(ctx context.Context, db *sql.DB, prefix string, limit int) ([]SessionCompletion, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	prefix = strings.ToLower(prefix)
+	for _, r := range prefix {
+		isHex := (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')
+		if !isHex && r != '-' {
+			// Anything non-hex means the user is mid-typing
+			// something else; silently return empty rather than
+			// erroring — completion funcs shouldn't yell.
+			return nil, nil
+		}
+	}
+
+	rows, err := db.QueryContext(ctx,
+		`SELECT s.id,
+		        COALESCE(s.cwd, '-') AS cwd,
+		        COALESCE(
+		            (SELECT content_text FROM events
+		               WHERE session_id = s.id AND kind = 'user_prompt'
+		               ORDER BY ts_source_ms ASC LIMIT 1),
+		            '-'
+		        ) AS first_prompt
+		   FROM sessions s
+		  WHERE s.id LIKE ? || '%'
+		  ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC
+		  LIMIT ?`,
+		prefix, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query session completions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []SessionCompletion
+	for rows.Next() {
+		var id, cwd, firstPrompt string
+		if err := rows.Scan(&id, &cwd, &firstPrompt); err != nil {
+			return nil, fmt.Errorf("scan completion row: %w", err)
+		}
+		out = append(out, SessionCompletion{
+			ID:          id,
+			Description: formatCompletionDescription(cwd, firstPrompt),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate completion rows: %w", err)
+	}
+	return out, nil
+}
+
+// formatCompletionDescription packs cwd and the first-prompt preview
+// into one line. Newlines and tabs flatten because shell completion
+// frameworks treat tab as the field separator and break on a literal
+// newline. Long previews truncate so a shell column doesn't blow out.
+func formatCompletionDescription(cwd, firstPrompt string) string {
+	preview := firstPrompt
+	for _, r := range "\n\r\t" {
+		preview = strings.ReplaceAll(preview, string(r), " ")
+	}
+	runes := []rune(preview)
+	if len(runes) > sessionCompletionPreviewMax {
+		preview = string(runes[:sessionCompletionPreviewMax]) + "…"
+	}
+	return cwd + " — " + preview
+}
+
 // EventView is the read-only shape used by code that walks stored
 // events (prompt builders, export, audit). Nullable fields are
 // modelled with sql.Null* so callers can distinguish "empty string"
