@@ -7,6 +7,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.38.0
 	github.com/chromedp/cdproto v0.0.0-20260321001828-e3e3800016bc
 	github.com/chromedp/chromedp v0.15.1
+	github.com/coreos/go-systemd/v22 v22.7.0
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/google/uuid v1.6.0
 	github.com/openai/openai-go v1.12.0
