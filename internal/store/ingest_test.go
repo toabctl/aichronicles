@@ -84,6 +84,70 @@ func TestIngestEnvelope_RejectsAppliedFalse(t *testing.T) {
 	})
 }
 
+func TestIngestEnvelope_SubagentFieldsRoundTrip(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	env, raw := newValidEnvelope(t)
+	env.Subagent = &ingest.Subagent{ID: "agent-42", Type: "planner"}
+	rawWithSubagent, err := jsonMarshalEnvelope(env)
+	if err != nil {
+		t.Fatalf("re-marshal: %v", err)
+	}
+	_ = raw // ignored — we use the re-marshalled body so envelope_json matches
+
+	withTx(t, s, func(tx *sql.Tx) {
+		if _, err := IngestEnvelope(t.Context(), tx, env, rawWithSubagent, 1); err != nil {
+			t.Fatalf("IngestEnvelope: %v", err)
+		}
+	})
+
+	var gotID, gotType sql.NullString
+	if err := s.DB().QueryRow(
+		`SELECT subagent_id, subagent_type FROM events WHERE event_id = ?`, env.EventID,
+	).Scan(&gotID, &gotType); err != nil {
+		t.Fatalf("read columns: %v", err)
+	}
+	if gotID.String != "agent-42" || !gotID.Valid {
+		t.Errorf("subagent_id: got %+v, want agent-42", gotID)
+	}
+	if gotType.String != "planner" || !gotType.Valid {
+		t.Errorf("subagent_type: got %+v, want planner", gotType)
+	}
+}
+
+func TestIngestEnvelope_TopLevelEventLeavesSubagentNull(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	env, raw := newValidEnvelope(t)
+	// Subagent stays nil — most events.
+
+	withTx(t, s, func(tx *sql.Tx) {
+		if _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
+			t.Fatalf("IngestEnvelope: %v", err)
+		}
+	})
+
+	var gotID, gotType sql.NullString
+	if err := s.DB().QueryRow(
+		`SELECT subagent_id, subagent_type FROM events WHERE event_id = ?`, env.EventID,
+	).Scan(&gotID, &gotType); err != nil {
+		t.Fatalf("read columns: %v", err)
+	}
+	if gotID.Valid {
+		t.Errorf("subagent_id should be NULL for top-level events, got %q", gotID.String)
+	}
+	if gotType.Valid {
+		t.Errorf("subagent_type should be NULL for top-level events, got %q", gotType.String)
+	}
+}
+
+// jsonMarshalEnvelope re-serialises an envelope after a test mutation
+// so envelope_json stored alongside the row matches the typed columns
+// extracted from the same struct.
+func jsonMarshalEnvelope(env *ingest.Envelope) ([]byte, error) {
+	return json.Marshal(env)
+}
+
 func TestIngestEnvelope_HappyPath(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)

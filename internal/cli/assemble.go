@@ -96,7 +96,24 @@ func Assemble(raw []byte, now time.Time) (ingest.Envelope, error) {
 	if content := extractContentText(kind, hook); content != "" {
 		env.ContentText = content
 	}
+	if sa := extractSubagent(hook); sa != nil {
+		env.Subagent = sa
+	}
 	return env, nil
+}
+
+// extractSubagent pulls subagent identity from the hook payload.
+// Claude Code emits agent_id / agent_type on SubagentStart,
+// SubagentStop, and any tool_use that fires inside a subagent's
+// frame. Returns nil for top-level events so the envelope omits
+// the field on the wire entirely.
+func extractSubagent(hook map[string]any) *ingest.Subagent {
+	id, _ := hook["agent_id"].(string)
+	typ, _ := hook["agent_type"].(string)
+	if id == "" && typ == "" {
+		return nil
+	}
+	return &ingest.Subagent{ID: id, Type: typ}
 }
 
 // extractContentText pulls the most informative human-readable field
