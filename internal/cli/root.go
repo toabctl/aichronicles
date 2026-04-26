@@ -6,6 +6,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/toabctl/aichronicles/internal/web"
 )
 
 // Execute runs the root aichronicles command. Returned exit code is the
@@ -65,5 +67,6 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newProposeCmd())
 	cmd.AddCommand(newMCPServeCmd())
 	cmd.AddCommand(newSummariesCmd())
+	cmd.AddCommand(web.NewCommand())
 	return cmd
 }
