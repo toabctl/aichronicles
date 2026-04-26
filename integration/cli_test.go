@@ -5,10 +5,13 @@ package integration
 import (
 	"bytes"
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/toabctl/aichronicles/internal/cli"
 	"github.com/toabctl/aichronicles/internal/daemon"
@@ -314,5 +317,87 @@ func TestCLI_IngestRecoveryClearsOutageFlag(t *testing.T) {
 	}
 	if _, err := os.Stat(flag); !os.IsNotExist(err) {
 		t.Errorf("flag should be cleared after a successful post; stat err = %v", err)
+	}
+}
+
+// TestCLI_IngestHangingDaemon_FlipsOutageFlag reproduces the EXACT
+// production failure mode that caused 30 hours of silent event drops:
+// the daemon process is alive, the kernel reports the UDS as LISTEN,
+// connect() succeeds — but accept() never returns / the daemon never
+// reads the request body. From the hook's point of view the POST
+// hangs and times out. The fix being pinned: the timeout must trip,
+// the CLI must NOT propagate an error to the hook (Claude's prompt
+// loop would break), AND the outage flag must be written so the
+// rate-limited notifier fires a desktop banner.
+//
+// Without this test, a regression that (e.g.) widened the ingest
+// timeout to "infinite" or stopped calling maybeNotifyOutage on
+// timeout-class errors would silently re-introduce the bug.
+func TestCLI_IngestHangingDaemon_FlipsOutageFlag(t *testing.T) {
+	isolateEnv(t)
+
+	// A unix-domain listener that accepts but never reads from or
+	// responds to its connections. Mirrors the production state
+	// where the daemon's accept loop is wedged.
+	sockPath := filepath.Join(t.TempDir(), "sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// Hold the connection until the test finishes — never
+			// read, never write. The CLI must time out and treat
+			// this as a failure.
+			go func(c net.Conn) {
+				<-stop
+				_ = c.Close()
+			}(conn)
+		}
+	}()
+	// Cleanup order matters: signal the per-conn holders, then
+	// CLOSE THE LISTENER (unblocks Accept), THEN wait for the
+	// accept goroutine. Closing in the other order deadlocks.
+	defer func() {
+		close(stop)
+		_ = ln.Close()
+		wg.Wait()
+	}()
+
+	hook := []byte(`{"session_id":"x","hook_event_name":"UserPromptSubmit","cwd":"/","prompt":"hi"}`)
+	var stderr bytes.Buffer
+
+	start := time.Now()
+	err = cli.RunIngest(bytes.NewReader(hook), &stderr, sockPath, "")
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("RunIngest must not surface the timeout to the hook, got: %v", err)
+	}
+	// defaultIngestTimeout is 250ms; allow generous slack for slow CI.
+	if elapsed > 5*time.Second {
+		t.Errorf("RunIngest blocked for %v on a hanging daemon; the timeout did not trip", elapsed)
+	}
+	if !strings.Contains(stderr.String(), "post to daemon") {
+		t.Errorf("expected stderr to log the failed POST, got %q", stderr.String())
+	}
+
+	// The crucial assertion: a hanging-daemon failure must trip the
+	// outage flag. This is the side effect the rate-limited desktop
+	// notifier polls — without it, the user gets zero signal that
+	// events are being dropped, exactly as happened in production.
+	flag := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "aichronicles", "outage.flag")
+	if _, err := os.Stat(flag); err != nil {
+		t.Fatalf("hanging-daemon ingest must flip the outage flag at %s; got: %v",
+			flag, err)
 	}
 }
