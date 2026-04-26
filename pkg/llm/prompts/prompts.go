@@ -100,16 +100,41 @@ type LinkAnnotation struct {
 // ReflectionResult is the schema-validated payload of a
 // record_reflection tool call.
 type ReflectionResult struct {
-	TaskTypes      []Evidenced `json:"task_types"`
-	Frictions      []Evidenced `json:"frictions"`
-	WorkflowChange string      `json:"workflow_change"`
+	TaskTypes      []ReflectionTaskType `json:"task_types"`
+	Frictions      []ReflectionFriction `json:"frictions"`
+	WorkflowChange string               `json:"workflow_change"`
 }
 
-// Evidenced is a claim the model is making that must cite at least
-// one session id as evidence.
-type Evidenced struct {
-	Label      string   `json:"label"`
-	SessionIDs []string `json:"session_ids"`
+// ReflectionTaskType is one cluster of recurring work the model
+// observed across sessions. Evidence requires ≥2 distinct sessions
+// (a one-off task isn't yet a pattern), each grounded in a verbatim
+// quote so the user can grep the session and verify the claim.
+type ReflectionTaskType struct {
+	Label     string               `json:"label"`
+	Evidence  []ReflectionEvidence `json:"evidence"`
+	Frequency int                  `json:"frequency"`
+}
+
+// ReflectionFriction is one recurring pain point. Same evidence
+// contract as ReflectionTaskType, plus a severity hint so the
+// reviewer can sort by impact: "small" = mild annoyance,
+// "medium" = noticeable cost per occurrence, "large" = blocked
+// progress or required workaround.
+type ReflectionFriction struct {
+	Label     string               `json:"label"`
+	Evidence  []ReflectionEvidence `json:"evidence"`
+	Frequency int                  `json:"frequency"`
+	Severity  string               `json:"severity"`
+}
+
+// ReflectionEvidence has the same shape as ProposalEvidence — quote
+// is a VERBATIM excerpt (≤160 chars), what_happened is the ≤1-line
+// context. Kept as its own type so the two surfaces can diverge if
+// reflection ever needs a different field set.
+type ReflectionEvidence struct {
+	SessionID    string `json:"session_id"`
+	Quote        string `json:"quote"`
+	WhatHappened string `json:"what_happened"`
 }
 
 // ProposalResult is the schema-validated payload of a
@@ -337,7 +362,19 @@ type SessionDigest struct {
 	Links       []string // optional: distinct URLs observed in the session
 }
 
-const reflectSystem = `You reflect on a developer's recent AI coding sessions to spot patterns. You MUST call the record_reflection tool exactly once. Be concrete and grounded in the material. Do not invent sessions, tools, or files. Brevity beats completeness. Every claim in task_types or frictions must cite at least one real session_id from the input.`
+const reflectSystem = `You reflect on recent coding sessions to spot recurring patterns of work and recurring pain points. You MUST call the record_reflection tool exactly once.
+
+Hard rules:
+
+1. Every task_type and friction requires evidence from ≥2 DISTINCT sessions. One-off tasks/pains aren't patterns — drop them.
+2. Each item carries 2–5 evidence entries. Each quote is a verbatim excerpt (≤160 chars) copied from a session's summary text. If a session has no summary, you may quote from its first_prompt ONLY when that first_prompt is itself substantive (≥30 chars and concrete). Short follow-ups like "do plan", "go ahead", "/loop", or "what's next?" don't ground anything — skip those sessions. Do NOT paraphrase.
+3. frequency = the count of distinct session_ids in your evidence array.
+4. severity (frictions only) — "small" = mild annoyance / extra step. "medium" = noticeable cost per occurrence (re-running a query, re-reading docs). "large" = blocked progress, required workaround, lost work.
+5. Reject generic observations ("user wrote a lot of Go", "many sessions involved git"). Specific patterns only — name the tool, the artifact, the symptom.
+6. Reject single-session insights, no matter how dramatic. A 30-hour outage that taught you something is interesting, but until it RECURS it's not a pattern worth a workflow_change.
+7. workflow_change: ONE concrete sentence the user could act on this week, grounded in the same patterns you just listed. If no single change stands out, write "no single change recommended" — do NOT pad with vague advice ("communicate more", "take breaks", "iterate faster").
+
+For a typical 25-session window, expect 2–4 task_types, 1–4 frictions, and a workflow_change (or the explicit "no single change" disclaimer). Lean toward proposing a clearly-grounded pattern even when its severity is moderate.`
 
 const reflectionToolSchema = `{
   "type": "object",
@@ -347,32 +384,52 @@ const reflectionToolSchema = `{
     "task_types": {
       "type":"array",
       "minItems": 0,
-      "maxItems": 3,
+      "maxItems": 4,
       "items": {
         "type":"object",
-        "required":["label","session_ids"],
+        "required":["label","evidence","frequency"],
         "additionalProperties": false,
         "properties": {
-          "label": {"type":"string","minLength":1},
-          "session_ids": {"type":"array","minItems":1,"items":{"type":"string","minLength":1}}
+          "label":     {"type":"string","minLength":1,"maxLength":120},
+          "evidence":  {"$ref":"#/$defs/reflectEvidence"},
+          "frequency": {"type":"integer","minimum":2}
         }
       }
     },
     "frictions": {
       "type":"array",
       "minItems": 0,
-      "maxItems": 3,
+      "maxItems": 4,
       "items": {
         "type":"object",
-        "required":["label","session_ids"],
+        "required":["label","evidence","frequency","severity"],
         "additionalProperties": false,
         "properties": {
-          "label": {"type":"string","minLength":1},
-          "session_ids": {"type":"array","minItems":1,"items":{"type":"string","minLength":1}}
+          "label":     {"type":"string","minLength":1,"maxLength":120},
+          "evidence":  {"$ref":"#/$defs/reflectEvidence"},
+          "frequency": {"type":"integer","minimum":2},
+          "severity":  {"type":"string","enum":["small","medium","large"]}
         }
       }
     },
-    "workflow_change": {"type":"string"}
+    "workflow_change": {"type":"string","minLength":1}
+  },
+  "$defs": {
+    "reflectEvidence": {
+      "type":"array",
+      "minItems": 2,
+      "maxItems": 5,
+      "items": {
+        "type":"object",
+        "required":["session_id","quote","what_happened"],
+        "additionalProperties": false,
+        "properties": {
+          "session_id":    {"type":"string","minLength":1},
+          "quote":         {"type":"string","minLength":1,"maxLength":160},
+          "what_happened": {"type":"string","minLength":1}
+        }
+      }
+    }
   }
 }`
 
@@ -418,7 +475,7 @@ const proposeSystem = `You triage recent coding sessions to propose high-leverag
 Hard rules:
 
 1. A pattern requires evidence from ≥2 DISTINCT sessions. One-off tasks don't qualify, no matter how dramatic — drop them.
-2. Each proposal carries 2–5 evidence entries. Each quote is a verbatim excerpt (≤160 chars) copied from a session's summary text, or — if the session has no summary — from its first_prompt. Quotes can be short (one sentence, even one phrase, is fine); their job is to let the user grep the session and find them. Do NOT paraphrase, but feel free to truncate inside a sentence.
+2. Each proposal carries 2–5 evidence entries. Each quote is a verbatim excerpt (≤160 chars) copied from a session's summary text. If a session has no summary, you may quote from its first_prompt ONLY when the first_prompt is itself substantive (≥30 chars and concrete — "compare libvirt against openSUSE Tumbleweed" qualifies; "do plan", "go ahead", "/loop", "what's next?" do NOT). Sessions whose only available text is a short prompt are not usable evidence — skip them. Do NOT paraphrase, but feel free to truncate inside a sentence.
 3. If the same insight could be a skill, a CLAUDE.md rule, AND a script: pick ONE form — the most leveraged for the workflow. Justify the choice in alternatives_rejected (e.g. "considered as a script but a skill captures the multi-step decision-making this needs"). Do NOT also list the other forms; that's noise.
 4. Reject generic engineering advice ("write tests", "use small commits", "be careful with merges"). The user's CLAUDE.md already covers practice-level rules.
 5. Reject things that already exist as a CLI / Claude built-in tool. (You can mention them in alternatives_rejected.)

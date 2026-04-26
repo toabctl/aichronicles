@@ -82,8 +82,8 @@ func synthMinimalToolInput(toolName, hint string) json.RawMessage {
 		return b
 	case prompts.ToolNameReflection:
 		b, _ := json.Marshal(prompts.ReflectionResult{
-			TaskTypes:      []prompts.Evidenced{},
-			Frictions:      []prompts.Evidenced{},
+			TaskTypes:      []prompts.ReflectionTaskType{},
+			Frictions:      []prompts.ReflectionFriction{},
 			WorkflowChange: hint,
 		})
 		return b

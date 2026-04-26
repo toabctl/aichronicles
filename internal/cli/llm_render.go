@@ -166,20 +166,54 @@ func renderSummary(w io.Writer, body string) error {
 	return err
 }
 
-// renderReflection pretty-prints a prompts.ReflectionResult JSON body.
+// renderReflection pretty-prints a prompts.ReflectionResult JSON
+// body. Each task_type / friction leads with [freq=N (severity=…)]
+// so the reviewer can scan by frequency or impact; evidence quotes
+// follow indented so the claim is grep-verifiable in the terminal.
 func renderReflection(w io.Writer, body string) error {
 	var r prompts.ReflectionResult
 	if err := json.Unmarshal([]byte(body), &r); err != nil {
 		return err
 	}
 	var b strings.Builder
-	writeEvidencedSection(&b, w, "Recurring task types", r.TaskTypes)
-	writeEvidencedSection(&b, w, "Recurring sources of friction", r.Frictions)
+	if len(r.TaskTypes) > 0 {
+		fmt.Fprintf(&b, "%s\n", sectionHeader(w, "Recurring task types"))
+		for _, t := range r.TaskTypes {
+			fmt.Fprintf(&b, "  - %s  [freq=%d]\n", t.Label, t.Frequency)
+			writeReflectEvidence(&b, t.Evidence)
+		}
+		b.WriteByte('\n')
+	}
+	if len(r.Frictions) > 0 {
+		fmt.Fprintf(&b, "%s\n", sectionHeader(w, "Recurring sources of friction"))
+		for _, f := range r.Frictions {
+			fmt.Fprintf(&b, "  - %s  [freq=%d severity=%s]\n", f.Label, f.Frequency, f.Severity)
+			writeReflectEvidence(&b, f.Evidence)
+		}
+		b.WriteByte('\n')
+	}
 	if r.WorkflowChange != "" {
 		fmt.Fprintf(&b, "%s\n  %s\n", sectionHeader(w, "Suggested workflow change"), r.WorkflowChange)
 	}
 	_, err := fmt.Fprint(w, b.String())
 	return err
+}
+
+// writeReflectEvidence is the reflection-side mirror of writeEvidence
+// in renderProposal — kept separate because the Evidence types are
+// distinct (so the renderer can diverge if the surfaces diverge).
+func writeReflectEvidence(b *strings.Builder, evidence []prompts.ReflectionEvidence) {
+	if len(evidence) == 0 {
+		return
+	}
+	b.WriteString("    evidence:\n")
+	for _, ev := range evidence {
+		short := ev.SessionID
+		if len(short) > 8 {
+			short = short[:8]
+		}
+		fmt.Fprintf(b, "      %s: %q (%s)\n", short, ev.Quote, ev.WhatHappened)
+	}
 }
 
 // renderProposal pretty-prints a prompts.ProposalResult JSON body.
@@ -261,17 +295,6 @@ func writeBulletSection(b *strings.Builder, w io.Writer, header string, items []
 	fmt.Fprintf(b, "%s\n", sectionHeader(w, header))
 	for _, s := range items {
 		fmt.Fprintf(b, "  - %s\n", s)
-	}
-	b.WriteByte('\n')
-}
-
-func writeEvidencedSection(b *strings.Builder, w io.Writer, header string, items []prompts.Evidenced) {
-	if len(items) == 0 {
-		return
-	}
-	fmt.Fprintf(b, "%s\n", sectionHeader(w, header))
-	for _, it := range items {
-		fmt.Fprintf(b, "  - %s\n    evidence: %s\n", it.Label, strings.Join(it.SessionIDs, ", "))
 	}
 	b.WriteByte('\n')
 }
