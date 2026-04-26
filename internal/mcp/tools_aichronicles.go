@@ -114,6 +114,20 @@ func searchEventsHandler(st *store.Store) ToolHandler {
 			}
 		}
 
+		// Surface a clear "no such subagent" error rather than
+		// silently returning zero hits, which is indistinguishable
+		// from "real subagent with no matches" and would hide a
+		// typo from the calling agent.
+		if req.SubagentID != "" {
+			exists, err := store.SubagentExists(ctx, st.DB(), req.SubagentID)
+			if err != nil {
+				return nil, &Error{Code: InternalError, Message: "search_events: subagent check: " + err.Error()}
+			}
+			if !exists {
+				return TextError("search_events: no events for subagent_id %q", req.SubagentID), nil
+			}
+		}
+
 		hits, err := store.SearchEvents(ctx, st.DB(), store.SearchEventOpts{
 			Query:      ftsQuery,
 			SubagentID: req.SubagentID,

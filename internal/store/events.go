@@ -176,6 +176,29 @@ func formatCompletionDescription(cwd, firstPrompt string) string {
 	return cwd + " — " + preview
 }
 
+// SubagentExists reports whether any event has the given
+// subagent_id. Used by the MCP search_events handler to give the
+// caller a clean error when they pass an unknown subagent_id
+// rather than silently returning zero hits — which is
+// indistinguishable from "real subagent with no matches" and
+// hides typos from the agent.
+func SubagentExists(ctx context.Context, db *sql.DB, subagentID string) (bool, error) {
+	if subagentID == "" {
+		return false, nil
+	}
+	var n int
+	if err := db.QueryRowContext(ctx,
+		`SELECT 1 FROM events WHERE subagent_id = ? LIMIT 1`,
+		subagentID,
+	).Scan(&n); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("subagent existence check: %w", err)
+	}
+	return true, nil
+}
+
 // SubagentSpan is one row from LoadSubagentSpans: a sub-agent
 // thread aggregated from the subagent_id-bearing events that
 // share a (session_id, subagent_id) pair.

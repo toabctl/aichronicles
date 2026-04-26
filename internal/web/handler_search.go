@@ -69,7 +69,16 @@ func buildSearchHits(r *http.Request, st *store.Store, q, kind, since string, no
 		Order: store.OrderRank,
 		NowMs: now.UnixMilli(),
 	}
-	if d, ok := parseSinceWindow(since); ok {
+	if since != "" {
+		d, ok := parseSinceWindow(since)
+		if !ok {
+			// Surface unrecognised values rather than silently
+			// dropping the filter. Otherwise a typo like
+			// `since=24hr` returns all-time results and the user
+			// thinks the filter ran.
+			return SearchHits{Error: "since: unrecognised window " + since +
+				"; valid: 24h, 7d, 30d (or empty for all time)"}
+		}
 		opts.SinceMs = now.Add(-d).UnixMilli()
 	}
 

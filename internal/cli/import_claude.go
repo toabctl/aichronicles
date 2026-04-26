@@ -74,7 +74,12 @@ func newImportClaudeCmd() *cobra.Command {
 			"is logged loudly and counted — we surface format drift rather\n" +
 			"than hide it behind a synthesized ID.\n\n" +
 			"path defaults to ~/.claude/projects. A specific file or directory\n" +
-			"works too.",
+			"works too.\n\n" +
+			"Trust model: import-claude bypasses the daemon. Edge redaction\n" +
+			"runs in-process before each envelope is stored, but anything\n" +
+			"the daemon would otherwise enforce — future origin signing,\n" +
+			"rate limits, audit logging — does not run. Imports operate on\n" +
+			"files you already trust enough to read locally.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := defaultClaudeProjectsDir()

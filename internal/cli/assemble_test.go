@@ -386,10 +386,39 @@ func TestRenderToolContent(t *testing.T) {
 				"tool_input": map[string]any{
 					"flag":  true,
 					"short": "x",
-					"body":  "the informative payload that should win",
+					"body":  "the informative payload that should win and is very long",
 				},
 			},
-			want: "mcp__demo__doThing the informative payload that should win",
+			want: "mcp__demo__doThing the informative payload that should win and is very long",
+		},
+		{
+			// The B8 audit restraint: short string fields are
+			// likelier to be ids/flags/credentials than the payload.
+			// Below 16 runes we refuse the fallback and emit just
+			// the tool name.
+			name: "unknown tool ignores short string fields",
+			hook: map[string]any{
+				"tool_name": "mcp__demo__doThing",
+				"tool_input": map[string]any{
+					"value": "tooshort",
+				},
+			},
+			want: "mcp__demo__doThing",
+		},
+		{
+			// The B8 audit restraint: the longest string must
+			// clearly dominate runner-up. Two similar-length string
+			// fields → no obvious payload → fall back to bare name
+			// rather than picking the wrong one.
+			name: "unknown tool refuses ambiguous longest-vs-runner-up",
+			hook: map[string]any{
+				"tool_name": "mcp__demo__doThing",
+				"tool_input": map[string]any{
+					"hostname": "internal.host.example.com",
+					"command":  "do-the-thing-with-secrets",
+				},
+			},
+			want: "mcp__demo__doThing",
 		},
 		{
 			name: "unknown tool ignores nested objects",
@@ -397,10 +426,10 @@ func TestRenderToolContent(t *testing.T) {
 				"tool_name": "mcp__demo__doThing",
 				"tool_input": map[string]any{
 					"meta":  map[string]any{"big": "ignored"},
-					"value": "the only string",
+					"value": "the only meaningful string field here",
 				},
 			},
-			want: "mcp__demo__doThing the only string",
+			want: "mcp__demo__doThing the only meaningful string field here",
 		},
 		{
 			name: "missing tool_input falls back to bare name",

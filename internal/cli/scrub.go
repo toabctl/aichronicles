@@ -58,30 +58,77 @@ type ScrubOptions struct {
 }
 
 // ScrubReport summarizes what scrub did (or would do under --dry-run).
-// Counts are envelope counts, not byte counts — one envelope with a
+// Counts are row counts, not byte counts — one envelope with a
 // 40-char key contributes 1 to EnvelopesRewritten, not 40.
 type ScrubReport struct {
-	EventsScanned      int
-	EventsRewritten    int // events.content_text rewrites (implies raw was rewritten too)
-	EnvelopesRewritten int // raw_envelopes.envelope_json rewrites; >= EventsRewritten
-	PatternHits        map[string]int
-	DryRun             bool
+	EventsScanned       int
+	EventsRewritten     int // events.content_text rewrites (implies raw was rewritten too)
+	EnvelopesRewritten  int // raw_envelopes.envelope_json rewrites; >= EventsRewritten
+	LLMOutputsScanned   int
+	LLMOutputsRewritten int // llm_outputs.body rewrites
+	PatternHits         map[string]int
+	DryRun              bool
 }
 
-// RunScrub walks every raw envelope, applies the scanner to it, and
-// rewrites both raw_envelopes.envelope_json and events.content_text
-// when changes are needed. Each rewrite is its own transaction so a
-// mid-run failure leaves the DB consistent — some events scrubbed,
-// the rest unchanged.
+// RunScrub walks every raw envelope and every cached LLM output,
+// applies the scanner, and rewrites matches to <redacted:kind>
+// markers in both write paths to the store: raw_envelopes (with
+// the events projection) and llm_outputs (LLM responses that
+// never go through ingest's edge redactor).
+//
+// The whole run is one transaction. Either the entire detector-set
+// upgrade lands or nothing does — no half-scrubbed state on a
+// crash. The cost is holding SQLite's write lock for the duration
+// of the scan; readers (web, MCP, CLI search) keep working via WAL,
+// but other writers (the daemon, imports) block. That's acceptable
+// for a maintenance operation the user explicitly opted into.
 //
 // Returns the report even on error so callers see progress so far.
 func RunScrub(s *store.Store, scanner redact.Scanner, opts ScrubOptions, out io.Writer) (*ScrubReport, error) {
 	report := &ScrubReport{PatternHits: map[string]int{}, DryRun: opts.DryRun}
 
-	rows, err := s.DB().Query(`SELECT event_id, envelope_json FROM raw_envelopes ORDER BY ingest_seq ASC`)
+	tx, err := s.DB().Begin()
 	if err != nil {
-		return report, fmt.Errorf("list raw_envelopes: %w", err)
+		return report, fmt.Errorf("begin scrub tx: %w", err)
 	}
+	// Always rollback on the way out; commit (when not dry-run)
+	// happens explicitly at the end of the success path.
+	defer func() { _ = tx.Rollback() }()
+
+	if err := scrubRawEnvelopes(tx, scanner, opts, report, out); err != nil {
+		return report, err
+	}
+	if err := scrubLLMOutputs(tx, scanner, opts, report, out); err != nil {
+		return report, err
+	}
+
+	summary := fmt.Sprintf(
+		"scanned=%d envelopes_rewritten=%d events_content_rewritten=%d "+
+			"llm_outputs_scanned=%d llm_outputs_rewritten=%d dry_run=%t\n",
+		report.EventsScanned, report.EnvelopesRewritten, report.EventsRewritten,
+		report.LLMOutputsScanned, report.LLMOutputsRewritten, report.DryRun)
+	_, _ = fmt.Fprint(out, summary)
+	for _, p := range sortedKeys(report.PatternHits) {
+		_, _ = fmt.Fprintf(out, "  %-24s %d\n", p, report.PatternHits[p])
+	}
+
+	if !opts.DryRun {
+		if err := tx.Commit(); err != nil {
+			return report, fmt.Errorf("commit scrub: %w", err)
+		}
+	}
+	return report, nil
+}
+
+// scrubRawEnvelopes walks raw_envelopes inside the open transaction,
+// rewriting envelope_json and the corresponding events.content_text
+// in place when the scanner finds anything.
+func scrubRawEnvelopes(tx *sql.Tx, scanner redact.Scanner, opts ScrubOptions, report *ScrubReport, out io.Writer) error {
+	rows, err := tx.Query(`SELECT event_id, envelope_json FROM raw_envelopes ORDER BY ingest_seq ASC`)
+	if err != nil {
+		return fmt.Errorf("list raw_envelopes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
 
 	type rewrite struct {
 		eventID      string
@@ -96,8 +143,7 @@ func RunScrub(s *store.Store, scanner redact.Scanner, opts ScrubOptions, out io.
 		report.EventsScanned++
 		var eventID, rawJSON string
 		if err := rows.Scan(&eventID, &rawJSON); err != nil {
-			_ = rows.Close()
-			return report, fmt.Errorf("scan raw row: %w", err)
+			return fmt.Errorf("scan raw row: %w", err)
 		}
 
 		var env ingest.Envelope
@@ -114,8 +160,7 @@ func RunScrub(s *store.Store, scanner redact.Scanner, opts ScrubOptions, out io.
 
 		reMarshaled, err := json.Marshal(&env)
 		if err != nil {
-			_ = rows.Close()
-			return report, fmt.Errorf("re-marshal %s: %w", eventID, err)
+			return fmt.Errorf("re-marshal %s: %w", eventID, err)
 		}
 
 		rw := rewrite{
@@ -130,8 +175,7 @@ func RunScrub(s *store.Store, scanner redact.Scanner, opts ScrubOptions, out io.
 		pending = append(pending, rw)
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return report, err
+		return err
 	}
 	_ = rows.Close()
 
@@ -147,47 +191,87 @@ func RunScrub(s *store.Store, scanner redact.Scanner, opts ScrubOptions, out io.
 		mode := "would rewrite"
 		if !opts.DryRun {
 			mode = "rewrote"
-			if err := applyScrubWrite(s.DB(), rw.eventID, rw.newRaw, rw.newContent, rw.contentDirty); err != nil {
-				return report, fmt.Errorf("write %s: %w", rw.eventID, err)
+			if _, err := tx.Exec(
+				`UPDATE raw_envelopes SET envelope_json = ? WHERE event_id = ?`,
+				rw.newRaw, rw.eventID,
+			); err != nil {
+				return fmt.Errorf("update raw_envelopes %s: %w", rw.eventID, err)
+			}
+			if rw.contentDirty {
+				if _, err := tx.Exec(
+					`UPDATE events SET content_text = ? WHERE event_id = ?`,
+					rw.newContent, rw.eventID,
+				); err != nil {
+					return fmt.Errorf("update events %s: %w", rw.eventID, err)
+				}
 			}
 		}
 		_, _ = fmt.Fprintf(out, "%s %s patterns=%v\n", mode, firstN(rw.eventID, 8), rw.patterns)
 	}
-
-	summary := fmt.Sprintf("scanned=%d envelopes_rewritten=%d events_content_rewritten=%d dry_run=%t\n",
-		report.EventsScanned, report.EnvelopesRewritten, report.EventsRewritten, report.DryRun)
-	_, _ = fmt.Fprint(out, summary)
-	for _, p := range sortedKeys(report.PatternHits) {
-		_, _ = fmt.Fprintf(out, "  %-24s %d\n", p, report.PatternHits[p])
-	}
-	return report, nil
+	return nil
 }
 
-// applyScrubWrite does the two UPDATEs in one transaction so either
-// both succeed or neither does. Updating events.content_text fires the
-// events_fts_au trigger, keeping FTS consistent.
-func applyScrubWrite(db *sql.DB, eventID, newRaw string, newContent sql.NullString, contentDirty bool) error {
-	tx, err := db.Begin()
+// scrubLLMOutputs walks llm_outputs and rewrites bodies that match
+// the current detector set. LLM outputs land in the store via
+// SaveLLMOutput, not via /v1/ingest — so they bypass the edge
+// redactor entirely. Without this loop, an upgraded detector set
+// catches new patterns in events but stale bodies in llm_outputs
+// keep emitting the old leak through every read path.
+func scrubLLMOutputs(tx *sql.Tx, scanner redact.Scanner, opts ScrubOptions, report *ScrubReport, out io.Writer) error {
+	rows, err := tx.Query(`SELECT id, body FROM llm_outputs ORDER BY id ASC`)
 	if err != nil {
+		return fmt.Errorf("list llm_outputs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	type rewrite struct {
+		id       int64
+		newBody  string
+		patterns []string
+	}
+	var pending []rewrite
+
+	for rows.Next() {
+		report.LLMOutputsScanned++
+		var id int64
+		var body string
+		if err := rows.Scan(&id, &body); err != nil {
+			return fmt.Errorf("scan llm_outputs row: %w", err)
+		}
+		findings := scanner.Scan(body)
+		if len(findings) == 0 {
+			continue
+		}
+		clean, names := redact.Replace(body, findings)
+		if clean == body {
+			continue
+		}
+		pending = append(pending, rewrite{id: id, newBody: clean, patterns: names})
+	}
+	if err := rows.Err(); err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	_ = rows.Close()
 
-	if _, err := tx.Exec(
-		`UPDATE raw_envelopes SET envelope_json = ? WHERE event_id = ?`,
-		newRaw, eventID,
-	); err != nil {
-		return fmt.Errorf("update raw_envelopes: %w", err)
-	}
-	if contentDirty {
-		if _, err := tx.Exec(
-			`UPDATE events SET content_text = ? WHERE event_id = ?`,
-			newContent, eventID,
-		); err != nil {
-			return fmt.Errorf("update events: %w", err)
+	for _, rw := range pending {
+		for _, p := range rw.patterns {
+			report.PatternHits[p]++
 		}
+		report.LLMOutputsRewritten++
+
+		mode := "would rewrite"
+		if !opts.DryRun {
+			mode = "rewrote"
+			if _, err := tx.Exec(
+				`UPDATE llm_outputs SET body = ? WHERE id = ?`,
+				rw.newBody, rw.id,
+			); err != nil {
+				return fmt.Errorf("update llm_outputs %d: %w", rw.id, err)
+			}
+		}
+		_, _ = fmt.Fprintf(out, "%s llm_output id=%d patterns=%v\n", mode, rw.id, rw.patterns)
 	}
-	return tx.Commit()
+	return nil
 }
 
 func sortedKeys(m map[string]int) []string {

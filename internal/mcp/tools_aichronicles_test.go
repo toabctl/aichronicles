@@ -520,6 +520,27 @@ func TestListSubagents_EmptyStore(t *testing.T) {
 	}
 }
 
+// TestSearchEvents_UnknownSubagentIDIsClearError pins the B6
+// audit fix: an unknown subagent_id must surface as an explicit
+// error, not silently return zero hits (which is
+// indistinguishable from "real subagent with no matches" and
+// hides typos from the calling agent).
+func TestSearchEvents_UnknownSubagentIDIsClearError(t *testing.T) {
+	t.Parallel()
+	st, _ := seedSubagentEvents(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "search_events",
+		`{"query":"step","subagent_id":"agent-does-not-exist"}`)
+	if !res.IsError {
+		t.Fatalf("expected IsError=true for unknown subagent_id, got %+v", res)
+	}
+	if !strings.Contains(res.Content[0].Text, "no events for subagent_id") {
+		t.Errorf("expected diagnostic, got: %s", res.Content[0].Text)
+	}
+}
+
 func TestSearchEvents_SubagentIDFilterNarrows(t *testing.T) {
 	t.Parallel()
 	st, subID := seedSubagentEvents(t)

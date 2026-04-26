@@ -243,9 +243,17 @@ func Load() (*Config, error) {
 // group or world bit (mask 0077) refuses to load. Rationale: an api
 // key command is a trust boundary — if anyone else on the box can
 // rewrite the config, they can redirect the key to arbitrary places.
+//
+// Symlinks at the config path are refused outright when
+// api_key_command is set: an attacker with permission to rewrite a
+// symlink (but not the underlying file) could race-replace the
+// target after the perm check, and Lstat-then-Stat is the only way
+// to close that window. We use Lstat to inspect the path itself —
+// os.Stat would have followed the symlink and reported the
+// target's permissions, missing the attack vector entirely.
 func LoadFrom(path string) (*Config, error) {
 	cfg := Default()
-	info, statErr := os.Stat(path)
+	info, statErr := os.Lstat(path)
 	if statErr != nil {
 		if errors.Is(statErr, fs.ErrNotExist) {
 			return &cfg, nil
@@ -263,6 +271,14 @@ func LoadFrom(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if cfg.LLM.HasAPIKeyCommand() {
+		// Refuse symlinks: see the function-level comment.
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf(
+				"%s is a symlink and a provider api_key_command is set; "+
+					"refuse to trust a symlinked config (race-replacement risk). "+
+					"resolve the symlink and put the real file at %s",
+				path, path)
+		}
 		if perm := info.Mode().Perm(); perm&0o077 != 0 {
 			return nil, fmt.Errorf(
 				"%s has mode %04o but a provider api_key_command is set; "+

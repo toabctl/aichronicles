@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -134,6 +136,10 @@ func RunReflect(
 	built, err := prompts.BuildReflect(digests, window)
 	if err != nil {
 		return 0, fmt.Errorf("reflect: build prompt: %w", err)
+	}
+	if len(built.Patterns) > 0 {
+		slog.Info("reflect: egress redaction fired",
+			"patterns", strings.Join(built.Patterns, ","))
 	}
 
 	return runCachedLLM(ctx, s, newClient, cachedLLMInput{

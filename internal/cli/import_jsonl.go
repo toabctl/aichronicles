@@ -27,7 +27,13 @@ func newImportJSONLCmd() *cobra.Command {
 			"events.jsonl) and inserts each line into the store. Idempotent:\n" +
 			"duplicates (by event_id) are counted and skipped.\n\n" +
 			"Use this once after upgrading from the JSONL-only POC to backfill\n" +
-			"historical events into SQLite, or to replay a backup.",
+			"historical events into SQLite, or to replay a backup.\n\n" +
+			"Trust model: import-jsonl bypasses the daemon. The store still\n" +
+			"refuses unredacted envelopes (ErrRedactionRequired), but anything\n" +
+			"the daemon would otherwise enforce — future origin signing, rate\n" +
+			"limits, audit logging — does not run. Treat the input file as\n" +
+			"authoritative; if a third party hands you events.jsonl, audit it\n" +
+			"with `aichronicles audit` after import.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resolvedDB, err := paths.ResolveStorePath(dbPath)

@@ -478,3 +478,34 @@ daemon_start = false
 		t.Errorf("config without api_key_command should load under any mode, got %v", err)
 	}
 }
+
+// TestLoadFrom_APIKeyCommand_RefusesSymlink pins the B11 audit
+// fix: a symlink at the config path is rejected outright when
+// api_key_command is set, even when the symlink target has 0600
+// perms. os.Stat would have followed the link and reported the
+// target's perms (0600 → fine), missing the race-replacement
+// attack vector entirely. Lstat catches the symlink itself.
+func TestLoadFrom_APIKeyCommand_RefusesSymlink(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real.toml")
+	body := `
+[llm.anthropic]
+api_key_command = "echo secret"
+`
+	if err := os.WriteFile(target, []byte(body), 0o600); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+	link := filepath.Join(dir, "config.toml")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	_, err := LoadFrom(link)
+	if err == nil {
+		t.Fatal("expected error loading symlinked config with api_key_command")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("error should call out the symlink, got: %v", err)
+	}
+}

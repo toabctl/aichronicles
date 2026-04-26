@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -161,6 +163,16 @@ func RunSummarize(
 	built, err := prompts.BuildSummary(sessionID, events, links, files)
 	if err != nil {
 		return 0, fmt.Errorf("summarize: build prompt: %w", err)
+	}
+
+	// If the egress redactor caught anything during prompt
+	// assembly, surface it on stderr. Without this the user has
+	// no signal that scrubbing fired at all — `built.Patterns`
+	// was being silently dropped before the B5 audit fix.
+	if len(built.Patterns) > 0 {
+		slog.Info("summarize: egress redaction fired",
+			"session_id", sessionID,
+			"patterns", strings.Join(built.Patterns, ","))
 	}
 
 	if !opts.Force {

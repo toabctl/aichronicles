@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -126,6 +128,10 @@ func RunPropose(
 		return 0, fmt.Errorf("propose: enrich digests: %w", err)
 	}
 	built, err := prompts.BuildPropose(digests)
+	if err == nil && len(built.Patterns) > 0 {
+		slog.Info("propose: egress redaction fired",
+			"patterns", strings.Join(built.Patterns, ","))
+	}
 	if err != nil {
 		return 0, fmt.Errorf("propose: build prompt: %w", err)
 	}

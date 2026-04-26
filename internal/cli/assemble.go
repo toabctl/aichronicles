@@ -237,26 +237,57 @@ func stringField(m map[string]any, key string) string {
 	return s
 }
 
-// longestStringValue returns the longest string-typed value in m, or
-// "" when no top-level string field is present. Used as the
-// fallback rendering for tools we don't know per-shape — MCP tools
-// typically carry one big string field (a query, a path, a body)
-// alongside knobs; surfacing the longest one is a cheap proxy for
-// "the informative part." Non-string fields (numbers, nested
-// objects) are ignored deliberately to keep content_text tight.
+// longestStringValue returns the longest string-typed value in m
+// when it's clearly the informative payload, or "" otherwise. Used
+// as the fallback rendering for tools we don't know per-shape —
+// MCP tools typically carry one big string field (a query, a path,
+// a body) alongside knobs; surfacing the longest one is a cheap
+// proxy for "the informative part."
+//
+// Two restraints from the B8 audit fix:
+//
+//   - Minimum length of fallbackMinLen runes before we'll surface a
+//     value at all. A short string field is more likely a flag,
+//     id, or credential than a payload — we'd rather render the
+//     bare tool name than risk a false-positive secret leak.
+//
+//   - The longest value must clearly dominate any other strings.
+//     If two fields are similar lengths, neither is "obviously the
+//     payload"; refuse and fall back to bare tool name. Mitigates
+//     the risk of picking the wrong field when the schema gives
+//     no guidance.
+//
+// Non-string fields (numbers, nested objects, booleans) are ignored
+// deliberately to keep content_text tight.
+const (
+	fallbackMinLen      = 16 // shorter than this is likely a knob, not the payload
+	fallbackDominanceX2 = 2  // longest must be at least 2× the runner-up to win
+)
+
 func longestStringValue(m map[string]any) string {
 	if m == nil {
 		return ""
 	}
-	var best string
+	var best, secondBest string
 	for _, v := range m {
 		s, ok := v.(string)
 		if !ok {
 			continue
 		}
 		if len(s) > len(best) {
+			secondBest = best
 			best = s
+		} else if len(s) > len(secondBest) {
+			secondBest = s
 		}
+	}
+	if len([]rune(best)) < fallbackMinLen {
+		return ""
+	}
+	// "Clearly dominates" check: longest at least 2× the runner-up,
+	// or there's no runner-up at all (only one string field).
+	if secondBest != "" && len(best) < fallbackDominanceX2*len(secondBest) {
+		return ""
 	}
 	return best
 }

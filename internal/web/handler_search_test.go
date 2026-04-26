@@ -149,6 +149,24 @@ func TestSearchHits_SinceFilterApplied(t *testing.T) {
 	}
 }
 
+func TestSearchHits_UnrecognisedSinceIsError(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	status, body := fetch(t, base+"/search/hits?"+url.Values{
+		"q":     {"x"},
+		"since": {"24hr"}, // typo: was 24h
+	}.Encode())
+	if status != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", status)
+	}
+	if !strings.Contains(body, "unrecognised window") {
+		t.Errorf("expected error fragment, got:\n%s", body)
+	}
+}
+
 func TestParseSinceWindow(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
