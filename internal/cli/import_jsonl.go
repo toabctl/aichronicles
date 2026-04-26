@@ -85,15 +85,18 @@ func (r ImportReport) String() string {
 }
 
 // ImportJSONL reads envelopes line-by-line from r and inserts each
-// into the store. Every line runs in its own transaction — that way a
-// mid-file malformed line doesn't abort earlier successful writes.
-// ctx is propagated to each store write so Ctrl-C stops an import
-// between lines rather than after the current file.
+// into the store. Envelopes are batched into chunked transactions
+// (see envelopeBatcher) to amortise SQLite's per-commit fsync cost;
+// a malformed envelope inside a chunk falls back to per-row replay
+// so one bad line never aborts the surrounding rows.
+// ctx is propagated to every store write so Ctrl-C stops an import
+// between chunks rather than after the current file.
 //
 // Idempotent via event_id PK; rerunning on the same input is safe.
 func ImportJSONL(ctx context.Context, r io.Reader, s *store.Store) (ImportReport, error) {
 	start := time.Now()
 	report := ImportReport{}
+	batcher := newEnvelopeBatcher(s)
 
 	sc := bufio.NewScanner(r)
 	// Envelopes can carry long assistant messages — widen the default
@@ -129,45 +132,35 @@ func ImportJSONL(ctx context.Context, r io.Reader, s *store.Store) (ImportReport
 			continue
 		}
 
-		deduped, err := importOne(ctx, s, &env, scrubbed)
-		if err != nil {
-			// Storage-level error is fatal — something is wrong with
-			// the DB, not the input.
+		// Need a stable copy of env per envelope: Add stashes a pointer
+		// and the loop variable would otherwise be reused for the next
+		// iteration's fresh Unmarshal target.
+		envCopy := env
+		if err := batcher.Add(ctx, &envCopy, scrubbed); err != nil {
 			report.DurationMS = time.Since(start).Milliseconds()
+			report.Imported = batcher.Imported()
+			report.Deduped = batcher.Deduped()
 			return report, fmt.Errorf("import line %d (%s): %w", report.LinesRead, env.EventID, err)
-		}
-		if deduped {
-			report.Deduped++
-		} else {
-			report.Imported++
 		}
 	}
 	if err := sc.Err(); err != nil {
 		report.DurationMS = time.Since(start).Milliseconds()
+		report.Imported = batcher.Imported()
+		report.Deduped = batcher.Deduped()
 		return report, fmt.Errorf("scan: %w", err)
 	}
 
+	if err := batcher.Flush(ctx); err != nil {
+		report.DurationMS = time.Since(start).Milliseconds()
+		report.Imported = batcher.Imported()
+		report.Deduped = batcher.Deduped()
+		return report, fmt.Errorf("flush: %w", err)
+	}
+
+	report.Imported = batcher.Imported()
+	report.Deduped = batcher.Deduped()
 	report.DurationMS = time.Since(start).Milliseconds()
 	return report, nil
-}
-
-// importOne wraps one envelope insertion in its own transaction.
-func importOne(ctx context.Context, s *store.Store, env *ingest.Envelope, raw []byte) (bool, error) {
-	tx, err := s.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return false, fmt.Errorf("begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	tsServer := time.Now().UTC().UnixMilli()
-	deduped, err := store.IngestEnvelope(ctx, tx, env, raw, tsServer)
-	if err != nil {
-		return false, err
-	}
-	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("commit: %w", err)
-	}
-	return deduped, nil
 }
 
 // bytesTrimSpace avoids the strings.TrimSpace copy for empty-line

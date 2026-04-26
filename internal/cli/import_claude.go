@@ -148,12 +148,18 @@ func (r ClaudeImportReport) String() string {
 // ImportClaudeTranscripts walks target (file or directory) and
 // ingests every conversational transcript line. warnOut receives one
 // line per skipped-with-warning entry (missing uuid, invalid JSON)
-// so the user can grep the original transcript. The ctx is propagated
-// to each store write so Ctrl-C stops an import between lines rather
-// than after the current file.
+// so the user can grep the original transcript. The ctx is
+// propagated to every store write so Ctrl-C stops an import between
+// chunks rather than after the current file.
+//
+// Envelopes are streamed into one envelopeBatcher shared across all
+// files so chunk fsync cost amortises across file boundaries — a
+// directory of small transcripts no longer pays one commit per
+// short file plus one per row.
 func ImportClaudeTranscripts(ctx context.Context, target string, s *store.Store, warnOut io.Writer) (ClaudeImportReport, error) {
 	start := time.Now()
 	report := ClaudeImportReport{}
+	batcher := newEnvelopeBatcher(s)
 
 	info, err := os.Stat(target)
 	if err != nil {
@@ -184,11 +190,27 @@ func ImportClaudeTranscripts(ctx context.Context, target string, s *store.Store,
 	}
 
 	for _, path := range files {
-		if err := importClaudeFile(ctx, path, s, &report, warnOut); err != nil {
+		if err := importClaudeFile(ctx, path, batcher, &report, warnOut); err != nil {
+			// Make sure any buffered envelopes from earlier files
+			// land before we return — the contract is "progress
+			// up to the last completed chunk is durable".
+			_ = batcher.Flush(ctx)
+			report.Imported = batcher.Imported()
+			report.Deduped = batcher.Deduped()
 			report.DurationMS = time.Since(start).Milliseconds()
 			return report, fmt.Errorf("import %s: %w", path, err)
 		}
 	}
+
+	if err := batcher.Flush(ctx); err != nil {
+		report.Imported = batcher.Imported()
+		report.Deduped = batcher.Deduped()
+		report.DurationMS = time.Since(start).Milliseconds()
+		return report, fmt.Errorf("flush: %w", err)
+	}
+
+	report.Imported = batcher.Imported()
+	report.Deduped = batcher.Deduped()
 	report.DurationMS = time.Since(start).Milliseconds()
 	return report, nil
 }
@@ -213,7 +235,7 @@ type claudeMessage struct {
 	Model   string          `json:"model"`
 }
 
-func importClaudeFile(ctx context.Context, path string, s *store.Store, report *ClaudeImportReport, warnOut io.Writer) error {
+func importClaudeFile(ctx context.Context, path string, batcher *envelopeBatcher, report *ClaudeImportReport, warnOut io.Writer) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -235,7 +257,7 @@ func importClaudeFile(ctx context.Context, path string, s *store.Store, report *
 		if len(line) > 0 {
 			lineNum++
 			report.LinesRead++
-			if err := processClaudeLine(ctx, s, path, lineNum, line, report, warnOut); err != nil {
+			if err := processClaudeLine(ctx, batcher, path, lineNum, line, report, warnOut); err != nil {
 				return err
 			}
 		}
@@ -252,7 +274,12 @@ func importClaudeFile(ctx context.Context, path string, s *store.Store, report *
 // error ONLY for storage-level failures; every format / validation
 // issue is counted into report and reported via warnOut so one bad
 // line never aborts the whole import.
-func processClaudeLine(ctx context.Context, s *store.Store, path string, lineNum int, line []byte, report *ClaudeImportReport, warnOut io.Writer) error {
+//
+// Lines that pass validation are queued on the batcher rather than
+// committed individually — the batcher owns the imported / deduped
+// counters, and ImportClaudeTranscripts copies them onto the report
+// once the trailing chunk has been flushed.
+func processClaudeLine(ctx context.Context, batcher *envelopeBatcher, path string, lineNum int, line []byte, report *ClaudeImportReport, warnOut io.Writer) error {
 	if len(line) > maxClaudeLineBytes {
 		report.Invalid++
 		importWarn(warnOut, fmt.Sprintf("line too large at %s:%d (%d bytes, cap %d)", path, lineNum, len(line), maxClaudeLineBytes))
@@ -298,14 +325,8 @@ func processClaudeLine(ctx context.Context, s *store.Store, path string, lineNum
 		return nil
 	}
 
-	deduped, err := importOneEnvelope(ctx, s, env, rawForStore)
-	if err != nil {
+	if err := batcher.Add(ctx, env, rawForStore); err != nil {
 		return fmt.Errorf("%s:%d: %w", path, lineNum, err)
-	}
-	if deduped {
-		report.Deduped++
-	} else {
-		report.Imported++
 	}
 	return nil
 }
@@ -538,26 +559,4 @@ func stringContent(m *claudeMessage) string {
 func importWarn(w io.Writer, args ...any) {
 	parts := append([]any{"aichronicles import-claude:"}, args...)
 	_, _ = fmt.Fprintln(w, parts...)
-}
-
-// importOneEnvelope runs one envelope through store.IngestEnvelope in
-// its own transaction. Shared with the events.jsonl importer in
-// import_jsonl.go via importOne, but the two are kept separate so
-// schema drift for either format is isolated.
-func importOneEnvelope(ctx context.Context, s *store.Store, env *ingest.Envelope, raw []byte) (bool, error) {
-	tx, err := s.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return false, fmt.Errorf("begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	tsServer := time.Now().UTC().UnixMilli()
-	deduped, err := store.IngestEnvelope(ctx, tx, env, raw, tsServer)
-	if err != nil {
-		return false, err
-	}
-	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("commit: %w", err)
-	}
-	return deduped, nil
 }
