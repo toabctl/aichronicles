@@ -39,3 +39,14 @@ Cover the seams that unit tests can't: real SQLite, the UDS listener, the ingest
 ## 6. Never guess — always root-cause
 
 When a test fails, a build breaks, or a behavior is wrong: read the code, read the error, reproduce it, and understand *why* before changing anything. No "try this and see." No plausible-sounding fixes. No broad catch-and-ignore. If you can't explain the failure in one sentence, you haven't found the cause yet.
+
+## 7. Correctness beats coverage
+
+When a feature can be built two ways — narrow but always right, or broad but sometimes wrong — choose narrow. Wrong stored data (a synthesised URL pointing at the wrong PR, a "key file" the session never touched, a link the LLM hallucinated) is worse than missing data: it produces confidently-wrong results that are hard to spot and harder to debug.
+
+Concretely:
+
+- Only synthesise a value when its inputs unambiguously determine it. If resolving a reference needs context that might be stale, missing, or guessed-at, capture the bare fact and defer resolution.
+- Anti-fabrication grounding (the "Links observed" / "Files observed" prompt pattern) beats soft "please don't invent" instructions. When the model is asked to enrich captured data, give it the canonical list and tell it to drop entries it can't attribute.
+- Heuristic shortcuts like "the cwd's git remote at extract time tells us the repo" or "GitHub's redirect papers over `/pull/` vs `/issues/`" almost always fail silently in some corner. Skip the case rather than ship the heuristic.
+- "Returning nothing" is a valid answer. If extraction can't determine a value cleanly, drop the row; the user (or a later layer like an LLM) can do the inference better than a regex.
