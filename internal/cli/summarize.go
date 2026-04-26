@@ -45,7 +45,8 @@ func newSummarizeCmd() *cobra.Command {
 			"database.\n\n" +
 			"Requires " + llm.APIKeyEnv + " to be set unless --force is off AND\n" +
 			"a cached summary exists.",
-		Args: cobra.ExactArgs(1),
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeSessionID,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sessionID := args[0]
 			format, err := ParseOutputFormat(formatIn)

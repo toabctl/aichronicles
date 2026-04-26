@@ -81,6 +81,7 @@ func newSummariesListCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&sessionIn, "session", "", "filter by session id or unique prefix")
+	registerSessionFlagCompletion(cmd)
 	cmd.Flags().StringVar(&typeIn, "type", "", "filter by output type (summary | reflect | propose)")
 	cmd.Flags().IntVar(&limit, "limit", 0, "max rows to list (default 50)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
@@ -104,7 +105,8 @@ func newSummariesShowCmd() *cobra.Command {
 			"Errors with `no output for session …/type …` when the session\n" +
 			"exists but has never been summarized/reflected/proposed under\n" +
 			"the requested type.",
-		Args: cobra.ExactArgs(1),
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeSessionID,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, err := ParseOutputFormat(formatIn)
 			if err != nil {
