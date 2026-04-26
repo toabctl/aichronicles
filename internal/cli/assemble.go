@@ -171,8 +171,21 @@ func toolDetail(toolName string, input map[string]any) string {
 		return stringField(input, "url")
 	case "WebSearch":
 		return stringField(input, "query")
+	case "Task":
+		// Sub-agent launch. Both fields are typically present;
+		// description is shorter and clearer for a one-line
+		// preview, prompt is the full instructions.
+		if d := stringField(input, "description"); d != "" {
+			return d
+		}
+		return stringField(input, "prompt")
 	}
-	return ""
+	// Unknown tool (commonly an MCP tool — `mcp__server__name`
+	// in Claude Code's namespace, with a per-server tool_input
+	// schema we can't enumerate). Fall back to the longest
+	// string-valued field in tool_input so the most informative
+	// payload still reaches FTS without a per-server allow-list.
+	return longestStringValue(input)
 }
 
 // stringField returns m[key] as a string when present and non-empty,
@@ -184,4 +197,28 @@ func stringField(m map[string]any, key string) string {
 		return ""
 	}
 	return s
+}
+
+// longestStringValue returns the longest string-typed value in m, or
+// "" when no top-level string field is present. Used as the
+// fallback rendering for tools we don't know per-shape — MCP tools
+// typically carry one big string field (a query, a path, a body)
+// alongside knobs; surfacing the longest one is a cheap proxy for
+// "the informative part." Non-string fields (numbers, nested
+// objects) are ignored deliberately to keep content_text tight.
+func longestStringValue(m map[string]any) string {
+	if m == nil {
+		return ""
+	}
+	var best string
+	for _, v := range m {
+		s, ok := v.(string)
+		if !ok {
+			continue
+		}
+		if len(s) > len(best) {
+			best = s
+		}
+	}
+	return best
 }

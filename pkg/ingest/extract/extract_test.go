@@ -298,7 +298,79 @@ var (
 	_ Extractor = GlobExtractor
 	_ Extractor = WebFetchExtractor
 	_ Extractor = WebSearchExtractor
+	_ Extractor = TaskExtractor
 )
+
+func TestTask_PromptExtracted(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool: &ingest.Tool{Name: "Task"},
+		Payload: map[string]any{
+			"tool_input": map[string]any{
+				"description":   "investigate slow query",
+				"subagent_type": "planner",
+				"prompt":        "Look at internal/store/search.go and identify the slowest path.",
+			},
+		},
+	}
+	got := FromEnvelope(env)
+	if len(got) != 1 || got[0].Kind != KindSubagentPrompt {
+		t.Fatalf("got %+v, want one subagent_prompt", got)
+	}
+	if !reflect.DeepEqual(got[0].Extra, map[string]any{"subagent_type": "planner"}) {
+		t.Errorf("extra: got %+v, want subagent_type=planner", got[0].Extra)
+	}
+	if got[0].Value != "Look at internal/store/search.go and identify the slowest path." {
+		t.Errorf("value: got %q", got[0].Value)
+	}
+}
+
+func TestTask_NonTaskToolSkipped(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool: &ingest.Tool{Name: "Read"},
+		Payload: map[string]any{
+			"tool_input": map[string]any{"prompt": "should not extract"},
+		},
+	}
+	for _, x := range FromEnvelope(env) {
+		if x.Kind == KindSubagentPrompt {
+			t.Errorf("non-Task tool should not produce subagent_prompt: %+v", x)
+		}
+	}
+}
+
+func TestTask_MissingPromptSkipped(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool: &ingest.Tool{Name: "Task"},
+		Payload: map[string]any{
+			"tool_input": map[string]any{"description": "no prompt field"},
+		},
+	}
+	for _, x := range FromEnvelope(env) {
+		if x.Kind == KindSubagentPrompt {
+			t.Errorf("Task without prompt should not extract: %+v", x)
+		}
+	}
+}
+
+func TestTask_NoSubagentTypeOmitsExtra(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool: &ingest.Tool{Name: "Task"},
+		Payload: map[string]any{
+			"tool_input": map[string]any{"prompt": "do the thing"},
+		},
+	}
+	got := FromEnvelope(env)
+	if len(got) != 1 {
+		t.Fatalf("got %d extractions, want 1", len(got))
+	}
+	if got[0].Extra != nil {
+		t.Errorf("extra should be nil when subagent_type absent: %+v", got[0].Extra)
+	}
+}
 
 func TestGrep_PatternOnlyExtracted(t *testing.T) {
 	t.Parallel()

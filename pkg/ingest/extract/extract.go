@@ -24,12 +24,13 @@ import (
 // Kind names for Extraction.Kind. Kept as exported constants so
 // callers (the store, future MCP search tools) match on them.
 const (
-	KindURL          = "url"
-	KindFilePath     = "file_path"
-	KindShellCommand = "shell_command"
-	KindGrepPattern  = "grep_pattern"
-	KindGlobPattern  = "glob_pattern"
-	KindWebQuery     = "web_query"
+	KindURL            = "url"
+	KindFilePath       = "file_path"
+	KindShellCommand   = "shell_command"
+	KindGrepPattern    = "grep_pattern"
+	KindGlobPattern    = "glob_pattern"
+	KindWebQuery       = "web_query"
+	KindSubagentPrompt = "subagent_prompt"
 )
 
 // Extraction is one fact derived from an envelope. The caller writes
@@ -57,6 +58,7 @@ var Registered = []Extractor{
 	GlobExtractor,
 	WebFetchExtractor,
 	WebSearchExtractor,
+	TaskExtractor,
 }
 
 // FromEnvelope runs every Registered extractor against env and returns
@@ -255,4 +257,35 @@ func WebSearchExtractor(env *ingest.Envelope) []Extraction {
 		return nil
 	}
 	return []Extraction{{Kind: KindWebQuery, Value: q}}
+}
+
+// TaskExtractor emits the prompt a sub-agent was launched with as
+// a typed fact. Lets `aichronicles search` surface "I delegated
+// work about X to a sub-agent" without the user having to remember
+// the agent name. The Task tool carries both `description` (one-
+// line) and `prompt` (the full instructions); we extract `prompt`
+// because it's the high-recall field and the description is
+// already mirrored into content_text by toolDetail.
+//
+// The `subagent_type` field — when present — lands in Extra so
+// downstream queries can ask "what prompts did my planner get?"
+// without joining against the (forthcoming) subagent_threads
+// projection.
+func TaskExtractor(env *ingest.Envelope) []Extraction {
+	if env.Tool == nil || env.Tool.Name != "Task" {
+		return nil
+	}
+	input, ok := toolInput(env)
+	if !ok {
+		return nil
+	}
+	prompt, ok := input["prompt"].(string)
+	if !ok || prompt == "" {
+		return nil
+	}
+	ex := Extraction{Kind: KindSubagentPrompt, Value: prompt}
+	if t, ok := input["subagent_type"].(string); ok && t != "" {
+		ex.Extra = map[string]any{"subagent_type": t}
+	}
+	return []Extraction{ex}
 }

@@ -290,12 +290,57 @@ func TestRenderToolContent(t *testing.T) {
 			want: "WebSearch Go FTS5 trigram",
 		},
 		{
-			name: "unknown tool falls back to bare name",
+			name: "Task description preferred when present",
+			hook: map[string]any{
+				"tool_name": "Task",
+				"tool_input": map[string]any{
+					"description":   "investigate slow query",
+					"subagent_type": "planner",
+					"prompt":        "Read internal/store/search.go.",
+				},
+			},
+			want: "Task investigate slow query",
+		},
+		{
+			name: "Task falls back to prompt when no description",
+			hook: map[string]any{
+				"tool_name": "Task",
+				"tool_input": map[string]any{
+					"prompt": "Read internal/store/search.go.",
+				},
+			},
+			want: "Task Read internal/store/search.go.",
+		},
+		{
+			name: "unknown tool with no string fields falls back to bare name",
 			hook: map[string]any{
 				"tool_name":  "MysteryTool",
-				"tool_input": map[string]any{"foo": "bar"},
+				"tool_input": map[string]any{"flag": true, "count": 3},
 			},
 			want: "MysteryTool",
+		},
+		{
+			name: "unknown tool surfaces longest string field",
+			hook: map[string]any{
+				"tool_name": "mcp__demo__doThing",
+				"tool_input": map[string]any{
+					"flag":  true,
+					"short": "x",
+					"body":  "the informative payload that should win",
+				},
+			},
+			want: "mcp__demo__doThing the informative payload that should win",
+		},
+		{
+			name: "unknown tool ignores nested objects",
+			hook: map[string]any{
+				"tool_name": "mcp__demo__doThing",
+				"tool_input": map[string]any{
+					"meta":  map[string]any{"big": "ignored"},
+					"value": "the only string",
+				},
+			},
+			want: "mcp__demo__doThing the only string",
 		},
 		{
 			name: "missing tool_input falls back to bare name",
