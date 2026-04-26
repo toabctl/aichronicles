@@ -29,6 +29,7 @@ type SessionRow struct {
 	Cwd          string // working directory at last event, or "-"
 	FirstPrompt  string // truncated first user_prompt content_text
 	HasSummary   bool   // an llm_outputs(kind='summary') row exists for this session
+	SummaryTopic string // parsed `topic` field from the cached summary; empty when none
 }
 
 // SessionDetail is the data shape the session detail template

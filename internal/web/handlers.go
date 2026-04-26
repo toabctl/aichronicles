@@ -3,12 +3,14 @@ package web
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 // previewMaxRunes caps how much of a prompt or content blob we
@@ -37,9 +39,9 @@ func (s *Server) sessionsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // loadSessionsForList runs the read query backing the sessions page.
-// One SQL roundtrip with a LEFT JOIN on llm_outputs and a correlated
-// SELECT for the first user_prompt — same shape as the MCP
-// list_sessions tool, plus the has-summary flag.
+// One SQL roundtrip pulls the session rows + first-prompt preview;
+// a second indexed query fetches each session's cached summary so
+// the row can show the model-attributed topic alongside the prompt.
 func loadSessionsForList(ctx context.Context, st *store.Store, limit int) ([]SessionRow, error) {
 	const q = `
 		SELECT s.id,
@@ -49,9 +51,7 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int) ([]Ses
 		       s.cwd,
 		       (SELECT content_text FROM events
 		          WHERE session_id = s.id AND kind = 'user_prompt'
-		          ORDER BY ts_source_ms ASC LIMIT 1) AS first_prompt,
-		       EXISTS(SELECT 1 FROM llm_outputs lo
-		                WHERE lo.session_id = s.id AND lo.kind = 'summary') AS has_summary
+		          ORDER BY ts_source_ms ASC LIMIT 1) AS first_prompt
 		  FROM sessions s
 		 ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC
 		 LIMIT ?`
@@ -64,6 +64,7 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int) ([]Ses
 
 	now := time.Now()
 	var out []SessionRow
+	var ids []string
 	for rows.Next() {
 		var (
 			id          string
@@ -72,9 +73,8 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int) ([]Ses
 			eventCount  int
 			cwd         sql.NullString
 			firstPrompt sql.NullString
-			hasSummary  bool
 		)
-		if err := rows.Scan(&id, &startedMs, &endedMs, &eventCount, &cwd, &firstPrompt, &hasSummary); err != nil {
+		if err := rows.Scan(&id, &startedMs, &endedMs, &eventCount, &cwd, &firstPrompt); err != nil {
 			return nil, fmt.Errorf("scan session row: %w", err)
 		}
 		out = append(out, SessionRow{
@@ -84,13 +84,39 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int) ([]Ses
 			EventCount:   eventCount,
 			Cwd:          orDash(cwd),
 			FirstPrompt:  truncatePreview(firstPrompt),
-			HasSummary:   hasSummary,
 		})
+		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate session rows: %w", err)
 	}
+
+	summaries, err := store.LoadSummariesIndexedByID(ctx, st.DB(), ids)
+	if err != nil {
+		return nil, fmt.Errorf("load summaries: %w", err)
+	}
+	for i := range out {
+		summary, ok := summaries[out[i].ID]
+		if !ok {
+			continue
+		}
+		out[i].HasSummary = true
+		out[i].SummaryTopic = parseSummaryTopic(summary.Body)
+	}
 	return out, nil
+}
+
+// parseSummaryTopic extracts the `topic` field from a cached
+// summary body. Returns empty string when the body is malformed
+// JSON or the topic is missing — the row still renders the badge,
+// just without the inline topic line. Scoped narrow on purpose:
+// a one-liner per row doesn't need the rest of SummaryResult.
+func parseSummaryTopic(body string) string {
+	var parsed prompts.SummaryResult
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		return ""
+	}
+	return parsed.Topic
 }
 
 // shortID returns the 8-char preview the CLI uses everywhere

@@ -43,6 +43,14 @@ main.container {
   font-style: italic;
 }
 
+/* Cached-summary topic shown inline below the first prompt on
+   the sessions list and search results. Muted + italic so the
+   prompt remains the primary signal. */
+.topic {
+  color: var(--pico-muted-color);
+  font-style: italic;
+}
+
 /* Sessions table — let the cwd column wrap on long paths but
    keep the timestamp column tight. */
 table.sessions td.cwd {

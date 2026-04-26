@@ -191,6 +191,90 @@ func TestSessionsPage_HasSummaryBadgeOnlyForCachedRows(t *testing.T) {
 	}
 }
 
+func TestSessionsPage_ShowsSummaryTopicInRow(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+
+	withTopic := seedSession(t, st, "sess-topical", "long question text", now)
+	seedSession(t, st, "sess-plain", "another question", now.Add(time.Minute))
+
+	// Plant a parseable summary on the first session only.
+	tx, err := st.DB().Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
+		SessionID:   sql.NullString{String: withTopic, Valid: true},
+		Kind:        store.LLMKindSummary,
+		Model:       "claude-sonnet-4-6",
+		PromptHash:  "h-topic",
+		Body:        `{"topic":"Reproducing the kitten kerning bug"}`,
+		CreatedAtMs: now.UnixMilli(),
+	}); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("seed summary: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	_, body := fetch(t, base+"/")
+	if !strings.Contains(body, "Reproducing the kitten kerning bug") {
+		t.Errorf("topic should render inline for summarised session:\n%s", body)
+	}
+	// The row uses <small class="topic"> — confirm we wrap it so the
+	// topic stays muted/italic per the CSS contract.
+	if !strings.Contains(body, `<small class="topic">`) {
+		t.Errorf("expected <small class=\"topic\"> wrapper for the topic line:\n%s", body)
+	}
+}
+
+func TestSessionsPage_MalformedSummaryBodyOmitsTopic(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	id := seedSession(t, st, "sess-malformed", "another question", now)
+
+	tx, err := st.DB().Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
+		SessionID:   sql.NullString{String: id, Valid: true},
+		Kind:        store.LLMKindSummary,
+		Model:       "test",
+		PromptHash:  "h-bad-list",
+		Body:        "not actually JSON",
+		CreatedAtMs: now.UnixMilli(),
+	}); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("seed: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	status, body := fetch(t, base+"/")
+	if status != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", status)
+	}
+	// Badge still appears (the row has a summary), but the topic
+	// line must be absent because the JSON didn't parse.
+	if !strings.Contains(body, "badge-summary") {
+		t.Errorf("expected summary badge even for malformed body:\n%s", body)
+	}
+	if strings.Contains(body, `<small class="topic">`) {
+		t.Errorf("malformed summary must not render an empty topic line:\n%s", body)
+	}
+}
+
 func TestStaticAssets_Served(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)
