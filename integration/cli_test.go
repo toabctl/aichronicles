@@ -52,7 +52,7 @@ func TestCLI_IngestRoundTrip(t *testing.T) {
 	}`)
 
 	var stderr bytes.Buffer
-	if err := cli.RunIngest(bytes.NewReader(hook), &stderr, sock); err != nil {
+	if err := cli.RunIngest(bytes.NewReader(hook), &stderr, sock, ""); err != nil {
 		t.Fatalf("RunIngest returned error: %v", err)
 	}
 	if stderr.Len() != 0 {
@@ -116,7 +116,7 @@ func TestCLI_IngestRedactsSecretsEndToEnd(t *testing.T) {
 	}`)
 
 	var stderr bytes.Buffer
-	if err := cli.RunIngest(bytes.NewReader(hook), &stderr, sock); err != nil {
+	if err := cli.RunIngest(bytes.NewReader(hook), &stderr, sock, ""); err != nil {
 		t.Fatalf("RunIngest: %v", err)
 	}
 
@@ -192,7 +192,7 @@ func TestCLI_IngestRespectsDenyPaths(t *testing.T) {
 	}`)
 
 	var stderr bytes.Buffer
-	if err := cli.RunIngest(bytes.NewReader(hook), &stderr, sock); err != nil {
+	if err := cli.RunIngest(bytes.NewReader(hook), &stderr, sock, ""); err != nil {
 		t.Fatalf("RunIngest: %v", err)
 	}
 
@@ -213,7 +213,7 @@ func TestCLI_IngestRespectsDenyPaths(t *testing.T) {
 		"prompt": "ok"
 	}`)
 	stderr.Reset()
-	if err := cli.RunIngest(bytes.NewReader(hookOK), &stderr, sock); err != nil {
+	if err := cli.RunIngest(bytes.NewReader(hookOK), &stderr, sock, ""); err != nil {
 		t.Fatalf("RunIngest allowed: %v", err)
 	}
 	_ = s.DB().QueryRow(`SELECT COUNT(*) FROM raw_envelopes`).Scan(&n)
@@ -228,7 +228,7 @@ func TestCLI_IngestUnreachableDaemon_DoesNotFail(t *testing.T) {
 	hook := []byte(`{"session_id":"x","hook_event_name":"UserPromptSubmit","cwd":"/","prompt":"hi"}`)
 	var stderr bytes.Buffer
 
-	err := cli.RunIngest(bytes.NewReader(hook), &stderr, filepath.Join(t.TempDir(), "nope.sock"))
+	err := cli.RunIngest(bytes.NewReader(hook), &stderr, filepath.Join(t.TempDir(), "nope.sock"), "")
 	if err != nil {
 		t.Fatalf("expected nil error even when daemon unreachable, got %v", err)
 	}

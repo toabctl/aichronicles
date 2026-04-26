@@ -70,3 +70,35 @@ func claudeCodeDefaultPath() (string, error) {
 	}
 	return filepath.Join(home, ".claude", "settings.json"), nil
 }
+
+// Codex is the OpenAI Codex CLI agent. Hook event names follow the
+// names documented at https://developers.openai.com/codex/hooks —
+// the list mirrors the subset Claude Code exposes that maps cleanly
+// to our envelope kinds. Codex requires `[features] codex_hooks =
+// true` in ~/.codex/config.toml; the setup command's docs note this
+// (we don't rewrite the user's config.toml for them).
+//
+// Implementation status: based on documented hook field shapes; the
+// per-fixture validation TODO entry tracks the work to harden this
+// against real Codex stdin payloads.
+var Codex = Agent{
+	Slug:        "codex",
+	Description: "OpenAI Codex CLI",
+	HookEvents: []string{
+		"UserPromptSubmit",
+		"Stop",
+		"PostToolUse",
+		"PostToolUseFailure",
+	},
+	DefaultSettingsPath: codexDefaultPath,
+}
+
+// codexDefaultPath resolves ~/.codex/hooks.json. Codex documents the
+// hook config as living next to its config.toml in ~/.codex/.
+func codexDefaultPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".codex", "hooks.json"), nil
+}

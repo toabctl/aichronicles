@@ -65,7 +65,7 @@ func TestE2E_IngestSummarizeFetchViaMCP(t *testing.T) {
 	}`)
 
 	var stderr bytes.Buffer
-	if err := cli.RunIngest(bytes.NewReader(hook), &stderr, sock); err != nil {
+	if err := cli.RunIngest(bytes.NewReader(hook), &stderr, sock, ""); err != nil {
 		t.Fatalf("RunIngest: %v", err)
 	}
 

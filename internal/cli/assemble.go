@@ -57,6 +57,21 @@ func roleForKind(kind string) string {
 	}
 }
 
+// AssembleByAgent dispatches to the right per-agent assembler. The
+// agent slug must match one of the known sources (today: claude-code,
+// codex). Unknown slugs return an error so a typo in --agent surfaces
+// immediately rather than producing a malformed envelope.
+func AssembleByAgent(agent string, raw []byte, now time.Time) (ingest.Envelope, error) {
+	switch agent {
+	case "claude-code":
+		return Assemble(raw, now)
+	case "codex":
+		return AssembleCodex(raw, now)
+	default:
+		return ingest.Envelope{}, fmt.Errorf("AssembleByAgent: unknown agent slug %q", agent)
+	}
+}
+
 // Assemble parses a Claude Code hook payload (JSON on stdin) and returns
 // a wire Envelope ready to be POSTed. The payload is stored verbatim so
 // downstream enrichment can recover anything we didn't normalize.

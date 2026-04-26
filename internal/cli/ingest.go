@@ -20,21 +20,31 @@ import (
 // isn't set. 250ms is the CLAUDE.md hook-latency cap.
 const defaultIngestTimeout = 250 * time.Millisecond
 
+// defaultIngestAgent is the agent slug ingest uses when invoked
+// without --agent. Claude Code is the historical default and the
+// hook command Claude's settings.json points at; existing
+// installs keep working without flag changes.
+const defaultIngestAgent = "claude-code"
+
 func newIngestCmd() *cobra.Command {
 	var socketFlag string
+	var agentSlug string
 	cmd := &cobra.Command{
 		Use:   "ingest",
 		Short: "Read a hook payload on stdin and forward as an envelope",
-		Long: "ingest is invoked by Claude Code hooks. It reads a JSON hook\n" +
-			"payload from stdin, wraps it in the canonical Envelope, and POSTs\n" +
-			"to aichroniclesd over a Unix socket.\n\n" +
+		Long: "ingest is invoked by AI coding agent hooks (Claude Code by\n" +
+			"default; pass --agent codex to consume OpenAI Codex CLI hook\n" +
+			"payloads). It reads a JSON hook payload from stdin, wraps it\n" +
+			"in the canonical Envelope, and POSTs to aichroniclesd over a\n" +
+			"Unix socket.\n\n" +
 			"Blocking policy: this command NEVER fails the hook. Errors are\n" +
 			"logged to stderr as structured records and the process exits 0.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return RunIngest(cmd.InOrStdin(), cmd.ErrOrStderr(), socketFlag)
+			return RunIngest(cmd.InOrStdin(), cmd.ErrOrStderr(), socketFlag, agentSlug)
 		},
 	}
 	cmd.Flags().StringVar(&socketFlag, "socket", "", "daemon UDS path (overrides $AICHRONICLES_SOCKET; defaults to XDG_RUNTIME_DIR)")
+	cmd.Flags().StringVar(&agentSlug, "agent", defaultIngestAgent, "source agent slug (claude-code | codex)")
 	return cmd
 }
 
@@ -53,7 +63,7 @@ func newIngestLogger(stderr io.Writer) *slog.Logger {
 // stdin, assembles an envelope, and forwards to the daemon. The error
 // return exists for the cobra interface; in practice this command always
 // returns nil so a missing or broken daemon never fails a Claude hook.
-func RunIngest(stdin io.Reader, stderr io.Writer, socketFlag string) error {
+func RunIngest(stdin io.Reader, stderr io.Writer, socketFlag, agentSlug string) error {
 	log := newIngestLogger(stderr)
 
 	raw, err := io.ReadAll(stdin)
@@ -66,9 +76,12 @@ func RunIngest(stdin io.Reader, stderr io.Writer, socketFlag string) error {
 		return nil
 	}
 
-	env, err := Assemble(raw, time.Now().UTC())
+	if agentSlug == "" {
+		agentSlug = defaultIngestAgent
+	}
+	env, err := AssembleByAgent(agentSlug, raw, time.Now().UTC())
 	if err != nil {
-		log.Error("assemble envelope", "err", err)
+		log.Error("assemble envelope", "agent", agentSlug, "err", err)
 		return nil
 	}
 
