@@ -23,7 +23,7 @@ func TestBuildSummary_IncludesTranscriptAndSessionID(t *testing.T) {
 		{EventID: "e2", Kind: "assistant_message", Role: nullS("assistant"),
 			ContentText: nullS("bufio.Scanner with Buffer() for long lines"), TsSourceMs: 2},
 	}
-	built, err := BuildSummary("sess-abc", events, nil)
+	built, err := BuildSummary("sess-abc", events, nil, nil)
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestBuildSummary_LabelsSubagentEventsInTranscript(t *testing.T) {
 			SubagentID:  nullS("agent-9"),
 			ContentText: nullS("worker step"), TsSourceMs: 3},
 	}
-	built, err := BuildSummary("sess", events, nil)
+	built, err := BuildSummary("sess", events, nil, nil)
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestBuildSummary_SchemaIncludesSubagents(t *testing.T) {
 	events := []store.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
-	built, err := BuildSummary("sess", events, nil)
+	built, err := BuildSummary("sess", events, nil, nil)
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestBuildSummary_SetsForcedTool(t *testing.T) {
 	events := []store.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
-	built, err := BuildSummary("sess", events, nil)
+	built, err := BuildSummary("sess", events, nil, nil)
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestBuildSummary_RendersLinksBlockWhenPresent(t *testing.T) {
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
 	built, err := BuildSummary("sess-l", events,
-		[]string{"https://a.example/", "https://b.example/"})
+		[]string{"https://a.example/", "https://b.example/"}, nil)
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
@@ -157,12 +157,82 @@ func TestBuildSummary_RendersLinksBlockWhenPresent(t *testing.T) {
 	}
 }
 
+func TestBuildSummary_RendersFilesBlockWhenPresent(t *testing.T) {
+	t.Parallel()
+	events := []store.EventView{
+		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
+	}
+	files := []string{
+		"/home/me/repo/internal/store/migrate.go",
+		"/home/me/repo/internal/store/search.go",
+	}
+	built, err := BuildSummary("sess-f", events, nil, files)
+	if err != nil {
+		t.Fatalf("BuildSummary: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	if !strings.Contains(body, "Files observed via tool calls") {
+		t.Errorf("files stanza missing:\n%s", body)
+	}
+	for _, p := range files {
+		if !strings.Contains(body, p) {
+			t.Errorf("path %q not rendered:\n%s", p, body)
+		}
+	}
+	if !strings.Contains(body, "do NOT shorten or reformat") {
+		t.Errorf("anti-fabrication instruction missing:\n%s", body)
+	}
+}
+
+func TestBuildSummary_OmitsFilesBlockWhenNoneProvided(t *testing.T) {
+	t.Parallel()
+	events := []store.EventView{
+		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
+	}
+	built, _ := BuildSummary("sess", events, nil, nil)
+	if strings.Contains(built.Request.Messages[0].Content, "Files observed") {
+		t.Errorf("empty files list should omit the stanza:\n%s",
+			built.Request.Messages[0].Content)
+	}
+}
+
+func TestBuildSummary_HashChangesWhenFilesChange(t *testing.T) {
+	t.Parallel()
+	events := []store.EventView{
+		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
+	}
+	a, _ := BuildSummary("sess", events, nil, nil)
+	b, _ := BuildSummary("sess", events, nil, []string{"/etc/hosts"})
+	if a.Hash == b.Hash {
+		t.Error("adding a file should change the hash")
+	}
+}
+
+func TestBuildSummary_SchemaInstructsAbsoluteFiles(t *testing.T) {
+	t.Parallel()
+	events := []store.EventView{
+		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
+	}
+	built, _ := BuildSummary("sess", events, nil, nil)
+	schema := string(built.Request.Tools[0].InputSchema)
+	for _, want := range []string{
+		`"key_files"`,
+		"Absolute file paths",
+		"Files observed",
+		"verbatim",
+	} {
+		if !strings.Contains(schema, want) {
+			t.Errorf("schema missing %q:\n%s", want, schema)
+		}
+	}
+}
+
 func TestBuildSummary_OmitsLinksBlockWhenNoneProvided(t *testing.T) {
 	t.Parallel()
 	events := []store.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
-	built, err := BuildSummary("sess", events, nil)
+	built, err := BuildSummary("sess", events, nil, nil)
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
@@ -181,7 +251,7 @@ func TestBuildSummary_LinksPassThroughEgressRedaction(t *testing.T) {
 	// extractions can capture verbatim. renderLinksBlock must scrub
 	// it before it reaches the prompt.
 	links := []string{"https://user:s3cret@example.com/foo"}
-	built, err := BuildSummary("sess-leak", events, links)
+	built, err := BuildSummary("sess-leak", events, links, nil)
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
@@ -207,7 +277,7 @@ func TestBuildSummary_ScrubsSecretsAndReportsPatterns(t *testing.T) {
 		{EventID: "e1", Kind: "user_prompt", Role: nullS("user"),
 			ContentText: nullS("my AKIAIOSFODNN7EXAMPLE leak"), TsSourceMs: 1},
 	}
-	built, err := BuildSummary("sess-x", events, nil)
+	built, err := BuildSummary("sess-x", events, nil, nil)
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
@@ -225,10 +295,10 @@ func TestBuildSummary_ScrubsSecretsAndReportsPatterns(t *testing.T) {
 
 func TestBuildSummary_RejectsEmptyInputs(t *testing.T) {
 	t.Parallel()
-	if _, err := BuildSummary("", []store.EventView{{}}, nil); err == nil {
+	if _, err := BuildSummary("", []store.EventView{{}}, nil, nil); err == nil {
 		t.Error("empty sessionID: expected error")
 	}
-	if _, err := BuildSummary("sess", nil, nil); err == nil {
+	if _, err := BuildSummary("sess", nil, nil, nil); err == nil {
 		t.Error("nil events: expected error")
 	}
 }
@@ -238,8 +308,8 @@ func TestBuildSummary_HashDeterministicSameInput(t *testing.T) {
 	events := []store.EventView{
 		{Kind: "user_prompt", ContentText: nullS("identical prompt"), TsSourceMs: 1},
 	}
-	a, _ := BuildSummary("sess", events, nil)
-	b, _ := BuildSummary("sess", events, nil)
+	a, _ := BuildSummary("sess", events, nil, nil)
+	b, _ := BuildSummary("sess", events, nil, nil)
 	if a.Hash != b.Hash {
 		t.Errorf("hash not deterministic: %q vs %q", a.Hash, b.Hash)
 	}
@@ -249,10 +319,10 @@ func TestBuildSummary_HashChangesWhenContentChanges(t *testing.T) {
 	t.Parallel()
 	a, _ := BuildSummary("sess", []store.EventView{
 		{Kind: "user_prompt", ContentText: nullS("first"), TsSourceMs: 1},
-	}, nil)
+	}, nil, nil)
 	b, _ := BuildSummary("sess", []store.EventView{
 		{Kind: "user_prompt", ContentText: nullS("second"), TsSourceMs: 1},
-	}, nil)
+	}, nil, nil)
 	if a.Hash == b.Hash {
 		t.Errorf("hash unchanged for different content: %q", a.Hash)
 	}
@@ -263,8 +333,8 @@ func TestBuildSummary_HashChangesWhenLinksChange(t *testing.T) {
 	events := []store.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
-	a, _ := BuildSummary("sess", events, nil)
-	b, _ := BuildSummary("sess", events, []string{"https://example.com/"})
+	a, _ := BuildSummary("sess", events, nil, nil)
+	b, _ := BuildSummary("sess", events, []string{"https://example.com/"}, nil)
 	if a.Hash == b.Hash {
 		t.Error("adding a link should change the hash")
 	}
@@ -281,7 +351,7 @@ func TestBuildSummary_NullToolUseEventDoesNotPanic(t *testing.T) {
 			ToolName:    nullS("Bash"),
 		},
 	}
-	built, err := BuildSummary("sess-null", events, nil)
+	built, err := BuildSummary("sess-null", events, nil, nil)
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
@@ -299,7 +369,7 @@ func TestBuildSummary_AllNullEventFieldsRenderKindLabel(t *testing.T) {
 			TsSourceMs: 1,
 		},
 	}
-	built, err := BuildSummary("sess-bare", events, nil)
+	built, err := BuildSummary("sess-bare", events, nil, nil)
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}

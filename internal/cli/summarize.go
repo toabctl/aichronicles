@@ -130,14 +130,35 @@ func RunSummarize(
 	// slice is fine (tool input will carry links:[]).
 	urls, err := store.LoadExtractionsForSession(ctx, s.DB(), sessionID, "url")
 	if err != nil {
-		return 0, fmt.Errorf("summarize: load extractions: %w", err)
+		return 0, fmt.Errorf("summarize: load extractions (url): %w", err)
 	}
 	links := make([]string, len(urls))
 	for i, u := range urls {
 		links[i] = u.Value
 	}
 
-	built, err := prompts.BuildSummary(sessionID, events, links)
+	// Pre-extracted file paths — same anti-fabrication grounding the
+	// links list provides for URLs. The model is told to draw
+	// key_files from this list when present and to copy prose-mention
+	// paths verbatim otherwise; absolute paths thanks to
+	// FilePathExtractor's cwd-anchoring.
+	fileExt, err := store.LoadExtractionsForSession(ctx, s.DB(), sessionID, "file_path")
+	if err != nil {
+		return 0, fmt.Errorf("summarize: load extractions (file_path): %w", err)
+	}
+	// Multiple Read/Edit calls on the same path produce multiple
+	// extraction rows; the prompt only wants distinct values.
+	seenFile := make(map[string]struct{}, len(fileExt))
+	files := make([]string, 0, len(fileExt))
+	for _, fx := range fileExt {
+		if _, dup := seenFile[fx.Value]; dup {
+			continue
+		}
+		seenFile[fx.Value] = struct{}{}
+		files = append(files, fx.Value)
+	}
+
+	built, err := prompts.BuildSummary(sessionID, events, links, files)
 	if err != nil {
 		return 0, fmt.Errorf("summarize: build prompt: %w", err)
 	}

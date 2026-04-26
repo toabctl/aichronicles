@@ -155,7 +155,11 @@ const summaryToolSchema = `{
     "topic": {"type":"string","minLength":1},
     "what_was_done": {"type":"array","items":{"type":"string","minLength":1},"minItems":1,"maxItems":8},
     "unresolved": {"type":"array","items":{"type":"string","minLength":1}},
-    "key_files": {"type":"array","items":{"type":"string","minLength":1}},
+    "key_files": {
+      "type":"array",
+      "description": "Absolute file paths the session worked on. Prefer entries from the 'Files observed' stanza when present. For files referenced only in prose, copy the path verbatim from the transcript — never shorten, infer, or reformat. Do not invent paths.",
+      "items":{"type":"string","minLength":1}
+    },
     "links": {
       "type":"array",
       "items":{
@@ -187,7 +191,7 @@ const summaryToolSchema = `{
 
 const summaryTemplate = `Session: %s
 Events: %d
-%s
+%s%s
 Transcript follows, oldest first:
 ---
 %s
@@ -195,13 +199,22 @@ Transcript follows, oldest first:
 `
 
 // BuildSummary returns the prompt for summarizing one session's
-// events. links is the distinct URL list observed in the session
-// (typically from store.LoadExtractionsForSession(kind='url')); the
-// model is prompted to annotate each with a `used_for` via the
-// record_summary tool, dropping any it cannot confidently attribute.
-// Passing a nil/empty links slice is fine — the tool just receives
-// an empty links array.
-func BuildSummary(sessionID string, events []store.EventView, links []string) (Built, error) {
+// events.
+//
+// links is the distinct URL list observed in the session (typically
+// from store.LoadExtractionsForSession(kind='url')); the model is
+// prompted to annotate each with a `used_for` via the record_summary
+// tool, dropping any it cannot confidently attribute.
+//
+// files is the distinct file_path list observed in the session
+// (typically from store.LoadExtractionsForSession(kind='file_path'));
+// it grounds the model's `key_files` output in actually-touched
+// files rather than plausible-looking paths it might invent.
+//
+// Passing nil/empty for either slice is fine — the corresponding
+// stanza is omitted and the model receives an empty array (or
+// whatever it surfaces from prose mentions in the transcript).
+func BuildSummary(sessionID string, events []store.EventView, links, files []string) (Built, error) {
 	if sessionID == "" {
 		return Built{}, fmt.Errorf("BuildSummary: sessionID required")
 	}
@@ -212,8 +225,9 @@ func BuildSummary(sessionID string, events []store.EventView, links []string) (B
 	pats := patternSet{}
 	transcript := renderEvents(events, pats)
 	linksBlock := renderLinksBlock(links, pats)
+	filesBlock := renderFilesBlock(files, pats)
 
-	userMsg := fmt.Sprintf(summaryTemplate, sessionID, len(events), linksBlock, transcript)
+	userMsg := fmt.Sprintf(summaryTemplate, sessionID, len(events), linksBlock, filesBlock, transcript)
 
 	req := llm.Request{
 		System:    summarySystem,
@@ -242,6 +256,35 @@ func renderLinksBlock(links []string, pats patternSet) string {
 	b.WriteString("\nLinks observed in this session — annotate each with a specific `used_for` in the record_summary `links` field. DROP any you cannot confidently attribute; do NOT invent new URLs:\n")
 	for _, url := range links {
 		clean, names := redact.Outbound(url)
+		pats.addAll(names)
+		b.WriteString("- ")
+		b.WriteString(clean)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// renderFilesBlock formats the "Files observed" stanza that grounds
+// key_files in actually-touched files. Returns "" when no files
+// were observed via tool calls — in that case the model falls back
+// to prose mentions in the transcript (per the schema description),
+// which is the right behaviour for sessions where everything
+// happened verbally.
+//
+// The list is the distinct file_path extractions for the session
+// (already absolute thanks to FilePathExtractor's normalisation),
+// passed verbatim. The schema description tells the model to draw
+// key_files from this list when present and to use the path string
+// from the transcript verbatim for any file referenced only in
+// prose.
+func renderFilesBlock(files []string, pats patternSet) string {
+	if len(files) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nFiles observed via tool calls in this session — prefer these as `key_files` entries. Use the path strings verbatim. If a file appears only in prose (user prompt or assistant text), copy that path verbatim too; do NOT shorten or reformat:\n")
+	for _, p := range files {
+		clean, names := redact.Outbound(p)
 		pats.addAll(names)
 		b.WriteString("- ")
 		b.WriteString(clean)
