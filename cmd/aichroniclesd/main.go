@@ -123,9 +123,32 @@ func run(sockFlag, dbFlag string) error {
 	// deadline lives on a separate bounded child below.
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Tell systemd we're up. Order matters: this MUST come after
+	// the listener is bound (above), otherwise systemd considers
+	// us ready while we're still starting and may fire READY-
+	// dependent units against a not-yet-accepting daemon. No-op
+	// when not under a notify-type service.
+	daemon.NotifyReady(logger)
+
+	// Start the watchdog AFTER READY=1 so the first probe goes
+	// against an actually-up listener. Bound to sigCtx so a
+	// shutdown signal stops the watchdog goroutine cleanly
+	// alongside the rest of the daemon. No-op when WATCHDOG_USEC
+	// is unset.
+	if err := daemon.Start(sigCtx, resolvedSock, logger); err != nil {
+		logger.Warn("start watchdog", "err", err)
+	}
+
 	<-sigCtx.Done()
 	drainTimeout := cfg.Limits.ShutdownDrainTimeout.Or(defaultShutdownDrainTimeout)
 	logger.Info("aichroniclesd shutting down", "drain_timeout", drainTimeout)
+
+	// Tell systemd we're shutting down deliberately so it can
+	// distinguish a clean exit from a watchdog-driven kill in
+	// the journal. Issued before drain so it lands even if a
+	// pending request takes the full drain window.
+	daemon.NotifyStopping(logger)
 
 	drainCtx, cancel := context.WithTimeout(context.Background(), drainTimeout)
 	defer cancel()
