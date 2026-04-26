@@ -51,6 +51,7 @@ type Envelope struct {
 	Payload            map[string]any `json:"payload"`
 	Transport          string         `json:"transport,omitempty"`
 	Redaction          *Redaction     `json:"redaction,omitempty"`
+	Subagent           *Subagent      `json:"subagent,omitempty"`
 
 	// Server-assigned on persist. Zero on the wire; populated before logging.
 	SessionID string    `json:"session_id,omitempty"`
@@ -63,6 +64,24 @@ type Tool struct {
 	Name    string `json:"name,omitempty"`
 	NameRaw string `json:"name_raw,omitempty"`
 	CallID  string `json:"call_id,omitempty"`
+}
+
+// Subagent identifies the sub-agent thread an event belongs to. Nil
+// (omitted on the wire) for top-level events run by the main agent.
+// ID is the per-session sub-agent identifier the host emits in
+// SubagentStart / SubagentStop / nested tool_use payloads; events
+// sharing the same (session_id, ID) belong to the same thread. Type
+// is the sub-agent's role label (e.g. "planner", "researcher") when
+// available; absent for hosts that don't expose one.
+//
+// Linkage to a parent event id is intentionally NOT modelled here
+// in v1: the (session, subagent_id) pair is enough to query "what
+// did the planner do," and tracing causal parent events would
+// require more host metadata than Claude Code's hooks currently
+// expose. Future work — see TODO.md if it's still listed.
+type Subagent struct {
+	ID   string `json:"id,omitempty"`
+	Type string `json:"type,omitempty"`
 }
 
 // Redaction records what the ingest-edge scrubber did, for audit + tuning.
