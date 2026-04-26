@@ -1,0 +1,37 @@
+{{define "content"}}
+<hgroup>
+  <h1>Sessions</h1>
+  <p>Most recently active first. Click a row to see events and the cached summary.</p>
+</hgroup>
+
+{{if .Sessions}}
+<table class="sessions">
+  <thead>
+    <tr>
+      <th>Session</th>
+      <th>Last activity</th>
+      <th>Events</th>
+      <th>Cwd</th>
+      <th>First prompt</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Sessions}}
+    <tr>
+      <td class="sid"><a href="/sessions/{{.ID}}">{{.ShortID}}</a></td>
+      <td class="ts">{{.LastActivity}}</td>
+      <td>{{.EventCount}}</td>
+      <td class="cwd">{{.Cwd}}</td>
+      <td>{{.FirstPrompt}}</td>
+      <td>{{if .HasSummary}}<span class="badge badge-summary">summary</span>{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="empty">(no sessions in the store yet — run <code>aichronicles import-claude</code> to backfill, or hook up the daemon and capture a fresh session)</p>
+{{end}}
+{{end}}
+
+{{template "base" .}}

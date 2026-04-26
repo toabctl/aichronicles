@@ -1,0 +1,32 @@
+{{define "base"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.Title}} — aichronicles</title>
+<link rel="stylesheet" href="/static/pico.min.css">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="container">
+  <nav>
+    <ul>
+      <li><strong><a href="/">aichronicles</a></strong></li>
+    </ul>
+    <ul>
+      <li><a href="/">Sessions</a></li>
+      <li><a href="/search">Search</a></li>
+    </ul>
+  </nav>
+</header>
+
+<main class="container">
+{{template "content" .}}
+</main>
+
+<footer class="container">
+  <small><a href="/healthz">healthz</a></small>
+</footer>
+</body>
+</html>
+{{end}}

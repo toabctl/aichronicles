@@ -1,0 +1,54 @@
+/* Project-specific tweaks on top of Pico classless. Kept tiny on
+   purpose — Pico handles typography, tables, forms, and dark mode
+   for free; this file only adjusts the few aichronicles-specific
+   bits Pico can't infer. */
+
+:root {
+  --pico-spacing-vertical: 0.75rem;
+}
+
+main.container {
+  /* Pico defaults to centered fixed-width; let session tables
+     breathe without scrolling on desktop. */
+  max-width: 1200px;
+}
+
+/* Session-id prefix renders as a monospace token everywhere. */
+.sid {
+  font-family: var(--pico-font-family-monospace);
+  font-size: 0.9em;
+}
+
+/* Compact event-kind / has-summary badges. */
+.badge {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  border-radius: 0.25rem;
+  background: var(--pico-secondary-background);
+  color: var(--pico-secondary-inverse);
+  font-size: 0.75em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.badge-summary {
+  background: var(--pico-primary-background);
+  color: var(--pico-primary-inverse);
+}
+
+/* "(no hits)" / "(no sessions)" empty states render as muted text
+   rather than a styled button. */
+.empty {
+  color: var(--pico-muted-color);
+  font-style: italic;
+}
+
+/* Sessions table — let the cwd column wrap on long paths but
+   keep the timestamp column tight. */
+table.sessions td.cwd {
+  word-break: break-all;
+}
+table.sessions td.ts {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}

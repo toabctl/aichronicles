@@ -18,8 +18,11 @@ package web
 
 import (
 	"context"
+	"embed"
 	"errors"
 	"fmt"
+	"html/template"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -28,6 +31,14 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/store"
 )
+
+// assetsFS holds every file under internal/web/assets/. Templates
+// land under assets/templates/, vendored static files under
+// assets/static/. `all:` walks dotfiles too in case future asset
+// pipelines emit them.
+//
+//go:embed all:assets
+var assetsFS embed.FS
 
 // DefaultPort is the loopback port aichronicles web binds to by
 // default. Picked to avoid collisions with the common range
@@ -71,6 +82,7 @@ type Server struct {
 	cfg   Config
 	log   *slog.Logger
 	mux   *http.ServeMux
+	tpl   *template.Template
 }
 
 // NewServer wires the routes against st. The caller retains
@@ -95,15 +107,57 @@ func NewServer(st *store.Store, cfg Config, log *slog.Logger) *Server {
 		cfg:   cfg,
 		log:   log,
 		mux:   http.NewServeMux(),
+		tpl:   mustParseTemplates(),
 	}
 	s.registerRoutes()
 	return s
 }
 
+// mustParseTemplates loads every .html file under assets/templates
+// into a single template set. Panics on parse error — fatal at
+// startup, not at request time. Call sites then invoke
+// s.tpl.ExecuteTemplate(w, "<page>.html", data) which renders the
+// "content" block defined in that page wrapped in base.html.
+func mustParseTemplates() *template.Template {
+	t, err := template.New("aichronicles").ParseFS(assetsFS, "assets/templates/*.html")
+	if err != nil {
+		panic(fmt.Errorf("parse embedded templates: %w", err))
+	}
+	return t
+}
+
 // registerRoutes wires every route handled by this server.
-// Per-route handlers land in their own files as they're added.
+// Per-route handlers land in handlers.go.
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /healthz", s.healthz)
+	s.mux.HandleFunc("GET /{$}", s.sessionsHandler)
+	s.mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS())))
+}
+
+// staticFS returns a sub-FS rooted at assets/static so paths like
+// /static/pico.min.css resolve to the embedded file rather than
+// requiring the prefix in the request URL.
+func staticFS() fs.FS {
+	sub, err := fs.Sub(assetsFS, "assets/static")
+	if err != nil {
+		// embed.FS guarantees this; an error means the embed
+		// directive lost the directory at build time.
+		panic(fmt.Errorf("static sub-fs: %w", err))
+	}
+	return sub
+}
+
+// render executes the named template against page data and writes
+// the result. Templates render base.html via the {{template "base"
+// .}} hook each page emits, so the layout wraps every content
+// block transparently.
+func (s *Server) render(w http.ResponseWriter, _ *http.Request, name string, data any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tpl.ExecuteTemplate(w, name, data); err != nil {
+		s.log.Error("render template", "name", name, "err", err)
+		// Don't double-write the response body — ExecuteTemplate
+		// may have already flushed headers before erroring.
+	}
 }
 
 // Addr returns the address the server is configured to listen on.
