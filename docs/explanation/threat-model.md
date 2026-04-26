@@ -35,6 +35,8 @@ that data.
 │                              ▼                              │
 │   MCP client  ◀────stdio────▶  mcp-serve                    │
 │                                  │                          │
+│   browser    ◀──HTTP/127.0.0.1──▶  aichronicles web         │
+│                                  │                          │
 │                              ▼   │ read-only                │
 │                           SQLite store                      │
 │                              ▲   ▲                          │
@@ -48,6 +50,15 @@ that data.
          ▼
    Anthropic / OpenAI HTTPS  ◀── only on summarize/reflect/propose
 ```
+
+`aichronicles web` is a short-lived CLI subprocess (same shape as
+`mcp-serve`) that boots a small HTTP server on `127.0.0.1` and
+opens the SQLite store read-only. Localhost is the auth boundary
+— no authentication, no TLS — mirroring the daemon's choice of
+0600 UDS rather than network sockets. Binding to a non-loopback
+address is opt-in (`--bind 0.0.0.0`) and surfaces a startup
+warning; it explicitly leaves the single-user trust model and is
+not a supported posture.
 
 Inside the box: untrusted *between* boundaries (the daemon doesn't
 trust the CLI's redaction claim; the egress redactor scrubs again

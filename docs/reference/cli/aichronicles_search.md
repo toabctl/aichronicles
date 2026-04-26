@@ -4,9 +4,11 @@ Full-text search over captured envelopes
 
 ### Synopsis
 
-Runs an FTS5 MATCH against events.content_text and prints the
-top hits one per line. Query syntax is SQLite FTS5 (phrases in
-quotes, AND/OR/NOT, prefix with *). Pass --format=json for a
+Searches across captured envelopes and prints the top hits
+one per line. Type plain words; bare tokens match by prefix
+(`mongo` finds `mongodb`). Wrap exact matches in double
+quotes (`"panic stack"`). Identifiers and paths can be
+typed verbatim (`migrate.go`). Pass --format=json for a
 structured payload suitable for jq.
 
 ```
