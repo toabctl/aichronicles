@@ -255,19 +255,32 @@ table.sessions td.latest .ts {
   padding: 0.25rem 0;
 }
 
-/* Persistent nav-bar search: a compact input with a popover that
+/* Persistent nav-bar search: a wide input with a popover that
    sits below it, populated by htmx swaps from /search/hits?compact=1.
    Position: relative on the form so the popover can be absolutely
-   positioned below it without escaping the nav. */
+   positioned below it without escaping the nav.
+   The form takes flex-grow:1 inside its <li> so it uses all the
+   horizontal space the nav can spare; min-width keeps it usable
+   on narrow viewports. align-self: center vertically aligns the
+   input against the nav links beside it (Pico's <nav> is flex
+   but the search <form> wrapper otherwise drifted up by ~3px
+   because the input is shorter than an <a> link). */
+header > nav > ul li:has(> .navsearch) {
+  flex: 1 1 auto;
+}
 .navsearch {
   position: relative;
   margin: 0;
-  min-width: 16rem;
+  align-self: center;
+  width: 100%;
+  min-width: 24rem;
+  max-width: 60rem;
 }
 .navsearch input[type="search"] {
   margin: 0;
+  width: 100%;
   height: 2.25rem;
-  font-size: 0.9rem;
+  font-size: 0.95rem;
 }
 .navsearch-popover {
   position: absolute;
