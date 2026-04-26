@@ -176,6 +176,90 @@ func formatCompletionDescription(cwd, firstPrompt string) string {
 	return cwd + " — " + preview
 }
 
+// LiveEvent is the read-only shape returned by LoadEventsSinceSeq.
+// Carries enough fields to render a live-feed row without an extra
+// query: ingest_seq is the cursor for resumption, the rest mirror
+// what the sessions list renders. Snippet is rune-truncated server-
+// side to keep the SSE payload small.
+type LiveEvent struct {
+	IngestSeq  int64
+	EventID    string
+	SessionID  string
+	Kind       string
+	TsSourceMs int64
+	TsServerMs int64
+	Cwd        sql.NullString
+	Snippet    sql.NullString
+}
+
+// LoadEventsSinceSeq returns events whose ingest_seq is strictly
+// greater than `cursor`, oldest-first, capped at limit. Used by the
+// SSE /stream handler to fetch one batch per poll. Optional
+// sessionID filter narrows to events in one session — empty means
+// "all sessions". The cursor is ingest_seq (monotonic by design)
+// not ts_server_ms (subject to clock skew).
+func LoadEventsSinceSeq(ctx context.Context, db *sql.DB, cursor int64, sessionID string, limit int) ([]LiveEvent, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var (
+		q    string
+		args []any
+	)
+	const (
+		baseSelect = `SELECT r.ingest_seq, e.event_id, e.session_id, e.kind,
+		                     e.ts_source_ms, r.ts_server_ms, e.cwd, e.content_text
+		                FROM raw_envelopes r
+		                JOIN events e ON e.event_id = r.event_id
+		               WHERE r.ingest_seq > ?`
+		orderBy = ` ORDER BY r.ingest_seq ASC LIMIT ?`
+	)
+	if sessionID == "" {
+		q = baseSelect + orderBy
+		args = []any{cursor, limit}
+	} else {
+		q = baseSelect + ` AND e.session_id = ?` + orderBy
+		args = []any{cursor, sessionID, limit}
+	}
+
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query live events: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []LiveEvent
+	for rows.Next() {
+		var e LiveEvent
+		if err := rows.Scan(&e.IngestSeq, &e.EventID, &e.SessionID, &e.Kind,
+			&e.TsSourceMs, &e.TsServerMs, &e.Cwd, &e.Snippet); err != nil {
+			return nil, fmt.Errorf("scan live event: %w", err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate live events: %w", err)
+	}
+	return out, nil
+}
+
+// LatestIngestSeq returns the highest ingest_seq currently in the
+// store, or 0 when the store is empty. Used by the SSE /stream
+// handler to seed the cursor at "now" so a new client doesn't get
+// historical events flooded at it on connect.
+func LatestIngestSeq(ctx context.Context, db *sql.DB) (int64, error) {
+	var seq sql.NullInt64
+	if err := db.QueryRowContext(ctx,
+		`SELECT MAX(ingest_seq) FROM raw_envelopes`,
+	).Scan(&seq); err != nil {
+		return 0, fmt.Errorf("max ingest_seq: %w", err)
+	}
+	if !seq.Valid {
+		return 0, nil
+	}
+	return seq.Int64, nil
+}
+
 // SubagentExists reports whether any event has the given
 // subagent_id. Used by the MCP search_events handler to give the
 // caller a clean error when they pass an unknown subagent_id

@@ -27,6 +27,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/store"
@@ -84,6 +85,11 @@ type Server struct {
 	mux       *http.ServeMux
 	pages     map[string]*template.Template
 	fragments map[string]*template.Template
+
+	// streamCount is the live count of /stream connections —
+	// per-server (not package-global) so concurrent tests and
+	// hypothetical multi-server setups don't share the cap.
+	streamCount atomic.Int32
 }
 
 // NewServer wires the routes against st. The caller retains
@@ -175,6 +181,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /sessions/{id}", s.sessionDetailHandler)
 	s.mux.HandleFunc("GET /search", s.searchHandler)
 	s.mux.HandleFunc("GET /search/hits", s.searchHitsHandler)
+	s.mux.HandleFunc("GET /stream", s.streamHandler)
 	s.mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS())))
 }
 
