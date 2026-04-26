@@ -243,6 +243,59 @@ func LoadEventsSinceSeq(ctx context.Context, db *sql.DB, cursor int64, sessionID
 	return out, nil
 }
 
+// LoadLatestEventsIndexedByID returns the most recent event per
+// session in sessionIDs, keyed by session_id. Sessions without any
+// events are absent from the map (no zero-value entry, so callers
+// can distinguish "no events yet" from "event with empty body").
+//
+// One window-function query — the alternative of calling
+// LoadEventsForSession per session is N+1 and the sessions list
+// renders this on every page load. ROW_NUMBER() picks the latest
+// per partition; ties broken by event_id DESC (UUIDv7 event_ids
+// sort by creation time, so this is deterministic).
+//
+// Empty input returns an empty map and no query.
+func LoadLatestEventsIndexedByID(ctx context.Context, db *sql.DB, sessionIDs []string) (map[string]LiveEvent, error) {
+	if len(sessionIDs) == 0 {
+		return map[string]LiveEvent{}, nil
+	}
+
+	placeholders := strings.Repeat(",?", len(sessionIDs))[1:]
+	args := make([]any, 0, len(sessionIDs))
+	for _, id := range sessionIDs {
+		args = append(args, id)
+	}
+
+	q := `SELECT r.ingest_seq, e.event_id, e.session_id, e.kind,
+		       e.ts_source_ms, r.ts_server_ms, e.cwd, e.content_text
+		  FROM (
+		      SELECT event_id, session_id, kind, ts_source_ms, cwd, content_text,
+		             ROW_NUMBER() OVER (PARTITION BY session_id
+		                                ORDER BY ts_source_ms DESC, event_id DESC) AS rn
+		        FROM events
+		       WHERE session_id IN (` + placeholders + `)
+		  ) e
+		  JOIN raw_envelopes r ON r.event_id = e.event_id
+		 WHERE e.rn = 1`
+
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query latest events: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make(map[string]LiveEvent, len(sessionIDs))
+	for rows.Next() {
+		var e LiveEvent
+		if err := rows.Scan(&e.IngestSeq, &e.EventID, &e.SessionID, &e.Kind,
+			&e.TsSourceMs, &e.TsServerMs, &e.Cwd, &e.Snippet); err != nil {
+			return nil, fmt.Errorf("scan latest event: %w", err)
+		}
+		out[e.SessionID] = e
+	}
+	return out, rows.Err()
+}
+
 // LatestIngestSeq returns the highest ingest_seq currently in the
 // store, or 0 when the store is empty. Used by the SSE /stream
 // handler to seed the cursor at "now" so a new client doesn't get

@@ -321,3 +321,91 @@ func TestSessionsEffectiveTsIndex_UsedByDigestQuery(t *testing.T) {
 		t.Errorf("plan does not use idx_sessions_effective_ts:\n%s", plan.String())
 	}
 }
+
+func TestLoadLatestEventsIndexedByID_EmptyInputReturnsEmptyMap(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	got, err := LoadLatestEventsIndexedByID(t.Context(), s.DB(), nil)
+	if err != nil {
+		t.Fatalf("nil input: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty map, got %v", got)
+	}
+
+	got, err = LoadLatestEventsIndexedByID(t.Context(), s.DB(), []string{})
+	if err != nil {
+		t.Fatalf("empty input: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty map, got %v", got)
+	}
+}
+
+func TestLoadLatestEventsIndexedByID_LatestWinsPerSession(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	// Two sessions with multiple events each, plus one session with
+	// zero events so we can assert it's absent from the result.
+	base := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	seedEvents(t, s, "sess-A", 4, base)
+	seedEvents(t, s, "sess-B", 2, base.Add(time.Hour))
+
+	idA := ingest.DeriveSessionID("claude-code", "sess-A")
+	idB := ingest.DeriveSessionID("claude-code", "sess-B")
+	idMissing := ingest.DeriveSessionID("claude-code", "no-events-here")
+
+	got, err := LoadLatestEventsIndexedByID(t.Context(), s.DB(),
+		[]string{idA, idB, idMissing})
+	if err != nil {
+		t.Fatalf("LoadLatestEventsIndexedByID: %v", err)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("entry count: got %d, want 2 (A and B; missing has no events)", len(got))
+	}
+
+	// seedEvents spaces events 1ms apart starting at baseTs, so the
+	// last event for sess-A is at base + 3ms, for sess-B at base+1h+1ms.
+	wantA := base.Add(3 * time.Millisecond).UnixMilli()
+	wantB := base.Add(time.Hour + 1*time.Millisecond).UnixMilli()
+	if a, ok := got[idA]; !ok {
+		t.Error("missing sess-A entry")
+	} else if a.TsSourceMs != wantA {
+		t.Errorf("sess-A latest: got ts %d, want %d", a.TsSourceMs, wantA)
+	}
+	if b, ok := got[idB]; !ok {
+		t.Error("missing sess-B entry")
+	} else if b.TsSourceMs != wantB {
+		t.Errorf("sess-B latest: got ts %d, want %d", b.TsSourceMs, wantB)
+	}
+	if _, ok := got[idMissing]; ok {
+		t.Error("session with no events should be absent from map")
+	}
+}
+
+func TestLoadLatestEventsIndexedByID_OneSessionInLargeCohort(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	// Seed many sessions, ask for one — verify the IN-clause query
+	// scopes correctly even with many placeholders.
+	base := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	for i := range 5 {
+		seedEvents(t, s, "sess-"+string(rune('a'+i)), 3, base.Add(time.Duration(i)*time.Hour))
+	}
+	target := ingest.DeriveSessionID("claude-code", "sess-c")
+
+	got, err := LoadLatestEventsIndexedByID(t.Context(), s.DB(), []string{target})
+	if err != nil {
+		t.Fatalf("LoadLatestEventsIndexedByID: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(got))
+	}
+	if _, ok := got[target]; !ok {
+		t.Error("requested session should be present")
+	}
+}
