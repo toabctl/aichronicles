@@ -20,12 +20,25 @@ import (
 // It relies on `aichronicles` being on the user's PATH.
 const defaultHookCommand = "aichronicles ingest"
 
+// defaultHookCommandFor returns the per-agent hook command. Claude
+// Code keeps the bare "aichronicles ingest" form for backwards
+// compatibility with existing installs (it's the --agent default).
+// Other agents pass --agent <slug> so RunIngest dispatches to the
+// right per-agent assembler.
+func defaultHookCommandFor(agent ingest.Agent) string {
+	if agent.Slug == ingest.ClaudeCode.Slug {
+		return defaultHookCommand
+	}
+	return defaultHookCommand + " --agent " + agent.Slug
+}
+
 func newSetupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Install aichronicles into an AI coding agent or the OS",
 	}
 	cmd.AddCommand(newSetupClaudeCodeCmd())
+	cmd.AddCommand(newSetupCodexCLICmd())
 	cmd.AddCommand(newSetupSystemdCmd())
 	return cmd
 }
@@ -60,6 +73,42 @@ func newSetupClaudeCodeCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&settingsPath, "settings", "", "path to Claude Code settings.json (default: ~/.claude/settings.json)")
 	cmd.Flags().StringVar(&hookCommand, "command", defaultHookCommand, "command to run from each hook")
+	return cmd
+}
+
+func newSetupCodexCLICmd() *cobra.Command {
+	var settingsPath string
+	var hookCommand string
+	cmd := &cobra.Command{
+		Use:   "codex-cli",
+		Short: "Install Codex CLI hooks that forward events to aichroniclesd",
+		Long: "Idempotently merges hook entries (UserPromptSubmit, Stop,\n" +
+			"PostToolUse, PostToolUseFailure) into ~/.codex/hooks.json,\n" +
+			"each pointing at `aichronicles ingest --agent codex`. Existing\n" +
+			"hook entries from other tools are preserved; running twice is\n" +
+			"a no-op.\n\n" +
+			"Codex hooks must be enabled separately by setting\n" +
+			"`[features] codex_hooks = true` in ~/.codex/config.toml — this\n" +
+			"command does not edit your config.toml; it only writes hooks.json.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			path := settingsPath
+			if path == "" {
+				var err error
+				path, err = ingest.Codex.DefaultSettingsPath()
+				if err != nil {
+					return err
+				}
+			}
+			report, err := InstallAgentHooks(ingest.Codex, path, hookCommand)
+			if err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), report)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&settingsPath, "settings", "", "path to Codex hooks.json (default: ~/.codex/hooks.json)")
+	cmd.Flags().StringVar(&hookCommand, "command", defaultHookCommandFor(ingest.Codex), "command to run from each hook")
 	return cmd
 }
 

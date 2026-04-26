@@ -16,6 +16,7 @@ func newTeardownCmd() *cobra.Command {
 		Short: "Remove aichronicles integration from an AI coding agent or the OS",
 	}
 	cmd.AddCommand(newTeardownClaudeCodeCmd())
+	cmd.AddCommand(newTeardownCodexCLICmd())
 	cmd.AddCommand(newTeardownSystemdCmd())
 	return cmd
 }
@@ -43,7 +44,7 @@ func newTeardownClaudeCodeCmd() *cobra.Command {
 					return err
 				}
 			}
-			report, err := RemoveClaudeCodeHooks(path, hookCommand, !yes)
+			report, err := RemoveAgentHooks(ingest.ClaudeCode, path, hookCommand, !yes)
 			if err != nil {
 				return err
 			}
@@ -57,17 +58,58 @@ func newTeardownClaudeCodeCmd() *cobra.Command {
 	return cmd
 }
 
-// RemoveClaudeCodeHooks is the inverse of InstallClaudeCodeHooks: it
-// drops every hook entry whose inner command matches, preserves
-// entries belonging to other tools, and rewrites the file only when
+func newTeardownCodexCLICmd() *cobra.Command {
+	var settingsPath string
+	var hookCommand string
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "codex-cli",
+		Short: "Remove aichronicles Codex CLI hooks from hooks.json",
+		Long: "Inverse of `setup codex-cli`. Strips every hook entry whose\n" +
+			"command matches ours from each Codex hook event. Other tools'\n" +
+			"entries are preserved; running twice is a no-op.\n\n" +
+			"Dry-run by default: pass --yes to actually rewrite the file.\n" +
+			"Does not touch ~/.codex/config.toml — flip\n" +
+			"`[features] codex_hooks = false` yourself if you want to\n" +
+			"disable hooks entirely.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			path := settingsPath
+			if path == "" {
+				var err error
+				path, err = ingest.Codex.DefaultSettingsPath()
+				if err != nil {
+					return err
+				}
+			}
+			report, err := RemoveAgentHooks(ingest.Codex, path, hookCommand, !yes)
+			if err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), report)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&settingsPath, "settings", "", "path to Codex hooks.json (default: ~/.codex/hooks.json)")
+	cmd.Flags().StringVar(&hookCommand, "command", defaultHookCommandFor(ingest.Codex), "command to strip from each hook")
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the removal (required to modify the file)")
+	return cmd
+}
+
+// RemoveAgentHooks is the inverse of InstallAgentHooks: it drops
+// every hook entry whose inner command matches, preserves entries
+// belonging to other tools, and rewrites the file only when
 // something actually changed.
 //
 // When dryRun is true the function computes the plan without touching
-// settings.json. The returned report uses "would remove" phrasing so
-// cobra can relay it as a preview.
-func RemoveClaudeCodeHooks(path, command string, dryRun bool) (string, error) {
+// the settings file. The returned report uses "would remove" phrasing
+// so cobra can relay it as a preview.
+//
+// Generic over the agent — call sites pass ingest.ClaudeCode or
+// ingest.Codex and get the same merge / cleanup behaviour. The
+// agent supplies which hook event names to walk.
+func RemoveAgentHooks(agent ingest.Agent, path, command string, dryRun bool) (string, error) {
 	if command == "" {
-		command = defaultHookCommand
+		command = defaultHookCommandFor(agent)
 	}
 	settings, err := readSettings(path)
 	if err != nil {
@@ -81,7 +123,7 @@ func RemoveClaudeCodeHooks(path, command string, dryRun bool) (string, error) {
 	}
 
 	var removed []string
-	for _, ev := range ingest.ClaudeCode.HookEvents {
+	for _, ev := range agent.HookEvents {
 		entriesAny, ok := hooksRoot[ev].([]any)
 		if !ok {
 			continue
@@ -112,6 +154,13 @@ func RemoveClaudeCodeHooks(path, command string, dryRun bool) (string, error) {
 
 	sort.Strings(removed)
 	return formatRemoveReport(path, removed, dryRun), nil
+}
+
+// RemoveClaudeCodeHooks is preserved as a thin alias so existing
+// callers (mainly tests) compile unchanged. New code should call
+// RemoveAgentHooks directly with the desired ingest.Agent.
+func RemoveClaudeCodeHooks(path, command string, dryRun bool) (string, error) {
+	return RemoveAgentHooks(ingest.ClaudeCode, path, command, dryRun)
 }
 
 // stripOurEntries returns a copy of entries with every entry whose

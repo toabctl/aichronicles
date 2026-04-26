@@ -12,4 +12,5 @@ Remove aichronicles integration from an AI coding agent or the OS
 
 * [aichronicles](./aichronicles.md)	 - Capture AI coding agent session events
 * [aichronicles teardown claude-code](./aichronicles_teardown_claude-code.md)	 - Remove aichronicles Claude Code hooks from settings.json
+* [aichronicles teardown codex-cli](./aichronicles_teardown_codex-cli.md)	 - Remove aichronicles Codex CLI hooks from hooks.json
 * [aichronicles teardown systemd](./aichronicles_teardown_systemd.md)	 - Remove aichronicles systemd --user units
