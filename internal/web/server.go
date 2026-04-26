@@ -254,6 +254,13 @@ func (s *Server) Run(ctx context.Context) error {
 		// hangs even on a localhost service.
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
+		// BaseContext makes every request's r.Context() inherit
+		// from Run's ctx — so when the user hits ctrl-C the
+		// long-lived SSE handlers see r.Context().Done() fire
+		// immediately. Without this, http.Server.Shutdown blocks
+		// for the full ShutdownTimeout because Shutdown only
+		// stops new connections; it doesn't cancel handlers.
+		BaseContext: func(_ net.Listener) context.Context { return ctx },
 	}
 
 	ln := s.cfg.Listener
