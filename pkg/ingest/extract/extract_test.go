@@ -124,6 +124,62 @@ func TestFilePath_WriteAndEditAlsoExtract(t *testing.T) {
 	}
 }
 
+func TestFilePath_RelativePathJoinedWithCwd(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool: &ingest.Tool{Name: "Edit"},
+		Cwd:  "/home/me/repo",
+		Payload: map[string]any{
+			"tool_input": map[string]any{
+				"file_path": "internal/store/migrate.go",
+			},
+		},
+	}
+	got := toKV(FromEnvelope(env))
+	want := []kindValue{{KindFilePath, "/home/me/repo/internal/store/migrate.go"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestFilePath_AbsolutePathPassesThroughUntouched(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool: &ingest.Tool{Name: "Read"},
+		Cwd:  "/home/me/repo",
+		Payload: map[string]any{
+			"tool_input": map[string]any{
+				"file_path": "/etc/hosts",
+			},
+		},
+	}
+	got := toKV(FromEnvelope(env))
+	want := []kindValue{{KindFilePath, "/etc/hosts"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestFilePath_RelativePathNoCwdKeptAsIs(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool: &ingest.Tool{Name: "Read"},
+		// Cwd intentionally empty — agent didn't supply one.
+		Payload: map[string]any{
+			"tool_input": map[string]any{
+				"file_path": "config.go",
+			},
+		},
+	}
+	got := toKV(FromEnvelope(env))
+	// Best-effort fallback: with no anchor, store the literal.
+	// Better than dropping the row outright.
+	want := []kindValue{{KindFilePath, "config.go"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
 func TestFilePath_NonFileToolSkipped(t *testing.T) {
 	t.Parallel()
 	// Grep does not emit a canonical file_path — skip even if present.

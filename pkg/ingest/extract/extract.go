@@ -15,6 +15,7 @@
 package extract
 
 import (
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -118,6 +119,14 @@ var fileToolNames = map[string]struct{}{
 
 // FilePathExtractor emits one extraction per file_path carried by a
 // canonical file-touching tool's tool_input.
+//
+// Relative paths are joined with env.Cwd before storing so the
+// extraction is unambiguous and grep-friendly. Claude Code's
+// Read/Write/Edit tools document absolute paths as their contract,
+// but other agents (Codex, MCP tools) make no such guarantee, and
+// the resulting `key_files` / search hits are noticeably more
+// useful when every stored path is canonical. Absolute inputs
+// pass through untouched (filepath.IsAbs short-circuits).
 func FilePathExtractor(env *ingest.Envelope) []Extraction {
 	if env.Tool == nil {
 		return nil
@@ -132,6 +141,9 @@ func FilePathExtractor(env *ingest.Envelope) []Extraction {
 	path, ok := input["file_path"].(string)
 	if !ok || path == "" {
 		return nil
+	}
+	if !filepath.IsAbs(path) && env.Cwd != "" {
+		path = filepath.Join(env.Cwd, path)
 	}
 	return []Extraction{{Kind: KindFilePath, Value: path}}
 }
