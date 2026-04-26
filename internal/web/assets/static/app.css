@@ -111,6 +111,22 @@ main.container {
   font-style: italic;
 }
 
+/* Keyboard navigation focus ring. tr.nav-row is keyboard-focusable
+   via tabindex="0"; when ↑/↓/Enter drive a row, the focus
+   outline gives the user a clear visual anchor. The default
+   browser outline on a <tr> is invisible against most table
+   styles — explicit colour + offset fixes that.
+   :focus-visible (not :focus) so the ring only shows up for
+   keyboard users; mouse clicks don't paint the ring. */
+tr.nav-row {
+  cursor: pointer;
+}
+tr.nav-row:focus-visible {
+  outline: 2px solid var(--pico-primary);
+  outline-offset: -2px;
+  background: var(--pico-secondary-background);
+}
+
 /* Cached-summary topic shown inline below the first prompt on
    the sessions list and search results. Muted + italic so the
    prompt remains the primary signal. */

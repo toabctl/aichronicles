@@ -15,7 +15,7 @@
   {{end}}
   <tbody>
     {{range .Hits}}
-    <tr>
+    <tr class="nav-row" tabindex="0">
       <td class="sid"><a href="/sessions/{{.SessionID}}">{{.ShortID}}</a></td>
       <td class="ts">{{.When}}</td>
       <td><span class="badge badge-{{.Kind}}">{{.Kind}}</span></td>

@@ -28,7 +28,7 @@
     </thead>
     <tbody>
       {{range .Sessions}}
-      <tr>
+      <tr class="nav-row" tabindex="0">
         <td class="status-cell">{{.StatusDotHTML}}</td>
         <td class="sid"><a href="/sessions/{{.ID}}">{{.ShortID}}</a></td>
         <td class="ts">{{.LastActivity}}</td>
