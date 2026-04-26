@@ -222,9 +222,19 @@ func TestCLI_IngestRespectsDenyPaths(t *testing.T) {
 	}
 }
 
-func TestCLI_IngestUnreachableDaemon_DoesNotFail(t *testing.T) {
+// TestCLI_IngestUnreachableDaemon_LogsAndContinues pins the design
+// contract: when the daemon is unreachable, the ingest CLI must
+// (a) never return an error to the calling hook (would break Claude
+// Code's prompt loop) and (b) emit a structured log line so the
+// failure is at least visible in stderr / journal.
+//
+// Renamed from `_DoesNotFail` because the old name implied "no
+// failure handling needed" — but the hidden silent-failure path is
+// exactly what let a 30-hour outage drop ~hundreds of events
+// without the user noticing. The companion test below pins the
+// outage-flag side effect that catches the next such outage early.
+func TestCLI_IngestUnreachableDaemon_LogsAndContinues(t *testing.T) {
 	isolateEnv(t)
-	// Unreachable socket path; CLI must NEVER return an error to the hook.
 	hook := []byte(`{"session_id":"x","hook_event_name":"UserPromptSubmit","cwd":"/","prompt":"hi"}`)
 	var stderr bytes.Buffer
 
@@ -234,5 +244,75 @@ func TestCLI_IngestUnreachableDaemon_DoesNotFail(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "aichronicles ingest") {
 		t.Errorf("expected stderr to mention ingest error, got %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "post to daemon") {
+		t.Errorf("expected stderr to name the failure mode (post to daemon), got %q", stderr.String())
+	}
+}
+
+// TestCLI_IngestUnreachableDaemon_FlipsOutageFlag pins the user-
+// visibility side of the contract. Silent-on-the-hook is fine; what
+// is NOT fine is silent on the user. After a failed POST, the
+// outage flag must exist on disk — that's what the rate-limited
+// notifier checks before sending a desktop banner. If a future
+// refactor removes the maybeNotifyOutage call from RunIngest, this
+// test fails immediately instead of letting another 30-hour outage
+// drop events with no signal to the user.
+func TestCLI_IngestUnreachableDaemon_FlipsOutageFlag(t *testing.T) {
+	isolateEnv(t)
+	hook := []byte(`{"session_id":"x","hook_event_name":"UserPromptSubmit","cwd":"/","prompt":"hi"}`)
+
+	err := cli.RunIngest(bytes.NewReader(hook), &bytes.Buffer{},
+		filepath.Join(t.TempDir(), "nope.sock"), "")
+	if err != nil {
+		t.Fatalf("RunIngest: %v", err)
+	}
+
+	// XDG_RUNTIME_DIR was redirected by isolateEnv; the flag must
+	// land at <isolated>/aichronicles/outage.flag.
+	flag := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "aichronicles", "outage.flag")
+	if _, err := os.Stat(flag); err != nil {
+		t.Fatalf("expected outage flag at %s, got: %v", flag, err)
+	}
+}
+
+// TestCLI_IngestRecoveryClearsOutageFlag covers the other half of
+// the lifecycle: once the daemon is reachable again, the next
+// successful POST must drop the flag so a future outage triggers a
+// fresh notification rather than being suppressed by stale state.
+func TestCLI_IngestRecoveryClearsOutageFlag(t *testing.T) {
+	isolateEnv(t)
+
+	// First: fail once to plant the flag.
+	missingSock := filepath.Join(t.TempDir(), "nope.sock")
+	hook := []byte(`{"session_id":"x","hook_event_name":"UserPromptSubmit","cwd":"/","prompt":"hi"}`)
+	if err := cli.RunIngest(bytes.NewReader(hook), &bytes.Buffer{}, missingSock, ""); err != nil {
+		t.Fatalf("first RunIngest: %v", err)
+	}
+	flag := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "aichronicles", "outage.flag")
+	if _, err := os.Stat(flag); err != nil {
+		t.Fatalf("flag should exist after first failure: %v", err)
+	}
+
+	// Now: bring up a real daemon and ingest successfully.
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "sock")
+	s, err := store.Open(filepath.Join(dir, "store.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+	srv := daemon.NewServer(s, nil)
+	shutdown, err := daemon.ListenAndServe(sock, srv.Handler())
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = shutdown(context.Background()) }()
+
+	if err := cli.RunIngest(bytes.NewReader(hook), &bytes.Buffer{}, sock, ""); err != nil {
+		t.Fatalf("second RunIngest: %v", err)
+	}
+	if _, err := os.Stat(flag); !os.IsNotExist(err) {
+		t.Errorf("flag should be cleared after a successful post; stat err = %v", err)
 	}
 }
