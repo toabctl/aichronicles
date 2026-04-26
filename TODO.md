@@ -126,6 +126,59 @@ observability project ships an interactive permission dialog flow,
 but that's an interactive UI feature and aichronicles is a
 read/capture tool, not an agent host.
 
+### Drop egress redaction (read-path layer only)
+
+`redact.Outbound` currently runs on three different egress paths:
+the MCP `tools/call` response in `internal/mcp/mcp.go`, the prompt
+builders in `pkg/llm/prompts/prompts.go`, and the SDK error
+scrubbers (`scrubAnthropicError` / `scrubOpenAIError` in
+`pkg/llm/`). The defense-in-depth rationale was: a detector
+added after a row was stored still scrubs the old row when read
+out.
+
+That benefit is small in practice. aichronicles ships
+`aichronicles scrub` (`internal/cli/scrub.go`) precisely for the
+"I added a new detector, rewrite stored rows" case, and ingress
+redaction enforced at four layers (CLI edge, daemon, store, and
+the OpenAPI invariant) is the actual single point of truth.
+Running the detector set on every byte that leaves wastes CPU,
+adds a second site for detector-set bugs to live, and complicates
+new read paths (the upcoming `aichronicles web` server is the
+immediate trigger for this cleanup).
+
+Operationally: add detector → run `scrub` → reads are safe.
+That's a clearer story than "redact twice; the second time is a
+silent fix-up nobody can observe."
+
+Scope:
+
+- Drop the `redact.Outbound` calls from `internal/mcp/mcp.go`'s
+  `handleToolsCall` egress wrapper and any per-handler scrubs.
+  Tests that assert "egress scrubs a planted secret" become
+  "ingest refuses an envelope carrying that secret"
+  (`TestToolsCall_ScrubsEgressText` in
+  `internal/mcp/tools_aichronicles_test.go` is the relevant one
+  to rewrite).
+- Update `docs/explanation/threat-model.md` to drop boundary 4
+  ("egress redaction") from the diagram and explain the new
+  posture: ingress is the single point of truth; `scrub` is the
+  operational tool when the detector set changes.
+- The new `aichronicles web` server (planned) does NOT build a
+  redact-on-write response wrapper. Reads render `content_text`
+  directly.
+
+Decide separately, not part of this cleanup: the prompt-builder
+layer in `pkg/llm/prompts/prompts.go` and the SDK error scrubbers.
+Those scrub content before it leaves the local trust boundary to
+a third-party LLM provider — a different threat model from
+"prevent local read paths from re-emitting a credential." Likely
+keep them; document the asymmetry in the threat-model so the
+reasoning is captured.
+
+Non-goal: removing `aichronicles scrub`. It stays as the
+canonical path for "I changed the detector set, refresh stored
+rows."
+
 ### MCP and sub-agent tool_input extraction
 
 Grep / Glob / WebFetch / WebSearch are now first-class — their
