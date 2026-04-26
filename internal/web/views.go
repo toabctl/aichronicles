@@ -24,14 +24,15 @@ type SessionsPage struct {
 // are pre-rendered server-side so the template stays free of
 // formatting helpers — easier to test and easier to keep tidy.
 type SessionRow struct {
-	ID           string // full UUID — used in /sessions/{id} hrefs
-	ShortID      string // 8-char preview — what the user sees in the row
-	LastActivity string // human-friendly relative time ("2h ago")
-	EventCount   int
-	Cwd          string // working directory at last event, or "-"
-	FirstPrompt  string // truncated first user_prompt content_text
-	HasSummary   bool   // an llm_outputs(kind='summary') row exists for this session
-	SummaryTopic string // parsed `topic` field from the cached summary; empty when none
+	ID             string // full UUID — used in /sessions/{id} hrefs
+	ShortID        string // 8-char preview — what the user sees in the row
+	LastActivity   string // human-friendly relative time ("2h ago")
+	EventCount     int
+	Cwd            string // working directory at last event, or "-"
+	FirstPrompt    string // truncated first user_prompt content_text
+	HasSummary     bool   // an llm_outputs(kind='summary') row exists for this session
+	SummaryTopic   string // parsed `topic` field from the cached summary; empty when none
+	SummaryTooltip string // multi-line plain-text tooltip for the summary badge — topic + "what was done" bullets, native browser tooltip
 
 	// StatusDotHTML is the pre-rendered <span class="status …">●</span>
 	// for the activity dot. Pre-rendered so the same Go-side renderer

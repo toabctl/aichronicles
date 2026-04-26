@@ -41,7 +41,7 @@
         <td class="latest"
             sse-swap="session-{{.ID}}"
             hx-swap="innerHTML">{{if .LatestEventHTML}}{{.LatestEventHTML}}{{else}}<span class="empty">—</span>{{end}}</td>
-        <td>{{if .HasSummary}}<span class="badge badge-summary">summary</span>{{end}}</td>
+        <td>{{if .HasSummary}}<span class="badge badge-summary"{{if .SummaryTooltip}} title="{{.SummaryTooltip}}"{{end}}>summary</span>{{end}}</td>
       </tr>
       {{end}}
     </tbody>

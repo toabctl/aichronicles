@@ -104,7 +104,7 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int) ([]Ses
 	for i := range out {
 		if summary, ok := summaries[out[i].ID]; ok {
 			out[i].HasSummary = true
-			out[i].SummaryTopic = parseSummaryTopic(summary.Body)
+			out[i].SummaryTopic, out[i].SummaryTooltip = parseSummaryForBadge(summary.Body)
 		}
 
 		// Status dot: ended / active / idle. Driven by the latest
@@ -123,17 +123,70 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int) ([]Ses
 	return out, nil
 }
 
-// parseSummaryTopic extracts the `topic` field from a cached
-// summary body. Returns empty string when the body is malformed
-// JSON or the topic is missing — the row still renders the badge,
-// just without the inline topic line. Scoped narrow on purpose:
-// a one-liner per row doesn't need the rest of SummaryResult.
-func parseSummaryTopic(body string) string {
+// parseSummaryForBadge extracts the topic AND a multi-line tooltip
+// from a cached summary body. The tooltip carries the topic plus
+// the "what was done" bullets so a hover on the badge surfaces the
+// whole gist of the session without a click. Returns empty strings
+// when the body is malformed JSON — the row still renders the
+// badge, just without the inline topic line and without a tooltip.
+//
+// The tooltip is plain text with newlines so the browser's native
+// title= attribute renders it as a multi-line popover; no CSS or
+// markup needed beyond the title= itself.
+func parseSummaryForBadge(body string) (topic, tooltip string) {
 	var parsed prompts.SummaryResult
 	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
-		return ""
+		return "", ""
 	}
-	return parsed.Topic
+	topic = parsed.Topic
+
+	var b strings.Builder
+	if topic != "" {
+		b.WriteString(topic)
+	}
+	if len(parsed.WhatWasDone) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString("What was done:")
+		// Cap at 5 bullets so a runaway summary doesn't produce
+		// a tooltip that overflows the screen. Most summaries
+		// cap at 8 by their own schema; 5 is enough to scan.
+		const maxBullets = 5
+		for i, d := range parsed.WhatWasDone {
+			if i >= maxBullets {
+				b.WriteString("\n• …")
+				break
+			}
+			b.WriteString("\n• ")
+			b.WriteString(d)
+		}
+	}
+	if len(parsed.Unresolved) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString("Unresolved:")
+		const maxBullets = 3
+		for i, u := range parsed.Unresolved {
+			if i >= maxBullets {
+				b.WriteString("\n• …")
+				break
+			}
+			b.WriteString("\n• ")
+			b.WriteString(u)
+		}
+	}
+	return topic, b.String()
+}
+
+// parseSummaryTopic preserves the older two-return-value-free
+// helper signature for callers that only want the topic. Defined
+// in terms of parseSummaryForBadge so the parsing logic isn't
+// duplicated.
+func parseSummaryTopic(body string) string {
+	t, _ := parseSummaryForBadge(body)
+	return t
 }
 
 // shortID returns the 8-char preview the CLI uses everywhere

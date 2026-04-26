@@ -183,9 +183,11 @@ func TestSessionsPage_HasSummaryBadgeOnlyForCachedRows(t *testing.T) {
 
 	_, body := fetch(t, base+"/")
 	// Crude but sufficient: the badge HTML appears once (for the
-	// session with the summary), not twice.
-	const badge = `class="badge badge-summary">summary`
-	count := strings.Count(body, badge)
+	// session with the summary), not twice. Anchored on the
+	// classnames-up-to-the-quote so the assertion is stable across
+	// later attribute additions (e.g. title= for the hover tooltip).
+	const badgeMarker = `class="badge badge-summary"`
+	count := strings.Count(body, badgeMarker)
 	if count != 1 {
 		t.Errorf("badge count: got %d, want 1\n%s", count, body)
 	}
@@ -230,6 +232,65 @@ func TestSessionsPage_ShowsSummaryTopicInRow(t *testing.T) {
 	// topic stays muted/italic per the CSS contract.
 	if !strings.Contains(body, `<small class="topic">`) {
 		t.Errorf("expected <small class=\"topic\"> wrapper for the topic line:\n%s", body)
+	}
+}
+
+func TestSessionsPage_SummaryBadgeCarriesTooltip(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+
+	id := seedSession(t, st, "sess-tooltip", "anything", now)
+
+	// Plant a summary with topic + what_was_done + unresolved so
+	// every section of the tooltip renderer is exercised.
+	tx, err := st.DB().Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
+		SessionID:  sql.NullString{String: id, Valid: true},
+		Kind:       store.LLMKindSummary,
+		Model:      "claude-sonnet-4-6",
+		PromptHash: "h-tooltip",
+		Body: `{
+			"topic": "Investigate the foo bar baz drift",
+			"what_was_done": ["Read internal/foo", "Wrote a regression test", "Filed PR #42"],
+			"unresolved": ["Document the new invariant"],
+			"key_files": ["a.go"],
+			"links": []
+		}`,
+		CreatedAtMs: now.UnixMilli(),
+	}); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("seed summary: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	_, body := fetch(t, base+"/")
+	// The badge MUST carry a title= attribute. The tooltip text is
+	// auto-escaped by html/template, so newlines become "&#10;" or
+	// similar — assert on the topic and the bullet labels rather
+	// than literal newlines.
+	if !strings.Contains(body, `class="badge badge-summary" title=`) {
+		t.Errorf("expected summary badge with title= attribute:\n%s", body)
+	}
+	for _, want := range []string{
+		"Investigate the foo bar baz drift", // topic line
+		"What was done:",                    // header
+		"Read internal/foo",                 // first what_was_done bullet
+		"Filed PR #42",                      // last what_was_done bullet
+		"Unresolved:",                       // unresolved header
+		"Document the new invariant",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("tooltip body missing %q:\n%s", want, body)
+		}
 	}
 }
 
