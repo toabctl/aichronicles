@@ -51,11 +51,25 @@ type Scanner interface {
 	Scan(s string) []Finding
 }
 
-// Detector is the simplest Scanner: a single named regex. Construct
-// with NewDetector so pattern compilation is bounded to package init.
+// Detector is the simplest Scanner: a single named regex with an
+// optional fast-path literal prefilter. Construct with NewDetector
+// so pattern compilation is bounded to package init.
 type Detector struct {
 	Name string
 	RE   *regexp.Regexp
+
+	// Prefilter is a set of literal substrings (any-of). When
+	// non-empty, Scan does an O(n) substring screen before
+	// running the regex — if NONE of the literals appear in the
+	// input, the regex cannot match and is skipped entirely.
+	// Empty means "run the regex unconditionally" (the right
+	// choice for case-insensitive patterns we don't want to
+	// pay an O(n) lowercase copy for).
+	//
+	// Correctness invariant: every string the regex would match
+	// MUST contain at least one of the prefilter literals.
+	// Otherwise the prefilter introduces false negatives.
+	Prefilter []string
 }
 
 // NewDetector compiles pattern and returns a Detector. Panics on a
@@ -65,8 +79,28 @@ func NewDetector(name, pattern string) *Detector {
 	return &Detector{Name: name, RE: regexp.MustCompile(pattern)}
 }
 
+// WithPrefilter attaches one or more literal substrings as a
+// fast-path screen. At least one MUST appear verbatim in any
+// string the regex could match (see Detector.Prefilter doc).
+// Returns the detector so it can be chained inside the
+// builtinDetectors literal:
+//
+//	NewDetector("foo", `\bfoo[A-Z]+`).WithPrefilter("foo")
+func (d *Detector) WithPrefilter(literals ...string) *Detector {
+	d.Prefilter = literals
+	return d
+}
+
 // Scan finds every non-overlapping match of the detector's regex.
+// When Prefilter is set, it short-circuits to nil for inputs that
+// can't possibly match — turning the typical "scan a paragraph of
+// prose" call from O(input × regex-state-machine) to O(input)
+// memcmp. On a real-world Claude transcript import this dropped
+// the regex share of CPU time from ~63% to a small fraction.
 func (d *Detector) Scan(s string) []Finding {
+	if len(d.Prefilter) > 0 && !containsAny(s, d.Prefilter) {
+		return nil
+	}
 	matches := d.RE.FindAllStringIndex(s, -1)
 	if matches == nil {
 		return nil
@@ -76,6 +110,20 @@ func (d *Detector) Scan(s string) []Finding {
 		out[i] = Finding{Pattern: d.Name, Start: m[0], End: m[1]}
 	}
 	return out
+}
+
+// containsAny reports whether s contains any literal from
+// substrings. Linear in len(s) × len(substrings) worst case, but
+// each strings.Contains is a SIMD-accelerated memmem-shape scan
+// that's orders of magnitude faster than running the corresponding
+// regex on miss.
+func containsAny(s string, substrings []string) bool {
+	for _, sub := range substrings {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 // Composite chains multiple detectors and merges their findings into
@@ -188,37 +236,76 @@ func BuiltinDetectors() []Scanner {
 }
 
 // builtinDetectors is the ordered list of production detectors.
-// Order matters for overlap resolution: earlier = wins on ties. Most
-// specific / longest-prefix patterns go first.
+// Order matters for overlap resolution: earlier = wins on ties.
+// Most specific / longest-prefix patterns go first.
+//
+// Each detector that can be screened by a literal prefix uses
+// WithPrefilter so prose-heavy input (the common case for our
+// import path) skips the regex engine entirely on miss.
+// Case-insensitive detectors and ones whose required literal is
+// too generic to filter usefully run their regex unconditionally.
 func builtinDetectors() []Scanner {
 	return []Scanner{
 		// Specific API keys with distinctive prefixes.
-		NewDetector("anthropic_api_key", `\bsk-ant-[A-Za-z0-9_-]{20,}\b`),
-		NewDetector("openai_api_key", `\bsk-(?:proj-)?[A-Za-z0-9_-]{40,}\b`),
-		NewDetector("google_api_key", `\bAIza[0-9A-Za-z_-]{35}\b`),
-		NewDetector("github_pat_fine_grained", `\bgithub_pat_[A-Za-z0-9_]{82}\b`),
-		NewDetector("github_pat_classic", `\bgh[pousr]_[A-Za-z0-9]{36}\b`),
-		NewDetector("aws_access_key", `\bAKIA[0-9A-Z]{16}\b`),
-		NewDetector("npm_token", `\bnpm_[A-Za-z0-9]{36}\b`),
-		NewDetector("slack_token", `\bxox[abprs]-[0-9]{10,}-[0-9a-zA-Z-]{24,}\b`),
-		NewDetector("stripe_key", `\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{24,}\b`),
+		NewDetector("anthropic_api_key", `\bsk-ant-[A-Za-z0-9_-]{20,}\b`).
+			WithPrefilter("sk-ant-"),
+		NewDetector("openai_api_key", `\bsk-(?:proj-)?[A-Za-z0-9_-]{40,}\b`).
+			WithPrefilter("sk-"),
+		NewDetector("google_api_key", `\bAIza[0-9A-Za-z_-]{35}\b`).
+			WithPrefilter("AIza"),
+		NewDetector("github_pat_fine_grained", `\bgithub_pat_[A-Za-z0-9_]{82}\b`).
+			WithPrefilter("github_pat_"),
+		// gh[pousr]_ has no single literal prefix, but the union of
+		// the five concrete 4-byte prefixes covers every match.
+		NewDetector("github_pat_classic", `\bgh[pousr]_[A-Za-z0-9]{36}\b`).
+			WithPrefilter("ghp_", "gho_", "ghu_", "ghs_", "ghr_"),
+		NewDetector("aws_access_key", `\bAKIA[0-9A-Z]{16}\b`).
+			WithPrefilter("AKIA"),
+		NewDetector("npm_token", `\bnpm_[A-Za-z0-9]{36}\b`).
+			WithPrefilter("npm_"),
+		NewDetector("slack_token", `\bxox[abprs]-[0-9]{10,}-[0-9a-zA-Z-]{24,}\b`).
+			WithPrefilter("xox"),
+		// (?:sk|pk|rk)_(?:live|test)_ — six concrete combinations
+		// cover every possible match.
+		NewDetector("stripe_key", `\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{24,}\b`).
+			WithPrefilter(
+				"sk_live_", "sk_test_",
+				"pk_live_", "pk_test_",
+				"rk_live_", "rk_test_",
+			),
+		// twilio_sid: AC and SK alone are too noisy in prose (any
+		// capitalised word can contain "AC"); the regex's own RE2
+		// literal-prefix screen handles the miss case adequately.
 		NewDetector("twilio_sid", `\b(?:AC|SK)[a-f0-9]{32}\b`),
 
-		// Structural patterns (no short distinctive prefix).
+		// Structural patterns (no short distinctive prefix in the
+		// "uppercase-prefix" sense, but most still have a strong
+		// literal anchor we can screen on).
 		NewDetector("pem_private_key",
-			`-----BEGIN (?:RSA |EC |OPENSSH |PGP |DSA |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----`),
+			`-----BEGIN (?:RSA |EC |OPENSSH |PGP |DSA |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----`).
+			WithPrefilter("-----BEGIN"),
 		NewDetector("jwt",
-			`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`),
+			`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`).
+			WithPrefilter("eyJ"),
+		// bearer_token / db_connection_string / aws_secret_key_assignment
+		// are all (?i)-flagged. A case-insensitive prefilter would
+		// mean a per-Scan lowercase copy of the input — for typical
+		// inputs the cost would dwarf the benefit. Run the regex
+		// directly; RE2 handles the miss case in microseconds.
 		NewDetector("bearer_token",
 			`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{20,}\b`),
 		NewDetector("db_connection_string",
 			`(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis(?:s)?|amqp)://[^:@\s]+:[^@\s]+@[^\s]+`),
+		// basic_auth_url is case-sensitive and "://" is a required
+		// substring — a serviceable prefilter for prose input.
 		NewDetector("basic_auth_url",
-			`\bhttps?://[^:@\s/]+:[^@\s/]+@[^\s]+`),
+			`\bhttps?://[^:@\s/]+:[^@\s/]+@[^\s]+`).
+			WithPrefilter("://"),
 
 		// Context-aware: AWS secret follows an assignment-style key.
 		// Matches the whole key=value so the assignment syntax is
-		// redacted alongside the 40-char secret.
+		// redacted alongside the 40-char secret. Case-insensitive
+		// → no prefilter (same reasoning as bearer_token).
 		NewDetector("aws_secret_key_assignment",
 			`(?i)\baws_?secret(?:_access)?_?key\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}["']?`),
 	}

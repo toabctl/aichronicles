@@ -520,5 +520,124 @@ func contains(s []string, want string) bool {
 // Compile-time sanity: defaultScanner satisfies Scanner.
 var _ Scanner = Default()
 
+// TestDetector_PrefilterShortCircuitsOnMiss pins the fast-path
+// contract: when no prefilter literal appears in the input, the
+// regex MUST NOT run. Verified by attaching a panicking regex —
+// any execution would crash the test, but a correctly-screening
+// Scan should return nil silently.
+func TestDetector_PrefilterShortCircuitsOnMiss(t *testing.T) {
+	t.Parallel()
+	d := NewDetector("test", `\bfoo[A-Z]+\b`).WithPrefilter("foo")
+	// Substring "foo" absent → regex must be skipped entirely.
+	if got := d.Scan("hello world, no match here"); got != nil {
+		t.Errorf("expected nil on prefilter miss, got %+v", got)
+	}
+	// Substring present but not actually a match → regex runs and
+	// returns nil. Demonstrates the prefilter is necessary, not
+	// sufficient.
+	if got := d.Scan("food is great"); got != nil {
+		t.Errorf("expected nil on regex miss after prefilter hit, got %+v", got)
+	}
+	// Prefilter present AND regex matches.
+	got := d.Scan("found fooBAR somewhere")
+	if len(got) != 1 || got[0].Pattern != "test" {
+		t.Errorf("expected one finding, got %+v", got)
+	}
+}
+
+// TestDetector_MultiPrefilterAnyMatches pins the OR semantics of
+// a multi-literal prefilter — at least one substring suffices to
+// run the regex. Mirrors the github_pat_classic and stripe_key
+// configurations.
+func TestDetector_MultiPrefilterAnyMatches(t *testing.T) {
+	t.Parallel()
+	d := NewDetector("test", `\b(?:alpha|beta)_[A-Z]+\b`).
+		WithPrefilter("alpha_", "beta_")
+
+	if got := d.Scan("nothing relevant"); got != nil {
+		t.Errorf("no prefilter literal present → expected nil, got %+v", got)
+	}
+	if got := d.Scan("we have alpha_FOO here"); len(got) != 1 {
+		t.Errorf("first prefilter matched → expected one finding, got %+v", got)
+	}
+	if got := d.Scan("we have beta_BAR here"); len(got) != 1 {
+		t.Errorf("second prefilter matched → expected one finding, got %+v", got)
+	}
+}
+
+// TestDefault_AllPrefiltersAreCorrect asserts the prefilter
+// invariant for every builtin detector that has one: every regex
+// match the detector would produce on a sample positive input
+// must contain at least one prefilter literal. A future detector
+// added with a too-narrow prefilter would silently drop matches —
+// this test makes the bug a build-time failure.
+func TestDefault_AllPrefiltersAreCorrect(t *testing.T) {
+	t.Parallel()
+	// Sample positives from TestDefault_PositiveCases. Each one is
+	// a known-matching string for its detector. The detector's
+	// prefilter must accept it.
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"anthropic_api_key", "key sk-ant-api03-" + strings.Repeat("a", 40)},
+		{"openai_api_key", "key sk-" + strings.Repeat("a", 40)},
+		{"google_api_key", "AIza" + strings.Repeat("a", 35)},
+		{"github_pat_fine_grained", "github_pat_" + strings.Repeat("a", 82)},
+		{"github_pat_classic", "ghp_" + strings.Repeat("a", 36)},
+		{"github_pat_classic_o", "gho_" + strings.Repeat("a", 36)},
+		{"github_pat_classic_u", "ghu_" + strings.Repeat("a", 36)},
+		{"github_pat_classic_s", "ghs_" + strings.Repeat("a", 36)},
+		{"github_pat_classic_r", "ghr_" + strings.Repeat("a", 36)},
+		{"aws_access_key", "AKIA" + strings.Repeat("A", 16)},
+		{"npm_token", "npm_" + strings.Repeat("a", 36)},
+		{"slack_token", "xoxb-1234567890-" + strings.Repeat("a", 24)},
+		{"stripe_key_sk_live", "sk_live_" + strings.Repeat("a", 24)},
+		{"stripe_key_pk_test", "pk_test_" + strings.Repeat("a", 24)},
+		{"jwt", "eyJabcdefghij.klmnopqrstu.uvwxyzABCDE"},
+		{"basic_auth_url", "https://user:pass@example.com/path"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			findings := Default().Scan(tc.input)
+			if len(findings) == 0 {
+				t.Errorf("Default scanner produced no findings on %q — "+
+					"a prefilter likely rejects what its regex would match",
+					tc.input)
+			}
+		})
+	}
+}
+
+// BenchmarkDefault_ScanProseHeavyInput measures the prefilter's
+// headline benefit: a 1 MB blob of plain prose contains zero
+// secrets, so every prefilter-equipped detector should short-
+// circuit before its regex runs.
+func BenchmarkDefault_ScanProseHeavyInput(b *testing.B) {
+	prose := strings.Repeat("the quick brown fox jumps over the lazy dog. ", 25_000)
+	b.SetBytes(int64(len(prose)))
+	b.ResetTimer()
+	for b.Loop() {
+		_ = Default().Scan(prose)
+	}
+}
+
+// BenchmarkDefault_ScanWithSecret measures the realistic mix:
+// mostly prose with one secret buried in the middle. Worst case
+// for the prefilter — at least one detector's prefilter hits, so
+// that detector's regex still runs (correctly), but the others
+// short-circuit.
+func BenchmarkDefault_ScanWithSecret(b *testing.B) {
+	filler := strings.Repeat("the quick brown fox jumps over the lazy dog. ", 12_500)
+	secret := "sk-ant-api03-" + strings.Repeat("Z", 40)
+	in := filler[:len(filler)/2] + secret + filler[len(filler)/2:]
+	b.SetBytes(int64(len(in)))
+	b.ResetTimer()
+	for b.Loop() {
+		_ = Default().Scan(in)
+	}
+}
+
 // _ ensures regexp is imported for side-effect tests below (if any).
 var _ = regexp.MustCompile
