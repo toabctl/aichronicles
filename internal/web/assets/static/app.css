@@ -11,8 +11,12 @@ main.container {
   /* Pico defaults to a centered, ~1200px reading width. The
      sessions list is data-dense (status dot + sid + ts + count
      + prompt+cwd + latest-event + summary) and benefits hugely
-     from a wider canvas. */
-  max-width: 1600px;
+     from a wider canvas — without it the latest-event snippet
+     gets clipped after a handful of characters. We give the
+     container most of the viewport on big monitors, with a
+     comfortable cap so the page doesn't turn into one absurd
+     line on a 4K widescreen. */
+  max-width: min(2400px, 95vw);
 }
 
 /* Session-id prefix renders as a monospace token everywhere. */
@@ -220,6 +224,14 @@ table.sessions td.latest .ts {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Take all the remaining horizontal space the row has after
+     the fixed-shrink ts / sid / cwd cells, and clamp our
+     content to it. Without flex: 1 + min-width: 0 the long
+     snippet pushes past the row's right edge and the ellipsis
+     never fires — a long Bash invocation reads as "cut on the
+     right side" with no visual cue that there's more. */
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .livefeed-empty {
   color: var(--pico-muted-color);
