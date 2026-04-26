@@ -122,8 +122,25 @@ func (s *Server) streamHandler(w http.ResponseWriter, r *http.Request) {
 				// (ctx done) come through the other branch.
 				continue
 			}
+			now := time.Now()
 			for _, e := range events {
-				if err := writeStreamEvent(w, e); err != nil {
+				// Each ingested event becomes TWO SSE frames:
+				//
+				//   event: event           — the live-feed row, listened
+				//                           for by <ul id="livefeed">.
+				//   event: session-<id>   — the per-row "Latest event"
+				//                           cell + an OOB span that
+				//                           updates the status dot.
+				//
+				// One ingest_seq, two frames; cursor advances once.
+				// The bandwidth cost (one extra ~few-hundred-byte
+				// frame per event) is the price of letting the
+				// existing live feed AND the per-row cells share a
+				// single SSE connection.
+				if err := writeLiveFeedFrame(w, e); err != nil {
+					return
+				}
+				if err := writeSessionFrame(w, e, now); err != nil {
 					return
 				}
 				cursor = e.IngestSeq
@@ -135,20 +152,38 @@ func (s *Server) streamHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// writeStreamEvent serialises one LiveEvent as an SSE message.
-// The `id:` line lets the browser's EventSource send a
-// Last-Event-ID header on reconnect, matching the ?since_seq
-// resume parameter — no events are missed across a disconnect.
-//
-// Payload is an HTML fragment ready for htmx-ext-sse to swap
-// directly into the DOM. Single-line so the SSE data field
-// stays in one frame.
-func writeStreamEvent(w http.ResponseWriter, e store.LiveEvent) error {
+// writeLiveFeedFrame serialises one LiveEvent as the SSE message
+// the live feed listens for (`event: event`). Payload is the
+// `<li class="livefeed-row">…</li>` fragment that prepends into
+// `<ul id="livefeed">`. The `id:` line lets the browser's
+// EventSource send a Last-Event-ID header on reconnect, matching
+// the ?since_seq resume parameter.
+func writeLiveFeedFrame(w http.ResponseWriter, e store.LiveEvent) error {
 	frag := renderLiveEventFragment(e)
-	// SSE frame: id (for resume), event (for hx-ext sse-swap
-	// routing), data (one line). End with double-newline.
 	_, err := fmt.Fprintf(w, "id: %d\nevent: event\ndata: %s\n\n",
 		e.IngestSeq, frag)
+	return err
+}
+
+// writeSessionFrame serialises one LiveEvent as the SSE message
+// the per-row "Latest event" cell listens for (`event: session-<id>`).
+//
+// The `data:` line carries the cell's new innerHTML AND an OOB
+// status-dot <span> with hx-swap-oob="true". htmx processes the
+// OOB span first (swapping the status dot by id) then swaps the
+// rest of the response into the listening cell — one SSE frame,
+// two cells updated.
+//
+// Single line on purpose: an SSE `data:` value spanning multiple
+// lines is concatenated by the browser, but htmx's parser is
+// happier with one line, and our renderers already flatten newlines
+// from snippets via truncateForStream.
+func writeSessionFrame(w http.ResponseWriter, e store.LiveEvent, now time.Time) error {
+	cell := renderLatestEventCell(e)
+	status, title := sessionStatus(&e, now)
+	dot := renderStatusDot(e.SessionID, status, title, true /* OOB */)
+	_, err := fmt.Fprintf(w, "id: %d\nevent: session-%s\ndata: %s%s\n\n",
+		e.IngestSeq, e.SessionID, cell, dot)
 	return err
 }
 
