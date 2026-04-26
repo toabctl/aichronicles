@@ -332,17 +332,19 @@ func convertAnthropicMessage(msg *anthropicsdk.Message, requestedModel string) *
 
 // scrubAnthropicError wraps an SDK error so its message — which
 // includes the raw upstream response body for HTTP failures — never
-// echoes a leaked API key or other secret. We always run the
-// (truncated) message through redact.Outbound; secret detectors
-// rewrite anything that matches.
+// echoes a leaked API key or other secret.
+//
+// Order matters: redact first, truncate second. Truncating before
+// redacting could split a credential straddling the byte boundary,
+// half of which would then escape the regex match and reach the
+// caller.
 func scrubAnthropicError(err error) error {
 	if err == nil {
 		return nil
 	}
-	msg := err.Error()
-	if len(msg) > 1024 {
-		msg = msg[:1024] + "…"
+	scrubbed, _ := redact.Outbound(err.Error())
+	if len(scrubbed) > 1024 {
+		scrubbed = scrubbed[:1024] + "…"
 	}
-	scrubbed, _ := redact.Outbound(msg)
 	return fmt.Errorf("anthropic: %s", scrubbed)
 }

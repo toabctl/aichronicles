@@ -51,6 +51,18 @@ func parseToolResult(resp *llm.Response, toolName string, target any) error {
 		}
 		return fmt.Errorf("model did not call %s: %s", toolName, fallback)
 	}
+	// Forced tool use means the model is contractually obliged to
+	// call exactly one tool. More than one is the model going off-
+	// rails; silently picking [0] would discard whatever the others
+	// said and the user couldn't tell.
+	if len(resp.ToolUses) > 1 {
+		names := make([]string, len(resp.ToolUses))
+		for i, t := range resp.ToolUses {
+			names[i] = t.Name
+		}
+		return fmt.Errorf("model returned %d tool uses (forced %s): %s",
+			len(resp.ToolUses), toolName, strings.Join(names, ", "))
+	}
 	tu := resp.ToolUses[0]
 	if tu.Name != toolName {
 		return fmt.Errorf("model called tool %q but %q was forced", tu.Name, toolName)

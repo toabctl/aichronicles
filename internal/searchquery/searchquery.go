@@ -164,16 +164,34 @@ func transform(p part) (string, error) {
 // it contains one of the tokenizer's separator characters (in which
 // case the tokenizer would split it; wrapping makes it a phrase
 // query of the resulting tokens, which is what the user wanted).
+//
+// Both ASCII and non-ASCII runes are checked: a Unicode quotation
+// mark or a non-ASCII separator looks innocent to a byte scan but
+// would still confuse the FTS5 parser if pasted into a MATCH
+// expression unwrapped.
 func needsQuoting(s string) bool {
 	for _, r := range s {
-		if r > unicode.MaxASCII {
+		// Specials and separators are documented as ASCII; the
+		// fast path is `r < MaxASCII && IndexByte`. For non-ASCII
+		// runes, fall through to the strings.ContainsRune path so
+		// any future expansion of the special set (e.g. a
+		// non-ASCII quote-like char) is matched as well.
+		if r <= unicode.MaxASCII {
+			c := byte(r)
+			if strings.IndexByte(fts5Specials, c) >= 0 {
+				return true
+			}
+			if strings.IndexByte(separators, c) >= 0 {
+				return true
+			}
 			continue
 		}
-		c := byte(r)
-		if strings.IndexByte(fts5Specials, c) >= 0 {
-			return true
-		}
-		if strings.IndexByte(separators, c) >= 0 {
+		// Defensive: also check for Unicode characters classified
+		// as quotation marks or other punctuation that an FTS5
+		// parser might choke on. unicode.IsPunct is permissive,
+		// but for safety we wrap any non-ASCII punctuation as a
+		// phrase rather than letting it through as-is.
+		if unicode.IsPunct(r) || unicode.IsSymbol(r) {
 			return true
 		}
 	}

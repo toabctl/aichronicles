@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -84,6 +85,11 @@ func AssembleCodex(raw []byte, now time.Time) (ingest.Envelope, error) {
 // PostToolUse carries `tool_name` (and we delegate to the same
 // per-tool renderer Claude Code uses since tool_input shape is
 // largely tool-driven not host-driven).
+//
+// For tool_failure the bare renderToolContent isn't enough —
+// the failure-specific fields (error, exit_code, stderr) carry
+// the actual diagnostic and must reach content_text so search
+// finds the failure later.
 func extractCodexContentText(kind string, hook map[string]any) string {
 	switch kind {
 	case "user_prompt":
@@ -101,8 +107,45 @@ func extractCodexContentText(kind string, hook map[string]any) string {
 		if s, ok := hook["response"].(string); ok && s != "" {
 			return s
 		}
-	case "tool_use", "tool_failure":
+	case "tool_use":
 		return renderToolContent(hook)
+	case "tool_failure":
+		return renderCodexToolFailure(hook)
 	}
 	return ""
+}
+
+// renderCodexToolFailure produces a content_text rendering for a
+// Codex PostToolUseFailure event. Combines the tool-name + input
+// rendering (from renderToolContent) with the failure-specific
+// fields the Codex hook documents — `error`, `exit_code`,
+// `stderr`, `interrupted` — so a search for the error string
+// later actually hits this row instead of bouncing off
+// content_text that says only "Bash".
+//
+// Fields are stitched together with newlines so both halves
+// land in the FTS index. Empty fields are skipped silently.
+func renderCodexToolFailure(hook map[string]any) string {
+	var parts []string
+	if base := renderToolContent(hook); base != "" {
+		parts = append(parts, base)
+	}
+	if s := stringField(hook, "error"); s != "" {
+		parts = append(parts, "error: "+s)
+	}
+	if s := stringField(hook, "stderr"); s != "" {
+		parts = append(parts, "stderr: "+s)
+	}
+	// exit_code is typically a number; render via fmt to handle
+	// the float64 JSON unmarshalling cleanly.
+	if v, ok := hook["exit_code"]; ok {
+		parts = append(parts, fmt.Sprintf("exit_code: %v", v))
+	}
+	if b, ok := hook["interrupted"].(bool); ok && b {
+		parts = append(parts, "interrupted: true")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "\n")
 }

@@ -93,6 +93,59 @@ func TestAssembleCodex_UnknownEventMapsToUnknown(t *testing.T) {
 	}
 }
 
+func TestAssembleCodex_ToolFailureSurfacesError(t *testing.T) {
+	t.Parallel()
+	raw := []byte(`{
+		"session_id":"c-fail",
+		"hook_event_name":"PostToolUseFailure",
+		"cwd":"/work",
+		"tool_name":"Bash",
+		"tool_input":{"command":"false"},
+		"error":"Exit code 1",
+		"exit_code":1,
+		"stderr":"some failure detail"
+	}`)
+	env, err := AssembleCodex(raw, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("AssembleCodex: %v", err)
+	}
+	if env.Kind != "tool_failure" {
+		t.Fatalf("Kind: got %q, want tool_failure", env.Kind)
+	}
+	for _, want := range []string{
+		"Bash false", // base rendering from renderToolContent
+		"error: Exit code 1",
+		"stderr: some failure detail",
+		"exit_code: 1",
+	} {
+		if !strings.Contains(env.ContentText, want) {
+			t.Errorf("ContentText missing %q:\n%s", want, env.ContentText)
+		}
+	}
+}
+
+func TestAssembleCodex_ToolFailureWithoutErrorFieldsFallsBack(t *testing.T) {
+	t.Parallel()
+	// Some failures carry only the bare tool info — make sure
+	// renderCodexToolFailure degrades to the same shape
+	// renderToolContent would have produced rather than emitting
+	// an empty string.
+	raw := []byte(`{
+		"session_id":"c-bare",
+		"hook_event_name":"PostToolUseFailure",
+		"cwd":"/work",
+		"tool_name":"Bash",
+		"tool_input":{"command":"false"}
+	}`)
+	env, err := AssembleCodex(raw, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("AssembleCodex: %v", err)
+	}
+	if env.ContentText != "Bash false" {
+		t.Errorf("ContentText: got %q, want %q", env.ContentText, "Bash false")
+	}
+}
+
 func TestAssembleCodex_MissingSessionIDIsError(t *testing.T) {
 	t.Parallel()
 	_, err := AssembleCodex([]byte(`{"hook_event_name":"UserPromptSubmit"}`), time.Now())

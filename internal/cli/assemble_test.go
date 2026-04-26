@@ -212,6 +212,66 @@ func TestAssemble_MalformedJSON_IsError(t *testing.T) {
 	}
 }
 
+func TestExtractSubagent(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		hook map[string]any
+		want *ingest.Subagent
+	}{
+		{
+			name: "both id and type → populated",
+			hook: map[string]any{"agent_id": "agent-7", "agent_type": "planner"},
+			want: &ingest.Subagent{ID: "agent-7", Type: "planner"},
+		},
+		{
+			name: "id only → populated with empty type",
+			hook: map[string]any{"agent_id": "agent-7"},
+			want: &ingest.Subagent{ID: "agent-7", Type: ""},
+		},
+		{
+			// Pinned by the symmetry fix: a payload with only
+			// agent_type is malformed — type is descriptive metadata
+			// hanging off the id. Returning a Subagent with empty ID
+			// would label events for a thread the queries can't
+			// reach.
+			name: "type only → nil (rejected)",
+			hook: map[string]any{"agent_type": "planner"},
+			want: nil,
+		},
+		{
+			name: "neither → nil",
+			hook: map[string]any{"cwd": "/x"},
+			want: nil,
+		},
+		{
+			name: "empty id → nil",
+			hook: map[string]any{"agent_id": "", "agent_type": "planner"},
+			want: nil,
+		},
+		{
+			name: "non-string id → nil (silent, malformed input)",
+			hook: map[string]any{"agent_id": 42, "agent_type": "planner"},
+			want: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := extractSubagent(tc.hook)
+			if (got == nil) != (tc.want == nil) {
+				t.Fatalf("nil-ness mismatch: got %+v, want %+v", got, tc.want)
+			}
+			if got == nil {
+				return
+			}
+			if got.ID != tc.want.ID || got.Type != tc.want.Type {
+				t.Errorf("got %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestRenderToolContent covers the per-tool tool_input rendering
 // that feeds content_text for tool_use / tool_failure events. Each
 // case asserts (a) the tool name appears as its own token, and (b)

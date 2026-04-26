@@ -101,6 +101,19 @@ func TestToFTS5(t *testing.T) {
 			want: "東京*",
 		},
 		{
+			// Unicode quotation marks are punctuation; we wrap
+			// them defensively rather than risk an FTS5 parse
+			// error. Pinned by the A4 audit fix.
+			name: "unicode left quote forces phrase wrapping",
+			in:   "“hello",
+			want: `"“hello"`,
+		},
+		{
+			name: "unicode em-dash forces phrase wrapping",
+			in:   "ab—cd",
+			want: `"ab—cd"`,
+		},
+		{
 			name:    "empty string errors",
 			in:      "",
 			wantErr: ErrEmpty,

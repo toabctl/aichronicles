@@ -120,14 +120,20 @@ func Assemble(raw []byte, now time.Time) (ingest.Envelope, error) {
 // extractSubagent pulls subagent identity from the hook payload.
 // Claude Code emits agent_id / agent_type on SubagentStart,
 // SubagentStop, and any tool_use that fires inside a subagent's
-// frame. Returns nil for top-level events so the envelope omits
-// the field on the wire entirely.
+// frame.
+//
+// Returns nil unless agent_id is present and non-empty: subagent
+// identity hangs off the ID — type is descriptive metadata. A
+// payload with only agent_type and no agent_id is malformed (or
+// from a host we don't understand); fabricating a thread out of
+// it would label events with an empty ID, which downstream
+// queries can't reason about.
 func extractSubagent(hook map[string]any) *ingest.Subagent {
 	id, _ := hook["agent_id"].(string)
-	typ, _ := hook["agent_type"].(string)
-	if id == "" && typ == "" {
+	if id == "" {
 		return nil
 	}
+	typ, _ := hook["agent_type"].(string)
 	return &ingest.Subagent{ID: id, Type: typ}
 }
 
