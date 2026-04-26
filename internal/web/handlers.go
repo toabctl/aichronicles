@@ -33,7 +33,7 @@ func (s *Server) sessionsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	page := SessionsPage{Title: "Sessions", Sessions: rows}
-	s.render(w, r, "sessions.html", page)
+	s.render(w, r, "sessions", page)
 }
 
 // loadSessionsForList runs the read query backing the sessions page.

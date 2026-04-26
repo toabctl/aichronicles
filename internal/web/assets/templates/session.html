@@ -1,0 +1,89 @@
+{{define "content"}}
+<hgroup>
+  <h1>Session <span class="sid">{{.ShortID}}</span></h1>
+  <p><a href="/">← all sessions</a></p>
+</hgroup>
+
+<article>
+  <table>
+    <tbody>
+      <tr><th scope="row">id</th><td class="sid">{{.ID}}</td></tr>
+      <tr><th scope="row">cwd</th><td>{{.Cwd}}</td></tr>
+      <tr><th scope="row">started</th><td class="ts">{{.StartedAt}}</td></tr>
+      <tr><th scope="row">ended</th><td class="ts">{{.EndedAt}}</td></tr>
+      <tr><th scope="row">events</th><td>{{.EventCount}}</td></tr>
+    </tbody>
+  </table>
+</article>
+
+{{with .Summary}}
+<article>
+  <header>
+    <h2>Summary</h2>
+    <small>{{.Model}} · generated {{.GeneratedAt}}</small>
+  </header>
+
+  <p><strong>Topic.</strong> {{.Topic}}</p>
+
+  {{if .WhatWasDone}}
+  <h3>What was done</h3>
+  <ul>{{range .WhatWasDone}}<li>{{.}}</li>{{end}}</ul>
+  {{end}}
+
+  {{if .Unresolved}}
+  <h3>Unresolved</h3>
+  <ul>{{range .Unresolved}}<li>{{.}}</li>{{end}}</ul>
+  {{end}}
+
+  {{if .KeyFiles}}
+  <h3>Key files</h3>
+  <ul>{{range .KeyFiles}}<li><code>{{.}}</code></li>{{end}}</ul>
+  {{end}}
+
+  {{if .Links}}
+  <h3>Links</h3>
+  <ul>
+    {{range .Links}}
+    <li>
+      <a href="{{.URL}}" rel="noopener noreferrer">{{.URL}}</a>
+      <br><small>{{.UsedFor}}</small>
+    </li>
+    {{end}}
+  </ul>
+  {{end}}
+</article>
+{{else}}
+<article>
+  <p class="empty">No cached summary yet. Generate one with
+    <code>aichronicles summarize {{.ShortID}}</code>.</p>
+</article>
+{{end}}
+
+<h2>Events</h2>
+{{if .Events}}
+<table>
+  <thead>
+    <tr>
+      <th>When</th>
+      <th>Kind</th>
+      <th>Role</th>
+      <th>Tool</th>
+      <th>Snippet</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Events}}
+    <tr>
+      <td class="ts">{{.When}}</td>
+      <td><span class="badge">{{.Kind}}</span></td>
+      <td>{{.Role}}</td>
+      <td>{{.Tool}}</td>
+      <td>{{.Snippet}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="empty">(no events stored for this session)</p>
+{{end}}
+{{end}}

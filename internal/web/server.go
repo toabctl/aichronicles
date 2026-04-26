@@ -82,7 +82,7 @@ type Server struct {
 	cfg   Config
 	log   *slog.Logger
 	mux   *http.ServeMux
-	tpl   *template.Template
+	pages map[string]*template.Template
 }
 
 // NewServer wires the routes against st. The caller retains
@@ -107,30 +107,44 @@ func NewServer(st *store.Store, cfg Config, log *slog.Logger) *Server {
 		cfg:   cfg,
 		log:   log,
 		mux:   http.NewServeMux(),
-		tpl:   mustParseTemplates(),
+		pages: mustParsePages(),
 	}
 	s.registerRoutes()
 	return s
 }
 
-// mustParseTemplates loads every .html file under assets/templates
-// into a single template set. Panics on parse error — fatal at
-// startup, not at request time. Call sites then invoke
-// s.tpl.ExecuteTemplate(w, "<page>.html", data) which renders the
-// "content" block defined in that page wrapped in base.html.
-func mustParseTemplates() *template.Template {
-	t, err := template.New("aichronicles").ParseFS(assetsFS, "assets/templates/*.html")
-	if err != nil {
-		panic(fmt.Errorf("parse embedded templates: %w", err))
+// pageNames is the canonical list of content templates the server
+// renders. Each name maps to assets/templates/<name>.html, which
+// is parsed alongside base.html into its own template set so the
+// `content` block one page defines doesn't shadow another's.
+var pageNames = []string{"sessions", "session"}
+
+// mustParsePages loads each page's template into a per-page
+// template.Template, sharing only base.html. Single shared set
+// would have one page's `{{define "content"}}` silently override
+// another's — Go templates resolve by name across the whole set.
+// Panics on parse error: fatal at startup, never at request time.
+func mustParsePages() map[string]*template.Template {
+	out := make(map[string]*template.Template, len(pageNames))
+	for _, name := range pageNames {
+		t, err := template.New(name).ParseFS(assetsFS,
+			"assets/templates/base.html",
+			"assets/templates/"+name+".html",
+		)
+		if err != nil {
+			panic(fmt.Errorf("parse page %s: %w", name, err))
+		}
+		out[name] = t
 	}
-	return t
+	return out
 }
 
 // registerRoutes wires every route handled by this server.
-// Per-route handlers land in handlers.go.
+// Per-route handlers land in handlers.go and handler_session.go.
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /healthz", s.healthz)
 	s.mux.HandleFunc("GET /{$}", s.sessionsHandler)
+	s.mux.HandleFunc("GET /sessions/{id}", s.sessionDetailHandler)
 	s.mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS())))
 }
 
@@ -147,16 +161,23 @@ func staticFS() fs.FS {
 	return sub
 }
 
-// render executes the named template against page data and writes
-// the result. Templates render base.html via the {{template "base"
-// .}} hook each page emits, so the layout wraps every content
-// block transparently.
+// render picks the page-specific template set and executes the
+// "base" template against page data. Each set was loaded with
+// base.html plus exactly one content page, so "base" resolves to
+// the layout and {{template "content" .}} resolves to that
+// page's content block.
 func (s *Server) render(w http.ResponseWriter, _ *http.Request, name string, data any) {
+	t, ok := s.pages[name]
+	if !ok {
+		s.log.Error("render: unknown page", "name", name)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tpl.ExecuteTemplate(w, name, data); err != nil {
+	if err := t.ExecuteTemplate(w, "base", data); err != nil {
 		s.log.Error("render template", "name", name, "err", err)
-		// Don't double-write the response body — ExecuteTemplate
-		// may have already flushed headers before erroring.
+		// Don't double-write — ExecuteTemplate may have already
+		// flushed headers before erroring.
 	}
 }
 
