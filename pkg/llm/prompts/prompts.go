@@ -68,11 +68,23 @@ const (
 // tool call. Fields are always populated (empty slices/strings on
 // fields the model had nothing to say about).
 type SummaryResult struct {
-	Topic       string           `json:"topic"`
-	WhatWasDone []string         `json:"what_was_done"`
-	Unresolved  []string         `json:"unresolved"`
-	KeyFiles    []string         `json:"key_files"`
-	Links       []LinkAnnotation `json:"links"`
+	Topic       string            `json:"topic"`
+	WhatWasDone []string          `json:"what_was_done"`
+	Unresolved  []string          `json:"unresolved"`
+	KeyFiles    []string          `json:"key_files"`
+	Links       []LinkAnnotation  `json:"links"`
+	Subagents   []SubagentSummary `json:"subagents"`
+}
+
+// SubagentSummary describes one sub-agent thread that ran in the
+// session. ID matches store.events.subagent_id; Type is the role
+// label when the host emitted one; Description is a one-line
+// model-attributed summary of what the thread did, drawn from the
+// events labelled with that subagent in the prompt transcript.
+type SubagentSummary struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	Description string `json:"description"`
 }
 
 // LinkAnnotation pairs a URL the user actually referenced in a
@@ -137,7 +149,7 @@ const summarySystem = `You summarize a single coding session between a human and
 // when computing prompt_hash.
 const summaryToolSchema = `{
   "type": "object",
-  "required": ["topic","what_was_done","unresolved","key_files","links"],
+  "required": ["topic","what_was_done","unresolved","key_files","links","subagents"],
   "additionalProperties": false,
   "properties": {
     "topic": {"type":"string","minLength":1},
@@ -153,6 +165,20 @@ const summaryToolSchema = `{
         "properties":{
           "url":{"type":"string","minLength":1},
           "used_for":{"type":"string","minLength":1}
+        }
+      }
+    },
+    "subagents": {
+      "type":"array",
+      "description": "One entry per sub-agent thread that ran. The transcript labels each event with [sa:<id>:<type>] when it belongs to a thread; populate only ids that actually appear there. Empty array if no [sa:...] labels in the transcript.",
+      "items":{
+        "type":"object",
+        "required":["id","type","description"],
+        "additionalProperties": false,
+        "properties":{
+          "id":{"type":"string","minLength":1},
+          "type":{"type":"string"},
+          "description":{"type":"string","minLength":1}
         }
       }
     }
@@ -407,6 +433,13 @@ func BuildPropose(digests []SessionDigest) (Built, error) {
 // renderEvents turns an event stream into a human-ish transcript.
 // Every non-empty content_text and tool_name passes through
 // redact.Outbound; patterns accumulate into pats.
+//
+// Events with a non-NULL subagent_id pick up an [sa:<id>:<type>]
+// prefix on their label so the model can attribute work to a
+// specific thread when it fills in SummaryResult.Subagents. The
+// ID is the load-bearing identifier; type may be empty for hosts
+// that don't emit one and is rendered as "?" in that case so the
+// label shape stays uniform.
 func renderEvents(events []store.EventView, pats patternSet) string {
 	var b strings.Builder
 	for _, e := range events {
@@ -418,6 +451,13 @@ func renderEvents(events []store.EventView, pats patternSet) string {
 			clean, names := redact.Outbound(e.ToolName.String)
 			pats.addAll(names)
 			label += " (" + clean + ")"
+		}
+		if e.SubagentID.Valid && e.SubagentID.String != "" {
+			t := "?"
+			if e.SubagentType.Valid && e.SubagentType.String != "" {
+				t = e.SubagentType.String
+			}
+			label = "sa:" + e.SubagentID.String + ":" + t + " " + label
 		}
 		_, _ = fmt.Fprintf(&b, "[%s]\n", label)
 

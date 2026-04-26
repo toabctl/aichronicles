@@ -254,12 +254,14 @@ func LoadSubagentSpans(ctx context.Context, db *sql.DB, sessionID string, limit 
 // modelled with sql.Null* so callers can distinguish "empty string"
 // from "column was NULL".
 type EventView struct {
-	EventID     string
-	Kind        string
-	Role        sql.NullString
-	ContentText sql.NullString
-	TsSourceMs  int64
-	ToolName    sql.NullString
+	EventID      string
+	Kind         string
+	Role         sql.NullString
+	ContentText  sql.NullString
+	TsSourceMs   int64
+	ToolName     sql.NullString
+	SubagentID   sql.NullString
+	SubagentType sql.NullString
 }
 
 // SessionDigestRow is the read shape used by reflect/propose. Each
@@ -383,7 +385,8 @@ func LoadEventsForSession(ctx context.Context, db *sql.DB, sessionID string, lim
 		limit = DefaultEventsPerSessionLimit
 	}
 	rows, err := db.QueryContext(ctx,
-		`SELECT event_id, kind, role, content_text, ts_source_ms, tool_name
+		`SELECT event_id, kind, role, content_text, ts_source_ms, tool_name,
+		        subagent_id, subagent_type
 		 FROM events
 		 WHERE session_id = ?
 		 ORDER BY ts_source_ms ASC, rowid ASC
@@ -398,7 +401,8 @@ func LoadEventsForSession(ctx context.Context, db *sql.DB, sessionID string, lim
 	var out []EventView
 	for rows.Next() {
 		var e EventView
-		if err := rows.Scan(&e.EventID, &e.Kind, &e.Role, &e.ContentText, &e.TsSourceMs, &e.ToolName); err != nil {
+		if err := rows.Scan(&e.EventID, &e.Kind, &e.Role, &e.ContentText,
+			&e.TsSourceMs, &e.ToolName, &e.SubagentID, &e.SubagentType); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		out = append(out, e)

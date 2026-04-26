@@ -47,6 +47,55 @@ func TestBuildSummary_IncludesTranscriptAndSessionID(t *testing.T) {
 	}
 }
 
+func TestBuildSummary_LabelsSubagentEventsInTranscript(t *testing.T) {
+	t.Parallel()
+	events := []store.EventView{
+		{Kind: "user_prompt", Role: nullS("user"),
+			ContentText: nullS("main agent prompt"), TsSourceMs: 1},
+		{Kind: "user_prompt", Role: nullS("user"),
+			SubagentID: nullS("agent-7"), SubagentType: nullS("planner"),
+			ContentText: nullS("planner step one"), TsSourceMs: 2},
+		{Kind: "user_prompt", Role: nullS("user"),
+			SubagentID:  nullS("agent-9"),
+			ContentText: nullS("worker step"), TsSourceMs: 3},
+	}
+	built, err := BuildSummary("sess", events, nil)
+	if err != nil {
+		t.Fatalf("BuildSummary: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	// Top-level event has no subagent prefix.
+	if strings.Contains(body, "[sa:") && !strings.Contains(body, "main agent prompt") {
+		t.Errorf("top-level event accidentally labelled:\n%s", body)
+	}
+	// Subagent events carry sa:<id>:<type> prefix.
+	if !strings.Contains(body, "sa:agent-7:planner") {
+		t.Errorf("expected sa:agent-7:planner label:\n%s", body)
+	}
+	// Subagent without a type renders as `?` so the shape stays
+	// uniform.
+	if !strings.Contains(body, "sa:agent-9:?") {
+		t.Errorf("expected sa:agent-9:? label for type-less subagent:\n%s", body)
+	}
+}
+
+func TestBuildSummary_SchemaIncludesSubagents(t *testing.T) {
+	t.Parallel()
+	events := []store.EventView{
+		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
+	}
+	built, err := BuildSummary("sess", events, nil)
+	if err != nil {
+		t.Fatalf("BuildSummary: %v", err)
+	}
+	schema := string(built.Request.Tools[0].InputSchema)
+	for _, want := range []string{`"subagents"`, `"description"`, `[sa:`} {
+		if !strings.Contains(schema, want) {
+			t.Errorf("schema missing %q:\n%s", want, schema)
+		}
+	}
+}
+
 func TestBuildSummary_SetsForcedTool(t *testing.T) {
 	t.Parallel()
 	events := []store.EventView{
