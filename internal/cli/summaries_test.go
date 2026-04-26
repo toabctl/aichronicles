@@ -56,7 +56,14 @@ func seedSummariesFixtures(t *testing.T) (*store.Store, string) {
 	})
 	proposal, _ := json.Marshal(prompts.ProposalResult{
 		Skills: []prompts.ProposedSkill{
-			{Name: "extract-metrics", WhenToUse: "w", Why: "y", SessionIDs: []string{"s"}},
+			{
+				Name: "extract-metrics", WhenToUse: "w", Why: "y",
+				Evidence: []prompts.ProposalEvidence{
+					{SessionID: "s1", Quote: "q", WhatHappened: "h"},
+					{SessionID: "s2", Quote: "q", WhatHappened: "h"},
+				},
+				Frequency: 2, Effort: "small", AlternativesRejected: "",
+			},
 		},
 	})
 
@@ -164,9 +171,30 @@ func TestExtractTopic_ProposalWithMultipleSkillsShowsCount(t *testing.T) {
 	t.Parallel()
 	body, _ := json.Marshal(prompts.ProposalResult{
 		Skills: []prompts.ProposedSkill{
-			{Name: "first", WhenToUse: "w", Why: "y", SessionIDs: []string{"s"}},
-			{Name: "second", WhenToUse: "w", Why: "y", SessionIDs: []string{"s"}},
-			{Name: "third", WhenToUse: "w", Why: "y", SessionIDs: []string{"s"}},
+			{
+				Name: "first", WhenToUse: "w", Why: "y",
+				Evidence: []prompts.ProposalEvidence{
+					{SessionID: "s1", Quote: "q", WhatHappened: "h"},
+					{SessionID: "s2", Quote: "q", WhatHappened: "h"},
+				},
+				Frequency: 2, Effort: "small",
+			},
+			{
+				Name: "second", WhenToUse: "w", Why: "y",
+				Evidence: []prompts.ProposalEvidence{
+					{SessionID: "s1", Quote: "q", WhatHappened: "h"},
+					{SessionID: "s2", Quote: "q", WhatHappened: "h"},
+				},
+				Frequency: 2, Effort: "small",
+			},
+			{
+				Name: "third", WhenToUse: "w", Why: "y",
+				Evidence: []prompts.ProposalEvidence{
+					{SessionID: "s1", Quote: "q", WhatHappened: "h"},
+					{SessionID: "s2", Quote: "q", WhatHappened: "h"},
+				},
+				Frequency: 2, Effort: "small",
+			},
 		},
 	})
 	got := extractTopic(store.LLMKindPropose, string(body))

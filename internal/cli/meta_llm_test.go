@@ -141,9 +141,9 @@ func TestRunReflect_LimitCapsDigestsSentToLLM(t *testing.T) {
 	); err != nil {
 		t.Fatalf("RunReflect: %v", err)
 	}
-	// Each digest heading in the prompt is "## Session N — <id>".
+	// Each digest heading in the prompt is "## session_id: <uuid>".
 	body := f.lastReq.Messages[0].Content
-	count := strings.Count(body, "## Session ")
+	count := strings.Count(body, "## session_id: ")
 	if count != 3 {
 		t.Errorf("expected 3 digests in prompt, got %d", count)
 	}

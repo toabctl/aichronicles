@@ -183,6 +183,10 @@ func renderReflection(w io.Writer, body string) error {
 }
 
 // renderProposal pretty-prints a prompts.ProposalResult JSON body.
+// Each item leads with `[freq=N effort=size]` so the user can scan
+// for high-frequency / low-effort wins first; evidence lines carry
+// a verbatim quote from each cited session so the proposal is
+// grep-verifiable without leaving the terminal.
 func renderProposal(w io.Writer, body string) error {
 	var r prompts.ProposalResult
 	if err := json.Unmarshal([]byte(body), &r); err != nil {
@@ -192,28 +196,62 @@ func renderProposal(w io.Writer, body string) error {
 	if len(r.Skills) > 0 {
 		fmt.Fprintf(&b, "%s\n", sectionHeader(w, "Skills / slash-command ideas"))
 		for _, s := range r.Skills {
-			fmt.Fprintf(&b, "  - %s\n    when: %s\n    why:  %s\n    evidence: %s\n",
-				s.Name, s.WhenToUse, s.Why, strings.Join(s.SessionIDs, ", "))
+			fmt.Fprintf(&b, "  - %s  [freq=%d effort=%s]\n    when: %s\n    why:  %s\n",
+				s.Name, s.Frequency, s.Effort, s.WhenToUse, s.Why)
+			writeEvidence(&b, s.Evidence)
+			writeAlternatives(&b, s.AlternativesRejected)
 		}
 		b.WriteByte('\n')
 	}
 	if len(r.ClaudeMdEntries) > 0 {
 		fmt.Fprintf(&b, "%s\n", sectionHeader(w, "CLAUDE.md entries worth adding"))
 		for _, e := range r.ClaudeMdEntries {
-			fmt.Fprintf(&b, "  - %s\n    why:      %s\n    evidence: %s\n",
-				e.Rule, e.Why, strings.Join(e.SessionIDs, ", "))
+			fmt.Fprintf(&b, "  - [freq=%d effort=%s]\n    rule: %s\n    why:  %s\n",
+				e.Frequency, e.Effort, e.Rule, e.Why)
+			writeEvidence(&b, e.Evidence)
+			writeAlternatives(&b, e.AlternativesRejected)
 		}
 		b.WriteByte('\n')
 	}
 	if len(r.Scripts) > 0 {
 		fmt.Fprintf(&b, "%s\n", sectionHeader(w, "Pre-built scripts worth keeping"))
 		for _, s := range r.Scripts {
-			fmt.Fprintf(&b, "  - %s — %s\n    evidence: %s\n",
-				s.Name, s.Purpose, strings.Join(s.SessionIDs, ", "))
+			fmt.Fprintf(&b, "  - %s  [freq=%d effort=%s]\n    purpose: %s\n",
+				s.Name, s.Frequency, s.Effort, s.Purpose)
+			writeEvidence(&b, s.Evidence)
+			writeAlternatives(&b, s.AlternativesRejected)
 		}
 	}
 	_, err := fmt.Fprint(w, b.String())
 	return err
+}
+
+// writeEvidence renders an indented "evidence:" block. Each entry
+// shows the short session id, the verbatim quote, and the
+// what_happened context — that's the bare minimum for a reviewer
+// to verify "yes, the model is grounded in real session bytes".
+func writeEvidence(b *strings.Builder, evidence []prompts.ProposalEvidence) {
+	if len(evidence) == 0 {
+		return
+	}
+	b.WriteString("    evidence:\n")
+	for _, ev := range evidence {
+		short := ev.SessionID
+		if len(short) > 8 {
+			short = short[:8]
+		}
+		fmt.Fprintf(b, "      %s: %q (%s)\n", short, ev.Quote, ev.WhatHappened)
+	}
+}
+
+// writeAlternatives renders the alternatives_rejected line when
+// non-empty. Skipped on empty so a tight proposal that didn't have
+// to choose between forms doesn't render an awkward blank line.
+func writeAlternatives(b *strings.Builder, alt string) {
+	if alt == "" {
+		return
+	}
+	fmt.Fprintf(b, "    alt:  %s\n", alt)
 }
 
 func writeBulletSection(b *strings.Builder, w io.Writer, header string, items []string) {

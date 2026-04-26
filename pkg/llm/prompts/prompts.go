@@ -121,23 +121,51 @@ type ProposalResult struct {
 	Scripts         []ProposedScript       `json:"scripts"`
 }
 
+// ProposalEvidence grounds one proposal in actual session text.
+// quote is a verbatim excerpt (≤160 chars) from the session, not a
+// paraphrase — paraphrase loses the property that the user can grep
+// the session and verify the claim. what_happened is the ≤1-line
+// context for that quote.
+type ProposalEvidence struct {
+	SessionID    string `json:"session_id"`
+	Quote        string `json:"quote"`
+	WhatHappened string `json:"what_happened"`
+}
+
+// ProposedSkill, ProposedClaudeMdRule, and ProposedScript share the
+// same metadata shape — Evidence (≥2 entries), Frequency, Effort
+// estimate, and AlternativesRejected ("I considered making this a
+// script but the skill form is more leveraged because…"). The
+// shared fields exist as a loose contract rather than an embedded
+// struct so each kind can keep its category-specific text fields
+// (WhenToUse, Rule, Purpose) readable in isolation.
+
 type ProposedSkill struct {
-	Name       string   `json:"name"`
-	WhenToUse  string   `json:"when_to_use"`
-	Why        string   `json:"why"`
-	SessionIDs []string `json:"session_ids"`
+	Name                 string             `json:"name"`
+	WhenToUse            string             `json:"when_to_use"`
+	Why                  string             `json:"why"`
+	Evidence             []ProposalEvidence `json:"evidence"`
+	Frequency            int                `json:"frequency"`
+	Effort               string             `json:"effort"`
+	AlternativesRejected string             `json:"alternatives_rejected"`
 }
 
 type ProposedClaudeMdRule struct {
-	Rule       string   `json:"rule"`
-	Why        string   `json:"why"`
-	SessionIDs []string `json:"session_ids"`
+	Rule                 string             `json:"rule"`
+	Why                  string             `json:"why"`
+	Evidence             []ProposalEvidence `json:"evidence"`
+	Frequency            int                `json:"frequency"`
+	Effort               string             `json:"effort"`
+	AlternativesRejected string             `json:"alternatives_rejected"`
 }
 
 type ProposedScript struct {
-	Name       string   `json:"name"`
-	Purpose    string   `json:"purpose"`
-	SessionIDs []string `json:"session_ids"`
+	Name                 string             `json:"name"`
+	Purpose              string             `json:"purpose"`
+	Evidence             []ProposalEvidence `json:"evidence"`
+	Frequency            int                `json:"frequency"`
+	Effort               string             `json:"effort"`
+	AlternativesRejected string             `json:"alternatives_rejected"`
 }
 
 // --- summary ---
@@ -385,7 +413,20 @@ func BuildReflect(digests []SessionDigest, window time.Duration) (Built, error) 
 	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
 }
 
-const proposeSystem = `You are a principal engineer reviewing a developer's AI coding sessions to propose reusable capabilities. You MUST call the record_proposal tool exactly once. Only suggest things that would have demonstrably saved time in the sessions shown. Reject generic advice. Every proposed item must cite at least one real session_id from the input as evidence.`
+const proposeSystem = `You triage recent coding sessions to propose high-leverage, repeatedly-useful capabilities. You MUST call the record_proposal tool exactly once.
+
+Hard rules:
+
+1. A pattern requires evidence from ≥2 DISTINCT sessions. One-off tasks don't qualify, no matter how dramatic — drop them.
+2. Each proposal carries 2–5 evidence entries. Each quote is a verbatim excerpt (≤160 chars) copied from a session's summary text, or — if the session has no summary — from its first_prompt. Quotes can be short (one sentence, even one phrase, is fine); their job is to let the user grep the session and find them. Do NOT paraphrase, but feel free to truncate inside a sentence.
+3. If the same insight could be a skill, a CLAUDE.md rule, AND a script: pick ONE form — the most leveraged for the workflow. Justify the choice in alternatives_rejected (e.g. "considered as a script but a skill captures the multi-step decision-making this needs"). Do NOT also list the other forms; that's noise.
+4. Reject generic engineering advice ("write tests", "use small commits", "be careful with merges"). The user's CLAUDE.md already covers practice-level rules.
+5. Reject things that already exist as a CLI / Claude built-in tool. (You can mention them in alternatives_rejected.)
+6. Skill names: ≤4 words, kebab-case. Rules: lead with the trigger condition, ≤60 words total. Scripts: one-line purpose, no flag list.
+7. frequency = the count of distinct session_ids in your evidence array.
+8. effort: "small" = an afternoon script. "medium" = a few days, well-scoped skill. "large" = a project-shaped effort that probably wants its own design doc.
+
+For a typical 25-session window, expect 1–4 well-grounded proposals total across all categories — not 0, not 15. Zero is acceptable only if every recurring pattern you see is already covered by the user's existing tools or CLAUDE.md. Lean toward proposing a clearly-grounded pattern even when its time-saving estimate is moderate; the user wants concrete leads, not perfect ones.`
 
 const proposalToolSchema = `{
   "type": "object",
@@ -396,46 +437,78 @@ const proposalToolSchema = `{
       "type":"array",
       "minItems": 0,
       "maxItems": 5,
-      "items": {
-        "type":"object",
-        "required":["name","when_to_use","why","session_ids"],
-        "additionalProperties": false,
-        "properties": {
-          "name": {"type":"string","pattern":"^[a-z][a-z0-9-]*$"},
-          "when_to_use": {"type":"string","minLength":1},
-          "why": {"type":"string","minLength":1},
-          "session_ids": {"type":"array","minItems":1,"items":{"type":"string","minLength":1}}
-        }
-      }
+      "items": { "$ref": "#/$defs/proposalSkill" }
     },
     "claude_md_entries": {
       "type":"array",
       "minItems": 0,
       "maxItems": 5,
-      "items": {
-        "type":"object",
-        "required":["rule","why","session_ids"],
-        "additionalProperties": false,
-        "properties": {
-          "rule": {"type":"string","minLength":1},
-          "why": {"type":"string","minLength":1},
-          "session_ids": {"type":"array","minItems":1,"items":{"type":"string","minLength":1}}
-        }
-      }
+      "items": { "$ref": "#/$defs/proposalRule" }
     },
     "scripts": {
       "type":"array",
       "minItems": 0,
       "maxItems": 5,
+      "items": { "$ref": "#/$defs/proposalScript" }
+    }
+  },
+  "$defs": {
+    "evidence": {
+      "type":"array",
+      "minItems": 2,
+      "maxItems": 5,
       "items": {
         "type":"object",
-        "required":["name","purpose","session_ids"],
+        "required":["session_id","quote","what_happened"],
         "additionalProperties": false,
         "properties": {
-          "name": {"type":"string","minLength":1},
-          "purpose": {"type":"string","minLength":1},
-          "session_ids": {"type":"array","minItems":1,"items":{"type":"string","minLength":1}}
+          "session_id":    {"type":"string","minLength":1},
+          "quote":         {"type":"string","minLength":1,"maxLength":160},
+          "what_happened": {"type":"string","minLength":1}
         }
+      }
+    },
+    "frequency": {"type":"integer","minimum":2},
+    "effort":    {"type":"string","enum":["small","medium","large"]},
+    "alternatives_rejected": {"type":"string"},
+    "proposalSkill": {
+      "type":"object",
+      "required":["name","when_to_use","why","evidence","frequency","effort","alternatives_rejected"],
+      "additionalProperties": false,
+      "properties": {
+        "name":                  {"type":"string","pattern":"^[a-z][a-z0-9-]*$"},
+        "when_to_use":           {"type":"string","minLength":1},
+        "why":                   {"type":"string","minLength":1},
+        "evidence":              {"$ref":"#/$defs/evidence"},
+        "frequency":             {"$ref":"#/$defs/frequency"},
+        "effort":                {"$ref":"#/$defs/effort"},
+        "alternatives_rejected": {"$ref":"#/$defs/alternatives_rejected"}
+      }
+    },
+    "proposalRule": {
+      "type":"object",
+      "required":["rule","why","evidence","frequency","effort","alternatives_rejected"],
+      "additionalProperties": false,
+      "properties": {
+        "rule":                  {"type":"string","minLength":1,"maxLength":600},
+        "why":                   {"type":"string","minLength":1},
+        "evidence":              {"$ref":"#/$defs/evidence"},
+        "frequency":             {"$ref":"#/$defs/frequency"},
+        "effort":                {"$ref":"#/$defs/effort"},
+        "alternatives_rejected": {"$ref":"#/$defs/alternatives_rejected"}
+      }
+    },
+    "proposalScript": {
+      "type":"object",
+      "required":["name","purpose","evidence","frequency","effort","alternatives_rejected"],
+      "additionalProperties": false,
+      "properties": {
+        "name":                  {"type":"string","minLength":1},
+        "purpose":               {"type":"string","minLength":1},
+        "evidence":              {"$ref":"#/$defs/evidence"},
+        "frequency":             {"$ref":"#/$defs/frequency"},
+        "effort":                {"$ref":"#/$defs/effort"},
+        "alternatives_rejected": {"$ref":"#/$defs/alternatives_rejected"}
       }
     }
   }
@@ -520,8 +593,14 @@ func renderEvents(events []store.EventView, pats patternSet) string {
 // annotation tool output can cite them by session_id.
 func renderDigests(digests []SessionDigest, pats patternSet) string {
 	var b strings.Builder
-	for i, d := range digests {
-		_, _ = fmt.Fprintf(&b, "## Session %d — %s\n", i+1, d.ID)
+	for _, d := range digests {
+		// Header carries ONLY the canonical UUID — no index — so
+		// callers like propose can't accidentally cite the
+		// human-readable index ("3") in fields that demand a
+		// session_id. The downstream prompt is unambiguous: any
+		// "session_id" in your tool call must be a full UUID
+		// matching this header.
+		_, _ = fmt.Fprintf(&b, "## session_id: %s\n", d.ID)
 		if d.StartedAtMs > 0 && d.EndedAtMs > 0 {
 			_, _ = fmt.Fprintf(&b, "Window: %s → %s\n",
 				time.UnixMilli(d.StartedAtMs).UTC().Format(time.RFC3339),
