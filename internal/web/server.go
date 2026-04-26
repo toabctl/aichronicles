@@ -78,11 +78,12 @@ type Config struct {
 // kicked off via Run. Safe to call Run concurrently with multiple
 // requests, not safe to call Run twice.
 type Server struct {
-	store *store.Store
-	cfg   Config
-	log   *slog.Logger
-	mux   *http.ServeMux
-	pages map[string]*template.Template
+	store     *store.Store
+	cfg       Config
+	log       *slog.Logger
+	mux       *http.ServeMux
+	pages     map[string]*template.Template
+	fragments map[string]*template.Template
 }
 
 // NewServer wires the routes against st. The caller retains
@@ -103,11 +104,12 @@ func NewServer(st *store.Store, cfg Config, log *slog.Logger) *Server {
 		log = slog.Default()
 	}
 	s := &Server{
-		store: st,
-		cfg:   cfg,
-		log:   log,
-		mux:   http.NewServeMux(),
-		pages: mustParsePages(),
+		store:     st,
+		cfg:       cfg,
+		log:       log,
+		mux:       http.NewServeMux(),
+		pages:     mustParsePages(),
+		fragments: mustParseFragments(),
 	}
 	s.registerRoutes()
 	return s
@@ -117,7 +119,14 @@ func NewServer(st *store.Store, cfg Config, log *slog.Logger) *Server {
 // renders. Each name maps to assets/templates/<name>.html, which
 // is parsed alongside base.html into its own template set so the
 // `content` block one page defines doesn't shadow another's.
-var pageNames = []string{"sessions", "session"}
+var pageNames = []string{"sessions", "session", "search"}
+
+// fragmentNames is the canonical list of htmx fragment templates
+// the server renders. Each name maps to
+// assets/templates/_<name>.html — the underscore prefix flags
+// them as partials, parsed without base.html so they emit just
+// the table or empty-state line that swaps into a target.
+var fragmentNames = []string{"hits"}
 
 // mustParsePages loads each page's template into a per-page
 // template.Template, sharing only base.html. Single shared set
@@ -139,12 +148,33 @@ func mustParsePages() map[string]*template.Template {
 	return out
 }
 
+// mustParseFragments loads each fragment template (assets/
+// templates/_<name>.html) into its own template set, with no
+// base.html — fragments are HTML chunks htmx swaps into a
+// target, not standalone documents.
+func mustParseFragments() map[string]*template.Template {
+	out := make(map[string]*template.Template, len(fragmentNames))
+	for _, name := range fragmentNames {
+		t, err := template.New(name).ParseFS(assetsFS,
+			"assets/templates/_"+name+".html",
+		)
+		if err != nil {
+			panic(fmt.Errorf("parse fragment %s: %w", name, err))
+		}
+		out[name] = t
+	}
+	return out
+}
+
 // registerRoutes wires every route handled by this server.
-// Per-route handlers land in handlers.go and handler_session.go.
+// Per-route handlers land in handlers.go, handler_session.go,
+// and handler_search.go.
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /healthz", s.healthz)
 	s.mux.HandleFunc("GET /{$}", s.sessionsHandler)
 	s.mux.HandleFunc("GET /sessions/{id}", s.sessionDetailHandler)
+	s.mux.HandleFunc("GET /search", s.searchHandler)
+	s.mux.HandleFunc("GET /search/hits", s.searchHitsHandler)
 	s.mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS())))
 }
 
@@ -178,6 +208,22 @@ func (s *Server) render(w http.ResponseWriter, _ *http.Request, name string, dat
 		s.log.Error("render template", "name", name, "err", err)
 		// Don't double-write — ExecuteTemplate may have already
 		// flushed headers before erroring.
+	}
+}
+
+// renderFragment writes one htmx fragment template to w. Skips
+// the base layout — htmx swaps the response into a target, so
+// the response body should be just the fragment's HTML.
+func (s *Server) renderFragment(w http.ResponseWriter, name string, data any) {
+	t, ok := s.fragments[name]
+	if !ok {
+		s.log.Error("renderFragment: unknown fragment", "name", name)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := t.ExecuteTemplate(w, name, data); err != nil {
+		s.log.Error("render fragment", "name", name, "err", err)
 	}
 }
 

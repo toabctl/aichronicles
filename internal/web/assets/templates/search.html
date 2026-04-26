@@ -1,0 +1,37 @@
+{{define "content"}}
+<hgroup>
+  <h1>Search</h1>
+  <p>Plain words match by prefix; <code>"quoted phrases"</code> match exactly. Identifiers and paths (<code>migrate.go</code>) work verbatim.</p>
+</hgroup>
+
+<form role="search" onsubmit="return false">
+  <input type="search"
+         name="q"
+         placeholder="search captured events…"
+         autofocus
+         hx-get="/search/hits"
+         hx-trigger="input changed delay:200ms, search"
+         hx-target="#hits"
+         hx-include="closest form">
+  <details>
+    <summary>Filters</summary>
+    <fieldset class="grid">
+      <label>kind
+        <input type="text" name="kind" placeholder="user_prompt, tool_use, …">
+      </label>
+      <label>since
+        <select name="since">
+          <option value="">any time</option>
+          <option value="24h">last 24 hours</option>
+          <option value="7d">last 7 days</option>
+          <option value="30d">last 30 days</option>
+        </select>
+      </label>
+    </fieldset>
+  </details>
+</form>
+
+<div id="hits">
+  <p class="empty">(start typing — results appear here as you go)</p>
+</div>
+{{end}}

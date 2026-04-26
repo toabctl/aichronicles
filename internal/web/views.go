@@ -77,3 +77,29 @@ type EventRow struct {
 	Tool    string // empty if not a tool event
 	Snippet string // truncated content_text preview
 }
+
+// SearchPage is the data shape the /search full-page template
+// consumes. Most of the heavy lifting is done by the htmx
+// fragment endpoint at /search/hits, so this struct is mostly
+// for the layout's <title>.
+type SearchPage struct {
+	Title string
+}
+
+// SearchHits is the shape the /search/hits fragment template
+// consumes. Either Error is non-empty (parse failure, query is
+// empty) and the template renders it as a muted line, or Hits
+// holds the matching rows. Both empty == empty-state line.
+type SearchHits struct {
+	Hits  []SearchHitRow
+	Error string
+}
+
+// SearchHitRow is one matching event for the search fragment.
+type SearchHitRow struct {
+	SessionID string // full UUID for the /sessions/{id} link
+	ShortID   string
+	When      string // relative time
+	Kind      string
+	Snippet   string // SQL snippet() output, falls back to truncated content
+}

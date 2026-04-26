@@ -1,0 +1,28 @@
+{{define "hits"}}
+{{if .Error}}
+<p class="empty">{{.Error}}</p>
+{{else if .Hits}}
+<table>
+  <thead>
+    <tr>
+      <th>Session</th>
+      <th>When</th>
+      <th>Kind</th>
+      <th>Snippet</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Hits}}
+    <tr>
+      <td class="sid"><a href="/sessions/{{.SessionID}}">{{.ShortID}}</a></td>
+      <td class="ts">{{.When}}</td>
+      <td><span class="badge">{{.Kind}}</span></td>
+      <td>{{.Snippet}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="empty">(no hits for that query)</p>
+{{end}}
+{{end}}
