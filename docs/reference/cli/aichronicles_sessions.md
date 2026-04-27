@@ -26,7 +26,7 @@ aichronicles sessions [flags]
       --format string    output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help             help for sessions
       --limit int        max sessions to return (default 30)
-      --since duration   only sessions whose ended_at is within this duration (search/audit filter on per-event ts_source)
+      --since duration   only sessions whose ended_at is within this duration (e.g. 24h, 7d) (default 0s)
 ```
 
 ### SEE ALSO

@@ -23,9 +23,12 @@ aichronicles search <query> [flags]
   -h, --help             help for search
       --kind string      filter by event kind (user_prompt, tool_use, …)
       --limit int        max number of hits (default 20)
+      --model string     with --summarize: LLM model id (default: provider's default)
       --no-dedup         show every row even when the same turn was captured from multiple sources (hook + import)
       --session string   filter by session id or unique prefix
-      --since duration   only events within this duration (e.g. 24h, 7d)
+      --since duration   only events within this duration (e.g. 24h, 7d) (default 0s)
+      --summarize        synthesise an LLM-written answer from the top hits instead of printing rows (requires ANTHROPIC_API_KEY)
+      --top int          with --summarize: max hits fed to the LLM as grounding context (default 5)
 ```
 
 ### SEE ALSO

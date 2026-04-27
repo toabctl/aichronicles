@@ -23,7 +23,7 @@ aichronicles audit [flags]
       --format string    output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help             help for audit
       --limit int        max events to scan, newest first (0 = scan all)
-      --since duration   only scan events with ts_source newer than this duration (e.g. 168h)
+      --since duration   only scan events with ts_source newer than this duration (e.g. 24h, 7d) (default 0s)
 ```
 
 ### SEE ALSO

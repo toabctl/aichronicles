@@ -19,6 +19,12 @@ than hide it behind a synthesized ID.
 path defaults to ~/.claude/projects. A specific file or directory
 works too.
 
+Trust model: import-claude bypasses the daemon. Edge redaction
+runs in-process before each envelope is stored, but anything
+the daemon would otherwise enforce — future origin signing,
+rate limits, audit logging — does not run. Imports operate on
+files you already trust enough to read locally.
+
 ```
 aichronicles import-claude [path] [flags]
 ```

@@ -56,21 +56,32 @@ curl --silent --unix-socket /run/user/(id -u)/aichronicles/sock \
 # {"status":"ok"}
 ```
 
-## 3. Wire Claude Code hooks (≈15s)
+## 3. Wire agent hooks (≈15s)
+
+Pick the agent(s) you actually use. Both commands are idempotent
+and preserve any existing hook entries other tools have written.
 
 ```fish
+# Claude Code → ~/.claude/settings.json
 aichronicles setup claude-code --yes
+
+# Gemini CLI → ~/.gemini/settings.json
+aichronicles setup gemini-cli --yes
 ```
 
-This merges six hook entries into your `~/.claude/settings.json`
+For Claude Code, this merges six hook entries
 (`UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionStart`,
-`SessionEnd`, `PostToolUseFailure`). Each hook runs `aichronicles
-ingest` as a subprocess, which pipes the hook payload through the
-edge redactor and POSTs the envelope to the daemon over the UDS.
+`SessionEnd`, `PostToolUseFailure`). For Gemini, the event-name
+set is the agent's equivalent (`BeforeAgent`, `AfterModel`,
+`AfterTool`, `SessionStart`, `SessionEnd`). Each hook runs
+`aichronicles ingest --agent <slug>` as a subprocess, which pipes
+the hook payload through the edge redactor and POSTs the envelope
+to the daemon over the UDS.
 
-The hook never fails Claude Code: ingest exits 0 even if the daemon
-is unreachable. Outages fire one desktop notification per outage so
-you find out without it blocking your session.
+The hook never fails the agent: ingest exits 0 even if the daemon
+is unreachable. Outages fire one desktop notification per outage
+so you find out without it blocking your session.
+
 
 ## 4. Verify capture (≈15s)
 

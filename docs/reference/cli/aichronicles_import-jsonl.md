@@ -11,6 +11,13 @@ duplicates (by event_id) are counted and skipped.
 Use this once after upgrading from the JSONL-only POC to backfill
 historical events into SQLite, or to replay a backup.
 
+Trust model: import-jsonl bypasses the daemon. The store still
+refuses unredacted envelopes (ErrRedactionRequired), but anything
+the daemon would otherwise enforce — future origin signing, rate
+limits, audit logging — does not run. Treat the input file as
+authoritative; if a third party hands you events.jsonl, audit it
+with `aichronicles audit` after import.
+
 ```
 aichronicles import-jsonl <path> [flags]
 ```

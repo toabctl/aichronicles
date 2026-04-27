@@ -12,5 +12,5 @@ Install aichronicles into an AI coding agent or the OS
 
 * [aichronicles](./aichronicles.md)	 - Capture AI coding agent session events
 * [aichronicles setup claude-code](./aichronicles_setup_claude-code.md)	 - Install Claude Code hooks that forward events to aichroniclesd
-* [aichronicles setup codex-cli](./aichronicles_setup_codex-cli.md)	 - Install Codex CLI hooks that forward events to aichroniclesd
+* [aichronicles setup gemini-cli](./aichronicles_setup_gemini-cli.md)	 - Install Gemini CLI hooks that forward events to aichroniclesd
 * [aichronicles setup systemd](./aichronicles_setup_systemd.md)	 - Install socket-activated systemd --user units

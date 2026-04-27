@@ -20,7 +20,7 @@ aichronicles ingest [flags]
 ### Options
 
 ```
-      --agent string    source agent slug (claude-code | codex) (default "claude-code")
+      --agent string    source agent slug (claude-code | gemini-cli) (default "claude-code")
   -h, --help            help for ingest
       --socket string   daemon UDS path (overrides $AICHRONICLES_SOCKET; defaults to XDG_RUNTIME_DIR)
 ```
