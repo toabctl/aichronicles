@@ -13,15 +13,25 @@
 </nav>
 {{end}}
 
-<form role="search" onsubmit="return false">
-  <input type="search"
-         name="q"
-         placeholder="search captured events…"
-         autofocus
-         hx-get="/search/hits"
-         hx-trigger="input changed delay:200ms, search"
-         hx-target="#hits"
-         hx-include="closest form">
+<form onsubmit="return false">
+  {{/* role="search" stays on the wrapper, NOT on the form: Pico's
+       [role=search] styles the container as inline-flex with every
+       direct child as a flex item. Putting it on the <form> made
+       <details> compete for horizontal space with the input,
+       producing the awkward two-column layout. Wrapping just the
+       input keeps a11y semantics without spreading the filters
+       sideways. */}}
+  <div role="search">
+    <input type="search"
+           name="q"
+           placeholder="search captured events…"
+           aria-label="Search captured events"
+           autofocus
+           hx-get="/search/hits"
+           hx-trigger="input changed delay:200ms, search"
+           hx-target="#hits"
+           hx-include="closest form">
+  </div>
   {{/* Hidden inputs carry active filters into every htmx GET via
        hx-include="closest form" so the fragment endpoint
        /search/hits sees the same facet narrowing the chips
