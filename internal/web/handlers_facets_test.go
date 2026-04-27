@@ -237,6 +237,69 @@ func TestSessionsPage_MultipleFiltersCombine(t *testing.T) {
 	}
 }
 
+// TestSessionsPage_NoSummaryFilterChip exercises the quick-toggle
+// chip + the URL-driven filter. Without ?no-summary=1 both rows
+// appear; with the param only the un-summarised row survives. The
+// quick-toggle chip flips between active and inactive states.
+func TestSessionsPage_NoSummaryFilterChip(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	withSummary := seedSession(t, st, "sess-with", "alpha-marker session that has a summary attached", now)
+	_ = seedSession(t, st, "sess-without", "beta-marker session no summary yet ever attached", now.Add(time.Hour))
+
+	// Plant a summary on `withSummary`. Direct DB exec to avoid
+	// dragging the prompts package — only the `kind=summary` row
+	// matters for the NOT EXISTS filter.
+	if _, err := st.DB().Exec(
+		`INSERT INTO llm_outputs(session_id, kind, model, prompt_hash, body, created_at_ms)
+		 VALUES (?, 'summary', 'm', 'h-x', '{"topic":"with summary"}', ?)`,
+		withSummary, now.UnixMilli(),
+	); err != nil {
+		t.Fatalf("plant summary: %v", err)
+	}
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	// Without filter: both markers appear, the toggle chip is
+	// inactive, and clicking it adds the param.
+	_, all := fetch(t, base+"/")
+	if !strings.Contains(all, "alpha-marker") || !strings.Contains(all, "beta-marker") {
+		t.Errorf("unfiltered should show both:\n%s", all)
+	}
+	if !strings.Contains(all, `href="/?no-summary=1"`) {
+		t.Errorf("inactive toggle should link with ?no-summary=1:\n%s", all)
+	}
+	if strings.Contains(all, `class="agent-chip agent-chip-active" title="Sessions without a cached LLM summary`) {
+		t.Errorf("toggle should not be active by default:\n%s", all)
+	}
+
+	// With ?no-summary=1: only the un-summarised row, removable
+	// chip in the active row, toggle marked active.
+	_, narrow := fetch(t, base+"/?no-summary=1")
+	if !strings.Contains(narrow, "beta-marker") {
+		t.Errorf("filtered should keep un-summarised:\n%s", narrow)
+	}
+	if strings.Contains(narrow, "alpha-marker") {
+		t.Errorf("filtered should hide summarised:\n%s", narrow)
+	}
+	if !strings.Contains(narrow, "no summary ✕") {
+		t.Errorf("active filter chip missing:\n%s", narrow)
+	}
+	// The active toggle chip carries the active class. The href
+	// flips to "/" so clicking again removes the filter — but the
+	// template wraps attributes across lines, so check the chunks
+	// independently rather than as one substring.
+	if !strings.Contains(narrow, `Sessions without a cached LLM summary`) {
+		t.Errorf("active toggle missing its title attribute:\n%s", narrow)
+	}
+	// Find the toggle anchor and confirm it has the active class.
+	if !strings.Contains(narrow, `agent-chip agent-chip-active"`) {
+		t.Errorf("active toggle missing active class:\n%s", narrow)
+	}
+}
+
 func TestSessionsPage_ClearAllChip(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)
@@ -373,6 +436,7 @@ func TestBuildSessionListChips_OrderAndRemoval(t *testing.T) {
 		Skill:        "test-creation",
 		File:         "migrate.go",
 		WithFailures: true,
+		NoSummary:    true,
 	})
 	wantLabels := []string{
 		"project: /work/proj",
@@ -381,6 +445,7 @@ func TestBuildSessionListChips_OrderAndRemoval(t *testing.T) {
 		"skill: test-creation",
 		"file: migrate.go",
 		"with failures",
+		"no summary",
 	}
 	if len(chips) != len(wantLabels) {
 		t.Fatalf("chip count: got %d, want %d", len(chips), len(wantLabels))

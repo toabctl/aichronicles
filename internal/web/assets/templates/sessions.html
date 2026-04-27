@@ -22,6 +22,17 @@
 </nav>
 {{end}}
 
+{{/* Quick-filter row: one-click toggle for sessions that don't yet
+     have a cached summary. Pairs with the "(no summary yet)" muted
+     placeholder on each row's preview cell — clicking finds them
+     all so you can `aichronicles summaries fill` to clear them.
+     The href flips between set/unset so the same chip toggles. */}}
+<nav class="agent-filter" aria-label="Quick filters">
+  <a href="{{if .ActiveNoSummary}}/{{else}}/?no-summary=1{{end}}"
+     class="agent-chip{{if .ActiveNoSummary}} agent-chip-active{{end}}"
+     title="Sessions without a cached LLM summary — run `aichronicles summaries fill` to clear them">no summary yet</a>
+</nav>
+
 <div hx-ext="sse" sse-connect="/stream">
 
   <details class="livefeed-wrap" open>

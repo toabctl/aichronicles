@@ -42,11 +42,20 @@ func newSummariesCmd() *cobra.Command {
 }
 
 // defaultSummariesWindow is the --since default for missing/fill.
-// Matches reflect's and propose's defaults: a rolling week is the
-// natural "what hasn't been summarized for the next reflect run"
-// window. Override for one-off backfills (e.g. --since 720h for
-// the last 30 days).
-const defaultSummariesWindow = 7 * 24 * time.Hour
+// Three days because the typical workflow is "I worked over the
+// last few days; summarise anything that didn't get caught" —
+// a tight default keeps the fill cheap by default and matches
+// the muted-placeholder UI on the web sessions list (rows show
+// "(no summary yet)" until they're summarised, and the user wants
+// a quick command to clear the recent ones).
+//
+// Reflect / propose default to longer windows (14d / 30d) on
+// purpose — they need a wider lookback to spot cross-session
+// patterns. Summaries fill is the ingredient, not the analysis.
+//
+// Override for one-off backfills (e.g. --since 720h for the
+// last 30 days).
+const defaultSummariesWindow = 3 * 24 * time.Hour
 
 func newSummariesMissingCmd() *cobra.Command {
 	var (

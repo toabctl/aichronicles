@@ -43,6 +43,7 @@ type SessionsPage struct {
 	ActiveSkill        string // sessions whose events loaded this skill
 	ActiveFile         string // sessions whose events touched a file matching this substring
 	ActiveWithFailures bool   // sessions with ≥1 tool_failure event
+	ActiveNoSummary    bool   // sessions with NO llm_outputs(kind=summary) row
 
 	// FilterChips is a pre-rendered list of removable filter chips
 	// for the template. Each chip carries the label to display and

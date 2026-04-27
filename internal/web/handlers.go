@@ -71,6 +71,7 @@ func (s *Server) sessionsHandler(w http.ResponseWriter, r *http.Request) {
 		ActiveSkill:        filters.Skill,
 		ActiveFile:         filters.File,
 		ActiveWithFailures: filters.WithFailures,
+		ActiveNoSummary:    filters.NoSummary,
 		FilterChips:        buildSessionListChips("/", filters),
 	}
 	s.render(w, r, "sessions", page)
@@ -87,6 +88,12 @@ type sessionListFilters struct {
 	Skill        string
 	File         string
 	WithFailures bool
+	// NoSummary narrows to sessions that DON'T yet have an
+	// llm_outputs row of kind=summary. Pairs with the
+	// "(no summary yet)" muted placeholder on the row preview —
+	// the chip is the way to find every row sporting that
+	// placeholder so the user can queue them for `summaries fill`.
+	NoSummary bool
 }
 
 // readSessionListFilters parses the query string into the filter
@@ -103,6 +110,7 @@ func readSessionListFilters(r *http.Request) sessionListFilters {
 		Skill:        strings.TrimSpace(q.Get("skill")),
 		File:         strings.TrimSpace(q.Get("file")),
 		WithFailures: parseTruthy(q.Get("with-failures")),
+		NoSummary:    parseTruthy(q.Get("no-summary")),
 	}
 }
 
@@ -142,6 +150,8 @@ func buildSessionListChips(basePath string, f sessionListFilters) []FilterChip {
 			clone.File = ""
 		case "with-failures":
 			clone.WithFailures = false
+		case "no-summary":
+			clone.NoSummary = false
 		}
 		chips = append(chips, FilterChip{
 			Label:      label,
@@ -165,6 +175,9 @@ func buildSessionListChips(basePath string, f sessionListFilters) []FilterChip {
 	}
 	if f.WithFailures {
 		add("with failures", "with-failures")
+	}
+	if f.NoSummary {
+		add("no summary", "no-summary")
 	}
 	return chips
 }
@@ -193,6 +206,9 @@ func filtersToURL(basePath string, f sessionListFilters) string {
 	}
 	if f.WithFailures {
 		v.Set("with-failures", "1")
+	}
+	if f.NoSummary {
+		v.Set("no-summary", "1")
 	}
 	if len(v) == 0 {
 		return basePath
@@ -294,6 +310,16 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int, f sess
 		conds = append(conds, `EXISTS (
 			SELECT 1 FROM events e
 			 WHERE e.session_id = s.id AND e.kind = 'tool_failure'
+		)`)
+	}
+	if f.NoSummary {
+		// NOT EXISTS over llm_outputs(kind=summary). NOT EXISTS
+		// short-circuits on the first match, so this stays cheap
+		// even on a large llm_outputs table — the per-session
+		// scan stops as soon as one summary row is found.
+		conds = append(conds, `NOT EXISTS (
+			SELECT 1 FROM llm_outputs lo
+			 WHERE lo.session_id = s.id AND lo.kind = 'summary'
 		)`)
 	}
 	if len(conds) > 0 {
