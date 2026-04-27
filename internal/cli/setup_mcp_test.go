@@ -126,15 +126,16 @@ func TestStripMCPServer_NoOpWhenAbsent(t *testing.T) {
 }
 
 // TestInstallClaudeCodeFull_WritesHooksAndMCP is the load-bearing
-// integration test: a single call mutates settings.json with both
-// hook entries and the MCP server registration in one atomic
-// write.
+// integration test: hooks land in settingsPath (~/.claude/settings.json)
+// AND the MCP server registers in userConfigPath (~/.claude.json) —
+// two different files because that's how Claude Code splits them.
 func TestInstallClaudeCodeFull_WritesHooksAndMCP(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "settings.json")
+	settingsPath := filepath.Join(dir, "settings.json")
+	userPath := filepath.Join(dir, "user.json")
 
-	report, err := InstallClaudeCodeFull(path, defaultHookCommand,
+	report, err := InstallClaudeCodeFull(settingsPath, userPath, defaultHookCommand,
 		&MCPServerEntry{Name: "aichronicles", Command: "aichronicles"})
 	if err != nil {
 		t.Fatalf("InstallClaudeCodeFull: %v", err)
@@ -148,17 +149,18 @@ func TestInstallClaudeCodeFull_WritesHooksAndMCP(t *testing.T) {
 		}
 	}
 
-	body, err := os.ReadFile(path)
+	// Hooks land in the settings file; mcpServers does NOT.
+	settingsBody, err := os.ReadFile(settingsPath)
 	if err != nil {
-		t.Fatalf("read: %v", err)
+		t.Fatalf("read settings: %v", err)
 	}
-	var parsed map[string]any
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		t.Fatalf("parse: %v\n%s", err, body)
+	var settings map[string]any
+	if err := json.Unmarshal(settingsBody, &settings); err != nil {
+		t.Fatalf("parse settings: %v\n%s", err, settingsBody)
 	}
-	hooks, ok := parsed["hooks"].(map[string]any)
+	hooks, ok := settings["hooks"].(map[string]any)
 	if !ok {
-		t.Fatal("hooks block missing")
+		t.Fatal("hooks block missing from settings.json")
 	}
 	for _, ev := range []string{"UserPromptSubmit", "Stop", "PostToolUse",
 		"PostToolUseFailure", "SessionStart", "SessionEnd"} {
@@ -166,62 +168,88 @@ func TestInstallClaudeCodeFull_WritesHooksAndMCP(t *testing.T) {
 			t.Errorf("hook event %s missing", ev)
 		}
 	}
-	mcp, ok := parsed["mcpServers"].(map[string]any)
+	if _, leaked := settings["mcpServers"]; leaked {
+		t.Errorf("mcpServers should NOT be in settings.json (belongs in user-config)")
+	}
+
+	// MCP servers land in the user-config file; hooks do NOT.
+	userBody, err := os.ReadFile(userPath)
+	if err != nil {
+		t.Fatalf("read user config: %v", err)
+	}
+	var user map[string]any
+	if err := json.Unmarshal(userBody, &user); err != nil {
+		t.Fatalf("parse user config: %v\n%s", err, userBody)
+	}
+	mcp, ok := user["mcpServers"].(map[string]any)
 	if !ok {
-		t.Fatal("mcpServers block missing")
+		t.Fatal("mcpServers block missing from ~/.claude.json")
 	}
 	entry := mcp["aichronicles"].(map[string]any)
 	if entry["command"] != "aichronicles" {
 		t.Errorf("MCP command: got %v", entry["command"])
 	}
+	if _, leaked := user["hooks"]; leaked {
+		t.Errorf("hooks should NOT be in ~/.claude.json")
+	}
 }
 
 // TestInstallClaudeCodeFull_NilMCPSkipsRegistration covers the
-// --skip-mcp path: hooks land but no mcpServers entry is created.
+// --skip-mcp path: hooks land but the user-config file is left
+// untouched (not even created).
 func TestInstallClaudeCodeFull_NilMCPSkipsRegistration(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "settings.json")
+	settingsPath := filepath.Join(dir, "settings.json")
+	userPath := filepath.Join(dir, "user.json")
 
-	if _, err := InstallClaudeCodeFull(path, defaultHookCommand, nil); err != nil {
+	if _, err := InstallClaudeCodeFull(settingsPath, userPath, defaultHookCommand, nil); err != nil {
 		t.Fatalf("InstallClaudeCodeFull: %v", err)
 	}
-	body, _ := os.ReadFile(path)
+	body, _ := os.ReadFile(settingsPath)
 	var parsed map[string]any
 	_ = json.Unmarshal(body, &parsed)
-	if _, ok := parsed["mcpServers"]; ok {
-		t.Errorf("--skip-mcp should NOT write mcpServers:\n%s", body)
-	}
 	if _, ok := parsed["hooks"]; !ok {
-		t.Errorf("hooks should still land:\n%s", body)
+		t.Errorf("hooks should land in settings.json:\n%s", body)
+	}
+	if _, err := os.Stat(userPath); !os.IsNotExist(err) {
+		t.Errorf("--skip-mcp should NOT create the user-config file: %v", err)
 	}
 }
 
 // TestRemoveClaudeCodeFull_StripsBothHooksAndMCP verifies the
-// install/teardown pair round-trips cleanly: after teardown the
-// file looks identical to a never-installed state.
+// install/teardown pair round-trips cleanly across both files:
+// after teardown each file looks identical to a never-installed
+// state, and unrelated entries (sibling settings, foreign MCP
+// servers) survive.
 func TestRemoveClaudeCodeFull_StripsBothHooksAndMCP(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "settings.json")
-	// Pre-populate with a sibling key + a foreign MCP server so
-	// we can confirm those survive the teardown.
-	seed, _ := json.MarshalIndent(map[string]any{
+	settingsPath := filepath.Join(dir, "settings.json")
+	userPath := filepath.Join(dir, "user.json")
+	// Seed hooks settings.json with an unrelated sibling key.
+	settingsSeed, _ := json.MarshalIndent(map[string]any{
 		"security": map[string]any{"sshKeyEnabled": true},
+	}, "", "  ")
+	if err := os.WriteFile(settingsPath, settingsSeed, 0o644); err != nil {
+		t.Fatalf("seed settings: %v", err)
+	}
+	// Seed user-config with a foreign MCP server we'll check survives.
+	userSeed, _ := json.MarshalIndent(map[string]any{
 		"mcpServers": map[string]any{
 			"linear": map[string]any{"command": "linear-mcp"},
 		},
 	}, "", "  ")
-	if err := os.WriteFile(path, seed, 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
+	if err := os.WriteFile(userPath, userSeed, 0o644); err != nil {
+		t.Fatalf("seed user: %v", err)
 	}
 
-	if _, err := InstallClaudeCodeFull(path, defaultHookCommand,
+	if _, err := InstallClaudeCodeFull(settingsPath, userPath, defaultHookCommand,
 		&MCPServerEntry{Name: "aichronicles", Command: "aichronicles"}); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 
-	report, err := RemoveClaudeCodeFull(path, defaultHookCommand, false)
+	report, err := RemoveClaudeCodeFull(settingsPath, userPath, defaultHookCommand, false)
 	if err != nil {
 		t.Fatalf("RemoveClaudeCodeFull: %v", err)
 	}
@@ -229,14 +257,20 @@ func TestRemoveClaudeCodeFull_StripsBothHooksAndMCP(t *testing.T) {
 		t.Errorf("report missing 'removed':\n%s", report)
 	}
 
-	body, _ := os.ReadFile(path)
-	var parsed map[string]any
-	_ = json.Unmarshal(body, &parsed)
-
-	if _, ok := parsed["hooks"]; ok {
-		t.Errorf("hooks block should be empty / removed:\n%s", body)
+	settingsBody, _ := os.ReadFile(settingsPath)
+	var settings map[string]any
+	_ = json.Unmarshal(settingsBody, &settings)
+	if _, ok := settings["hooks"]; ok {
+		t.Errorf("hooks block should be empty / removed:\n%s", settingsBody)
 	}
-	mcp, ok := parsed["mcpServers"].(map[string]any)
+	if _, kept := settings["security"]; !kept {
+		t.Errorf("security block should survive teardown")
+	}
+
+	userBody, _ := os.ReadFile(userPath)
+	var user map[string]any
+	_ = json.Unmarshal(userBody, &user)
+	mcp, ok := user["mcpServers"].(map[string]any)
 	if !ok {
 		t.Fatal("mcpServers should still exist (linear is left)")
 	}
@@ -246,42 +280,46 @@ func TestRemoveClaudeCodeFull_StripsBothHooksAndMCP(t *testing.T) {
 	if _, kept := mcp["linear"]; !kept {
 		t.Errorf("linear should survive teardown")
 	}
-	if _, kept := parsed["security"]; !kept {
-		t.Errorf("security block should survive teardown")
-	}
 }
 
 // TestRemoveClaudeCodeFull_DryRunPreviewsWithoutMutation pins the
-// dry-run guarantee: the file is unchanged, but the report says
+// dry-run guarantee: neither file is modified, but the report says
 // what would happen.
 func TestRemoveClaudeCodeFull_DryRunPreviewsWithoutMutation(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "settings.json")
-	if _, err := InstallClaudeCodeFull(path, defaultHookCommand,
+	settingsPath := filepath.Join(dir, "settings.json")
+	userPath := filepath.Join(dir, "user.json")
+	if _, err := InstallClaudeCodeFull(settingsPath, userPath, defaultHookCommand,
 		&MCPServerEntry{Name: "aichronicles", Command: "aichronicles"}); err != nil {
 		t.Fatalf("install: %v", err)
 	}
-	before, _ := os.ReadFile(path)
+	beforeSettings, _ := os.ReadFile(settingsPath)
+	beforeUser, _ := os.ReadFile(userPath)
 
-	report, err := RemoveClaudeCodeFull(path, defaultHookCommand, true)
+	report, err := RemoveClaudeCodeFull(settingsPath, userPath, defaultHookCommand, true)
 	if err != nil {
 		t.Fatalf("dry-run: %v", err)
 	}
 	if !strings.Contains(report, "would remove") {
 		t.Errorf("dry-run report missing 'would remove':\n%s", report)
 	}
-	after, _ := os.ReadFile(path)
-	if string(before) != string(after) {
-		t.Errorf("dry-run modified the file:\nbefore=%s\nafter=%s", before, after)
+	afterSettings, _ := os.ReadFile(settingsPath)
+	afterUser, _ := os.ReadFile(userPath)
+	if string(beforeSettings) != string(afterSettings) {
+		t.Errorf("dry-run modified settings:\nbefore=%s\nafter=%s", beforeSettings, afterSettings)
+	}
+	if string(beforeUser) != string(afterUser) {
+		t.Errorf("dry-run modified user config:\nbefore=%s\nafter=%s", beforeUser, afterUser)
 	}
 }
 
 func TestRemoveClaudeCodeFull_NothingInstalledIsNoOp(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "settings.json")
-	report, err := RemoveClaudeCodeFull(path, defaultHookCommand, false)
+	settingsPath := filepath.Join(dir, "settings.json")
+	userPath := filepath.Join(dir, "user.json")
+	report, err := RemoveClaudeCodeFull(settingsPath, userPath, defaultHookCommand, false)
 	if err != nil {
 		t.Fatalf("RemoveClaudeCodeFull: %v", err)
 	}

@@ -1,17 +1,21 @@
 ## aichronicles teardown claude-code
 
-Remove aichronicles Claude Code hooks from settings.json
+Remove aichronicles Claude Code hooks + MCP server entry
 
 ### Synopsis
 
-Strips every hook entry whose command matches ours from each
-of the event types aichronicles installed into. Entries from other
-tools are preserved unchanged. Empty event arrays and an empty
-`hooks` object are cleaned up so the file looks pristine after
-a full removal. Idempotent: running twice is a no-op.
+Strips both halves of the install:
+
+  - hooks from ~/.claude/settings.json (every entry whose
+    command matches ours; entries from other tools survive)
+  - mcpServers.aichronicles from ~/.claude.json
+
+Empty event arrays + empty `hooks` / `mcpServers` containers
+are cleaned up so the files look pristine after a full removal.
+Idempotent: running twice is a no-op.
 
 Runs in dry-run mode by default: it reports what would change
-without touching settings.json. Pass --yes to actually write.
+without touching either file. Pass --yes to actually write.
 
 ```
 aichronicles teardown claude-code [flags]
@@ -20,10 +24,11 @@ aichronicles teardown claude-code [flags]
 ### Options
 
 ```
-      --command string    command to strip from each hook (default "aichronicles ingest")
-  -h, --help              help for claude-code
-      --settings string   path to Claude Code settings.json (default: ~/.claude/settings.json)
-      --yes               confirm the removal (required to modify settings.json)
+      --command string       command to strip from each hook (default "aichronicles ingest")
+  -h, --help                 help for claude-code
+      --settings string      path to Claude Code settings.json for HOOKS (default: ~/.claude/settings.json)
+      --user-config string   path to Claude Code user-config json for MCP SERVERS (default: ~/.claude.json)
+      --yes                  confirm the removal (required to modify the files)
 ```
 
 ### SEE ALSO

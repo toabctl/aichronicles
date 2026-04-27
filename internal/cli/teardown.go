@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -24,28 +26,39 @@ func newTeardownCmd() *cobra.Command {
 
 func newTeardownClaudeCodeCmd() *cobra.Command {
 	var settingsPath string
+	var userConfigPath string
 	var hookCommand string
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "claude-code",
-		Short: "Remove aichronicles Claude Code hooks from settings.json",
-		Long: "Strips every hook entry whose command matches ours from each\n" +
-			"of the event types aichronicles installed into. Entries from other\n" +
-			"tools are preserved unchanged. Empty event arrays and an empty\n" +
-			"`hooks` object are cleaned up so the file looks pristine after\n" +
-			"a full removal. Idempotent: running twice is a no-op.\n\n" +
+		Short: "Remove aichronicles Claude Code hooks + MCP server entry",
+		Long: "Strips both halves of the install:\n\n" +
+			"  - hooks from ~/.claude/settings.json (every entry whose\n" +
+			"    command matches ours; entries from other tools survive)\n" +
+			"  - mcpServers.aichronicles from ~/.claude.json\n\n" +
+			"Empty event arrays + empty `hooks` / `mcpServers` containers\n" +
+			"are cleaned up so the files look pristine after a full removal.\n" +
+			"Idempotent: running twice is a no-op.\n\n" +
 			"Runs in dry-run mode by default: it reports what would change\n" +
-			"without touching settings.json. Pass --yes to actually write.",
+			"without touching either file. Pass --yes to actually write.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			path := settingsPath
-			if path == "" {
+			hookPath := settingsPath
+			if hookPath == "" {
 				var err error
-				path, err = defaultClaudeSettingsPath()
+				hookPath, err = defaultClaudeSettingsPath()
 				if err != nil {
 					return err
 				}
 			}
-			report, err := RemoveClaudeCodeFull(path, hookCommand, !yes)
+			userPath := userConfigPath
+			if userPath == "" {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return fmt.Errorf("resolve home: %w", err)
+				}
+				userPath = filepath.Join(home, ".claude.json")
+			}
+			report, err := RemoveClaudeCodeFull(hookPath, userPath, hookCommand, !yes)
 			if err != nil {
 				return err
 			}
@@ -53,45 +66,56 @@ func newTeardownClaudeCodeCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&settingsPath, "settings", "", "path to Claude Code settings.json (default: ~/.claude/settings.json)")
+	cmd.Flags().StringVar(&settingsPath, "settings", "", "path to Claude Code settings.json for HOOKS (default: ~/.claude/settings.json)")
+	cmd.Flags().StringVar(&userConfigPath, "user-config", "", "path to Claude Code user-config json for MCP SERVERS (default: ~/.claude.json)")
 	cmd.Flags().StringVar(&hookCommand, "command", defaultHookCommand, "command to strip from each hook")
-	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the removal (required to modify settings.json)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the removal (required to modify the files)")
 	return cmd
 }
 
 // RemoveClaudeCodeFull is the Claude-Code-specific superset of
-// RemoveAgentHooks: same hook strip + drop the
-// mcpServers.aichronicles entry, in a single atomic write. Mirrors
-// InstallClaudeCodeFull's shape so the install/teardown pair
-// stays symmetric.
-func RemoveClaudeCodeFull(path, hookCommand string, dryRun bool) (string, error) {
+// RemoveAgentHooks: strip our hooks from settingsPath AND drop
+// mcpServers.aichronicles from userConfigPath. Mirrors
+// InstallClaudeCodeFull's two-file shape — the install/teardown
+// pair stays symmetric.
+func RemoveClaudeCodeFull(settingsPath, userConfigPath, hookCommand string, dryRun bool) (string, error) {
 	if hookCommand == "" {
 		hookCommand = defaultHookCommand
 	}
-	settings, err := readSettings(path)
+	settings, err := readSettings(settingsPath)
 	if err != nil {
 		return "", err
 	}
-
-	// Take a snapshot so we can compute "would remove" without
-	// mutating in dry-run mode. The strip helpers operate on the
-	// settings map directly, so for dry-run we work on a clone.
-	work := settings
+	// Snapshot for dry-run so we can compute "would remove" without
+	// mutating. Strip helpers operate on the map directly.
+	settingsWork := settings
 	if dryRun {
-		work = cloneSettings(settings)
+		settingsWork = cloneSettings(settings)
+	}
+	hookRemoved := stripAgentHooks(settingsWork, ingest.ClaudeCode.HookEvents, hookCommand)
+	if !dryRun && len(hookRemoved) > 0 {
+		if err := writeSettingsAtomic(settingsPath, settingsWork); err != nil {
+			return "", err
+		}
 	}
 
-	hookRemoved := stripAgentHooks(work, ingest.ClaudeCode.HookEvents, hookCommand)
-	mcpRemoved := stripMCPServer(work, aichroniclesMCPServerName)
-
-	if !dryRun && (len(hookRemoved) > 0 || mcpRemoved) {
-		if err := writeSettingsAtomic(path, work); err != nil {
+	userCfg, err := readSettings(userConfigPath)
+	if err != nil {
+		return "", err
+	}
+	userWork := userCfg
+	if dryRun {
+		userWork = cloneSettings(userCfg)
+	}
+	mcpRemoved := stripMCPServer(userWork, aichroniclesMCPServerName)
+	if !dryRun && mcpRemoved {
+		if err := writeSettingsAtomic(userConfigPath, userWork); err != nil {
 			return "", err
 		}
 	}
 
 	sort.Strings(hookRemoved)
-	return formatClaudeCodeTeardownReport(path, hookRemoved, mcpRemoved, dryRun), nil
+	return formatClaudeCodeTeardownReport(settingsPath, userConfigPath, hookRemoved, mcpRemoved, dryRun), nil
 }
 
 // stripAgentHooks removes every hook entry whose inner hooks
@@ -171,27 +195,31 @@ func cloneSettings(in map[string]any) map[string]any {
 }
 
 // formatClaudeCodeTeardownReport renders the user-facing summary
-// of a RemoveClaudeCodeFull run.
-func formatClaudeCodeTeardownReport(path string, hooksRemoved []string, mcpRemoved bool, dryRun bool) string {
+// of a RemoveClaudeCodeFull run. Names both files so the user can
+// inspect each independently afterwards.
+func formatClaudeCodeTeardownReport(settingsPath, userConfigPath string, hooksRemoved []string, mcpRemoved bool, dryRun bool) string {
 	verb := "removed"
 	if dryRun {
 		verb = "would remove"
 	}
 	if len(hooksRemoved) == 0 && !mcpRemoved {
-		return fmt.Sprintf("settings: %s\n  nothing to remove (idempotent)", path)
+		return fmt.Sprintf("hook settings: %s\nuser config:   %s\n  nothing to remove (idempotent)",
+			settingsPath, userConfigPath)
 	}
-	out := fmt.Sprintf("settings: %s\n", path)
+	var b strings.Builder
+	fmt.Fprintf(&b, "hook settings: %s\n", settingsPath)
 	if len(hooksRemoved) > 0 {
-		out += fmt.Sprintf("  %s %d hook entries: %s\n",
+		fmt.Fprintf(&b, "  %s %d hook entries: %s\n",
 			verb, len(hooksRemoved), strings.Join(hooksRemoved, ", "))
 	}
+	fmt.Fprintf(&b, "user config:   %s\n", userConfigPath)
 	if mcpRemoved {
-		out += fmt.Sprintf("  %s mcpServers.%s\n", verb, aichroniclesMCPServerName)
+		fmt.Fprintf(&b, "  %s mcpServers.%s\n", verb, aichroniclesMCPServerName)
 	}
 	if dryRun {
-		out += "\n(dry-run; pass --yes to actually rewrite)"
+		b.WriteString("\n(dry-run; pass --yes to actually rewrite)")
 	}
-	return strings.TrimRight(out, "\n")
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func newTeardownGeminiCLICmd() *cobra.Command {

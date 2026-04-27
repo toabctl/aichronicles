@@ -46,30 +46,46 @@ func newSetupCmd() *cobra.Command {
 
 func newSetupClaudeCodeCmd() *cobra.Command {
 	var settingsPath string
+	var userConfigPath string
 	var hookCommand string
 	var mcpCommand string
 	var skipMCP bool
 	cmd := &cobra.Command{
 		Use:   "claude-code",
 		Short: "Install Claude Code hooks + the aichronicles MCP server entry",
-		Long: "Two changes to ~/.claude/settings.json, both idempotent:\n\n" +
-			"  1. Hooks: merges six entries (UserPromptSubmit, Stop,\n" +
-			"     PostToolUse, PostToolUseFailure, SessionStart, SessionEnd)\n" +
-			"     each pointing at `aichronicles ingest`.\n" +
-			"  2. MCP server: registers an mcpServers.aichronicles entry\n" +
-			"     pointing at `aichronicles mcp-serve`, so Claude can\n" +
-			"     query past sessions / cached summaries / insights /\n" +
-			"     skills / staleness mid-conversation.\n\n" +
+		Long: "Two idempotent changes to TWO different files. Claude Code\n" +
+			"keeps hook config and MCP-server config in different places:\n\n" +
+			"  1. Hooks → ~/.claude/settings.json: merges six entries\n" +
+			"     (UserPromptSubmit, Stop, PostToolUse, PostToolUseFailure,\n" +
+			"     SessionStart, SessionEnd) each pointing at\n" +
+			"     `aichronicles ingest`.\n" +
+			"  2. MCP server → ~/.claude.json: registers\n" +
+			"     mcpServers.aichronicles pointing at `aichronicles\n" +
+			"     mcp-serve`, so Claude can query past sessions / cached\n" +
+			"     summaries / insights / skills / staleness mid-conversation.\n\n" +
+			"~/.claude.json is the user-level Claude Code config (project\n" +
+			"history, MCP servers, IDE state); ~/.claude/settings.json is\n" +
+			"editor settings (hooks, permissions, theme). Same product,\n" +
+			"two files — Claude Code reads MCP servers ONLY from the\n" +
+			"former.\n\n" +
 			"Existing hook + MCP entries from other tools are preserved.\n" +
 			"Pass --skip-mcp if you don't want the MCP server registered.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			path := settingsPath
-			if path == "" {
+			hookPath := settingsPath
+			if hookPath == "" {
 				var err error
-				path, err = ingest.ClaudeCode.DefaultSettingsPath()
+				hookPath, err = ingest.ClaudeCode.DefaultSettingsPath()
 				if err != nil {
 					return err
 				}
+			}
+			userPath := userConfigPath
+			if userPath == "" {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return fmt.Errorf("resolve home: %w", err)
+				}
+				userPath = filepath.Join(home, ".claude.json")
 			}
 			var mcp *MCPServerEntry
 			if !skipMCP {
@@ -78,7 +94,7 @@ func newSetupClaudeCodeCmd() *cobra.Command {
 					Command: mcpCommand,
 				}
 			}
-			report, err := InstallClaudeCodeFull(path, hookCommand, mcp)
+			report, err := InstallClaudeCodeFull(hookPath, userPath, hookCommand, mcp)
 			if err != nil {
 				return err
 			}
@@ -86,10 +102,11 @@ func newSetupClaudeCodeCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&settingsPath, "settings", "", "path to Claude Code settings.json (default: ~/.claude/settings.json)")
+	cmd.Flags().StringVar(&settingsPath, "settings", "", "path to Claude Code settings.json for HOOKS (default: ~/.claude/settings.json)")
+	cmd.Flags().StringVar(&userConfigPath, "user-config", "", "path to Claude Code user-config json for MCP SERVERS (default: ~/.claude.json)")
 	cmd.Flags().StringVar(&hookCommand, "command", defaultHookCommand, "command to run from each hook")
 	cmd.Flags().StringVar(&mcpCommand, "mcp-command", defaultMCPCommand, "command to register as the aichronicles MCP server")
-	cmd.Flags().BoolVar(&skipMCP, "skip-mcp", false, "do not register the aichronicles MCP server in settings.json")
+	cmd.Flags().BoolVar(&skipMCP, "skip-mcp", false, "do not register the aichronicles MCP server in ~/.claude.json")
 	return cmd
 }
 
@@ -157,41 +174,54 @@ type MCPServerEntry struct {
 }
 
 // InstallClaudeCodeFull is the Claude-Code-specific superset of
-// InstallAgentHooks: same hook merge, plus an mcpServers entry
-// when mcp != nil. Single read + merges + write so a partial
-// failure doesn't leave settings.json half-mutated.
-func InstallClaudeCodeFull(path, hookCommand string, mcp *MCPServerEntry) (string, error) {
+// InstallAgentHooks: hook merge into settingsPath PLUS an
+// mcpServers entry into userConfigPath when mcp != nil.
+//
+// Two files because Claude Code separates them:
+//   - settingsPath    is ~/.claude/settings.json   (hooks)
+//   - userConfigPath  is ~/.claude.json            (MCP servers)
+//
+// Each file is read, merged, and written atomically — the cross-
+// file write isn't transactional, but both merges are idempotent
+// so a retry after a partial failure converges. Returns a single
+// human-readable report covering both mutations.
+func InstallClaudeCodeFull(settingsPath, userConfigPath, hookCommand string, mcp *MCPServerEntry) (string, error) {
 	if hookCommand == "" {
 		hookCommand = defaultHookCommand
 	}
-	settings, err := readSettings(path)
+	settings, err := readSettings(settingsPath)
 	if err != nil {
 		return "", err
 	}
-
 	hooksAdded, hooksPresent := mergeAllHooks(settings, ingest.ClaudeCode.HookEvents, hookCommand)
+	if len(hooksAdded) > 0 {
+		if err := writeSettingsAtomic(settingsPath, settings); err != nil {
+			return "", err
+		}
+	}
 
 	mcpAdded := false
 	mcpPresent := false
 	if mcp != nil {
+		userCfg, err := readSettings(userConfigPath)
+		if err != nil {
+			return "", err
+		}
 		args := mcp.Args
 		if args == nil {
 			args = []string{"mcp-serve"}
 		}
-		if mergeMCPServer(settings, mcp.Name, mcp.Command, args) {
+		if mergeMCPServer(userCfg, mcp.Name, mcp.Command, args) {
 			mcpAdded = true
+			if err := writeSettingsAtomic(userConfigPath, userCfg); err != nil {
+				return "", err
+			}
 		} else {
 			mcpPresent = true
 		}
 	}
 
-	if len(hooksAdded) > 0 || mcpAdded {
-		if err := writeSettingsAtomic(path, settings); err != nil {
-			return "", err
-		}
-	}
-
-	return formatClaudeCodeReport(path, hooksAdded, hooksPresent, mcpAdded, mcpPresent, mcp), nil
+	return formatClaudeCodeReport(settingsPath, userConfigPath, hooksAdded, hooksPresent, mcpAdded, mcpPresent, mcp), nil
 }
 
 // mergeMCPServer inserts {command, args} under
@@ -231,11 +261,11 @@ func mergeMCPServer(settings map[string]any, name, command string, args []string
 }
 
 // formatClaudeCodeReport renders the user-facing summary of an
-// InstallClaudeCodeFull run. Lists what was newly added vs what
-// was already present, plus a note about the MCP entry.
-func formatClaudeCodeReport(path string, hooksAdded, hooksPresent []string, mcpAdded, mcpPresent bool, mcp *MCPServerEntry) string {
+// InstallClaudeCodeFull run. Surfaces both files separately so
+// the user can grep and `cat` them in their own follow-up checks.
+func formatClaudeCodeReport(settingsPath, userConfigPath string, hooksAdded, hooksPresent []string, mcpAdded, mcpPresent bool, mcp *MCPServerEntry) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "settings: %s\n", path)
+	fmt.Fprintf(&b, "hook settings: %s\n", settingsPath)
 	if len(hooksAdded) > 0 {
 		fmt.Fprintf(&b, "added %d hook entries: %s\n", len(hooksAdded), strings.Join(hooksAdded, ", "))
 	}
@@ -243,6 +273,7 @@ func formatClaudeCodeReport(path string, hooksAdded, hooksPresent []string, mcpA
 		fmt.Fprintf(&b, "already present: %s\n", strings.Join(hooksPresent, ", "))
 	}
 	if mcp != nil {
+		fmt.Fprintf(&b, "user config:   %s\n", userConfigPath)
 		switch {
 		case mcpAdded:
 			fmt.Fprintf(&b, "registered mcpServers.%s\n", mcp.Name)
