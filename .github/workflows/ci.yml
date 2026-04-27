@@ -1,0 +1,99 @@
+# Continuous integration: run the SAME pre-commit hooks the user
+# runs locally, in GitHub Actions, against every push and pull
+# request that targets main.
+#
+# Single source of truth — `.pre-commit-config.yaml`. Adding a
+# check to that file makes it run both locally (on `git commit`)
+# and here (on push/PR). No second list to keep in sync.
+#
+# Tooling layers (must match what `.pre-commit-config.yaml` calls):
+#   - Go      — for go build / vet / test / mod-tidy
+#   - Python  — for the pre-commit framework itself
+#   - golangci-lint, govulncheck, goimports, gitleaks — pinned via
+#     `additional-dependencies` / direct install so the hook doesn't
+#     fail on a missing binary
+#
+# Caching:
+#   - actions/setup-go caches the module + build cache by go.sum hash
+#   - actions/cache caches the pre-commit hook environments by config
+#     hash (rebuilds only when .pre-commit-config.yaml changes)
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel superseded in-flight runs on the same ref so a force-push or
+# rapid-fire PR commits don't burn a queue of stale jobs.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks scans the working tree, but we check out only
+          # the latest commit by default. fetch-depth: 0 gives it
+          # the full history so a leaked secret in a prior commit
+          # gets caught too.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # Pinned versions match what the maintainer runs locally
+      # (golangci-lint 2.x, govulncheck v1.x, gitleaks v8.x). When
+      # you bump them, also bump the rev in .pre-commit-config.yaml
+      # for the third-party hooks so local and CI stay aligned.
+      - name: Install Go-side hook tools
+        run: |
+          go install golang.org/x/tools/cmd/goimports@latest
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+          # Make $GOPATH/bin available to subsequent steps. The
+          # default `actions/setup-go` already exports it, but be
+          # explicit in case a future runner image changes that.
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install pre-commit
+        run: python -m pip install pre-commit==4.5.1
+
+      - name: Cache pre-commit envs
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: |
+            pre-commit-${{ runner.os }}-
+
+      - name: Run pre-commit hooks
+        # --all-files runs every hook on every tracked file, not just
+        # the diff from the PR. That matches what we ask of contributors
+        # locally and catches stale autogen output that a partial
+        # diff would miss (e.g. docs/reference/* drifting from source).
+        run: pre-commit run --all-files --show-diff-on-failure
+
+      - name: Verify autogen docs are fresh
+        # `make docs-check` re-runs docgen and diffs against what's
+        # committed. Belt-and-braces: if a future hook regression
+        # accidentally skips this, CI still catches drift.
+        run: make docs-check
