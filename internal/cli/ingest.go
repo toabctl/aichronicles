@@ -44,7 +44,7 @@ func newIngestCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&socketFlag, "socket", "", "daemon UDS path (overrides $AICHRONICLES_SOCKET; defaults to XDG_RUNTIME_DIR)")
-	cmd.Flags().StringVar(&agentSlug, "agent", defaultIngestAgent, "source agent slug (claude-code | codex)")
+	cmd.Flags().StringVar(&agentSlug, "agent", defaultIngestAgent, "source agent slug (claude-code | gemini-cli)")
 	return cmd
 }
 

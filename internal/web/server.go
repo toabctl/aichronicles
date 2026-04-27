@@ -125,7 +125,7 @@ func NewServer(st *store.Store, cfg Config, log *slog.Logger) *Server {
 // renders. Each name maps to assets/templates/<name>.html, which
 // is parsed alongside base.html into its own template set so the
 // `content` block one page defines doesn't shadow another's.
-var pageNames = []string{"sessions", "session", "search"}
+var pageNames = []string{"sessions", "session", "search", "insights", "skills", "projects"}
 
 // fragmentNames is the canonical list of htmx fragment templates
 // the server renders. Each name maps to
@@ -181,6 +181,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /sessions/{id}", s.sessionDetailHandler)
 	s.mux.HandleFunc("GET /search", s.searchHandler)
 	s.mux.HandleFunc("GET /search/hits", s.searchHitsHandler)
+	s.mux.HandleFunc("GET /insights", s.insightsHandler)
+	s.mux.HandleFunc("GET /skills", s.skillsHandler)
+	s.mux.HandleFunc("GET /projects", s.projectsHandler)
 	s.mux.HandleFunc("GET /stream", s.streamHandler)
 	s.mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS())))
 }

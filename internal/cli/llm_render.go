@@ -228,30 +228,13 @@ func renderProposal(w io.Writer, body string) error {
 	}
 	var b strings.Builder
 	if len(r.Skills) > 0 {
-		fmt.Fprintf(&b, "%s\n", sectionHeader(w, "Skills / slash-command ideas"))
+		fmt.Fprintf(&b, "%s\n", sectionHeader(w, "Proposed skills"))
 		for _, s := range r.Skills {
 			fmt.Fprintf(&b, "  - %s  [freq=%d effort=%s]\n    when: %s\n    why:  %s\n",
 				s.Name, s.Frequency, s.Effort, s.WhenToUse, s.Why)
-			writeEvidence(&b, s.Evidence)
-			writeAlternatives(&b, s.AlternativesRejected)
-		}
-		b.WriteByte('\n')
-	}
-	if len(r.ClaudeMdEntries) > 0 {
-		fmt.Fprintf(&b, "%s\n", sectionHeader(w, "CLAUDE.md entries worth adding"))
-		for _, e := range r.ClaudeMdEntries {
-			fmt.Fprintf(&b, "  - [freq=%d effort=%s]\n    rule: %s\n    why:  %s\n",
-				e.Frequency, e.Effort, e.Rule, e.Why)
-			writeEvidence(&b, e.Evidence)
-			writeAlternatives(&b, e.AlternativesRejected)
-		}
-		b.WriteByte('\n')
-	}
-	if len(r.Scripts) > 0 {
-		fmt.Fprintf(&b, "%s\n", sectionHeader(w, "Pre-built scripts worth keeping"))
-		for _, s := range r.Scripts {
-			fmt.Fprintf(&b, "  - %s  [freq=%d effort=%s]\n    purpose: %s\n",
-				s.Name, s.Frequency, s.Effort, s.Purpose)
+			for _, sc := range s.Scripts {
+				fmt.Fprintf(&b, "    script: scripts/%s  — %s\n", sc.Name, sc.Purpose)
+			}
 			writeEvidence(&b, s.Evidence)
 			writeAlternatives(&b, s.AlternativesRejected)
 		}

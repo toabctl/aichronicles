@@ -355,6 +355,7 @@ var (
 	_ Extractor = WebFetchExtractor
 	_ Extractor = WebSearchExtractor
 	_ Extractor = TaskExtractor
+	_ Extractor = SkillLoadExtractor
 )
 
 func TestTask_PromptExtracted(t *testing.T) {
@@ -532,5 +533,155 @@ func TestWebSearch_QueryExtracted(t *testing.T) {
 	want := []kindValue{{KindWebQuery, "Go FTS5 trigram"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// --- SkillLoad ----------------------------------------------------------
+
+// TestSkillLoad_HookShape covers live ingest from the Claude Code
+// hook: payload.tool_input.{skill,args} on a tool_use envelope with
+// tool_name="Skill". Args is optional and lands under Extra.
+func TestSkillLoad_HookShape(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool: &ingest.Tool{Name: "Skill"},
+		Payload: map[string]any{
+			"tool_input": map[string]any{
+				"skill": "build-test",
+				"args":  "--package internal/web",
+			},
+		},
+	}
+	got := FromEnvelope(env)
+	if len(got) != 1 || got[0].Kind != KindSkillLoad {
+		t.Fatalf("got %+v, want one skill_load", got)
+	}
+	if got[0].Value != "build-test" {
+		t.Errorf("value: got %q, want build-test", got[0].Value)
+	}
+	if !reflect.DeepEqual(got[0].Extra, map[string]any{"args": "--package internal/web"}) {
+		t.Errorf("extra: got %+v, want args=…", got[0].Extra)
+	}
+}
+
+// TestSkillLoad_ImportShape covers transcripts ingested via
+// import-claude: the skill name lives at
+// payload.message.content[*].input.skill rather than tool_input.
+// This is the shape that produced the 50/52 of skill events on the
+// dev box, so the regression case lives here.
+func TestSkillLoad_ImportShape(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool: &ingest.Tool{Name: "Skill"},
+		Payload: map[string]any{
+			"message": map[string]any{
+				"content": []any{
+					map[string]any{
+						"type": "text",
+						"text": "I'll use the grade skill.",
+					},
+					map[string]any{
+						"type": "tool_use",
+						"name": "Skill",
+						"input": map[string]any{
+							"skill": "grade",
+							"args":  "--repo https://example/x",
+						},
+					},
+				},
+			},
+		},
+	}
+	got := FromEnvelope(env)
+	if len(got) != 1 || got[0].Kind != KindSkillLoad {
+		t.Fatalf("got %+v, want one skill_load", got)
+	}
+	if got[0].Value != "grade" {
+		t.Errorf("value: got %q, want grade", got[0].Value)
+	}
+	if !reflect.DeepEqual(got[0].Extra, map[string]any{"args": "--repo https://example/x"}) {
+		t.Errorf("extra: got %+v", got[0].Extra)
+	}
+}
+
+// TestSkillLoad_NoArgsOmitsExtra confirms Extra stays nil rather
+// than {args:""} when the invocation carried no arguments.
+func TestSkillLoad_NoArgsOmitsExtra(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool: &ingest.Tool{Name: "Skill"},
+		Payload: map[string]any{
+			"tool_input": map[string]any{"skill": "effective-go"},
+		},
+	}
+	got := FromEnvelope(env)
+	if len(got) != 1 {
+		t.Fatalf("got %d, want 1", len(got))
+	}
+	if got[0].Extra != nil {
+		t.Errorf("extra should be nil when args absent: %+v", got[0].Extra)
+	}
+}
+
+// TestSkillLoad_NonSkillToolSkipped confirms the extractor only
+// fires on Tool.Name="Skill" — a Bash tool_use with a stray "skill"
+// key in tool_input must not produce a skill_load row.
+func TestSkillLoad_NonSkillToolSkipped(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool: &ingest.Tool{Name: "Bash"},
+		Payload: map[string]any{
+			"tool_input": map[string]any{
+				"command": "ls",
+				"skill":   "should-not-extract",
+			},
+		},
+	}
+	for _, x := range FromEnvelope(env) {
+		if x.Kind == KindSkillLoad {
+			t.Errorf("non-Skill tool produced skill_load: %+v", x)
+		}
+	}
+}
+
+// TestSkillLoad_MissingSkillFieldSkipped confirms a tool_use envelope
+// with Tool.Name="Skill" but no skill string in the payload (drift
+// from the documented contract) is silently dropped, not stored as
+// a row with empty value.
+func TestSkillLoad_MissingSkillFieldSkipped(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool: &ingest.Tool{Name: "Skill"},
+		Payload: map[string]any{
+			"tool_input": map[string]any{"args": "stray args, no skill"},
+		},
+	}
+	for _, x := range FromEnvelope(env) {
+		if x.Kind == KindSkillLoad {
+			t.Errorf("missing skill field should not extract: %+v", x)
+		}
+	}
+}
+
+// TestSkillLoad_ImportShape_NoToolUseBlock confirms that an import
+// envelope whose message.content has only text blocks (no tool_use
+// of name="Skill") is skipped — defensive against drift in Claude's
+// transcript shape.
+func TestSkillLoad_ImportShape_NoToolUseBlock(t *testing.T) {
+	t.Parallel()
+	env := &ingest.Envelope{
+		Tool: &ingest.Tool{Name: "Skill"},
+		Payload: map[string]any{
+			"message": map[string]any{
+				"content": []any{
+					map[string]any{"type": "text", "text": "no tool use here"},
+				},
+			},
+		},
+	}
+	for _, x := range FromEnvelope(env) {
+		if x.Kind == KindSkillLoad {
+			t.Errorf("text-only content should not extract: %+v", x)
+		}
 	}
 }

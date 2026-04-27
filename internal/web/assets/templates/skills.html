@@ -1,0 +1,84 @@
+{{define "content"}}
+<hgroup>
+  <h1>Skills <small>· last {{.Days}} days</small></h1>
+  <p>SKILL.md files you have on disk, how often they're loaded, and which
+     ones might be stale (skill loads correlated with tool_failure events
+     in the same session).</p>
+</hgroup>
+
+<nav class="agent-filter" aria-label="Window">
+  <a href="/skills?days=7" class="agent-chip{{if eq .Days 7}} agent-chip-active{{end}}">7d</a>
+  <a href="/skills?days=14" class="agent-chip{{if eq .Days 14}} agent-chip-active{{end}}">14d</a>
+  <a href="/skills?days=30" class="agent-chip{{if eq .Days 30}} agent-chip-active{{end}}">30d</a>
+  <a href="/skills?days=90" class="agent-chip{{if eq .Days 90}} agent-chip-active{{end}}">90d</a>
+</nav>
+
+{{if .Installed}}
+<article>
+  <header><h2>Installed <small>({{len .Installed}})</small></h2></header>
+  <table>
+    <thead><tr><th>Name</th><th>Source</th><th>Description</th></tr></thead>
+    <tbody>
+      {{range .Installed}}
+      <tr>
+        <td><code>{{.Name}}</code></td>
+        <td><small>{{.Source}}</small></td>
+        <td>{{.Description}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</article>
+{{else}}
+<article>
+  <p class="empty">No SKILL.md files found under ~/.claude/skills/ or under
+     project-local <code>.claude/skills/</code> for any session in the window.</p>
+</article>
+{{end}}
+
+<article>
+  <header><h2>Invoked recently <small>({{len .Invoked}})</small></h2></header>
+  {{if .Invoked}}
+  <table>
+    <thead><tr><th>Skill</th><th>Loads</th></tr></thead>
+    <tbody>
+      {{range .Invoked}}
+      <tr><td><code>{{.Name}}</code></td><td>{{.Count}}</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="empty">No <code>skill_load</code> extractions in the window.
+     Either you don't load skills via <code>/skill-name</code>, or the
+     events were ingested before the extractor existed — try
+     <code>aichronicles backfill-extractions --only=skill_load</code>.</p>
+  {{end}}
+</article>
+
+{{if .Stale}}
+<article>
+  <header><h2>Stale candidates <small>({{len .Stale}})</small></h2></header>
+  <p>Skills whose loads correlated with a <code>tool_failure</code> event in
+     the same session within ~10 minutes. A consistently high rate suggests
+     the skill's instructions are wrong / outdated and worth a refresh.</p>
+  <table>
+    <thead><tr><th>Skill</th><th>Stale</th><th>Total</th><th>Rate</th><th>Example sessions</th></tr></thead>
+    <tbody>
+      {{range .Stale}}
+      <tr>
+        <td><code>{{.Name}}</code></td>
+        <td>{{.StaleLoads}}</td>
+        <td>{{.TotalLoads}}</td>
+        <td>{{.Rate}}%</td>
+        <td>
+          {{range .Examples}}
+          <a href="/sessions/{{.SessionID}}" class="sid">{{.ShortID}}</a>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</article>
+{{end}}
+{{end}}

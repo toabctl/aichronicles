@@ -16,9 +16,10 @@ import (
 type LLMOutputKind string
 
 const (
-	LLMKindSummary LLMOutputKind = "summary"
-	LLMKindReflect LLMOutputKind = "reflect"
-	LLMKindPropose LLMOutputKind = "propose"
+	LLMKindSummary       LLMOutputKind = "summary"
+	LLMKindReflect       LLMOutputKind = "reflect"
+	LLMKindPropose       LLMOutputKind = "propose"
+	LLMKindReflectWeekly LLMOutputKind = "reflect_weekly"
 )
 
 // LLMOutput mirrors one row of the llm_outputs table. Callers
@@ -108,6 +109,25 @@ func LoadLLMOutputByHash(ctx context.Context, db *sql.DB, kind LLMOutputKind, pr
 		 FROM llm_outputs
 		 WHERE kind = ? AND prompt_hash = ?`,
 		string(kind), promptHash,
+	)
+	out, err := scanLLMOutput(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return out, err
+}
+
+// LoadLLMOutputByID returns the row with the given primary key,
+// or nil if no row matches. Used by callers that have a stable
+// reference to a specific output (e.g. `propose apply --output-id`)
+// and want to act on that exact row regardless of recency.
+func LoadLLMOutputByID(ctx context.Context, db *sql.DB, id int64) (*LLMOutput, error) {
+	row := db.QueryRowContext(ctx,
+		`SELECT id, session_id, kind, model, prompt_hash,
+			input_tokens, output_tokens, body, created_at_ms
+		 FROM llm_outputs
+		 WHERE id = ?`,
+		id,
 	)
 	out, err := scanLLMOutput(row)
 	if errors.Is(err, sql.ErrNoRows) {

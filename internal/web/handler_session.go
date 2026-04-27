@@ -94,6 +94,21 @@ func loadSessionHeader(ctx context.Context, st *store.Store, id string) (*Sessio
 		return nil, fmt.Errorf("scan session row: %w", err)
 	}
 
+	// The resume command MUST cd into the session's *start* cwd, not
+	// sessions.cwd: Claude looks up transcripts under
+	// ~/.claude/projects/<encoded-cwd>/ keyed by the cwd at session
+	// start. The trigger keeps sessions.cwd as the latest cwd seen
+	// (useful for "where was this session most recently working"),
+	// which breaks resume whenever the user cd'd mid-session. Falls
+	// back to sessions.cwd if the lookup turns up nothing.
+	resumeCwd, err := store.LoadSessionStartCwd(ctx, st.DB(), gotID)
+	if err != nil {
+		return nil, fmt.Errorf("load start cwd: %w", err)
+	}
+	if !resumeCwd.Valid {
+		resumeCwd = cwd
+	}
+
 	return &SessionDetail{
 		Title:           "session " + shortID(gotID),
 		ID:              gotID,
@@ -104,7 +119,7 @@ func loadSessionHeader(ctx context.Context, st *store.Store, id string) (*Sessio
 		EventCount:      eventCount,
 		SourceAgent:     sourceAgent,
 		SourceSessionID: sourceSessionID,
-		ResumeCommand:   buildResumeCommand(sourceAgent, sourceSessionID, cwd),
+		ResumeCommand:   buildResumeCommand(sourceAgent, sourceSessionID, resumeCwd),
 	}, nil
 }
 
@@ -120,18 +135,29 @@ func buildResumeCommand(agent, sourceSessionID string, cwd sql.NullString) strin
 	if sourceSessionID == "" {
 		return ""
 	}
+	var base string
 	switch agent {
 	case "claude-code":
-		base := "claude --resume " + sourceSessionID
-		if cwd.Valid && cwd.String != "" {
-			return "cd " + cwd.String + " && " + base
-		}
-		return base
+		base = "claude --resume " + sourceSessionID
+	case "gemini-cli":
+		// gemini-cli's `--help` advertises only `--resume <index>`
+		// or `--resume latest`, but the binary also accepts the
+		// session UUID directly (verified end-to-end:
+		// `gemini --resume <uuid>` correctly carries the prior
+		// session history). We emit the UUID form so the resume
+		// button doesn't depend on the volatile index ordering of
+		// `--list-sessions` (which changes every time a new
+		// session is created).
+		base = "gemini --resume " + sourceSessionID
 	default:
 		// codex / other agents have their own resume invocations
 		// we haven't modelled yet; emit nothing rather than guess.
 		return ""
 	}
+	if cwd.Valid && cwd.String != "" {
+		return "cd " + cwd.String + " && " + base
+	}
+	return base
 }
 
 // loadLatestSummary returns the most recent summary llm_outputs

@@ -1,0 +1,40 @@
+{{define "content"}}
+<hgroup>
+  <h1>Projects <small>· last {{.Days}} days</small></h1>
+  <p>Sessions grouped by project root (start cwd, walked up to the nearest
+     <code>.claude</code> / <code>.git</code> / <code>go.mod</code> ancestor).
+     Click a row to filter the sessions list to that project.</p>
+</hgroup>
+
+<nav class="agent-filter" aria-label="Window">
+  <a href="/projects?days=7" class="agent-chip{{if eq .Days 7}} agent-chip-active{{end}}">7d</a>
+  <a href="/projects?days=30" class="agent-chip{{if eq .Days 30}} agent-chip-active{{end}}">30d</a>
+  <a href="/projects?days=90" class="agent-chip{{if eq .Days 90}} agent-chip-active{{end}}">90d</a>
+</nav>
+
+{{if .Empty}}
+<p class="empty">(no sessions in window)</p>
+{{else}}
+<table>
+  <thead>
+    <tr>
+      <th>Project root</th>
+      <th>Sessions</th>
+      <th>Events</th>
+      <th>Last activity</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Projects}}
+    <tr class="nav-row" tabindex="0">
+      <td><a href="/?project={{.Root}}"><code>{{.Root}}</code></a>
+        {{if gt .DistinctCwds 1}}<small> ({{.DistinctCwds}} sub-cwds)</small>{{end}}</td>
+      <td>{{.Sessions}}</td>
+      <td>{{.Events}}</td>
+      <td class="ts">{{.LastActivity}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}
+{{end}}

@@ -28,36 +28,110 @@ const sessionsListLimit = 100
 // sessionsHandler renders the sessions list page at /. Returns the
 // most-recently-active sessions first, with a `summary` badge on
 // rows that already have a cached LLM summary in llm_outputs.
+//
+// Optional `?agent=<slug>` query param narrows the list to one
+// source agent (claude-code | gemini-cli). The filter shows up as
+// a removable chip in the rendered template; an unknown / empty
+// slug falls back to the unfiltered view rather than 404'ing.
 func (s *Server) sessionsHandler(w http.ResponseWriter, r *http.Request) {
-	rows, err := loadSessionsForList(r.Context(), s.store, sessionsListLimit)
+	agent := strings.TrimSpace(r.URL.Query().Get("agent"))
+	project := strings.TrimSpace(r.URL.Query().Get("project"))
+	rows, err := loadSessionsForList(r.Context(), s.store, sessionsListLimit, agent, project)
 	if err != nil {
 		s.log.Error("sessionsHandler: load", "err", err)
 		http.Error(w, "could not load sessions", http.StatusInternalServerError)
 		return
 	}
-	page := SessionsPage{Title: "Sessions", Sessions: rows}
+	agents, err := loadDistinctSourceAgents(r.Context(), s.store)
+	if err != nil {
+		s.log.Error("sessionsHandler: load agents", "err", err)
+		// Non-fatal — the list still renders, just without filter chips.
+		agents = nil
+	}
+	title := "Sessions"
+	if agent != "" {
+		title = "Sessions · " + agent
+	}
+	if project != "" {
+		title = "Sessions · " + project
+	}
+	page := SessionsPage{
+		Title:         title,
+		Sessions:      rows,
+		Agents:        agents,
+		ActiveAgent:   agent,
+		ActiveProject: project,
+	}
 	s.render(w, r, "sessions", page)
+}
+
+// loadDistinctSourceAgents returns the set of source_agent slugs
+// present in the sessions table, sorted alphabetically. Used to
+// render filter chips on the sessions list — we don't hardcode
+// "claude-code | gemini-cli" because the list grows whenever a
+// new agent's importer / setup command lands.
+func loadDistinctSourceAgents(ctx context.Context, st *store.Store) ([]string, error) {
+	rows, err := st.DB().QueryContext(ctx,
+		`SELECT DISTINCT source_agent FROM sessions ORDER BY source_agent ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("query distinct source_agent: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 // loadSessionsForList runs the read query backing the sessions page.
 // One SQL roundtrip pulls the session rows + first-prompt preview;
 // a second indexed query fetches each session's cached summary so
 // the row can show the model-attributed topic alongside the prompt.
-func loadSessionsForList(ctx context.Context, st *store.Store, limit int) ([]SessionRow, error) {
-	const q = `
+//
+// agentFilter, when non-empty, narrows to sessions where
+// source_agent = <filter>. Empty value lists every agent (the
+// default).
+func loadSessionsForList(ctx context.Context, st *store.Store, limit int, agentFilter, projectFilter string) ([]SessionRow, error) {
+	q := `
 		SELECT s.id,
 		       s.started_at_ms,
 		       s.ended_at_ms,
 		       s.event_count,
 		       s.cwd,
+		       s.source_agent,
 		       (SELECT content_text FROM events
 		          WHERE session_id = s.id AND kind = 'user_prompt'
 		          ORDER BY ts_source_ms ASC LIMIT 1) AS first_prompt
-		  FROM sessions s
-		 ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC
-		 LIMIT ?`
+		  FROM sessions s`
+	var conds []string
+	args := []any{}
+	if agentFilter != "" {
+		conds = append(conds, "s.source_agent = ?")
+		args = append(args, agentFilter)
+	}
+	if projectFilter != "" {
+		// Match sessions whose latest cwd is the project root or
+		// any descendant. Approximation: a session that started
+		// in /proj but cd'd to /elsewhere mid-way will still be
+		// indexed by its latest cwd, which is the trade-off
+		// sessions.cwd makes today. Good enough for a click-
+		// through filter; the /projects page uses start cwd for
+		// its rollup.
+		conds = append(conds, "(s.cwd = ? OR s.cwd LIKE ?)")
+		args = append(args, projectFilter, projectFilter+"/%")
+	}
+	if len(conds) > 0 {
+		q += " WHERE " + strings.Join(conds, " AND ")
+	}
+	q += " ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC LIMIT ?"
+	args = append(args, limit)
 
-	rows, err := st.DB().QueryContext(ctx, q, limit)
+	rows, err := st.DB().QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query sessions: %w", err)
 	}
@@ -73,9 +147,10 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int) ([]Ses
 			endedMs     sql.NullInt64
 			eventCount  int
 			cwd         sql.NullString
+			sourceAgent string
 			firstPrompt sql.NullString
 		)
-		if err := rows.Scan(&id, &startedMs, &endedMs, &eventCount, &cwd, &firstPrompt); err != nil {
+		if err := rows.Scan(&id, &startedMs, &endedMs, &eventCount, &cwd, &sourceAgent, &firstPrompt); err != nil {
 			return nil, fmt.Errorf("scan session row: %w", err)
 		}
 		out = append(out, SessionRow{
@@ -84,6 +159,7 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int) ([]Ses
 			LastActivity: relativeTime(effectiveTs(startedMs, endedMs), now),
 			EventCount:   eventCount,
 			Cwd:          orDash(cwd),
+			SourceAgent:  sourceAgent,
 			FirstPrompt:  truncatePreview(firstPrompt),
 		})
 		ids = append(ids, id)

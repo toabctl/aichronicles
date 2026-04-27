@@ -496,7 +496,7 @@ func TestBuildReflect_ScrubsSecretsInDigestFields(t *testing.T) {
 
 func TestBuildPropose_RequiresSessions(t *testing.T) {
 	t.Parallel()
-	if _, err := BuildPropose(nil); err == nil {
+	if _, err := BuildPropose(ProposeInputs{}); err == nil {
 		t.Error("empty digests: expected error")
 	}
 }
@@ -504,7 +504,7 @@ func TestBuildPropose_RequiresSessions(t *testing.T) {
 func TestBuildPropose_SetsForcedTool(t *testing.T) {
 	t.Parallel()
 	digests := []SessionDigest{{ID: "p", FirstPrompt: "hi"}}
-	built, err := BuildPropose(digests)
+	built, err := BuildPropose(ProposeInputs{Digests: digests})
 	if err != nil {
 		t.Fatalf("BuildPropose: %v", err)
 	}
@@ -521,7 +521,7 @@ func TestBuildPropose_ScrubsAndReportsPatterns(t *testing.T) {
 	digests := []SessionDigest{
 		{ID: "s-y", Summary: "I leaked AKIAIOSFODNN7EXAMPLE again"},
 	}
-	built, err := BuildPropose(digests)
+	built, err := BuildPropose(ProposeInputs{Digests: digests})
 	if err != nil {
 		t.Fatalf("BuildPropose: %v", err)
 	}
@@ -531,6 +531,139 @@ func TestBuildPropose_ScrubsAndReportsPatterns(t *testing.T) {
 	}
 	if len(built.Patterns) != 1 {
 		t.Errorf("expected one pattern, got %v", built.Patterns)
+	}
+}
+
+// --- BuildSearchSummary ---
+
+func TestBuildSearchSummary_RequiresQueryAndHits(t *testing.T) {
+	t.Parallel()
+	if _, err := BuildSearchSummary("", []SearchHit{{SessionID: "s"}}, 0); err == nil {
+		t.Error("empty query: expected error")
+	}
+	if _, err := BuildSearchSummary("q", nil, 0); err == nil {
+		t.Error("no hits: expected error")
+	}
+}
+
+func TestBuildSearchSummary_GroundsHitsInUserMessage(t *testing.T) {
+	t.Parallel()
+	hits := []SearchHit{
+		{SessionID: "abc12345-aaaa-bbbb-cccc-dddddddddddd", Kind: "user_prompt",
+			Cwd: "/proj", TsSourceMs: 1700000000000, Snippet: "investigate slow query"},
+		{SessionID: "def67890-aaaa-bbbb-cccc-dddddddddddd", Kind: "tool_use",
+			Cwd: "/proj", TsSourceMs: 1700000100000, Snippet: "Bash: EXPLAIN ANALYZE …"},
+	}
+	built, err := BuildSearchSummary("slow query", hits, 0)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	for _, want := range []string{
+		"Query: slow query",
+		"Hits (2)",
+		"[session=abc12345]",
+		"[session=def67890]",
+		"investigate slow query",
+		"EXPLAIN ANALYZE",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("user msg missing %q\n%s", want, body)
+		}
+	}
+	if !strings.Contains(built.Request.System, "Anti-fabrication rules") {
+		t.Error("system prompt missing anti-fabrication header")
+	}
+	if built.Request.MaxTokens == 0 {
+		t.Error("MaxTokens defaulted to zero")
+	}
+}
+
+func TestBuildSearchSummary_ScrubsSecrets(t *testing.T) {
+	t.Parallel()
+	hits := []SearchHit{{
+		SessionID: "abc12345-aaaa-bbbb-cccc-dddddddddddd",
+		Kind:      "user_prompt", Cwd: "/x", TsSourceMs: 1,
+		Snippet: "I leaked AKIAIOSFODNN7EXAMPLE in this turn",
+	}}
+	built, err := BuildSearchSummary("aws creds", hits, 0)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	if strings.Contains(body, "AKIAIOSFODNN7EXAMPLE") {
+		t.Errorf("search-summary prompt leaked secret:\n%s", body)
+	}
+	if len(built.Patterns) == 0 {
+		t.Error("expected at least one redaction pattern reported")
+	}
+}
+
+// TestBuildPropose_RendersInstalledAndInvokedSkills confirms the
+// new skill-aware sections land in the user message exactly when
+// the caller supplies them, and that the system prompt carries
+// the awareness rules. The assertions are substring-based rather
+// than exact-match so future prompt rewording doesn't break the
+// test for cosmetic reasons.
+func TestBuildPropose_RendersInstalledAndInvokedSkills(t *testing.T) {
+	t.Parallel()
+	in := ProposeInputs{
+		Digests: []SessionDigest{{ID: "s1", FirstPrompt: "do a thing"}},
+		InstalledSkills: []InstalledSkill{
+			{Name: "effective-go", Description: "idiomatic Go", Source: "global"},
+			{Name: "build-test", Description: "build then test", Source: "project:/home/tom/devel/x"},
+		},
+		InvokedSkills: []InvokedSkill{
+			{Name: "build-test", Count: 6},
+			{Name: "effective-go", Count: 3},
+		},
+	}
+	built, err := BuildPropose(in)
+	if err != nil {
+		t.Fatalf("BuildPropose: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	for _, want := range []string{
+		"Skills installed",
+		"effective-go [global]: idiomatic Go",
+		"build-test [project:/home/tom/devel/x]: build then test",
+		"Skills invoked recently",
+		"build-test × 6",
+		"effective-go × 3",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("propose user message missing %q\n--- body ---\n%s", want, body)
+		}
+	}
+	for _, want := range []string{
+		"Skill-awareness rules",
+		"do NOT propose a new skill with that name",
+	} {
+		if !strings.Contains(built.Request.System, want) {
+			t.Errorf("propose system prompt missing %q", want)
+		}
+	}
+}
+
+// TestBuildPropose_OmitsSkillSectionsWhenEmpty pins the no-section
+// case: a fresh user with no installed skills and no invocations
+// must NOT see misleading empty headers in the prompt.
+func TestBuildPropose_OmitsSkillSectionsWhenEmpty(t *testing.T) {
+	t.Parallel()
+	built, err := BuildPropose(ProposeInputs{
+		Digests: []SessionDigest{{ID: "s1", FirstPrompt: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("BuildPropose: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	for _, unwanted := range []string{
+		"Skills installed",
+		"Skills invoked recently",
+	} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("empty inputs leaked %q into body:\n%s", unwanted, body)
+		}
 	}
 }
 

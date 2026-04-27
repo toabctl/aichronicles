@@ -138,12 +138,16 @@ type ReflectionEvidence struct {
 }
 
 // ProposalResult is the schema-validated payload of a
-// record_proposal tool call. Each section capped at 5 items by
-// schema so callers can render the output deterministically.
+// record_proposal tool call. Single-shape: every proposal is a
+// skill. Trigger-conditional rules collapse into the skill's
+// when_to_use; helper scripts collapse into the skill's
+// scripts[]. Practice-level invariants without a trigger
+// (CLAUDE.md territory) are explicitly out of scope.
+//
+// Capped at 5 items by schema so callers can render the output
+// deterministically.
 type ProposalResult struct {
-	Skills          []ProposedSkill        `json:"skills"`
-	ClaudeMdEntries []ProposedClaudeMdRule `json:"claude_md_entries"`
-	Scripts         []ProposedScript       `json:"scripts"`
+	Skills []ProposedSkill `json:"skills"`
 }
 
 // ProposalEvidence grounds one proposal in actual session text.
@@ -157,40 +161,33 @@ type ProposalEvidence struct {
 	WhatHappened string `json:"what_happened"`
 }
 
-// ProposedSkill, ProposedClaudeMdRule, and ProposedScript share the
-// same metadata shape — Evidence (≥2 entries), Frequency, Effort
-// estimate, and AlternativesRejected ("I considered making this a
-// script but the skill form is more leveraged because…"). The
-// shared fields exist as a loose contract rather than an embedded
-// struct so each kind can keep its category-specific text fields
-// (WhenToUse, Rule, Purpose) readable in isolation.
-
+// ProposedSkill is the only artefact propose generates. Scripts
+// (when present) are skill-scoped: the apply command writes them
+// under <skill-dir>/scripts/<name> and the SKILL.md picks up a
+// reference under "Steps". Mirrors how Claude Code's skill
+// directory layout (and hermes-agent's skill_manager_tool) treat
+// scripts as supporting files inside a skill, not free-floating
+// helpers on PATH.
 type ProposedSkill struct {
-	Name                 string             `json:"name"`
-	WhenToUse            string             `json:"when_to_use"`
-	Why                  string             `json:"why"`
-	Evidence             []ProposalEvidence `json:"evidence"`
-	Frequency            int                `json:"frequency"`
-	Effort               string             `json:"effort"`
-	AlternativesRejected string             `json:"alternatives_rejected"`
+	Name                 string                `json:"name"`
+	WhenToUse            string                `json:"when_to_use"`
+	Why                  string                `json:"why"`
+	Scripts              []ProposedSkillScript `json:"scripts,omitempty"`
+	Evidence             []ProposalEvidence    `json:"evidence"`
+	Frequency            int                   `json:"frequency"`
+	Effort               string                `json:"effort"`
+	AlternativesRejected string                `json:"alternatives_rejected"`
 }
 
-type ProposedClaudeMdRule struct {
-	Rule                 string             `json:"rule"`
-	Why                  string             `json:"why"`
-	Evidence             []ProposalEvidence `json:"evidence"`
-	Frequency            int                `json:"frequency"`
-	Effort               string             `json:"effort"`
-	AlternativesRejected string             `json:"alternatives_rejected"`
-}
-
-type ProposedScript struct {
-	Name                 string             `json:"name"`
-	Purpose              string             `json:"purpose"`
-	Evidence             []ProposalEvidence `json:"evidence"`
-	Frequency            int                `json:"frequency"`
-	Effort               string             `json:"effort"`
-	AlternativesRejected string             `json:"alternatives_rejected"`
+// ProposedSkillScript is one helper script associated with a
+// proposed skill. Body is intentionally optional: the LLM gives us
+// the purpose and (when it can ground it from the evidence) a
+// starter shell body. The apply command falls back to a TODO stub
+// when Body is empty.
+type ProposedSkillScript struct {
+	Name    string `json:"name"`           // bare filename, e.g. "build-test.sh"
+	Purpose string `json:"purpose"`        // one-line description for the script header
+	Body    string `json:"body,omitempty"` // optional starter body the LLM can ground from evidence
 }
 
 // --- summary ---
@@ -470,24 +467,35 @@ func BuildReflect(digests []SessionDigest, window time.Duration) (Built, error) 
 	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
 }
 
-const proposeSystem = `You triage recent coding sessions to propose high-leverage, repeatedly-useful capabilities. You MUST call the record_proposal tool exactly once.
+const proposeSystem = `You triage recent coding sessions to propose high-leverage, repeatedly-useful skills. Every proposal is a SKILL — a Claude Code skill directory with a SKILL.md and (optionally) helper scripts. You MUST call the record_proposal tool exactly once.
+
+Out of scope (do NOT propose):
+- Standalone scripts not associated with a skill. If a recurring pattern needs a helper script, attach it to a skill via the skill's scripts[] field; the apply layer writes it under the skill's scripts/ subdir. There are no skill-less scripts.
+- Practice-level invariants without a trigger condition ("always commit-message format X", "never push --force to main"). These are CLAUDE.md territory and live there already; don't repropose them as skills.
+- Generic engineering advice ("write tests", "use small commits", "be careful with merges"). Same reason.
+- Things that already exist as a Claude Code / CLI built-in. (You can mention them in alternatives_rejected.)
 
 Hard rules:
 
 1. A pattern requires evidence from ≥2 DISTINCT sessions. One-off tasks don't qualify, no matter how dramatic — drop them.
 2. Each proposal carries 2–5 evidence entries. Each quote is a verbatim excerpt (≤160 chars) copied from a session's summary text. If a session has no summary, you may quote from its first_prompt ONLY when the first_prompt is itself substantive (≥30 chars and concrete — "compare libvirt against openSUSE Tumbleweed" qualifies; "do plan", "go ahead", "/loop", "what's next?" do NOT). Sessions whose only available text is a short prompt are not usable evidence — skip them. Do NOT paraphrase, but feel free to truncate inside a sentence.
-3. If the same insight could be a skill, a CLAUDE.md rule, AND a script: pick ONE form — the most leveraged for the workflow. Justify the choice in alternatives_rejected (e.g. "considered as a script but a skill captures the multi-step decision-making this needs"). Do NOT also list the other forms; that's noise.
-4. Reject generic engineering advice ("write tests", "use small commits", "be careful with merges"). The user's CLAUDE.md already covers practice-level rules.
-5. Reject things that already exist as a CLI / Claude built-in tool. (You can mention them in alternatives_rejected.)
-6. Skill names: ≤4 words, kebab-case. Rules: lead with the trigger condition, ≤60 words total. Scripts: one-line purpose, no flag list.
-7. frequency = the count of distinct session_ids in your evidence array.
-8. effort: "small" = an afternoon script. "medium" = a few days, well-scoped skill. "large" = a project-shaped effort that probably wants its own design doc.
+3. Skill names: ≤4 words, kebab-case (matches a directory name under ~/.claude/skills/).
+4. when_to_use is the trigger — lead with the condition that fires the skill ("When CI fails on a Go service…", "When deploying to staging…"). This is what would otherwise have been a separate CLAUDE.md rule; folding it in here is the canonical home.
+5. scripts[] is optional. Use it when the recurring pattern includes specific commands the user types repeatedly. Each script gets a bare filename (e.g. "build-test.sh"), a one-line purpose, and optionally a starter body. Don't list scripts[] entries that are just "run this one bash command" — those belong inline in the skill's steps. Reserve scripts[] for multi-step shell logic that benefits from being its own file.
+6. frequency = the count of distinct session_ids in your evidence array.
+7. effort: "small" = an afternoon. "medium" = a few days, well-scoped. "large" = a project-shaped effort that probably wants its own design doc.
 
-For a typical 25-session window, expect 1–4 well-grounded proposals total across all categories — not 0, not 15. Zero is acceptable only if every recurring pattern you see is already covered by the user's existing tools or CLAUDE.md. Lean toward proposing a clearly-grounded pattern even when its time-saving estimate is moderate; the user wants concrete leads, not perfect ones.`
+Skill-awareness rules (the "Skills installed" and "Skills invoked recently" sections at the top of the user message are CANONICAL — do not invent skill names):
+
+8. If a recurring pattern overlaps an *installed* skill (same domain or trigger), do NOT propose a new skill with that name or near-duplicate name. Skip the pattern.
+9. If a pattern is a clear *extension* of an installed skill (the skill exists but has a gap), you may propose the skill, but its name must be DIFFERENT and alternatives_rejected MUST cite the existing skill and explain the increment.
+10. Treat "Skills invoked recently" as evidence the user already uses those skills successfully. Patterns whose work is plausibly served by an invoked skill are solved — don't repropose them. The frequency in that section reflects real usage, not aspiration.
+
+For a typical 25-session window, expect 1–4 well-grounded skills total — not 0, not 5. Zero is acceptable only if every recurring pattern you see is already covered by an installed skill or is out of scope per the rules above. Lean toward proposing a clearly-grounded skill even when its time-saving estimate is moderate; the user wants concrete leads, not perfect ones.`
 
 const proposalToolSchema = `{
   "type": "object",
-  "required": ["skills","claude_md_entries","scripts"],
+  "required": ["skills"],
   "additionalProperties": false,
   "properties": {
     "skills": {
@@ -495,18 +503,6 @@ const proposalToolSchema = `{
       "minItems": 0,
       "maxItems": 5,
       "items": { "$ref": "#/$defs/proposalSkill" }
-    },
-    "claude_md_entries": {
-      "type":"array",
-      "minItems": 0,
-      "maxItems": 5,
-      "items": { "$ref": "#/$defs/proposalRule" }
-    },
-    "scripts": {
-      "type":"array",
-      "minItems": 0,
-      "maxItems": 5,
-      "items": { "$ref": "#/$defs/proposalScript" }
     }
   },
   "$defs": {
@@ -536,32 +532,21 @@ const proposalToolSchema = `{
         "name":                  {"type":"string","pattern":"^[a-z][a-z0-9-]*$"},
         "when_to_use":           {"type":"string","minLength":1},
         "why":                   {"type":"string","minLength":1},
-        "evidence":              {"$ref":"#/$defs/evidence"},
-        "frequency":             {"$ref":"#/$defs/frequency"},
-        "effort":                {"$ref":"#/$defs/effort"},
-        "alternatives_rejected": {"$ref":"#/$defs/alternatives_rejected"}
-      }
-    },
-    "proposalRule": {
-      "type":"object",
-      "required":["rule","why","evidence","frequency","effort","alternatives_rejected"],
-      "additionalProperties": false,
-      "properties": {
-        "rule":                  {"type":"string","minLength":1,"maxLength":600},
-        "why":                   {"type":"string","minLength":1},
-        "evidence":              {"$ref":"#/$defs/evidence"},
-        "frequency":             {"$ref":"#/$defs/frequency"},
-        "effort":                {"$ref":"#/$defs/effort"},
-        "alternatives_rejected": {"$ref":"#/$defs/alternatives_rejected"}
-      }
-    },
-    "proposalScript": {
-      "type":"object",
-      "required":["name","purpose","evidence","frequency","effort","alternatives_rejected"],
-      "additionalProperties": false,
-      "properties": {
-        "name":                  {"type":"string","minLength":1},
-        "purpose":               {"type":"string","minLength":1},
+        "scripts": {
+          "type":"array",
+          "minItems": 0,
+          "maxItems": 5,
+          "items": {
+            "type":"object",
+            "required":["name","purpose"],
+            "additionalProperties": false,
+            "properties": {
+              "name":    {"type":"string","pattern":"^[A-Za-z0-9_.-]+$","maxLength":64},
+              "purpose": {"type":"string","minLength":1,"maxLength":200},
+              "body":    {"type":"string","maxLength":4000}
+            }
+          }
+        },
         "evidence":              {"$ref":"#/$defs/evidence"},
         "frequency":             {"$ref":"#/$defs/frequency"},
         "effort":                {"$ref":"#/$defs/effort"},
@@ -571,7 +556,37 @@ const proposalToolSchema = `{
   }
 }`
 
-const proposeTemplate = `Below are %d recent sessions.
+// InstalledSkill is a SKILL.md the user already has on disk —
+// global (~/.claude/skills/) or project-local
+// (<project>/.claude/skills/). Source carries the origin so the
+// LLM can resolve duplicate names sensibly when both layers
+// define the same skill.
+type InstalledSkill struct {
+	Name        string
+	Description string
+	Source      string // "global", "project:<abs-path-to-project-root>", "plugin:<id>"
+}
+
+// InvokedSkill is one (skill_name, count) pair for skills the
+// user actually loaded inside the propose window. Distinct from
+// InstalledSkill: a skill can be installed but never invoked
+// (stale candidate), invoked but not installed (plugin), or both.
+type InvokedSkill struct {
+	Name  string
+	Count int
+}
+
+// ProposeInputs bundles every input BuildPropose consumes. Adding
+// a field here is non-breaking; callers that don't have it pass
+// the zero value. The shape was introduced when propose became
+// skill-aware so the signature wouldn't sprout positional args.
+type ProposeInputs struct {
+	Digests         []SessionDigest
+	InstalledSkills []InstalledSkill
+	InvokedSkills   []InvokedSkill
+}
+
+const proposeTemplate = `Below are %d recent sessions.%s%s
 
 ---
 %s
@@ -579,14 +594,19 @@ const proposeTemplate = `Below are %d recent sessions.
 `
 
 // BuildPropose composes the skills/CLAUDE.md/scripts proposal prompt.
-func BuildPropose(digests []SessionDigest) (Built, error) {
-	if len(digests) == 0 {
+func BuildPropose(in ProposeInputs) (Built, error) {
+	if len(in.Digests) == 0 {
 		return Built{}, fmt.Errorf("BuildPropose: no sessions")
 	}
 	pats := patternSet{}
-	body := renderDigests(digests, pats)
+	body := renderDigests(in.Digests, pats)
 
-	userMsg := fmt.Sprintf(proposeTemplate, len(digests), body)
+	userMsg := fmt.Sprintf(proposeTemplate,
+		len(in.Digests),
+		renderInstalledSkills(in.InstalledSkills),
+		renderInvokedSkills(in.InvokedSkills),
+		body,
+	)
 	req := llm.Request{
 		System:    proposeSystem,
 		Messages:  []llm.Message{{Role: llm.RoleUser, Content: userMsg}},
@@ -599,6 +619,108 @@ func BuildPropose(digests []SessionDigest) (Built, error) {
 		ForceTool: ToolNameProposal,
 	}
 	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
+}
+
+// SearchHit is one row supplied to BuildSearchSummary. Every field
+// is grounding context the LLM is allowed to cite verbatim. We
+// pass session_id and ts_source_ms so the model can attribute each
+// claim back to a concrete row the user could click through to.
+type SearchHit struct {
+	SessionID  string
+	Kind       string
+	Cwd        string
+	TsSourceMs int64
+	Snippet    string
+}
+
+const searchSummarySystem = `You answer the user's search query using ONLY the provided hits as ground truth. Anti-fabrication rules:
+
+1. Every statement you make must be supported by at least one hit. If the hits don't answer the query, say so plainly — do NOT pad with general knowledge.
+2. Cite session_ids inline using the form [session=<short-id>] after each claim. Use the FIRST 8 characters of the session_id; the user can expand to the full id from there.
+3. Quote sparingly. Synthesise the answer in your own words; reach for a verbatim quote only when paraphrasing would lose precision.
+4. Keep it tight: 2–5 sentences. The user is using this to recall what happened across recent work, not to read an essay.
+5. If multiple hits agree, cite multiple sessions: [session=abc12345, session=def67890]. If they disagree, say so explicitly and cite both sides.
+
+Respond as plain prose — no headers, no bullet lists, no markdown.`
+
+// BuildSearchSummary composes the prompt for `aichronicles search
+// --summarize`. Each hit is rendered as a labelled block carrying
+// session_id, timestamp, kind, cwd, and snippet — enough grounding
+// for the LLM to attribute claims without seeing the full
+// transcript.
+func BuildSearchSummary(query string, hits []SearchHit, maxTokens int) (Built, error) {
+	if query == "" {
+		return Built{}, fmt.Errorf("BuildSearchSummary: empty query")
+	}
+	if len(hits) == 0 {
+		return Built{}, fmt.Errorf("BuildSearchSummary: no hits")
+	}
+	if maxTokens <= 0 {
+		maxTokens = 512
+	}
+
+	pats := patternSet{}
+
+	// Scrub query just like content — secrets the user might have
+	// accidentally pasted into a search box must not echo into the
+	// LLM call.
+	cleanQuery, names := redact.Outbound(query)
+	pats.addAll(names)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Query: %s\n\nHits (%d):\n", cleanQuery, len(hits))
+	for _, h := range hits {
+		shortSess := h.SessionID
+		if len(shortSess) > 8 {
+			shortSess = shortSess[:8]
+		}
+		when := time.UnixMilli(h.TsSourceMs).UTC().Format(time.RFC3339)
+		cleanSnip, ns := redact.Outbound(h.Snippet)
+		pats.addAll(ns)
+		cleanCwd, ns2 := redact.Outbound(h.Cwd)
+		pats.addAll(ns2)
+		fmt.Fprintf(&b, "\n[session=%s] [kind=%s] [when=%s] [cwd=%s]\n%s\n",
+			shortSess, h.Kind, when, cleanCwd, cleanSnip)
+	}
+
+	req := llm.Request{
+		System:    searchSummarySystem,
+		Messages:  []llm.Message{{Role: llm.RoleUser, Content: b.String()}},
+		MaxTokens: maxTokens,
+	}
+	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
+}
+
+// renderInstalledSkills produces the "Skills installed:" block
+// inserted before the sessions in the propose user message. Empty
+// list → empty string (no header), so a fresh user with no
+// installed skills doesn't get a misleading section.
+func renderInstalledSkills(skills []InstalledSkill) string {
+	if len(skills) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\nSkills installed (the user has these — do not propose new skills with overlapping names):\n")
+	for _, s := range skills {
+		_, _ = fmt.Fprintf(&b, "- %s [%s]: %s\n", s.Name, s.Source, s.Description)
+	}
+	return b.String()
+}
+
+// renderInvokedSkills produces the "Skills invoked recently:" block.
+// Counts reflect actual skill_load extractions in the propose
+// window — patterns whose work the user is already serving via
+// these skills are solved and should not be re-proposed.
+func renderInvokedSkills(skills []InvokedSkill) string {
+	if len(skills) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nSkills invoked recently (count = times loaded in the window — these are working for the user):\n")
+	for _, s := range skills {
+		_, _ = fmt.Fprintf(&b, "- %s × %d\n", s.Name, s.Count)
+	}
+	return b.String()
 }
 
 // --- rendering helpers ---

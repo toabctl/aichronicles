@@ -4,8 +4,9 @@
 
 > **Status: work in progress.**
 
-aichronicles runs as a tiny user-mode daemon that ingests Claude Code
-hook events into a SQLite store, exposes the corpus as an
+aichronicles runs as a tiny user-mode daemon that ingests hook
+events from Claude Code and Gemini CLI into a SQLite store,
+exposes the corpus as an
 [MCP](https://modelcontextprotocol.io) server your agent can query for
 context from past work, and generates structured summaries on demand.
 
@@ -96,9 +97,12 @@ The threat model is documented at
 [`docs/explanation/threat-model.md`](docs/explanation/threat-model.md);
 read it before adopting if you handle anything sensitive.
 
-Currently supports Claude Code as the source agent. The envelope
-schema, redaction layer, and MCP server are agent-agnostic; adding
-another agent's hook format is mostly importer work.
+Supports two source agents today: **Claude Code** (Anthropic) and
+**Gemini CLI** (Google). Both write hooks into their respective
+settings file via `aichronicles setup <agent>` and ingest live
+through the same UDS daemon. The envelope schema, redaction
+layer, and MCP server are agent-agnostic; adding another agent's
+hook format is mostly importer work.
 
 ## Get started
 

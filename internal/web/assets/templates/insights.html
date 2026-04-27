@@ -1,0 +1,98 @@
+{{define "content"}}
+<hgroup>
+  <h1>Insights <small>· last {{.Days}} days</small></h1>
+  <p>{{.Since}} → {{.Until}}. Pure SQL aggregation; no LLM call.
+     For LLM-driven analysis, see <code>aichronicles reflect</code> and
+     <code>aichronicles propose</code>.</p>
+</hgroup>
+
+<nav class="agent-filter" aria-label="Window">
+  <a href="/insights?days=7" class="agent-chip{{if eq .Days 7}} agent-chip-active{{end}}">7d</a>
+  <a href="/insights?days=30" class="agent-chip{{if eq .Days 30}} agent-chip-active{{end}}">30d</a>
+  <a href="/insights?days=90" class="agent-chip{{if eq .Days 90}} agent-chip-active{{end}}">90d</a>
+</nav>
+
+{{if .Empty}}
+<p class="empty">(no sessions in this window)</p>
+{{else}}
+
+<article>
+  <header><h2>Overview</h2></header>
+  <table>
+    <tbody>
+      <tr><th scope="row">sessions</th>        <td>{{.Overview.Sessions}}</td></tr>
+      <tr><th scope="row">events</th>          <td>{{.Overview.Events}}</td></tr>
+      <tr><th scope="row">tool calls</th>      <td>{{.Overview.ToolUses}} (across {{.Overview.DistinctTools}} distinct tools)</td></tr>
+      <tr><th scope="row">user prompts</th>    <td>{{.Overview.UserPrompts}}</td></tr>
+      <tr><th scope="row">distinct skills</th> <td>{{.Overview.DistinctSkills}}</td></tr>
+    </tbody>
+  </table>
+</article>
+
+{{if .TopTools}}
+<article>
+  <header><h2>Top tools</h2></header>
+  <table>
+    <thead><tr><th>Tool</th><th>Calls</th><th>%</th></tr></thead>
+    <tbody>
+      {{range .TopTools}}
+      <tr><td><code>{{.ToolName}}</code></td><td>{{.Count}}</td><td>{{printf "%.1f" .Percent}}%</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</article>
+{{end}}
+
+{{if .TopSkills}}
+<article>
+  <header><h2>Top skills</h2></header>
+  <table>
+    <thead><tr><th>Skill</th><th>Loads</th><th>Last used</th></tr></thead>
+    <tbody>
+      {{range .TopSkills}}
+      <tr><td><code>{{.Name}}</code></td><td>{{.Count}}</td><td class="ts">{{.LastUsed}}</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</article>
+{{end}}
+
+<article>
+  <header><h2>Activity by hour <small>(UTC)</small></h2></header>
+  <table class="activity">
+    <tbody>
+      {{range .ActivityByHour}}
+      <tr>
+        <td class="ts">{{printf "%02d" .Hour}}</td>
+        <td class="bar-cell"><span class="bar" style="width: {{printf "%.1f" .Width}}%"></span></td>
+        <td>{{.Count}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</article>
+
+{{if .TopSessions}}
+<article>
+  <header><h2>Top sessions <small>(by event count)</small></h2></header>
+  <table class="sessions">
+    <thead><tr><th>Session</th><th>Events</th><th>Started</th><th>Cwd / first prompt</th></tr></thead>
+    <tbody>
+      {{range .TopSessions}}
+      <tr class="nav-row" tabindex="0">
+        <td class="sid"><a href="/sessions/{{.SessionID}}">{{.ShortID}}</a></td>
+        <td>{{.EventCount}}</td>
+        <td class="ts">{{.Started}}</td>
+        <td class="prompt-cell">
+          {{.FirstPrompt}}
+          <br><small class="cwd">{{.Cwd}}</small>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</article>
+{{end}}
+
+{{end}}{{/* if not Empty */}}
+{{end}}

@@ -67,6 +67,7 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newTeardownCmd())
 	cmd.AddCommand(newImportJSONLCmd())
 	cmd.AddCommand(newImportClaudeCmd())
+	cmd.AddCommand(newImportGeminiCmd())
 	cmd.AddCommand(newSearchCmd())
 	cmd.AddCommand(newSessionsCmd())
 	cmd.AddCommand(newAuditCmd())
@@ -76,6 +77,13 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newProposeCmd())
 	cmd.AddCommand(newMCPServeCmd())
 	cmd.AddCommand(newSummariesCmd())
+	cmd.AddCommand(newInsightsCmd())
+	cmd.AddCommand(newBackfillExtractionsCmd())
+	cmd.AddCommand(newSkillsCmd())
+	cmd.AddCommand(newPruneCmd())
+	cmd.AddCommand(newVacuumCmd())
+	cmd.AddCommand(newDigestCmd())
+	cmd.AddCommand(newEmbedCmd())
 	cmd.AddCommand(web.NewCommand())
 	return cmd
 }

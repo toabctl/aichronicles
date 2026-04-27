@@ -13,6 +13,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/paths"
+	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
@@ -94,6 +95,8 @@ func newProposeCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	addFormatFlag(cmd, &formatIn)
+	cmd.AddCommand(newProposeApplyCmd())
+	cmd.AddCommand(newProposeListCmd())
 	return cmd
 }
 
@@ -136,7 +139,27 @@ func RunPropose(
 	if err != nil {
 		return 0, fmt.Errorf("propose: enrich digests: %w", err)
 	}
-	built, err := prompts.BuildPropose(digests)
+
+	// Skill-aware enrichment: list every SKILL.md the user has on
+	// disk (global + project-local for each session's start cwd) so
+	// the LLM doesn't repropose what's already installed, plus the
+	// per-skill invocation counts so it knows which ones the user
+	// actively uses. Discovery errors are non-fatal — propose runs
+	// without the enrichment rather than refusing to proceed.
+	installed, err := skills.CollectInstalled(ctx, s.DB(), sinceMs)
+	if err != nil {
+		slog.Warn("propose: skipping installed-skills enrichment", "err", err)
+	}
+	invoked, err := skills.LoadInvoked(ctx, s.DB(), sinceMs)
+	if err != nil {
+		slog.Warn("propose: skipping invoked-skills enrichment", "err", err)
+	}
+
+	built, err := prompts.BuildPropose(prompts.ProposeInputs{
+		Digests:         digests,
+		InstalledSkills: installed,
+		InvokedSkills:   invoked,
+	})
 	if err == nil && len(built.Patterns) > 0 {
 		slog.Info("propose: egress redaction fired",
 			"patterns", strings.Join(built.Patterns, ","))

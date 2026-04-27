@@ -3,11 +3,21 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// newWarnLogger returns a slog.Logger writing to buf at Warn level
+// only — progress (Info) records are filtered out so callers can
+// assert on "warnings produced" without their buffer being polluted
+// by routine progress output.
+func newWarnLogger(buf *bytes.Buffer) *slog.Logger {
+	h := slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	return slog.New(h)
+}
 
 // loadClaudeFixture reads a single-line transcript fixture and parses
 // it as a claudeEntry for direct classification tests. Distinct name
@@ -202,7 +212,7 @@ func TestImportClaudeTranscripts_SingleFile(t *testing.T) {
 	var warns bytes.Buffer
 
 	path := filepath.Join("testdata", "claude_transcripts", "user_prompt_string.jsonl")
-	report, err := ImportClaudeTranscripts(t.Context(), path, s, &warns)
+	report, err := ImportClaudeTranscripts(t.Context(), path, s, newWarnLogger(&warns))
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -229,7 +239,7 @@ func TestImportClaudeTranscripts_MixedSessionCountsCorrectly(t *testing.T) {
 	var warns bytes.Buffer
 
 	path := filepath.Join("testdata", "claude_transcripts", "mixed_session.jsonl")
-	report, err := ImportClaudeTranscripts(t.Context(), path, s, &warns)
+	report, err := ImportClaudeTranscripts(t.Context(), path, s, newWarnLogger(&warns))
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -267,11 +277,11 @@ func TestImportClaudeTranscripts_IdempotentReplay(t *testing.T) {
 	var warns bytes.Buffer
 
 	path := filepath.Join("testdata", "claude_transcripts", "mixed_session.jsonl")
-	if _, err := ImportClaudeTranscripts(t.Context(), path, s, &warns); err != nil {
+	if _, err := ImportClaudeTranscripts(t.Context(), path, s, newWarnLogger(&warns)); err != nil {
 		t.Fatalf("first: %v", err)
 	}
 
-	second, err := ImportClaudeTranscripts(t.Context(), path, s, &warns)
+	second, err := ImportClaudeTranscripts(t.Context(), path, s, newWarnLogger(&warns))
 	if err != nil {
 		t.Fatalf("second: %v", err)
 	}
@@ -289,7 +299,7 @@ func TestImportClaudeTranscripts_DirectoryWalk(t *testing.T) {
 	var warns bytes.Buffer
 
 	dir := filepath.Join("testdata", "claude_transcripts")
-	report, err := ImportClaudeTranscripts(t.Context(), dir, s, &warns)
+	report, err := ImportClaudeTranscripts(t.Context(), dir, s, newWarnLogger(&warns))
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -307,7 +317,7 @@ func TestImportClaudeTranscripts_DirectoryWalk(t *testing.T) {
 func TestImportClaudeTranscripts_NonExistentPathReturnsError(t *testing.T) {
 	t.Parallel()
 	s := testStore(t)
-	_, err := ImportClaudeTranscripts(t.Context(), filepath.Join(t.TempDir(), "nope"), s, &bytes.Buffer{})
+	_, err := ImportClaudeTranscripts(t.Context(), filepath.Join(t.TempDir(), "nope"), s, newWarnLogger(&bytes.Buffer{}))
 	if err == nil {
 		t.Error("expected error for non-existent path")
 	}
@@ -327,7 +337,7 @@ func TestImportClaudeTranscripts_MalformedJSONIsCountedNotFatal(t *testing.T) {
 		t.Fatalf("write temp: %v", err)
 	}
 
-	report, err := ImportClaudeTranscripts(t.Context(), path, s, &warns)
+	report, err := ImportClaudeTranscripts(t.Context(), path, s, newWarnLogger(&warns))
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -377,7 +387,7 @@ func TestImportClaudeTranscripts_HandlesVeryLargeLine(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	report, err := ImportClaudeTranscripts(t.Context(), path, s, &warns)
+	report, err := ImportClaudeTranscripts(t.Context(), path, s, newWarnLogger(&warns))
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -416,7 +426,7 @@ func TestImportClaudeTranscripts_OversizeLineIsCountedNotFatal(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	report, err := ImportClaudeTranscripts(t.Context(), path, s, &warns)
+	report, err := ImportClaudeTranscripts(t.Context(), path, s, newWarnLogger(&warns))
 	if err != nil {
 		t.Fatalf("import: %v (warns=%s)", err, warns.String())
 	}

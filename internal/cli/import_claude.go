@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,7 +98,8 @@ func newImportClaudeCmd() *cobra.Command {
 			}
 			defer func() { _ = s.Close() }()
 
-			report, err := ImportClaudeTranscripts(cmd.Context(), target, s, cmd.ErrOrStderr())
+			log := newImportClaudeLogger(cmd.ErrOrStderr())
+			report, err := ImportClaudeTranscripts(cmd.Context(), target, s, log)
 			if err != nil {
 				return err
 			}
@@ -107,6 +109,16 @@ func newImportClaudeCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	return cmd
+}
+
+// newImportClaudeLogger wraps stderr in a slog.Logger so progress
+// (Info) and per-line skips (Warn) emit structured records, matching
+// the convention used by every other long-running CLI in this
+// package (ingest, summarize, propose, reflect, mcp-serve). Tests
+// pass a custom logger writing to a bytes.Buffer.
+func newImportClaudeLogger(stderr io.Writer) *slog.Logger {
+	h := slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo})
+	return slog.New(h).With("cmd", "aichronicles import-claude")
 }
 
 // defaultClaudeProjectsDir returns $HOME/.claude/projects — Claude
@@ -146,9 +158,9 @@ func (r ClaudeImportReport) String() string {
 }
 
 // ImportClaudeTranscripts walks target (file or directory) and
-// ingests every conversational transcript line. warnOut receives one
-// line per skipped-with-warning entry (missing uuid, invalid JSON)
-// so the user can grep the original transcript. The ctx is
+// ingests every conversational transcript line. log receives one
+// Warn record per skipped-with-warning entry (missing uuid, invalid
+// JSON) plus Info-level progress (one per file). The ctx is
 // propagated to every store write so Ctrl-C stops an import between
 // chunks rather than after the current file.
 //
@@ -156,7 +168,10 @@ func (r ClaudeImportReport) String() string {
 // files so chunk fsync cost amortises across file boundaries — a
 // directory of small transcripts no longer pays one commit per
 // short file plus one per row.
-func ImportClaudeTranscripts(ctx context.Context, target string, s *store.Store, warnOut io.Writer) (ClaudeImportReport, error) {
+func ImportClaudeTranscripts(ctx context.Context, target string, s *store.Store, log *slog.Logger) (ClaudeImportReport, error) {
+	if log == nil {
+		log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 	start := time.Now()
 	report := ClaudeImportReport{}
 	batcher := newEnvelopeBatcher(s)
@@ -189,8 +204,18 @@ func ImportClaudeTranscripts(ctx context.Context, target string, s *store.Store,
 		files = []string{target}
 	}
 
-	for _, path := range files {
-		if err := importClaudeFile(ctx, path, batcher, &report, warnOut); err != nil {
+	// Progress header: emit the file count up-front so the user has
+	// a sense of total work. One Info record per file follows below.
+	// Stdout stays reserved for the final report so callers can pipe
+	// it; the logger writes structured records to stderr.
+	if len(files) > 0 {
+		log.Info("import starting", "files", len(files))
+	}
+
+	for i, path := range files {
+		fileStart := time.Now()
+		linesBefore := report.LinesRead
+		if err := importClaudeFile(ctx, path, batcher, &report, log); err != nil {
 			// Make sure any buffered envelopes from earlier files
 			// land before we return — the contract is "progress
 			// up to the last completed chunk is durable".
@@ -200,6 +225,13 @@ func ImportClaudeTranscripts(ctx context.Context, target string, s *store.Store,
 			report.DurationMS = time.Since(start).Milliseconds()
 			return report, fmt.Errorf("import %s: %w", path, err)
 		}
+		log.Info("file done",
+			"index", i+1,
+			"total", len(files),
+			"path", shortPath(path),
+			"lines", report.LinesRead-linesBefore,
+			"elapsed", time.Since(fileStart),
+		)
 	}
 
 	if err := batcher.Flush(ctx); err != nil {
@@ -235,7 +267,7 @@ type claudeMessage struct {
 	Model   string          `json:"model"`
 }
 
-func importClaudeFile(ctx context.Context, path string, batcher *envelopeBatcher, report *ClaudeImportReport, warnOut io.Writer) error {
+func importClaudeFile(ctx context.Context, path string, batcher *envelopeBatcher, report *ClaudeImportReport, log *slog.Logger) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -257,7 +289,7 @@ func importClaudeFile(ctx context.Context, path string, batcher *envelopeBatcher
 		if len(line) > 0 {
 			lineNum++
 			report.LinesRead++
-			if err := processClaudeLine(ctx, batcher, path, lineNum, line, report, warnOut); err != nil {
+			if err := processClaudeLine(ctx, batcher, path, lineNum, line, report, log); err != nil {
 				return err
 			}
 		}
@@ -279,10 +311,12 @@ func importClaudeFile(ctx context.Context, path string, batcher *envelopeBatcher
 // committed individually — the batcher owns the imported / deduped
 // counters, and ImportClaudeTranscripts copies them onto the report
 // once the trailing chunk has been flushed.
-func processClaudeLine(ctx context.Context, batcher *envelopeBatcher, path string, lineNum int, line []byte, report *ClaudeImportReport, warnOut io.Writer) error {
+func processClaudeLine(ctx context.Context, batcher *envelopeBatcher, path string, lineNum int, line []byte, report *ClaudeImportReport, log *slog.Logger) error {
 	if len(line) > maxClaudeLineBytes {
 		report.Invalid++
-		importWarn(warnOut, fmt.Sprintf("line too large at %s:%d (%d bytes, cap %d)", path, lineNum, len(line), maxClaudeLineBytes))
+		log.Warn("line too large",
+			"path", path, "line", lineNum,
+			"bytes", len(line), "cap", maxClaudeLineBytes)
 		return nil
 	}
 	line = bytesStripTrailingNewline(line)
@@ -293,7 +327,7 @@ func processClaudeLine(ctx context.Context, batcher *envelopeBatcher, path strin
 	var entry claudeEntry
 	if err := json.Unmarshal(line, &entry); err != nil {
 		report.Invalid++
-		importWarn(warnOut, fmt.Sprintf("invalid JSON at %s:%d: %v", path, lineNum, err))
+		log.Warn("invalid JSON", "path", path, "line", lineNum, "err", err)
 		return nil
 	}
 
@@ -304,24 +338,28 @@ func processClaudeLine(ctx context.Context, batcher *envelopeBatcher, path strin
 
 	if entry.UUID == "" {
 		report.SkippedMissingUUID++
-		importWarn(warnOut, fmt.Sprintf("conversational row without uuid at %s:%d (type=%s)", path, lineNum, entry.Type))
+		log.Warn("conversational row without uuid",
+			"path", path, "line", lineNum, "type", entry.Type)
 		return nil
 	}
 	if _, err := uuid.Parse(entry.UUID); err != nil {
 		report.SkippedMissingUUID++
-		importWarn(warnOut, fmt.Sprintf("malformed uuid at %s:%d: %q", path, lineNum, entry.UUID))
+		log.Warn("malformed uuid",
+			"path", path, "line", lineNum, "uuid", entry.UUID)
 		return nil
 	}
 
 	env, rawForStore, err := transcriptEntryToEnvelope(&entry, line)
 	if err != nil {
 		report.Invalid++
-		importWarn(warnOut, fmt.Sprintf("convert %s:%d: %v", path, lineNum, err))
+		log.Warn("convert envelope",
+			"path", path, "line", lineNum, "err", err)
 		return nil
 	}
 	if err := env.Validate(); err != nil {
 		report.Invalid++
-		importWarn(warnOut, fmt.Sprintf("envelope validate %s:%d: %v", path, lineNum, err))
+		log.Warn("envelope validate",
+			"path", path, "line", lineNum, "err", err)
 		return nil
 	}
 
@@ -553,10 +591,20 @@ func stringContent(m *claudeMessage) string {
 	return joinTextBlocks(parseBlocks(m.Content))
 }
 
-// importWarn writes a single-line warning to w. The Fprintln error
-// return is intentionally discarded — if stderr itself is broken
-// there's nothing useful to do.
-func importWarn(w io.Writer, args ...any) {
-	parts := append([]any{"aichronicles import-claude:"}, args...)
-	_, _ = fmt.Fprintln(w, parts...)
+// shortPath compresses a Claude transcript path for the progress
+// log field. ~/.claude/projects/<encoded-cwd>/<uuid>.jsonl is long;
+// the encoded-cwd + filename is what the user can match to a
+// session, so we drop the ~/.claude/projects/ prefix when present.
+// Falls back to the full path when the prefix doesn't match (e.g.
+// user passed an arbitrary directory).
+func shortPath(p string) string {
+	for _, prefix := range []string{
+		os.Getenv("HOME") + "/.claude/projects/",
+		"/.claude/projects/",
+	} {
+		if prefix != "" && strings.HasPrefix(p, prefix) {
+			return p[len(prefix):]
+		}
+	}
+	return p
 }

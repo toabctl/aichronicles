@@ -22,8 +22,14 @@ import (
 // of already-stored events, already scrubbed at ingest.
 func RegisterAichroniclesTools(s *Server, st *store.Store) {
 	s.RegisterTool(Tool{
-		Name:        "search_events",
-		Description: "Full-text search over aichronicles events. Returns the top-matching events with session id, kind, and content snippet.",
+		Name: "search_events",
+		Description: "Search the user's PAST Claude Code and Gemini CLI sessions by keyword. " +
+			"Returns matching events (user prompts, assistant turns, tool calls) with session id, " +
+			"timestamp, and a snippet centred on the match. " +
+			"Use when the user asks 'when did I…?', 'find the session where…', 'did I work on…', " +
+			"or wants to recall a specific prior conversation. " +
+			"The corpus is every captured hook event from past sessions, indexed by SQLite FTS5; " +
+			"this is the user's actual conversation history, not a generic web search.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -37,8 +43,12 @@ func RegisterAichroniclesTools(s *Server, st *store.Store) {
 	})
 
 	s.RegisterTool(Tool{
-		Name:        "list_sessions",
-		Description: "List recent aichronicles sessions, newest first. Optional filters for working directory and time window.",
+		Name: "list_sessions",
+		Description: "List the user's recent past Claude Code / Gemini CLI conversations, newest first. " +
+			"Each row is one session: id, started/ended time, working directory, event count. " +
+			"Use when the user asks 'what was I doing yesterday', 'show me recent sessions', " +
+			"or wants to browse conversation history without a specific search keyword. " +
+			"For keyword search, use search_events instead.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -51,8 +61,14 @@ func RegisterAichroniclesTools(s *Server, st *store.Store) {
 	})
 
 	s.RegisterTool(Tool{
-		Name:        "get_summary",
-		Description: "Fetch the latest LLM-generated output for a session (kind=summary by default; accepts reflect/propose).",
+		Name: "get_summary",
+		Description: "Fetch the cached LLM-generated summary of one past Claude Code / Gemini CLI session. " +
+			"Returns the structured summary body (topic, what-was-done, unresolved items, key files, links) " +
+			"if one was generated. " +
+			"Use when the user asks 'what was that session about', 'summarize what we did in <session>', " +
+			"or after list_sessions / search_events surfaced a session id worth digesting. " +
+			"Not every session has a cached summary — only ones the user ran `aichronicles summarize` on. " +
+			"Pass kind=reflect or kind=propose for the multi-session analysis kinds.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -65,8 +81,12 @@ func RegisterAichroniclesTools(s *Server, st *store.Store) {
 	})
 
 	s.RegisterTool(Tool{
-		Name:        "list_subagents",
-		Description: "List sub-agent threads (events with a non-NULL subagent_id) aggregated as spans. Use the subagent_id from a row as a filter on search_events to drill into one thread.",
+		Name: "list_subagents",
+		Description: "List sub-agent threads from past Claude Code sessions — useful when an Agent or Task " +
+			"tool delegated work to a side conversation and the user wants to see what each subagent did. " +
+			"Each row is one sub-agent span (started, ended, event count, parent session). " +
+			"Use the returned subagent_id as a filter on search_events to read everything that ran inside " +
+			"one thread. Only meaningful for sessions that used delegation; most sessions will return zero rows.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {

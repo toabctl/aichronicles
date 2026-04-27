@@ -623,6 +623,38 @@ func LoadExtractionsForSession(ctx context.Context, db *sql.DB, sessionID, kind 
 // A non-positive `limit` uses DefaultEventsPerSessionLimit — callers
 // that truly want "every event" should pass a very large number and
 // own the memory consequences.
+// LoadSessionStartCwd returns the cwd of the earliest event with a
+// non-null cwd in the session. This is the "project root" the session
+// was started in — distinct from sessions.cwd, which the trigger in
+// migration 001 keeps as the *latest* non-null cwd seen on any event.
+//
+// Callers care about the start cwd specifically when generating
+// `claude --resume <id>`: Claude indexes transcripts under
+// ~/.claude/projects/<encoded-cwd>/ keyed off the cwd at session
+// start, so resuming from any later directory the user cd'd into
+// fails with "No conversation found".
+//
+// Returns sql.NullString{} (not an error) when the session has no
+// events with a recorded cwd — the caller decides whether to fall
+// back to sessions.cwd or hide the resume button.
+func LoadSessionStartCwd(ctx context.Context, db *sql.DB, sessionID string) (sql.NullString, error) {
+	row := db.QueryRowContext(ctx,
+		`SELECT cwd FROM events
+		  WHERE session_id = ? AND cwd IS NOT NULL
+		  ORDER BY ts_source_ms ASC, rowid ASC
+		  LIMIT 1`,
+		sessionID,
+	)
+	var cwd sql.NullString
+	switch err := row.Scan(&cwd); {
+	case errors.Is(err, sql.ErrNoRows):
+		return sql.NullString{}, nil
+	case err != nil:
+		return sql.NullString{}, fmt.Errorf("scan start cwd: %w", err)
+	}
+	return cwd, nil
+}
+
 func LoadEventsForSession(ctx context.Context, db *sql.DB, sessionID string, limit int) ([]EventView, error) {
 	if limit <= 0 {
 		limit = DefaultEventsPerSessionLimit

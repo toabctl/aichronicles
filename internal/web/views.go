@@ -1,6 +1,11 @@
 package web
 
-import "html/template"
+import (
+	"html/template"
+
+	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/llm/prompts"
+)
 
 // Page is the common envelope every route's view data sits inside.
 // Title flows into the <title> tag in base.html.
@@ -18,6 +23,17 @@ type Page struct {
 type SessionsPage struct {
 	Title    string
 	Sessions []SessionRow
+	// Agents is the list of distinct source_agent slugs present in
+	// the store. The template renders one filter chip per slug
+	// linking to ?agent=<slug>; nil/empty hides the chip row.
+	Agents []string
+	// ActiveAgent is the currently-applied filter (matches one of
+	// Agents when set). Empty value means "no filter."
+	ActiveAgent string
+	// ActiveProject is the project-root filter from /projects
+	// click-through. Rendered as a removable chip. Empty when
+	// no project filter is set.
+	ActiveProject string
 }
 
 // SessionRow is one row in the sessions list. Display strings
@@ -29,6 +45,7 @@ type SessionRow struct {
 	LastActivity   string // human-friendly relative time ("2h ago")
 	EventCount     int
 	Cwd            string // working directory at last event, or "-"
+	SourceAgent    string // claude-code | gemini-cli — drives the agent badge
 	FirstPrompt    string // truncated first user_prompt content_text
 	HasSummary     bool   // an llm_outputs(kind='summary') row exists for this session
 	SummaryTopic   string // parsed `topic` field from the cached summary; empty when none
@@ -102,6 +119,109 @@ type EventRow struct {
 	Role    string
 	Tool    string // empty if not a tool event
 	Snippet string // truncated content_text preview
+}
+
+// ProjectsPage drives /projects: one row per project root, with
+// session/event counts and last-activity timestamps. Project
+// roots are derived by rolling up start cwds to the nearest
+// .claude / .git / go.mod ancestor.
+type ProjectsPage struct {
+	Title    string
+	Days     int
+	Empty    bool
+	Projects []ProjectRow
+}
+
+// ProjectRow is one row in the projects list. SortKey is exposed
+// only for in-package sort stability; the template doesn't render
+// it.
+type ProjectRow struct {
+	Root         string // absolute path of the project root
+	Sessions     int
+	Events       int
+	LastActivity string // relative time ("2h ago")
+	DistinctCwds int    // how many distinct start cwds rolled into this root
+	SortKey      int64  // last_activity_ms for stable sort
+}
+
+// SkillsPage is the data shape /skills consumes. Three sections:
+// installed (SKILL.md files on disk), invoked (skill_load
+// extractions ranked by frequency), stale (skills whose loads
+// correlate with tool_failure events).
+type SkillsPage struct {
+	Title     string
+	Days      int
+	Installed []prompts.InstalledSkill
+	Invoked   []prompts.InvokedSkill
+	Stale     []StaleSkillRow
+}
+
+// StaleSkillRow is one row in the stale-candidates table. Pre-
+// computed Rate (0–100 integer percent) and Examples (with
+// short ids ready for /sessions/ links) keep the template free
+// of arithmetic / string-slicing.
+type StaleSkillRow struct {
+	Name       string
+	TotalLoads int
+	StaleLoads int
+	Rate       int // percent, 0–100
+	Examples   []StaleExample
+}
+
+// StaleExample is one example session listed under a stale skill.
+type StaleExample struct {
+	SessionID string // full id for /sessions/<id>
+	ShortID   string // 8-char preview
+}
+
+// InsightsPage is the data shape the /insights template consumes.
+// All formatting (relative times, percentages, bar widths) is
+// pre-computed in buildInsightsPage so the template stays free
+// of helpers.
+type InsightsPage struct {
+	Title          string
+	Days           int
+	Since          string // "2026-04-01"
+	Until          string
+	Empty          bool
+	Overview       store.InsightsOverview
+	TopTools       []InsightsToolRow
+	TopSkills      []InsightsSkillRow
+	ActivityByHour []InsightsHourRow // 24 entries
+	TopSessions    []InsightsSessionRow
+}
+
+// InsightsToolRow is one row of the "top tools" table.
+type InsightsToolRow struct {
+	ToolName string
+	Count    int
+	Percent  float64 // 0–100
+}
+
+// InsightsSkillRow is one row of the "top skills" table.
+type InsightsSkillRow struct {
+	Name     string
+	Count    int
+	LastUsed string // relative ("2h ago")
+}
+
+// InsightsHourRow is one bar in the activity-by-hour histogram.
+// Width is a 0–100 percentage of the busiest hour's count, so
+// the template can render `style="width: {{.Width}}%"` directly.
+type InsightsHourRow struct {
+	Hour  int
+	Count int
+	Width float64
+}
+
+// InsightsSessionRow is one row in the "top sessions" table.
+type InsightsSessionRow struct {
+	SessionID   string
+	ShortID     string
+	EventCount  int
+	Cwd         string
+	Started     string
+	FirstPrompt string
 }
 
 // SearchPage is the data shape the /search full-page template

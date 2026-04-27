@@ -32,6 +32,7 @@ const (
 	KindGlobPattern    = "glob_pattern"
 	KindWebQuery       = "web_query"
 	KindSubagentPrompt = "subagent_prompt"
+	KindSkillLoad      = "skill_load"
 )
 
 // Extraction is one fact derived from an envelope. The caller writes
@@ -60,6 +61,7 @@ var Registered = []Extractor{
 	WebFetchExtractor,
 	WebSearchExtractor,
 	TaskExtractor,
+	SkillLoadExtractor,
 }
 
 // FromEnvelope runs every Registered extractor against env and returns
@@ -269,6 +271,89 @@ func WebSearchExtractor(env *ingest.Envelope) []Extraction {
 		return nil
 	}
 	return []Extraction{{Kind: KindWebQuery, Value: q}}
+}
+
+// skillToolInput pulls the Skill tool's invocation arguments out of
+// an envelope's payload, handling the two payload shapes we receive
+// today:
+//
+//   - hook events (live ingest from Claude Code's hook):
+//     payload.tool_input.{skill, args}
+//   - imported transcripts (~/.claude/projects/*.jsonl):
+//     payload.message.content[i].{type:"tool_use",name:"Skill",input:{skill,args}}
+//
+// Returns (skill, args, true) when both forms can be parsed; the
+// args field is optional and may be empty. A future Codex / gemini
+// adapter would extend this same helper rather than the extractor
+// body — keeping the extractor logic itself shape-agnostic.
+func skillToolInput(env *ingest.Envelope) (skill, args string, ok bool) {
+	if env.Payload == nil {
+		return "", "", false
+	}
+
+	// Hook shape: {tool_input: {skill, args}}
+	if input, found := toolInput(env); found {
+		s, _ := input["skill"].(string)
+		a, _ := input["args"].(string)
+		if s != "" {
+			return s, a, true
+		}
+	}
+
+	// Import shape: {message:{content:[{type:"tool_use",name:"Skill",input:{skill,args}}]}}
+	msg, _ := env.Payload["message"].(map[string]any)
+	if msg == nil {
+		return "", "", false
+	}
+	blocks, _ := msg["content"].([]any)
+	for _, b := range blocks {
+		bm, _ := b.(map[string]any)
+		if bm == nil {
+			continue
+		}
+		if t, _ := bm["type"].(string); t != "tool_use" {
+			continue
+		}
+		if n, _ := bm["name"].(string); n != "Skill" {
+			continue
+		}
+		input, _ := bm["input"].(map[string]any)
+		if input == nil {
+			continue
+		}
+		s, _ := input["skill"].(string)
+		a, _ := input["args"].(string)
+		if s != "" {
+			return s, a, true
+		}
+	}
+	return "", "", false
+}
+
+// SkillLoadExtractor emits the skill name from a Skill tool_use,
+// attaching tool_input.args under Extra when present. Skill is
+// Claude Code's per-session skill-invocation primitive: a tool_use
+// with name="Skill" and input.skill=<skill-name>. The actual skill
+// name lives only inside the payload — events.tool_name is just
+// "Skill" — so without this extractor downstream queries can count
+// "skill loads happened" but not "which skills."
+//
+// Powers downstream features: skill-frequency reports, propose
+// awareness of installed-vs-invoked skills, and skill-staleness
+// detection (load + subsequent failure correlation).
+func SkillLoadExtractor(env *ingest.Envelope) []Extraction {
+	if env.Tool == nil || env.Tool.Name != "Skill" {
+		return nil
+	}
+	skill, args, ok := skillToolInput(env)
+	if !ok {
+		return nil
+	}
+	ex := Extraction{Kind: KindSkillLoad, Value: skill}
+	if args != "" {
+		ex.Extra = map[string]any{"args": args}
+	}
+	return []Extraction{ex}
 }
 
 // TaskExtractor emits the prompt a sub-agent was launched with as

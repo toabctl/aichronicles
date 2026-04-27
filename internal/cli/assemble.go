@@ -58,15 +58,15 @@ func roleForKind(kind string) string {
 }
 
 // AssembleByAgent dispatches to the right per-agent assembler. The
-// agent slug must match one of the known sources (today: claude-code,
-// codex). Unknown slugs return an error so a typo in --agent surfaces
-// immediately rather than producing a malformed envelope.
+// agent slug must match one of the known sources (claude-code,
+// gemini-cli). Unknown slugs return an error so a typo in --agent
+// surfaces immediately rather than producing a malformed envelope.
 func AssembleByAgent(agent string, raw []byte, now time.Time) (ingest.Envelope, error) {
 	switch agent {
 	case "claude-code":
 		return Assemble(raw, now)
-	case "codex":
-		return AssembleCodex(raw, now)
+	case "gemini-cli":
+		return AssembleGemini(raw, now)
 	default:
 		return ingest.Envelope{}, fmt.Errorf("AssembleByAgent: unknown agent slug %q", agent)
 	}
@@ -187,27 +187,42 @@ func renderToolContent(hook map[string]any) string {
 // renderToolContent fall back to the bare tool name. Adding a new
 // tool here should be paired with a matching extractor in
 // pkg/ingest/extract so the typed-fact tier can also reach it.
+//
+// Both Claude Code's tool naming (PascalCase: Bash, Read, …) and
+// Gemini CLI's equivalents (snake_case: run_shell_command,
+// read_file, …) are handled here. The tool_input field names are
+// identical across the two agents — both pass `{command, ...}`
+// for shell, `{file_path, ...}` for file ops, etc. — so one
+// switch with both names per case keeps the renderer consistent.
 func toolDetail(toolName string, input map[string]any) string {
 	if input == nil {
 		return ""
 	}
 	switch toolName {
-	case "Bash":
+	case "Bash", "run_shell_command":
 		return stringField(input, "command")
-	case "Read", "Write", "Edit", "NotebookEdit":
-		return stringField(input, "file_path")
-	case "Grep":
+	case "Read", "read_file",
+		"Write", "write_file",
+		"Edit", "replace",
+		"NotebookEdit":
+		// Gemini's read_file uses `absolute_path`; write_file and
+		// replace use `file_path`. Both shapes covered here.
+		if p := stringField(input, "file_path"); p != "" {
+			return p
+		}
+		return stringField(input, "absolute_path")
+	case "Grep", "search_file_content":
 		pat := stringField(input, "pattern")
 		path := stringField(input, "path")
 		if pat != "" && path != "" {
 			return pat + " " + path
 		}
 		return pat
-	case "Glob":
+	case "Glob", "find":
 		return stringField(input, "pattern")
-	case "WebFetch":
+	case "WebFetch", "web_fetch":
 		return stringField(input, "url")
-	case "WebSearch":
+	case "WebSearch", "google_web_search":
 		return stringField(input, "query")
 	case "Task":
 		// Sub-agent launch. Both fields are typically present;

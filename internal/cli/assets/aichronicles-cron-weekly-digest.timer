@@ -1,0 +1,14 @@
+[Unit]
+Description=aichronicles weekly digest
+
+[Timer]
+# Every Monday 06:00 UTC — the previous Mon-Sun week has just
+# completed and the digest covers it cleanly. Persistent=true
+# makes systemd run a missed timer ASAP after wakeup, so a
+# powered-off laptop doesn't lose the run.
+OnCalendar=Mon 06:00:00
+Persistent=true
+Unit=aichronicles-cron-weekly-digest.service
+
+[Install]
+WantedBy=timers.target

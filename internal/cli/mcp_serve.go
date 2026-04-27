@@ -6,9 +6,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/mcp"
 	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/llm"
 )
 
 // mcpServerName is what the MCP `initialize` handshake reports back
@@ -24,18 +26,25 @@ func newMCPServeCmd() *cobra.Command {
 	var dbPath string
 	cmd := &cobra.Command{
 		Use:   "mcp-serve",
-		Short: "Run an MCP server over stdio exposing aichronicles data",
-		Long: "Starts a Model Context Protocol server on stdin/stdout,\n" +
-			"offering three read-only tools (search_events, list_sessions,\n" +
-			"get_summary) backed by the local SQLite store.\n\n" +
-			"Typically registered in Claude Desktop's mcp_servers section:\n\n" +
-			"    \"aichronicles\": {\n" +
-			"      \"command\": \"/home/you/.local/bin/aichronicles\",\n" +
-			"      \"args\": [\"mcp-serve\"]\n" +
-			"    }\n\n" +
-			"Logs are emitted as structured records on stderr so Claude\n" +
-			"Desktop's own log window surfaces them. Stdin close (client\n" +
-			"disconnect) ends the process cleanly.",
+		Short: "Run an MCP server over stdio exposing the user's session history",
+		Long: "Starts a Model Context Protocol server on stdin/stdout that\n" +
+			"lets a model query the user's PAST Claude Code / Gemini CLI\n" +
+			"sessions. All tools read the local SQLite store; nothing\n" +
+			"writes back.\n\n" +
+			"Tools exposed:\n" +
+			"  search_events        — keyword search over past events\n" +
+			"  list_sessions        — recent past conversations\n" +
+			"  get_summary          — cached summary of one session\n" +
+			"  list_subagents       — sub-agent threads inside a session\n" +
+			"  get_insights         — usage report (top tools / skills / activity)\n" +
+			"  list_skills          — installed + invoked skills\n" +
+			"  get_skill_staleness  — skills correlated with tool failures\n" +
+			"  search_with_summary  — LLM-synthesised answer (requires API key)\n\n" +
+			"Registered automatically by `aichronicles setup claude-code` under\n" +
+			"the mcpServers.aichronicles entry of ~/.claude/settings.json.\n\n" +
+			"Logs go to stderr as structured records so the host's MCP log\n" +
+			"window surfaces them. Stdin close (client disconnect) ends the\n" +
+			"process cleanly.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			resolved, err := paths.ResolveStorePath(dbPath)
 			if err != nil {
@@ -55,6 +64,20 @@ func newMCPServeCmd() *cobra.Command {
 				Version: mcpServerVersion,
 			}, log)
 			mcp.RegisterAichroniclesTools(srv, s)
+			mcp.RegisterAichroniclesAnalyticsTools(srv, s)
+
+			// Register LLM-backed tools (search_with_summary) only when
+			// the user has an API key configured — otherwise the tool
+			// is omitted from the catalog entirely so an agent doesn't
+			// see it advertised and call it expecting it to work.
+			cfg, cfgErr := config.Load()
+			if cfgErr == nil {
+				llmCfg := llmConfigFromFile(cfg.LLM)
+				mcp.RegisterAichroniclesLLMTools(srv, s,
+					func() (llm.Client, error) { return llm.FromConfig(cmd.Context(), llmCfg) })
+			} else {
+				log.Warn("mcp: skipping LLM-backed tools (no config)", "err", cfgErr)
+			}
 
 			log.Info("mcp server starting",
 				"protocol", mcp.ProtocolVersion,

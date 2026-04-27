@@ -100,8 +100,6 @@ func synthMinimalToolInput(toolName, hint string) json.RawMessage {
 				Frequency: 2,
 				Effort:    "small",
 			}},
-			ClaudeMdEntries: []prompts.ProposedClaudeMdRule{},
-			Scripts:         []prompts.ProposedScript{},
 		})
 		return b
 	}

@@ -38,22 +38,30 @@ func newSetupCmd() *cobra.Command {
 		Short: "Install aichronicles into an AI coding agent or the OS",
 	}
 	cmd.AddCommand(newSetupClaudeCodeCmd())
-	cmd.AddCommand(newSetupCodexCLICmd())
+	cmd.AddCommand(newSetupGeminiCLICmd())
 	cmd.AddCommand(newSetupSystemdCmd())
+	cmd.AddCommand(newSetupCronCmd())
 	return cmd
 }
 
 func newSetupClaudeCodeCmd() *cobra.Command {
 	var settingsPath string
 	var hookCommand string
+	var mcpCommand string
+	var skipMCP bool
 	cmd := &cobra.Command{
 		Use:   "claude-code",
-		Short: "Install Claude Code hooks that forward events to aichroniclesd",
-		Long: "Idempotently merges six hook entries (UserPromptSubmit, Stop,\n" +
-			"PostToolUse, PostToolUseFailure, SessionStart, SessionEnd) into\n" +
-			"the target settings.json, each pointing at `aichronicles ingest`.\n" +
-			"Existing hook entries from other tools are preserved; running\n" +
-			"twice is a no-op.",
+		Short: "Install Claude Code hooks + the aichronicles MCP server entry",
+		Long: "Two changes to ~/.claude/settings.json, both idempotent:\n\n" +
+			"  1. Hooks: merges six entries (UserPromptSubmit, Stop,\n" +
+			"     PostToolUse, PostToolUseFailure, SessionStart, SessionEnd)\n" +
+			"     each pointing at `aichronicles ingest`.\n" +
+			"  2. MCP server: registers an mcpServers.aichronicles entry\n" +
+			"     pointing at `aichronicles mcp-serve`, so Claude can\n" +
+			"     query past sessions / cached summaries / insights /\n" +
+			"     skills / staleness mid-conversation.\n\n" +
+			"Existing hook + MCP entries from other tools are preserved.\n" +
+			"Pass --skip-mcp if you don't want the MCP server registered.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			path := settingsPath
 			if path == "" {
@@ -63,7 +71,14 @@ func newSetupClaudeCodeCmd() *cobra.Command {
 					return err
 				}
 			}
-			report, err := InstallAgentHooks(ingest.ClaudeCode, path, hookCommand)
+			var mcp *MCPServerEntry
+			if !skipMCP {
+				mcp = &MCPServerEntry{
+					Name:    aichroniclesMCPServerName,
+					Command: mcpCommand,
+				}
+			}
+			report, err := InstallClaudeCodeFull(path, hookCommand, mcp)
 			if err != nil {
 				return err
 			}
@@ -73,33 +88,51 @@ func newSetupClaudeCodeCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&settingsPath, "settings", "", "path to Claude Code settings.json (default: ~/.claude/settings.json)")
 	cmd.Flags().StringVar(&hookCommand, "command", defaultHookCommand, "command to run from each hook")
+	cmd.Flags().StringVar(&mcpCommand, "mcp-command", defaultMCPCommand, "command to register as the aichronicles MCP server")
+	cmd.Flags().BoolVar(&skipMCP, "skip-mcp", false, "do not register the aichronicles MCP server in settings.json")
 	return cmd
 }
 
-func newSetupCodexCLICmd() *cobra.Command {
+// aichroniclesMCPServerName is the identifier we register the MCP
+// server under in settings.json. Stable; renaming would orphan
+// any existing installs and force users to re-add the entry.
+const aichroniclesMCPServerName = "aichronicles"
+
+// defaultMCPCommand is the shell command Claude Code runs to start
+// our MCP server. settings.json's mcpServers entry expands the
+// command with no arguments by default; we ship the subcommand as
+// part of the args field below.
+const defaultMCPCommand = "aichronicles"
+
+func newSetupGeminiCLICmd() *cobra.Command {
 	var settingsPath string
 	var hookCommand string
 	cmd := &cobra.Command{
-		Use:   "codex-cli",
-		Short: "Install Codex CLI hooks that forward events to aichroniclesd",
-		Long: "Idempotently merges hook entries (UserPromptSubmit, Stop,\n" +
-			"PostToolUse, PostToolUseFailure) into ~/.codex/hooks.json,\n" +
-			"each pointing at `aichronicles ingest --agent codex`. Existing\n" +
-			"hook entries from other tools are preserved; running twice is\n" +
-			"a no-op.\n\n" +
-			"Codex hooks must be enabled separately by setting\n" +
-			"`[features] codex_hooks = true` in ~/.codex/config.toml — this\n" +
-			"command does not edit your config.toml; it only writes hooks.json.",
+		Use:   "gemini-cli",
+		Short: "Install Gemini CLI hooks that forward events to aichroniclesd",
+		Long: "Idempotently merges five hook entries (BeforeAgent, AfterModel,\n" +
+			"AfterTool, SessionStart, SessionEnd) into the target\n" +
+			"settings.json, each pointing at `aichronicles ingest --agent\n" +
+			"gemini-cli`. Existing hook entries from other tools are\n" +
+			"preserved; running twice is a no-op.\n\n" +
+			"Default settings path is ~/.gemini/settings.json (user-level\n" +
+			"hooks). Pass --settings to target a project-local\n" +
+			"<project>/.gemini/settings.json instead.\n\n" +
+			"Gemini's hook protocol is a near-clone of Claude Code's: it\n" +
+			"sends the same JSON-on-stdin shape, so the same `aichronicles\n" +
+			"ingest` shim handles both. Tool failures are detected from\n" +
+			"AfterTool's tool_response.error field rather than via a\n" +
+			"separate event name.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			path := settingsPath
 			if path == "" {
 				var err error
-				path, err = ingest.Codex.DefaultSettingsPath()
+				path, err = ingest.GeminiCLI.DefaultSettingsPath()
 				if err != nil {
 					return err
 				}
 			}
-			report, err := InstallAgentHooks(ingest.Codex, path, hookCommand)
+			report, err := InstallAgentHooks(ingest.GeminiCLI, path, hookCommand)
 			if err != nil {
 				return err
 			}
@@ -107,9 +140,117 @@ func newSetupCodexCLICmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&settingsPath, "settings", "", "path to Codex hooks.json (default: ~/.codex/hooks.json)")
-	cmd.Flags().StringVar(&hookCommand, "command", defaultHookCommandFor(ingest.Codex), "command to run from each hook")
+	cmd.Flags().StringVar(&settingsPath, "settings", "", "path to Gemini settings.json (default: ~/.gemini/settings.json)")
+	cmd.Flags().StringVar(&hookCommand, "command", defaultHookCommandFor(ingest.GeminiCLI), "command to run from each hook")
 	return cmd
+}
+
+// MCPServerEntry is the shape we merge into settings.json's
+// mcpServers map. Name is the key (e.g. "aichronicles"); Command
+// is the executable Claude Code invokes; Args are the subcommand
+// + flags passed to it. Matches Claude Code's documented schema
+// at https://code.claude.com/docs/en/mcp.
+type MCPServerEntry struct {
+	Name    string
+	Command string
+	Args    []string // when nil, ["mcp-serve"] is used (the canonical aichronicles invocation)
+}
+
+// InstallClaudeCodeFull is the Claude-Code-specific superset of
+// InstallAgentHooks: same hook merge, plus an mcpServers entry
+// when mcp != nil. Single read + merges + write so a partial
+// failure doesn't leave settings.json half-mutated.
+func InstallClaudeCodeFull(path, hookCommand string, mcp *MCPServerEntry) (string, error) {
+	if hookCommand == "" {
+		hookCommand = defaultHookCommand
+	}
+	settings, err := readSettings(path)
+	if err != nil {
+		return "", err
+	}
+
+	hooksAdded, hooksPresent := mergeAllHooks(settings, ingest.ClaudeCode.HookEvents, hookCommand)
+
+	mcpAdded := false
+	mcpPresent := false
+	if mcp != nil {
+		args := mcp.Args
+		if args == nil {
+			args = []string{"mcp-serve"}
+		}
+		if mergeMCPServer(settings, mcp.Name, mcp.Command, args) {
+			mcpAdded = true
+		} else {
+			mcpPresent = true
+		}
+	}
+
+	if len(hooksAdded) > 0 || mcpAdded {
+		if err := writeSettingsAtomic(path, settings); err != nil {
+			return "", err
+		}
+	}
+
+	return formatClaudeCodeReport(path, hooksAdded, hooksPresent, mcpAdded, mcpPresent, mcp), nil
+}
+
+// mergeMCPServer inserts {command, args} under
+// settings.mcpServers[name], leaving any other server entries
+// (or any pre-existing entry of the same name) intact. Returns
+// true iff settings was mutated. Conservative on conflicts: if
+// the name already exists with a DIFFERENT command we treat that
+// as user intent and leave it alone — running setup again must
+// not silently flip a hand-edited entry.
+func mergeMCPServer(settings map[string]any, name, command string, args []string) bool {
+	root, ok := settings["mcpServers"].(map[string]any)
+	if !ok {
+		root = map[string]any{}
+		settings["mcpServers"] = root
+	}
+	existing, ok := root[name].(map[string]any)
+	if ok {
+		// Already present — check whether it's our entry, in
+		// which case there's nothing to do; if it's been
+		// hand-edited to a different command, leave it.
+		if cmd, _ := existing["command"].(string); cmd == command {
+			return false
+		}
+		// Different command: respect the user's edit, don't
+		// overwrite. A future --force flag could change this.
+		return false
+	}
+	argsAny := make([]any, 0, len(args))
+	for _, a := range args {
+		argsAny = append(argsAny, a)
+	}
+	root[name] = map[string]any{
+		"command": command,
+		"args":    argsAny,
+	}
+	return true
+}
+
+// formatClaudeCodeReport renders the user-facing summary of an
+// InstallClaudeCodeFull run. Lists what was newly added vs what
+// was already present, plus a note about the MCP entry.
+func formatClaudeCodeReport(path string, hooksAdded, hooksPresent []string, mcpAdded, mcpPresent bool, mcp *MCPServerEntry) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "settings: %s\n", path)
+	if len(hooksAdded) > 0 {
+		fmt.Fprintf(&b, "added %d hook entries: %s\n", len(hooksAdded), strings.Join(hooksAdded, ", "))
+	}
+	if len(hooksPresent) > 0 {
+		fmt.Fprintf(&b, "already present: %s\n", strings.Join(hooksPresent, ", "))
+	}
+	if mcp != nil {
+		switch {
+		case mcpAdded:
+			fmt.Fprintf(&b, "registered mcpServers.%s\n", mcp.Name)
+		case mcpPresent:
+			fmt.Fprintf(&b, "mcpServers.%s already registered (no change)\n", mcp.Name)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // InstallAgentHooks merges aichronicles hook entries into the agent's

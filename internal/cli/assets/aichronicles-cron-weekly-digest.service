@@ -1,0 +1,9 @@
+[Unit]
+Description=aichronicles weekly digest run
+
+[Service]
+Type=oneshot
+# %h expands to $HOME at runtime; same convention aichronicles.service
+# already uses for %h/.local/bin/aichroniclesd. Keeps the unit
+# user-portable without hardcoding /home/<user>/.
+ExecStart=%h/.local/bin/aichronicles digest weekly

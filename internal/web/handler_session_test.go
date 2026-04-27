@@ -235,8 +235,22 @@ func TestBuildResumeCommand(t *testing.T) {
 			want:     "claude --resume abc",
 		},
 		{
+			name:     "gemini-cli with cwd",
+			agent:    "gemini-cli",
+			sourceID: "9a640b1c-eefa-40ef-897a-0437f0931706",
+			cwd:      sql.NullString{String: "/home/tom/devel/aichronicles", Valid: true},
+			want:     "cd /home/tom/devel/aichronicles && gemini --resume 9a640b1c-eefa-40ef-897a-0437f0931706",
+		},
+		{
+			name:     "gemini-cli without cwd",
+			agent:    "gemini-cli",
+			sourceID: "9a640b1c-eefa-40ef-897a-0437f0931706",
+			cwd:      sql.NullString{},
+			want:     "gemini --resume 9a640b1c-eefa-40ef-897a-0437f0931706",
+		},
+		{
 			name:     "unknown agent yields empty (button is hidden)",
-			agent:    "codex",
+			agent:    "some-future-agent",
 			sourceID: "abc",
 			cwd:      sql.NullString{String: "/x", Valid: true},
 			want:     "",
@@ -257,6 +271,36 @@ func TestBuildResumeCommand(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestSessionDetail_ResumeUsesStartCwdNotLatest pins the bug where a
+// session that cd'd mid-session generated a resume command pointing
+// at the *latest* cwd — which `claude --resume` rejects with "No
+// conversation found", because Claude indexes transcripts by the
+// cwd at session start. Seeding two events on the same session, the
+// second with a different cwd, must still produce a resume command
+// rooted at the first cwd.
+func TestSessionDetail_ResumeUsesStartCwdNotLatest(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+
+	// Event 1: started in /home/tom/devel/stereo
+	seedSessionWithCwd(t, st, "sess-cd", "first prompt",
+		"/home/tom/devel/stereo", now)
+	// Event 2: same session, user has cd'd into a worktree
+	id := seedSessionWithCwd(t, st, "sess-cd", "second prompt",
+		"/home/tom/devel/stereo/wt-harbor-install-cert", now.Add(time.Minute))
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+	_, body := fetch(t, base+"/sessions/"+id)
+
+	wantCmd := `data-resume-cmd="cd /home/tom/devel/stereo &amp;&amp; claude --resume sess-cd"`
+	if !strings.Contains(body, wantCmd) {
+		t.Errorf("resume button used latest cwd instead of start cwd:\nwant substring: %s\n--- body ---\n%s",
+			wantCmd, body)
 	}
 }
 

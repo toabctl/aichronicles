@@ -21,15 +21,31 @@ import (
 // it per call to test recency ordering.
 func seedSession(t *testing.T, st *store.Store, sourceSession, prompt string, ts time.Time) string {
 	t.Helper()
+	return seedSessionWithCwd(t, st, sourceSession, prompt, "/work/"+sourceSession, ts)
+}
+
+// seedSessionWithCwd is seedSession with an explicit cwd, used by
+// tests that exercise cwd-changes-mid-session behaviour (start vs.
+// latest cwd selection for the resume button).
+func seedSessionWithCwd(t *testing.T, st *store.Store, sourceSession, prompt, cwd string, ts time.Time) string {
+	t.Helper()
+	return seedSessionFull(t, st, "claude-code", sourceSession, prompt, cwd, ts)
+}
+
+// seedSessionFull is the most-flexible seeder, accepting an
+// explicit source_agent. Used by source-agent filter tests that
+// need to mix claude-code and gemini-cli sessions in one store.
+func seedSessionFull(t *testing.T, st *store.Store, sourceAgent, sourceSession, prompt, cwd string, ts time.Time) string {
+	t.Helper()
 	env := &ingest.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
-		SourceAgent:     "claude-code",
+		SourceAgent:     sourceAgent,
 		SourceSessionID: sourceSession,
 		Kind:            "user_prompt",
 		Role:            "user",
 		TsSource:        ts.UTC(),
-		Cwd:             "/work/" + sourceSession,
+		Cwd:             cwd,
 		ContentText:     prompt,
 		Payload:         map[string]any{},
 		Transport:       "hook",
@@ -47,7 +63,7 @@ func seedSession(t *testing.T, st *store.Store, sourceSession, prompt string, ts
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	return ingest.DeriveSessionID("claude-code", sourceSession)
+	return ingest.DeriveSessionID(sourceAgent, sourceSession)
 }
 
 // fetch is a one-liner that fetches and reads-fully a URL. Tests
@@ -91,6 +107,51 @@ func TestSessionsPage_RendersAllSessions(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q\n--- body ---\n%s", want, body)
 		}
+	}
+}
+
+// TestSessionsPage_AgentFilterChips covers the source-agent
+// filter UI: chips render for every distinct agent in the store,
+// the active chip is marked, ?agent=<slug> narrows the list, and
+// rows for the other agent disappear.
+func TestSessionsPage_AgentFilterChips(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	seedSessionFull(t, st, "claude-code", "sess-cc", "claude prompt alpha-marker",
+		"/work/cc", now)
+	seedSessionFull(t, st, "gemini-cli", "sess-gem", "gemini prompt beta-marker",
+		"/work/gem", now.Add(time.Hour))
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	// No filter: both rows present + both chips rendered.
+	_, body := fetch(t, base+"/")
+	for _, want := range []string{
+		`class="agent-filter"`,
+		`href="/?agent=claude-code"`,
+		`href="/?agent=gemini-cli"`,
+		"alpha-marker",
+		"beta-marker",
+		`class="agent-chip agent-chip-active"`, // "all" chip is active
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("unfiltered page missing %q\n%s", want, body)
+		}
+	}
+
+	// Filter by gemini-cli: only the gemini row appears, claude row is gone.
+	_, gemBody := fetch(t, base+"/?agent=gemini-cli")
+	if !strings.Contains(gemBody, "beta-marker") {
+		t.Errorf("filtered page missing gemini row:\n%s", gemBody)
+	}
+	if strings.Contains(gemBody, "alpha-marker") {
+		t.Errorf("filtered page should hide claude-code row:\n%s", gemBody)
+	}
+	// The gemini chip should be the active one.
+	if !strings.Contains(gemBody, `href="/?agent=gemini-cli" class="agent-chip agent-chip-active"`) {
+		t.Errorf("gemini chip should be active:\n%s", gemBody)
 	}
 }
 

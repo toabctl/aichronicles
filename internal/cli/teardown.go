@@ -16,8 +16,9 @@ func newTeardownCmd() *cobra.Command {
 		Short: "Remove aichronicles integration from an AI coding agent or the OS",
 	}
 	cmd.AddCommand(newTeardownClaudeCodeCmd())
-	cmd.AddCommand(newTeardownCodexCLICmd())
+	cmd.AddCommand(newTeardownGeminiCLICmd())
 	cmd.AddCommand(newTeardownSystemdCmd())
+	cmd.AddCommand(newTeardownCronCmd())
 	return cmd
 }
 
@@ -44,7 +45,7 @@ func newTeardownClaudeCodeCmd() *cobra.Command {
 					return err
 				}
 			}
-			report, err := RemoveAgentHooks(ingest.ClaudeCode, path, hookCommand, !yes)
+			report, err := RemoveClaudeCodeFull(path, hookCommand, !yes)
 			if err != nil {
 				return err
 			}
@@ -58,30 +59,162 @@ func newTeardownClaudeCodeCmd() *cobra.Command {
 	return cmd
 }
 
-func newTeardownCodexCLICmd() *cobra.Command {
+// RemoveClaudeCodeFull is the Claude-Code-specific superset of
+// RemoveAgentHooks: same hook strip + drop the
+// mcpServers.aichronicles entry, in a single atomic write. Mirrors
+// InstallClaudeCodeFull's shape so the install/teardown pair
+// stays symmetric.
+func RemoveClaudeCodeFull(path, hookCommand string, dryRun bool) (string, error) {
+	if hookCommand == "" {
+		hookCommand = defaultHookCommand
+	}
+	settings, err := readSettings(path)
+	if err != nil {
+		return "", err
+	}
+
+	// Take a snapshot so we can compute "would remove" without
+	// mutating in dry-run mode. The strip helpers operate on the
+	// settings map directly, so for dry-run we work on a clone.
+	work := settings
+	if dryRun {
+		work = cloneSettings(settings)
+	}
+
+	hookRemoved := stripAgentHooks(work, ingest.ClaudeCode.HookEvents, hookCommand)
+	mcpRemoved := stripMCPServer(work, aichroniclesMCPServerName)
+
+	if !dryRun && (len(hookRemoved) > 0 || mcpRemoved) {
+		if err := writeSettingsAtomic(path, work); err != nil {
+			return "", err
+		}
+	}
+
+	sort.Strings(hookRemoved)
+	return formatClaudeCodeTeardownReport(path, hookRemoved, mcpRemoved, dryRun), nil
+}
+
+// stripAgentHooks removes every hook entry whose inner hooks
+// invoke `command` from each event in events. Mutates settings
+// in place. Returns the names of events that had at least one
+// entry removed. Empty event arrays are deleted; an empty hooks
+// map is deleted from settings.
+//
+// Extracted from RemoveAgentHooks so InstallClaudeCodeFull and
+// RemoveClaudeCodeFull can drop the MCP entry alongside the
+// hooks in a single read+write cycle.
+func stripAgentHooks(settings map[string]any, events []string, command string) []string {
+	hooksRoot, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	var removed []string
+	for _, ev := range events {
+		entriesAny, ok := hooksRoot[ev].([]any)
+		if !ok {
+			continue
+		}
+		filtered, changed := stripOurEntries(entriesAny, command)
+		if !changed {
+			continue
+		}
+		removed = append(removed, ev)
+		if len(filtered) == 0 {
+			delete(hooksRoot, ev)
+		} else {
+			hooksRoot[ev] = filtered
+		}
+	}
+	if len(hooksRoot) == 0 {
+		delete(settings, "hooks")
+	}
+	return removed
+}
+
+// stripMCPServer drops settings.mcpServers[name] if it exists.
+// Empty mcpServers map is deleted from settings. Returns true iff
+// settings was mutated.
+func stripMCPServer(settings map[string]any, name string) bool {
+	root, ok := settings["mcpServers"].(map[string]any)
+	if !ok {
+		return false
+	}
+	if _, exists := root[name]; !exists {
+		return false
+	}
+	delete(root, name)
+	if len(root) == 0 {
+		delete(settings, "mcpServers")
+	}
+	return true
+}
+
+// cloneSettings returns a deep-enough copy of a settings map for
+// dry-run preview. We only mutate the top-level "hooks" /
+// "mcpServers" subtrees, so a one-level-deep copy of those is
+// sufficient — sibling keys (security, etc.) survive untouched.
+func cloneSettings(in map[string]any) map[string]any {
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		switch v := v.(type) {
+		case map[string]any:
+			inner := make(map[string]any, len(v))
+			for kk, vv := range v {
+				inner[kk] = vv
+			}
+			out[k] = inner
+		default:
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// formatClaudeCodeTeardownReport renders the user-facing summary
+// of a RemoveClaudeCodeFull run.
+func formatClaudeCodeTeardownReport(path string, hooksRemoved []string, mcpRemoved bool, dryRun bool) string {
+	verb := "removed"
+	if dryRun {
+		verb = "would remove"
+	}
+	if len(hooksRemoved) == 0 && !mcpRemoved {
+		return fmt.Sprintf("settings: %s\n  nothing to remove (idempotent)", path)
+	}
+	out := fmt.Sprintf("settings: %s\n", path)
+	if len(hooksRemoved) > 0 {
+		out += fmt.Sprintf("  %s %d hook entries: %s\n",
+			verb, len(hooksRemoved), strings.Join(hooksRemoved, ", "))
+	}
+	if mcpRemoved {
+		out += fmt.Sprintf("  %s mcpServers.%s\n", verb, aichroniclesMCPServerName)
+	}
+	if dryRun {
+		out += "\n(dry-run; pass --yes to actually rewrite)"
+	}
+	return strings.TrimRight(out, "\n")
+}
+
+func newTeardownGeminiCLICmd() *cobra.Command {
 	var settingsPath string
 	var hookCommand string
 	var yes bool
 	cmd := &cobra.Command{
-		Use:   "codex-cli",
-		Short: "Remove aichronicles Codex CLI hooks from hooks.json",
-		Long: "Inverse of `setup codex-cli`. Strips every hook entry whose\n" +
-			"command matches ours from each Codex hook event. Other tools'\n" +
+		Use:   "gemini-cli",
+		Short: "Remove aichronicles Gemini CLI hooks from settings.json",
+		Long: "Inverse of `setup gemini-cli`. Strips every hook entry whose\n" +
+			"command matches ours from each Gemini hook event. Other tools'\n" +
 			"entries are preserved; running twice is a no-op.\n\n" +
-			"Dry-run by default: pass --yes to actually rewrite the file.\n" +
-			"Does not touch ~/.codex/config.toml — flip\n" +
-			"`[features] codex_hooks = false` yourself if you want to\n" +
-			"disable hooks entirely.",
+			"Dry-run by default: pass --yes to actually rewrite the file.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			path := settingsPath
 			if path == "" {
 				var err error
-				path, err = ingest.Codex.DefaultSettingsPath()
+				path, err = ingest.GeminiCLI.DefaultSettingsPath()
 				if err != nil {
 					return err
 				}
 			}
-			report, err := RemoveAgentHooks(ingest.Codex, path, hookCommand, !yes)
+			report, err := RemoveAgentHooks(ingest.GeminiCLI, path, hookCommand, !yes)
 			if err != nil {
 				return err
 			}
@@ -89,8 +222,8 @@ func newTeardownCodexCLICmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&settingsPath, "settings", "", "path to Codex hooks.json (default: ~/.codex/hooks.json)")
-	cmd.Flags().StringVar(&hookCommand, "command", defaultHookCommandFor(ingest.Codex), "command to strip from each hook")
+	cmd.Flags().StringVar(&settingsPath, "settings", "", "path to Gemini settings.json (default: ~/.gemini/settings.json)")
+	cmd.Flags().StringVar(&hookCommand, "command", defaultHookCommandFor(ingest.GeminiCLI), "command to strip from each hook")
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the removal (required to modify the file)")
 	return cmd
 }

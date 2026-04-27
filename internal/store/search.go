@@ -51,6 +51,34 @@ type SearchEventOpts struct {
 	NoDedup    bool
 	Order      SearchOrder
 
+	// SourceAgent narrows to events whose source_agent matches
+	// (exact). Useful for "what did I ask Claude vs Gemini about
+	// this week" queries.
+	SourceAgent string
+
+	// ToolName narrows to events with a matching tool_name (exact).
+	// E.g. "Bash" or "run_shell_command".
+	ToolName string
+
+	// SkillName narrows to events whose session loaded the named
+	// skill (joins extractions kind=skill_load value=?). Session-
+	// level: returns every matching event from sessions where the
+	// skill fired, not just the skill_load event itself.
+	SkillName string
+
+	// FilePathSubstring narrows to events whose session touched a
+	// file matching this substring (joins extractions
+	// kind=file_path value LIKE %?%). Session-level by design —
+	// surfacing every event in a session that worked on the file
+	// is more useful than only the Read/Write events themselves.
+	FilePathSubstring string
+
+	// WithFailures, when true, narrows to events whose session
+	// produced at least one tool_failure event. Pairs with the
+	// staleness detector — patterns where the agent's tool calls
+	// fail.
+	WithFailures bool
+
 	// NowMs anchors the recency-boost calculation for OrderRank.
 	// Zero means use time.Now().UnixMilli() at call time. Set
 	// explicitly in tests so result ordering is deterministic.
@@ -157,6 +185,62 @@ func searchAgainst(ctx context.Context, db *sql.DB, opts SearchEventOpts, index 
 	return hits, nil
 }
 
+// appendCommonFilters writes the shared scalar / facet filter
+// clauses (kind, session_id, subagent_id, since_ms, source_agent,
+// tool_name, skill_name, file_path, with_failures) into filter
+// and appends the matching bind args. Used by both buildSearchSQL
+// and searchExtractions so a new facet only has to be added once.
+func appendCommonFilters(filter *strings.Builder, args *[]any, opts SearchEventOpts) {
+	if opts.Kind != "" {
+		filter.WriteString(` AND e.kind = ?`)
+		*args = append(*args, opts.Kind)
+	}
+	if opts.SessionID != "" {
+		filter.WriteString(` AND e.session_id = ?`)
+		*args = append(*args, opts.SessionID)
+	}
+	if opts.SubagentID != "" {
+		filter.WriteString(` AND e.subagent_id = ?`)
+		*args = append(*args, opts.SubagentID)
+	}
+	if opts.SinceMs > 0 {
+		filter.WriteString(` AND e.ts_source_ms >= ?`)
+		*args = append(*args, opts.SinceMs)
+	}
+	if opts.SourceAgent != "" {
+		filter.WriteString(` AND e.source_agent = ?`)
+		*args = append(*args, opts.SourceAgent)
+	}
+	if opts.ToolName != "" {
+		filter.WriteString(` AND e.tool_name = ?`)
+		*args = append(*args, opts.ToolName)
+	}
+	if opts.SkillName != "" {
+		// Session-level: every event in a session where the
+		// named skill loaded. The (kind, value) pair is covered
+		// by idx_extractions_kind_value so this stays cheap.
+		filter.WriteString(` AND e.session_id IN (
+			SELECT session_id FROM extractions WHERE kind = 'skill_load' AND value = ?
+		)`)
+		*args = append(*args, opts.SkillName)
+	}
+	if opts.FilePathSubstring != "" {
+		// Session-level + LIKE %substring% so a partial path
+		// ("migrate.go", "internal/store") matches. file_path
+		// extractions are the canonical source — see
+		// pkg/ingest/extract/FilePathExtractor.
+		filter.WriteString(` AND e.session_id IN (
+			SELECT session_id FROM extractions WHERE kind = 'file_path' AND value LIKE ?
+		)`)
+		*args = append(*args, "%"+opts.FilePathSubstring+"%")
+	}
+	if opts.WithFailures {
+		filter.WriteString(` AND e.session_id IN (
+			SELECT session_id FROM events WHERE kind = 'tool_failure'
+		)`)
+	}
+}
+
 // buildSearchSQL composes the SQL + bind args for one SearchEvents
 // call against the named FTS5 virtual table. The index argument is
 // interpolated as a SQL identifier; callers must pass a package
@@ -165,22 +249,7 @@ func buildSearchSQL(opts SearchEventOpts, index string) (string, []any) {
 	var filter strings.Builder
 	args := []any{opts.Query}
 
-	if opts.Kind != "" {
-		filter.WriteString(` AND e.kind = ?`)
-		args = append(args, opts.Kind)
-	}
-	if opts.SessionID != "" {
-		filter.WriteString(` AND e.session_id = ?`)
-		args = append(args, opts.SessionID)
-	}
-	if opts.SubagentID != "" {
-		filter.WriteString(` AND e.subagent_id = ?`)
-		args = append(args, opts.SubagentID)
-	}
-	if opts.SinceMs > 0 {
-		filter.WriteString(` AND e.ts_source_ms >= ?`)
-		args = append(args, opts.SinceMs)
-	}
+	appendCommonFilters(&filter, &args, opts)
 
 	limit := opts.Limit
 	if limit <= 0 {
@@ -299,22 +368,7 @@ func searchExtractions(ctx context.Context, db *sql.DB, opts SearchEventOpts) ([
 	var filter strings.Builder
 	args := []any{opts.Query}
 
-	if opts.Kind != "" {
-		filter.WriteString(` AND e.kind = ?`)
-		args = append(args, opts.Kind)
-	}
-	if opts.SessionID != "" {
-		filter.WriteString(` AND e.session_id = ?`)
-		args = append(args, opts.SessionID)
-	}
-	if opts.SubagentID != "" {
-		filter.WriteString(` AND e.subagent_id = ?`)
-		args = append(args, opts.SubagentID)
-	}
-	if opts.SinceMs > 0 {
-		filter.WriteString(` AND e.ts_source_ms >= ?`)
-		args = append(args, opts.SinceMs)
-	}
+	appendCommonFilters(&filter, &args, opts)
 
 	limit := opts.Limit
 	if limit <= 0 {

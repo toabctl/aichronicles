@@ -6,16 +6,13 @@ import (
 )
 
 // Agent describes one source-agent integration aichronicles supports.
-// Today the only registered agent is Claude Code; OpenAI's Codex CLI
-// is on the TODO and slots in by adding another Agent value next to
-// ClaudeCode below.
-//
-// The shape is value-typed (not an interface) because every agent
-// integration follows the same operational story — install hooks
-// into a JSON config file, map a hook payload into an Envelope —
-// and we don't need polymorphism, just data + a thin layer of
-// agent-specific glue. Putting both Agents in this file keeps the
-// list of known integrations literally one screen of code.
+// Today the registered agents are Claude Code (Anthropic) and Gemini
+// CLI (Google). Each follows the same operational story — install
+// hooks into a JSON config file, map a hook payload into an
+// Envelope — so the shape is value-typed (not an interface): we
+// just need data + a thin layer of agent-specific glue. Adding a
+// new agent is a single Agent value plus a per-host AssembleX
+// function in internal/cli.
 type Agent struct {
 	// Slug is the source_agent string envelopes carry. Stable;
 	// changing it would orphan every existing row for this agent.
@@ -71,34 +68,45 @@ func claudeCodeDefaultPath() (string, error) {
 	return filepath.Join(home, ".claude", "settings.json"), nil
 }
 
-// Codex is the OpenAI Codex CLI agent. Hook event names follow the
-// names documented at https://developers.openai.com/codex/hooks —
-// the list mirrors the subset Claude Code exposes that maps cleanly
-// to our envelope kinds. Codex requires `[features] codex_hooks =
-// true` in ~/.codex/config.toml; the setup command's docs note this
-// (we don't rewrite the user's config.toml for them).
+// GeminiCLI is Google's open-source Gemini CLI agent. The hook
+// system (packages/core/src/hooks/) is a near-clone of Claude
+// Code's: same stdin-JSON wire shape, same {session_id,
+// transcript_path, cwd, hook_event_name, timestamp} base input,
+// same per-event extras (tool_name, tool_input, tool_response).
+// Even sets CLAUDE_PROJECT_DIR env var "for compatibility."
 //
-// Implementation status: based on documented hook field shapes; the
-// per-fixture validation TODO entry tracks the work to harden this
-// against real Codex stdin payloads.
-var Codex = Agent{
-	Slug:        "codex",
-	Description: "OpenAI Codex CLI",
+// Hook events selected here match what claude-code subscribes to,
+// translated to gemini's naming:
+//
+//   - BeforeAgent  ↔ UserPromptSubmit  (user prompt captured)
+//   - AfterModel   ↔ Stop              (assistant turn finalised)
+//   - AfterTool    ↔ PostToolUse       (tool result; failures
+//     surfaced via tool_response.error inside AssembleGemini)
+//   - SessionStart, SessionEnd: identical names, identical roles
+//
+// We skip BeforeTool (the equivalent of PreToolUse) for the same
+// reason we skip it on claude: we only need post-tool to know
+// what happened, and observing both doubles every tool event.
+var GeminiCLI = Agent{
+	Slug:        "gemini-cli",
+	Description: "Google's Gemini CLI agent",
 	HookEvents: []string{
-		"UserPromptSubmit",
-		"Stop",
-		"PostToolUse",
-		"PostToolUseFailure",
+		"BeforeAgent",
+		"AfterModel",
+		"AfterTool",
+		"SessionStart",
+		"SessionEnd",
 	},
-	DefaultSettingsPath: codexDefaultPath,
+	DefaultSettingsPath: geminiCLIDefaultPath,
 }
 
-// codexDefaultPath resolves ~/.codex/hooks.json. Codex documents the
-// hook config as living next to its config.toml in ~/.codex/.
-func codexDefaultPath() (string, error) {
+// geminiCLIDefaultPath resolves ~/.gemini/settings.json. Gemini's
+// hook configuration lives there alongside the rest of the CLI's
+// user-level state (oauth_creds.json, projects.json).
+func geminiCLIDefaultPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".codex", "hooks.json"), nil
+	return filepath.Join(home, ".gemini", "settings.json"), nil
 }
