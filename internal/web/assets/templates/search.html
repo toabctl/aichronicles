@@ -4,6 +4,15 @@
   <p>Plain words match by prefix; <code>"quoted phrases"</code> match exactly. Identifiers and paths (<code>migrate.go</code>) work verbatim.</p>
 </hgroup>
 
+{{if .FilterChips}}
+<nav class="agent-filter" aria-label="Active filters">
+  {{range .FilterChips}}
+  <a href="{{.HrefRemove}}" class="agent-chip agent-chip-active" title="Click to remove this filter">{{.Label}} ✕</a>
+  {{end}}
+  <a href="/search" class="agent-chip" title="Clear all filters">clear all</a>
+</nav>
+{{end}}
+
 <form role="search" onsubmit="return false">
   <input type="search"
          name="q"
@@ -13,6 +22,16 @@
          hx-trigger="input changed delay:200ms, search"
          hx-target="#hits"
          hx-include="closest form">
+  {{/* Hidden inputs carry active filters into every htmx GET via
+       hx-include="closest form" so the fragment endpoint
+       /search/hits sees the same facet narrowing the chips
+       advertise. Removing a chip drops the param via the chip's
+       HrefRemove link, which reloads /search with the new URL. */}}
+  {{if .ActiveAgent}}<input type="hidden" name="agent" value="{{.ActiveAgent}}">{{end}}
+  {{if .ActiveTool}}<input type="hidden" name="tool" value="{{.ActiveTool}}">{{end}}
+  {{if .ActiveSkill}}<input type="hidden" name="skill" value="{{.ActiveSkill}}">{{end}}
+  {{if .ActiveFile}}<input type="hidden" name="file" value="{{.ActiveFile}}">{{end}}
+  {{if .ActiveWithFailures}}<input type="hidden" name="with-failures" value="1">{{end}}
   <details>
     <summary>Filters</summary>
     <fieldset class="grid">

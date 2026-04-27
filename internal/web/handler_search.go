@@ -24,30 +24,48 @@ const searchCompactLimit = 8
 // searchHandler renders the /search page itself: a form with the
 // htmx-driven input and an empty hits container. The hits
 // fragment populates the container as the user types.
+//
+// Faceted filters arriving on the URL (?agent=, ?tool=, …) are
+// surfaced as removable chips above the input AND seeded into
+// hidden form fields so each htmx GET to /search/hits carries
+// them through.
 func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "search", SearchPage{Title: "Search"})
+	facets := readSessionListFilters(r)
+	page := SearchPage{
+		Title:              "Search",
+		ActiveAgent:        facets.Agent,
+		ActiveTool:         facets.Tool,
+		ActiveSkill:        facets.Skill,
+		ActiveFile:         facets.File,
+		ActiveWithFailures: facets.WithFailures,
+		FilterChips:        buildSessionListChips("/search", facets),
+	}
+	s.render(w, r, "search", page)
 }
 
 // searchHitsHandler is the htmx fragment endpoint at
 // /search/hits. Reads ?q= (and optional ?kind / ?since /
-// ?compact=1), translates q into FTS5 via internal/searchquery,
-// and renders the hits fragment template — no layout, just the
-// table or empty-state line that gets swapped into #hits on the
-// page (or the nav-bar popover, when ?compact=1).
+// ?compact=1) plus the same faceted filters the sessions list
+// supports (?agent / ?tool / ?skill / ?file / ?with-failures),
+// translates q into FTS5 via internal/searchquery, and renders
+// the hits fragment template — no layout, just the table or
+// empty-state line that gets swapped into #hits on the page (or
+// the nav-bar popover, when ?compact=1).
 func (s *Server) searchHitsHandler(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	kind := r.URL.Query().Get("kind")
 	since := r.URL.Query().Get("since")
 	compact := r.URL.Query().Get("compact") == "1"
+	facets := readSessionListFilters(r)
 
-	view := buildSearchHits(r, s.store, q, kind, since, compact, s.now())
+	view := buildSearchHits(r, s.store, q, kind, since, compact, facets, s.now())
 	s.renderFragment(w, "hits", view)
 }
 
 // buildSearchHits performs the search and shapes the result for
 // the hits fragment. Extracted from the handler so tests can
 // drive it directly without going through the HTTP layer.
-func buildSearchHits(r *http.Request, st *store.Store, q, kind, since string, compact bool, now time.Time) SearchHits {
+func buildSearchHits(r *http.Request, st *store.Store, q, kind, since string, compact bool, facets sessionListFilters, now time.Time) SearchHits {
 	if q == "" {
 		// Empty query is the page's initial state — render an
 		// empty Hits with no Error so the template falls through
@@ -80,6 +98,14 @@ func buildSearchHits(r *http.Request, st *store.Store, q, kind, since string, co
 		// browsing the web UI get rank.
 		Order: store.OrderRank,
 		NowMs: now.UnixMilli(),
+		// Faceted filters mirror the CLI surface from #96. Empty
+		// values fall through to the unfiltered behavior in
+		// store.SearchEvents.
+		SourceAgent:       facets.Agent,
+		ToolName:          facets.Tool,
+		SkillName:         facets.Skill,
+		FilePathSubstring: facets.File,
+		WithFailures:      facets.WithFailures,
 	}
 	if since != "" {
 		d, ok := parseSinceWindow(since)

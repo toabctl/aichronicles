@@ -6,13 +6,16 @@ import (
 	"testing"
 )
 
-// TestSkillsPage_RendersThreeSections checks the page wires up
-// Installed / Invoked / Stale headers + the day-window filter
-// chips. We don't seed real SKILL.md files (CollectInstalled
-// reads from the user's home dir which the test can't isolate
-// safely), so the Installed table just renders its empty-state
-// line — what matters is the page returns 200 and shows the
-// section structure.
+// TestSkillsPage_RendersHeaderAndChips checks the page wires up
+// the day-window filter chips and the Invoked / Stale section
+// structure. We don't assert on the "Installed" header word
+// because the template hides it when there are no SKILL.md files
+// on disk, and the test runner has no control over $HOME (CI
+// runners have no skills installed; developer machines do — the
+// assertion would be flaky either way). The "Invoked" header IS
+// always rendered, with an empty-state line when no skill_load
+// extractions exist in the window — that's the structural
+// evidence we lean on here.
 func TestSkillsPage_RendersHeaderAndChips(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)
@@ -27,7 +30,6 @@ func TestSkillsPage_RendersHeaderAndChips(t *testing.T) {
 		"Skills",
 		`href="/skills?days=14"`,
 		`href="/skills?days=30"`,
-		"Installed",
 		"Invoked recently",
 		// no skill_load events seeded → empty-state suggestion
 		// for the invoked section.

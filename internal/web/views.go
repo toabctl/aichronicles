@@ -34,6 +34,30 @@ type SessionsPage struct {
 	// click-through. Rendered as a removable chip. Empty when
 	// no project filter is set.
 	ActiveProject string
+
+	// Faceted-search filters mirrored from #96's CLI surface. Each,
+	// when non-empty / true, narrows the candidate sessions and
+	// renders as a removable chip in the template. Multiple filters
+	// combine with AND.
+	ActiveTool         string // events with tool_name = ?
+	ActiveSkill        string // sessions whose events loaded this skill
+	ActiveFile         string // sessions whose events touched a file matching this substring
+	ActiveWithFailures bool   // sessions with ≥1 tool_failure event
+
+	// FilterChips is a pre-rendered list of removable filter chips
+	// for the template. Each chip carries the label to display and
+	// the href that drops only this one filter (preserving the
+	// others). Built once in the handler so the template stays
+	// free of URL-construction logic.
+	FilterChips []FilterChip
+}
+
+// FilterChip is one removable filter on the sessions list (and
+// /search). Label is what the chip shows; HrefRemove is the URL
+// to navigate to with this filter cleared and all others kept.
+type FilterChip struct {
+	Label      string
+	HrefRemove string
 }
 
 // SessionRow is one row in the sessions list. Display strings
@@ -227,9 +251,22 @@ type InsightsSessionRow struct {
 // SearchPage is the data shape the /search full-page template
 // consumes. Most of the heavy lifting is done by the htmx
 // fragment endpoint at /search/hits, so this struct is mostly
-// for the layout's <title>.
+// for the layout's <title> plus seeding the filter chips that
+// flow through to /search/hits via the form's hidden inputs.
 type SearchPage struct {
 	Title string
+	// Active filter values seeded into the form so the htmx
+	// fragment receives them on every keystroke. Empty when no
+	// filter is set.
+	ActiveAgent        string
+	ActiveTool         string
+	ActiveSkill        string
+	ActiveFile         string
+	ActiveWithFailures bool
+	// FilterChips renders the active filters above the input as
+	// removable chips, same UI as the sessions list. HrefRemove
+	// links back to /search with that one filter dropped.
+	FilterChips []FilterChip
 }
 
 // SearchHits is the shape the /search/hits fragment template

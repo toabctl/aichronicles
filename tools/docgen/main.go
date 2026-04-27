@@ -269,14 +269,19 @@ func genDetectors(out string) error {
 }
 
 // writeFileWithFinalNewline writes s to path, ensuring it ends in
-// exactly one newline. The pre-commit `end-of-file-fixer` enforces
-// this convention; matching it in the generator keeps `make
-// docs-check` from flagging a single-newline diff after a `git
-// commit` that triggered the auto-fixer.
+// EXACTLY one newline (not zero, not multiple). The pre-commit
+// `end-of-file-fixer` enforces this convention; matching it in the
+// generator keeps `make docs-check` from flagging a one-character
+// diff after pre-commit auto-fixed the same file.
+//
+// Specifically: builders that close every section with "\n\n" leave
+// a trailing blank line, which end-of-file-fixer then trims down to
+// one newline. The first generation matches; the next regeneration
+// re-adds the blank line; CI's docs-check sees the diff and fails.
+// Trimming all trailing whitespace and re-appending one newline
+// makes the output a fixed point of the auto-fixer.
 func writeFileWithFinalNewline(path, s string) error {
-	if !strings.HasSuffix(s, "\n") {
-		s += "\n"
-	}
+	s = strings.TrimRight(s, " \t\n\r") + "\n"
 	return os.WriteFile(path, []byte(s), 0o644)
 }
 

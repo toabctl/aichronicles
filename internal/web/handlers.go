@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -29,14 +30,19 @@ const sessionsListLimit = 100
 // most-recently-active sessions first, with a `summary` badge on
 // rows that already have a cached LLM summary in llm_outputs.
 //
-// Optional `?agent=<slug>` query param narrows the list to one
-// source agent (claude-code | gemini-cli). The filter shows up as
-// a removable chip in the rendered template; an unknown / empty
-// slug falls back to the unfiltered view rather than 404'ing.
+// Faceted-filter query params (all optional, all combine with AND):
+//   - agent          — exact source_agent (claude-code | gemini-cli)
+//   - project        — project-root cwd from /projects click-through
+//   - tool           — exact tool_name on some event in the session
+//   - skill          — sessions whose events loaded the named skill
+//   - file           — substring match on a file_path extraction
+//   - with-failures  — sessions with ≥1 tool_failure event (truthy values)
+//
+// Each active filter renders as a removable chip in the template;
+// removing one preserves the others.
 func (s *Server) sessionsHandler(w http.ResponseWriter, r *http.Request) {
-	agent := strings.TrimSpace(r.URL.Query().Get("agent"))
-	project := strings.TrimSpace(r.URL.Query().Get("project"))
-	rows, err := loadSessionsForList(r.Context(), s.store, sessionsListLimit, agent, project)
+	filters := readSessionListFilters(r)
+	rows, err := loadSessionsForList(r.Context(), s.store, sessionsListLimit, filters)
 	if err != nil {
 		s.log.Error("sessionsHandler: load", "err", err)
 		http.Error(w, "could not load sessions", http.StatusInternalServerError)
@@ -49,20 +55,149 @@ func (s *Server) sessionsHandler(w http.ResponseWriter, r *http.Request) {
 		agents = nil
 	}
 	title := "Sessions"
-	if agent != "" {
-		title = "Sessions · " + agent
+	if filters.Agent != "" {
+		title = "Sessions · " + filters.Agent
 	}
-	if project != "" {
-		title = "Sessions · " + project
+	if filters.Project != "" {
+		title = "Sessions · " + filters.Project
 	}
 	page := SessionsPage{
-		Title:         title,
-		Sessions:      rows,
-		Agents:        agents,
-		ActiveAgent:   agent,
-		ActiveProject: project,
+		Title:              title,
+		Sessions:           rows,
+		Agents:             agents,
+		ActiveAgent:        filters.Agent,
+		ActiveProject:      filters.Project,
+		ActiveTool:         filters.Tool,
+		ActiveSkill:        filters.Skill,
+		ActiveFile:         filters.File,
+		ActiveWithFailures: filters.WithFailures,
+		FilterChips:        buildSessionListChips("/", filters),
 	}
 	s.render(w, r, "sessions", page)
+}
+
+// sessionListFilters collects every faceted-filter param the
+// sessions list understands. Single struct so plumbing it through
+// the handler / loader / chip-builder doesn't fan out into a
+// long argument list every time we add a facet.
+type sessionListFilters struct {
+	Agent        string
+	Project      string
+	Tool         string
+	Skill        string
+	File         string
+	WithFailures bool
+}
+
+// readSessionListFilters parses the query string into the filter
+// struct. TrimSpace on every string so trailing whitespace from a
+// link-builder mistake doesn't accidentally narrow the result set
+// to zero rows; with-failures accepts the usual truthy values
+// ("1", "true", "yes") to keep the URL hand-typeable.
+func readSessionListFilters(r *http.Request) sessionListFilters {
+	q := r.URL.Query()
+	return sessionListFilters{
+		Agent:        strings.TrimSpace(q.Get("agent")),
+		Project:      strings.TrimSpace(q.Get("project")),
+		Tool:         strings.TrimSpace(q.Get("tool")),
+		Skill:        strings.TrimSpace(q.Get("skill")),
+		File:         strings.TrimSpace(q.Get("file")),
+		WithFailures: parseTruthy(q.Get("with-failures")),
+	}
+}
+
+// parseTruthy accepts "1", "true", "yes", "on" (case-insensitive)
+// as true; everything else (including the empty string) is false.
+// Mirrors what most form checkboxes serialize as.
+func parseTruthy(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// buildSessionListChips renders one FilterChip per ACTIVE filter,
+// in a stable display order. Each chip's HrefRemove drops only that
+// one filter from the URL while preserving the others, so the user
+// can pull one constraint off without losing the rest of their
+// drill-down.
+//
+// basePath is "/" for the sessions list and "/search" for the
+// search page (where the chips live alongside the search form).
+func buildSessionListChips(basePath string, f sessionListFilters) []FilterChip {
+	var chips []FilterChip
+	add := func(label, removeKey string) {
+		clone := f
+		switch removeKey {
+		case "agent":
+			clone.Agent = ""
+		case "project":
+			clone.Project = ""
+		case "tool":
+			clone.Tool = ""
+		case "skill":
+			clone.Skill = ""
+		case "file":
+			clone.File = ""
+		case "with-failures":
+			clone.WithFailures = false
+		}
+		chips = append(chips, FilterChip{
+			Label:      label,
+			HrefRemove: filtersToURL(basePath, clone),
+		})
+	}
+	if f.Project != "" {
+		add("project: "+f.Project, "project")
+	}
+	if f.Agent != "" {
+		add("agent: "+f.Agent, "agent")
+	}
+	if f.Tool != "" {
+		add("tool: "+f.Tool, "tool")
+	}
+	if f.Skill != "" {
+		add("skill: "+f.Skill, "skill")
+	}
+	if f.File != "" {
+		add("file: "+f.File, "file")
+	}
+	if f.WithFailures {
+		add("with failures", "with-failures")
+	}
+	return chips
+}
+
+// filtersToURL re-serialises the filter struct back into a URL.
+// Empty / falsy filters are omitted entirely so the resulting URL
+// stays minimal — `/?agent=claude-code` rather than
+// `/?agent=claude-code&tool=&skill=&file=&with-failures=`. URL-
+// encodes every value via url.Values.
+func filtersToURL(basePath string, f sessionListFilters) string {
+	v := url.Values{}
+	if f.Agent != "" {
+		v.Set("agent", f.Agent)
+	}
+	if f.Project != "" {
+		v.Set("project", f.Project)
+	}
+	if f.Tool != "" {
+		v.Set("tool", f.Tool)
+	}
+	if f.Skill != "" {
+		v.Set("skill", f.Skill)
+	}
+	if f.File != "" {
+		v.Set("file", f.File)
+	}
+	if f.WithFailures {
+		v.Set("with-failures", "1")
+	}
+	if len(v) == 0 {
+		return basePath
+	}
+	return basePath + "?" + v.Encode()
 }
 
 // loadDistinctSourceAgents returns the set of source_agent slugs
@@ -93,10 +228,11 @@ func loadDistinctSourceAgents(ctx context.Context, st *store.Store) ([]string, e
 // a second indexed query fetches each session's cached summary so
 // the row can show the model-attributed topic alongside the prompt.
 //
-// agentFilter, when non-empty, narrows to sessions where
-// source_agent = <filter>. Empty value lists every agent (the
-// default).
-func loadSessionsForList(ctx context.Context, st *store.Store, limit int, agentFilter, projectFilter string) ([]SessionRow, error) {
+// All filters in the struct are optional; multiple combine with AND.
+// Empty / false values are skipped. Tool / skill / file / failures
+// are session-level: a session matches if ANY of its events satisfies
+// the predicate.
+func loadSessionsForList(ctx context.Context, st *store.Store, limit int, f sessionListFilters) ([]SessionRow, error) {
 	q := `
 		SELECT s.id,
 		       s.started_at_ms,
@@ -110,11 +246,11 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int, agentF
 		  FROM sessions s`
 	var conds []string
 	args := []any{}
-	if agentFilter != "" {
+	if f.Agent != "" {
 		conds = append(conds, "s.source_agent = ?")
-		args = append(args, agentFilter)
+		args = append(args, f.Agent)
 	}
-	if projectFilter != "" {
+	if f.Project != "" {
 		// Match sessions whose latest cwd is the project root or
 		// any descendant. Approximation: a session that started
 		// in /proj but cd'd to /elsewhere mid-way will still be
@@ -123,7 +259,42 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int, agentF
 		// through filter; the /projects page uses start cwd for
 		// its rollup.
 		conds = append(conds, "(s.cwd = ? OR s.cwd LIKE ?)")
-		args = append(args, projectFilter, projectFilter+"/%")
+		args = append(args, f.Project, f.Project+"/%")
+	}
+	if f.Tool != "" {
+		// EXISTS over events (covered by idx_events_session_ts and
+		// the partial idx for tool-bearing rows). Cheap because
+		// SQLite short-circuits on the first hit.
+		conds = append(conds, `EXISTS (
+			SELECT 1 FROM events e
+			 WHERE e.session_id = s.id AND e.tool_name = ?
+		)`)
+		args = append(args, f.Tool)
+	}
+	if f.Skill != "" {
+		// extractions kind=skill_load value=<name> is the canonical
+		// signal — see pkg/ingest/extract/SkillLoadExtractor.
+		conds = append(conds, `EXISTS (
+			SELECT 1 FROM extractions x
+			 WHERE x.session_id = s.id AND x.kind = 'skill_load' AND x.value = ?
+		)`)
+		args = append(args, f.Skill)
+	}
+	if f.File != "" {
+		// Substring LIKE so a partial path ("migrate.go",
+		// "internal/store") matches. Same shape the CLI's
+		// FilePathSubstring filter uses.
+		conds = append(conds, `EXISTS (
+			SELECT 1 FROM extractions x
+			 WHERE x.session_id = s.id AND x.kind = 'file_path' AND x.value LIKE ?
+		)`)
+		args = append(args, "%"+f.File+"%")
+	}
+	if f.WithFailures {
+		conds = append(conds, `EXISTS (
+			SELECT 1 FROM events e
+			 WHERE e.session_id = s.id AND e.kind = 'tool_failure'
+		)`)
 	}
 	if len(conds) > 0 {
 		q += " WHERE " + strings.Join(conds, " AND ")

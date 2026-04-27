@@ -4,9 +4,12 @@
   <p>Most recently active first. Click a row to see events and the cached summary.</p>
 </hgroup>
 
-{{if .ActiveProject}}
-<nav class="agent-filter" aria-label="Active project filter">
-  <a href="/" class="agent-chip agent-chip-active">project: {{.ActiveProject}} ✕</a>
+{{if .FilterChips}}
+<nav class="agent-filter" aria-label="Active filters">
+  {{range .FilterChips}}
+  <a href="{{.HrefRemove}}" class="agent-chip agent-chip-active" title="Click to remove this filter">{{.Label}} ✕</a>
+  {{end}}
+  <a href="/" class="agent-chip" title="Clear all filters">clear all</a>
 </nav>
 {{end}}
 
