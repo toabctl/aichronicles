@@ -58,7 +58,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
+          # No cache: pip — the only Python dep is `pre-commit` itself,
+          # which actions/cache (below) handles via the hook env cache.
+          # Adding cache: pip would require a requirements.txt, which
+          # we don't keep at the repo root (only requirements-docs.txt
+          # for the mkdocs build, which docs.yml uses).
 
       # Pinned versions match what the maintainer runs locally
       # (golangci-lint 2.x, govulncheck v1.x, gitleaks v8.x). When

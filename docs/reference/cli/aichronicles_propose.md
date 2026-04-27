@@ -34,3 +34,5 @@ aichronicles propose [flags]
 ### SEE ALSO
 
 * [aichronicles](./aichronicles.md)	 - Capture AI coding agent session events
+* [aichronicles propose apply](./aichronicles_propose_apply.md)	 - Materialise a proposed skill (SKILL.md + scripts) on disk
+* [aichronicles propose list](./aichronicles_propose_list.md)	 - List skills in the latest cached propose output

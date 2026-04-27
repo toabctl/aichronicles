@@ -1,23 +1,30 @@
 ## aichronicles mcp-serve
 
-Run an MCP server over stdio exposing aichronicles data
+Run an MCP server over stdio exposing the user's session history
 
 ### Synopsis
 
-Starts a Model Context Protocol server on stdin/stdout,
-offering three read-only tools (search_events, list_sessions,
-get_summary) backed by the local SQLite store.
+Starts a Model Context Protocol server on stdin/stdout that
+lets a model query the user's PAST Claude Code / Gemini CLI
+sessions. All tools read the local SQLite store; nothing
+writes back.
 
-Typically registered in Claude Desktop's mcp_servers section:
+Tools exposed:
+  search_events        — keyword search over past events
+  list_sessions        — recent past conversations
+  get_summary          — cached summary of one session
+  list_subagents       — sub-agent threads inside a session
+  get_insights         — usage report (top tools / skills / activity)
+  list_skills          — installed + invoked skills
+  get_skill_staleness  — skills correlated with tool failures
+  search_with_summary  — LLM-synthesised answer (requires API key)
 
-    "aichronicles": {
-      "command": "/home/you/.local/bin/aichronicles",
-      "args": ["mcp-serve"]
-    }
+Registered automatically by `aichronicles setup claude-code` under
+the mcpServers.aichronicles entry of ~/.claude/settings.json.
 
-Logs are emitted as structured records on stderr so Claude
-Desktop's own log window surfaces them. Stdin close (client
-disconnect) ends the process cleanly.
+Logs go to stderr as structured records so the host's MCP log
+window surfaces them. Stdin close (client disconnect) ends the
+process cleanly.
 
 ```
 aichronicles mcp-serve [flags]
