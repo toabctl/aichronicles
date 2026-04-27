@@ -54,6 +54,15 @@ install: build
 	  echo "aichronicles.socket not installed — skipping restart."; \
 	  echo "  run \`aichronicles setup systemd\` to wire up the socket."; \
 	fi
+	@# `try-restart` only bounces aichronicles-web.service when it's
+	@# already running — the web service is socket-activated and may
+	@# legitimately be dead between bursts; we don't want to start it
+	@# here. When it IS running, the bounce makes the next request
+	@# pick up the new binary instead of waiting for idle-shutdown.
+	@if systemctl --user is-active aichronicles-web.service >/dev/null 2>&1; then \
+	  echo "restarting aichronicles-web.service (was running)"; \
+	  systemctl --user try-restart aichronicles-web.service; \
+	fi
 
 # Remove only what build/install produces locally.
 clean:
