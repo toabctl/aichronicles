@@ -72,18 +72,22 @@ func loadSessionDetail(ctx context.Context, st *store.Store, id string) (*Sessio
 // the row doesn't exist; the handler maps that to 404.
 func loadSessionHeader(ctx context.Context, st *store.Store, id string) (*SessionDetail, error) {
 	const q = `
-		SELECT id, started_at_ms, ended_at_ms, event_count, cwd
+		SELECT id, started_at_ms, ended_at_ms, event_count, cwd,
+		       source_agent, source_session_id
 		  FROM sessions WHERE id = ?`
 	row := st.DB().QueryRowContext(ctx, q, id)
 
 	var (
-		gotID      string
-		startedMs  sql.NullInt64
-		endedMs    sql.NullInt64
-		eventCount int
-		cwd        sql.NullString
+		gotID           string
+		startedMs       sql.NullInt64
+		endedMs         sql.NullInt64
+		eventCount      int
+		cwd             sql.NullString
+		sourceAgent     string
+		sourceSessionID string
 	)
-	if err := row.Scan(&gotID, &startedMs, &endedMs, &eventCount, &cwd); err != nil {
+	if err := row.Scan(&gotID, &startedMs, &endedMs, &eventCount, &cwd,
+		&sourceAgent, &sourceSessionID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errSessionNotFound
 		}
@@ -91,14 +95,43 @@ func loadSessionHeader(ctx context.Context, st *store.Store, id string) (*Sessio
 	}
 
 	return &SessionDetail{
-		Title:      "session " + shortID(gotID),
-		ID:         gotID,
-		ShortID:    shortID(gotID),
-		Cwd:        orDash(cwd),
-		StartedAt:  absoluteOrDash(startedMs),
-		EndedAt:    endedOrActive(endedMs),
-		EventCount: eventCount,
+		Title:           "session " + shortID(gotID),
+		ID:              gotID,
+		ShortID:         shortID(gotID),
+		Cwd:             orDash(cwd),
+		StartedAt:       absoluteOrDash(startedMs),
+		EndedAt:         endedOrActive(endedMs),
+		EventCount:      eventCount,
+		SourceAgent:     sourceAgent,
+		SourceSessionID: sourceSessionID,
+		ResumeCommand:   buildResumeCommand(sourceAgent, sourceSessionID, cwd),
 	}, nil
+}
+
+// buildResumeCommand renders the shell one-liner the Resume
+// button copies to the clipboard. cd-then-launch so the agent
+// resumes against the same workspace it was captured in;
+// `claude --resume` keys off cwd, not just the session id.
+//
+// Returns "" for unknown / empty agents — the template branches
+// on that to hide the button rather than show a copy action that
+// pastes "" into the user's terminal.
+func buildResumeCommand(agent, sourceSessionID string, cwd sql.NullString) string {
+	if sourceSessionID == "" {
+		return ""
+	}
+	switch agent {
+	case "claude-code":
+		base := "claude --resume " + sourceSessionID
+		if cwd.Valid && cwd.String != "" {
+			return "cd " + cwd.String + " && " + base
+		}
+		return base
+	default:
+		// codex / other agents have their own resume invocations
+		// we haven't modelled yet; emit nothing rather than guess.
+		return ""
+	}
 }
 
 // loadLatestSummary returns the most recent summary llm_outputs

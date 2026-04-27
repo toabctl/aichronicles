@@ -203,3 +203,83 @@ func TestSessionDetail_EndedActiveLabel(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildResumeCommand(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		agent    string
+		sourceID string
+		cwd      sql.NullString
+		want     string
+	}{
+		{
+			name:     "claude-code with cwd",
+			agent:    "claude-code",
+			sourceID: "5c407125-a64a-46c1-96d5-65ca14bdd9fc",
+			cwd:      sql.NullString{String: "/home/tom/devel/foo", Valid: true},
+			want:     "cd /home/tom/devel/foo && claude --resume 5c407125-a64a-46c1-96d5-65ca14bdd9fc",
+		},
+		{
+			name:     "claude-code without cwd",
+			agent:    "claude-code",
+			sourceID: "abc",
+			cwd:      sql.NullString{},
+			want:     "claude --resume abc",
+		},
+		{
+			name:     "claude-code with empty-but-valid cwd",
+			agent:    "claude-code",
+			sourceID: "abc",
+			cwd:      sql.NullString{String: "", Valid: true},
+			want:     "claude --resume abc",
+		},
+		{
+			name:     "unknown agent yields empty (button is hidden)",
+			agent:    "codex",
+			sourceID: "abc",
+			cwd:      sql.NullString{String: "/x", Valid: true},
+			want:     "",
+		},
+		{
+			name:     "missing source id yields empty",
+			agent:    "claude-code",
+			sourceID: "",
+			cwd:      sql.NullString{String: "/x", Valid: true},
+			want:     "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := buildResumeCommand(tc.agent, tc.sourceID, tc.cwd)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSessionDetail_RendersResumeButton confirms the rendered page
+// carries the resume button + data-resume-cmd payload that
+// keynav.js's click handler reads to populate the clipboard.
+func TestSessionDetail_RendersResumeButton(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	id := seedSession(t, st, "sess-resume", "anything", now)
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	_, body := fetch(t, base+"/sessions/"+id)
+	for _, want := range []string{
+		`class="resume-btn"`,
+		`data-resume-cmd="cd /work/sess-resume &amp;&amp; claude --resume sess-resume"`,
+		`>↻ resume</button>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("session page missing %q\n--- body ---\n%s", want, body)
+		}
+	}
+}

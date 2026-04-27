@@ -52,7 +52,7 @@ type SessionRow struct {
 // this session.
 type SessionDetail struct {
 	Title      string
-	ID         string // full UUID
+	ID         string // full UUID — our derived id (UUIDv5)
 	ShortID    string
 	Cwd        string
 	StartedAt  string // absolute UTC, "2026-04-24T12:00:00Z"
@@ -60,6 +60,16 @@ type SessionDetail struct {
 	EventCount int
 	Summary    *SessionSummary // nil if no cached summary
 	Events     []EventRow
+
+	// Resume hooks: SourceAgent + SourceSessionID identify the
+	// session to the originating agent (claude-code, codex). The
+	// derived ID we display elsewhere is OUR id (UUIDv5 of agent
+	// + source id) and is NOT what `claude --resume` accepts.
+	// ResumeCommand is the pre-rendered shell one-liner the
+	// "Resume" button copies — empty when SourceAgent is unknown.
+	SourceAgent     string
+	SourceSessionID string
+	ResumeCommand   string
 }
 
 // SessionSummary is the rendered shape of an llm_outputs row of

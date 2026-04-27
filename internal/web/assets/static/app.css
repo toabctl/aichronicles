@@ -127,6 +127,35 @@ tr.nav-row:focus-visible {
   background: var(--pico-secondary-background);
 }
 
+/* "Resume" button next to the session header on the detail page.
+   Click copies `cd <cwd> && claude --resume <id>` to the clipboard
+   (handler in keynav.js); the .resume-btn-copied class flips the
+   label briefly to "✓ copied" for visual feedback. */
+.resume-btn {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.5rem;
+  font-size: 0.7em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--pico-muted-border-color);
+  background: var(--pico-secondary-background);
+  color: var(--pico-color);
+  border-radius: 0.25rem;
+  cursor: pointer;
+  vertical-align: middle;
+  width: auto;
+}
+.resume-btn:hover {
+  background: var(--pico-primary-background);
+  color: var(--pico-primary-inverse);
+}
+.resume-btn.resume-btn-copied {
+  background: #16a34a;
+  color: #fff;
+  border-color: #16a34a;
+}
+
 /* Cached-summary topic shown inline below the first prompt on
    the sessions list and search results. Muted + italic so the
    prompt remains the primary signal. */

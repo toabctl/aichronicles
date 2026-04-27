@@ -1,6 +1,14 @@
 {{define "content"}}
 <hgroup>
-  <h1>Session <span class="sid">{{.ShortID}}</span></h1>
+  <h1>
+    Session <span class="sid">{{.ShortID}}</span>
+    {{if .ResumeCommand}}
+    <button type="button"
+            class="resume-btn"
+            data-resume-cmd="{{.ResumeCommand}}"
+            title="Copy `{{.ResumeCommand}}` to clipboard so you can paste it in a terminal to resume the agent">↻ resume</button>
+    {{end}}
+  </h1>
   <p><a href="/">← all sessions</a></p>
 </hgroup>
 

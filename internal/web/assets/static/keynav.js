@@ -49,6 +49,54 @@
     return !!target.isContentEditable;
   }
 
+  // Resume-button click: copy data-resume-cmd to clipboard, give
+  // visible feedback by flipping the button's class for ~1s.
+  // Listener delegated to document so SSE-driven re-renders of
+  // the session header (none today, but keep it future-proof)
+  // pick up the behaviour automatically.
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest && e.target.closest('.resume-btn');
+    if (!btn) return;
+    var cmd = btn.getAttribute('data-resume-cmd');
+    if (!cmd) return;
+
+    var doneLabel = '✓ copied';
+    var origLabel = btn.textContent;
+    function flash() {
+      btn.classList.add('resume-btn-copied');
+      btn.textContent = doneLabel;
+      setTimeout(function () {
+        btn.classList.remove('resume-btn-copied');
+        btn.textContent = origLabel;
+      }, 1200);
+    }
+
+    // navigator.clipboard.writeText is the modern path; falls back
+    // to a transient textarea + execCommand('copy') when the page
+    // isn't served on a secure origin (e.g. http on a remote LAN
+    // box) and the async API is therefore unavailable.
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(cmd).then(flash, function () {
+        legacyCopy(cmd);
+        flash();
+      });
+    } else {
+      legacyCopy(cmd);
+      flash();
+    }
+  });
+
+  function legacyCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) { /* best effort */ }
+    document.body.removeChild(ta);
+  }
+
   document.addEventListener('keydown', function (e) {
     var inInput = inEditableField(e.target);
 
