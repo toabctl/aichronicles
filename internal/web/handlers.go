@@ -353,6 +353,7 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int, f sess
 			out[i].HasSummary = true
 			out[i].SummaryTopic, out[i].SummaryTooltip = parseSummaryForBadge(summary.Body)
 		}
+		out[i].Preview, out[i].PreviewKind = pickRowPreview(out[i].SummaryTopic, out[i].FirstPrompt)
 
 		// Status dot: ended / active / idle. Driven by the latest
 		// event — its kind tells us whether the session has
@@ -368,6 +369,53 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int, f sess
 		out[i].StatusDotHTML = template.HTML(renderStatusDot(out[i].ID, status, title, false))
 	}
 	return out, nil
+}
+
+// pickRowPreview chooses the row's primary description text +
+// styling hint, in priority order:
+//
+//  1. summary topic — the model's distillation; the highest-signal
+//     option when the session has been summarized.
+//  2. first user_prompt — only when it stands on its own (≥30 chars
+//     after trim, not a follow-up filler). Many sessions begin with
+//     "yes" / "go ahead" / "/loop" / "what's next?", which would
+//     misrepresent what the session was actually about.
+//  3. muted placeholder — "(no summary yet)" so the row honestly
+//     reflects "we haven't summarized this; first_prompt isn't
+//     descriptive enough to stand in" rather than lying.
+func pickRowPreview(summaryTopic, firstPrompt string) (text, kind string) {
+	if topic := strings.TrimSpace(summaryTopic); topic != "" {
+		return topic, "topic"
+	}
+	if isSubstantivePrompt(firstPrompt) {
+		return firstPrompt, "prompt"
+	}
+	return "(no summary yet)", "muted"
+}
+
+// substantiveMinRunes is the rune-count floor under which we
+// consider a first user_prompt too short to stand in for a session
+// summary. 30 picked to filter the common follow-up fillers ("yes",
+// "do plan", "go ahead", "/loop", "what's next?") while keeping
+// short-but-real prompts ("fix the OAuth login bug" — 28 chars,
+// borderline; "implement the refresh-token rotation" — 36, kept).
+//
+// Mirrors the rule in pkg/llm/prompts/prompts.go that already skips
+// sessions whose first_prompt is a short filler when no summary is
+// available, so the web preview and the meta-LLM both treat the
+// same set of prompts as "not enough to ground anything."
+const substantiveMinRunes = 30
+
+// isSubstantivePrompt heuristically rejects filler first-prompts:
+// trims whitespace, requires at least substantiveMinRunes runes,
+// and rejects anything that's just a slash command ("/loop",
+// "/plan" — agent control rather than a topic).
+func isSubstantivePrompt(s string) bool {
+	t := strings.TrimSpace(s)
+	if strings.HasPrefix(t, "/") && !strings.ContainsAny(t, " \n\t") {
+		return false
+	}
+	return len([]rune(t)) >= substantiveMinRunes
 }
 
 // parseSummaryForBadge extracts the topic AND a multi-line tooltip

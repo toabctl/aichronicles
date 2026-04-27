@@ -230,9 +230,24 @@ tr.nav-row:focus-visible {
 }
 
 /* Cached-summary topic shown inline below the first prompt on
-   the sessions list and search results. Muted + italic so the
-   prompt remains the primary signal. */
+   search results. Muted + italic so the prompt remains the primary
+   signal in places that still surface both. */
 .topic {
+  color: var(--pico-muted-color);
+  font-style: italic;
+}
+
+/* Sessions-list row preview. Three styles by kind:
+   - "topic" (cached summary's topic — the strongest signal)
+   - "prompt" (substantive first user_prompt as fallback)
+   - "muted" (a "(no summary yet)" placeholder for sessions whose
+     first_prompt is too short to stand on its own, like "go ahead"
+     or "/loop" — show honest uncertainty rather than a misleading
+     fragment)
+   Topic and prompt look identical to the eye; the class hook is
+   here for tests + future "click to summarise" CTAs without
+   re-deriving which kind is which. */
+.preview-muted {
   color: var(--pico-muted-color);
   font-style: italic;
 }

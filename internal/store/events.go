@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -126,12 +127,12 @@ func LoadSessionsForCompletion(ctx context.Context, db *sql.DB, prefix string, l
 	rows, err := db.QueryContext(ctx,
 		`SELECT s.id,
 		        COALESCE(s.cwd, '-') AS cwd,
-		        COALESCE(
-		            (SELECT content_text FROM events
-		               WHERE session_id = s.id AND kind = 'user_prompt'
-		               ORDER BY ts_source_ms ASC LIMIT 1),
-		            '-'
-		        ) AS first_prompt
+		        (SELECT content_text FROM events
+		           WHERE session_id = s.id AND kind = 'user_prompt'
+		           ORDER BY ts_source_ms ASC LIMIT 1) AS first_prompt,
+		        (SELECT body FROM llm_outputs
+		           WHERE session_id = s.id AND kind = 'summary'
+		           ORDER BY created_at_ms DESC LIMIT 1) AS summary_body
 		   FROM sessions s
 		  WHERE s.id LIKE ? || '%'
 		  ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC
@@ -145,13 +146,17 @@ func LoadSessionsForCompletion(ctx context.Context, db *sql.DB, prefix string, l
 
 	var out []SessionCompletion
 	for rows.Next() {
-		var id, cwd, firstPrompt string
-		if err := rows.Scan(&id, &cwd, &firstPrompt); err != nil {
+		var (
+			id, cwd     string
+			firstPrompt sql.NullString
+			summaryBody sql.NullString
+		)
+		if err := rows.Scan(&id, &cwd, &firstPrompt, &summaryBody); err != nil {
 			return nil, fmt.Errorf("scan completion row: %w", err)
 		}
 		out = append(out, SessionCompletion{
 			ID:          id,
-			Description: formatCompletionDescription(cwd, firstPrompt),
+			Description: formatCompletionDescription(cwd, firstPrompt.String, summaryBody.String),
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -160,12 +165,23 @@ func LoadSessionsForCompletion(ctx context.Context, db *sql.DB, prefix string, l
 	return out, nil
 }
 
-// formatCompletionDescription packs cwd and the first-prompt preview
-// into one line. Newlines and tabs flatten because shell completion
-// frameworks treat tab as the field separator and break on a literal
-// newline. Long previews truncate so a shell column doesn't blow out.
-func formatCompletionDescription(cwd, firstPrompt string) string {
-	preview := firstPrompt
+// formatCompletionDescription packs cwd and a session preview into
+// one line for shell completion. Preview priority:
+//
+//  1. The cached summary's `topic` field (the model's distillation
+//     of what the session was about — the strongest signal).
+//  2. The first user_prompt, but only when ≥30 chars after trim and
+//     not a slash command. Skips fillers like "go ahead" / "/loop"
+//     that misrepresent the session.
+//  3. A muted "(no summary)" placeholder, so completion is honest
+//     about the lack of a topic instead of surfacing a confusing
+//     fragment.
+//
+// Newlines and tabs flatten because shell completion frameworks
+// treat tab as the field separator and break on a literal newline.
+// Long previews truncate so the candidate fits one terminal line.
+func formatCompletionDescription(cwd, firstPrompt, summaryBody string) string {
+	preview := pickCompletionPreview(firstPrompt, summaryBody)
 	for _, r := range "\n\r\t" {
 		preview = strings.ReplaceAll(preview, string(r), " ")
 	}
@@ -174,6 +190,57 @@ func formatCompletionDescription(cwd, firstPrompt string) string {
 		preview = string(runes[:sessionCompletionPreviewMax]) + "…"
 	}
 	return cwd + " — " + preview
+}
+
+// pickCompletionPreview implements the same priority order the web
+// sessions list uses (pickRowPreview) — kept text-only here so the
+// store package doesn't depend on the web package. The summary
+// body is JSON; we extract the `topic` field with a minimal
+// scan rather than pulling in the whole prompts package.
+func pickCompletionPreview(firstPrompt, summaryBody string) string {
+	if topic := extractSummaryTopic(summaryBody); topic != "" {
+		return topic
+	}
+	if t := strings.TrimSpace(firstPrompt); isSubstantiveFirstPrompt(t) {
+		return t
+	}
+	return "(no summary)"
+}
+
+// extractSummaryTopic pulls the `"topic": "..."` field out of a
+// cached summary body without depending on the prompts package.
+// Returns "" when the body is empty, isn't JSON, or has no topic.
+// Loose parse is fine: a malformed summary body just falls
+// through to first_prompt.
+func extractSummaryTopic(body string) string {
+	if body == "" {
+		return ""
+	}
+	var parsed struct {
+		Topic string `json:"topic"`
+	}
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(parsed.Topic)
+}
+
+// substantiveFirstPromptMinRunes mirrors the web's
+// substantiveMinRunes constant — short follow-ups ("yes", "go
+// ahead", "/loop") aren't useful descriptions.
+const substantiveFirstPromptMinRunes = 30
+
+// isSubstantiveFirstPrompt rejects whitespace-only prompts, raw
+// slash commands, and anything below substantiveFirstPromptMinRunes
+// runes. Mirrors the web/handlers.go heuristic of the same name.
+func isSubstantiveFirstPrompt(t string) bool {
+	if t == "" {
+		return false
+	}
+	if strings.HasPrefix(t, "/") && !strings.ContainsAny(t, " \n\t") {
+		return false
+	}
+	return len([]rune(t)) >= substantiveFirstPromptMinRunes
 }
 
 // LiveEvent is the read-only shape returned by LoadEventsSinceSeq.

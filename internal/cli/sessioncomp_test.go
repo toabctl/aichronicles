@@ -63,7 +63,7 @@ func seedSessionForCompletion(t *testing.T, dbPath, sourceSession, prompt string
 
 func TestCompleteSessionID_ReturnsTabSeparatedDescriptions(t *testing.T) {
 	dbPath := pointStoreEnv(t)
-	id := seedSessionForCompletion(t, dbPath, "sess-comp", "summarise the redaction story")
+	id := seedSessionForCompletion(t, dbPath, "sess-comp", "summarise the redaction story for the docs site")
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.SetContext(context.Background())

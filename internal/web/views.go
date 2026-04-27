@@ -75,6 +75,17 @@ type SessionRow struct {
 	SummaryTopic   string // parsed `topic` field from the cached summary; empty when none
 	SummaryTooltip string // multi-line plain-text tooltip for the summary badge — topic + "what was done" bullets, native browser tooltip
 
+	// Preview is the row's primary description. SummaryTopic when
+	// available (the model's actual distillation of the session);
+	// otherwise the first user_prompt — but only if it's substantive
+	// (≥30 chars after trim, not a follow-up like "go ahead" /
+	// "/loop"). When neither is useful, PreviewKind is "muted" and
+	// Preview is a placeholder ("no summary yet"), so the row
+	// doesn't lie about a 3-hour session by showing "yes please" as
+	// its primary text.
+	Preview     string
+	PreviewKind string // "topic" | "prompt" | "muted"
+
 	// StatusDotHTML is the pre-rendered <span class="status …">●</span>
 	// for the activity dot. Pre-rendered so the same Go-side renderer
 	// powers both initial server-side render and SSE-driven OOB

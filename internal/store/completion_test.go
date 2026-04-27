@@ -8,8 +8,13 @@ import (
 func TestLoadSessionsForCompletion_EmptyPrefixListsAll(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
-	a := ingestText(t, s, "sess-alpha", "alpha thread first prompt")
-	b := ingestText(t, s, "sess-beta", "beta thread first prompt")
+	// First prompts must be ≥30 runes to count as substantive — see
+	// the substantiveFirstPromptMinRunes contract in events.go.
+	// Shorter prompts get masked as "(no summary)" because the
+	// completion description should not surface filler like "yes" /
+	// "/loop" as a session's identity.
+	a := ingestText(t, s, "sess-alpha", "alpha thread first prompt about onboarding")
+	b := ingestText(t, s, "sess-beta", "beta thread first prompt about deployments")
 
 	rows, err := LoadSessionsForCompletion(t.Context(), s.DB(), "", 10)
 	if err != nil {
@@ -91,7 +96,11 @@ func TestLoadSessionsForCompletion_NonHexInputReturnsEmpty(t *testing.T) {
 
 func TestFormatCompletionDescription_FlattensWhitespace(t *testing.T) {
 	t.Parallel()
-	got := formatCompletionDescription("/x", "first\nline\tlast")
+	// Long enough to count as substantive (≥30 runes) so it falls
+	// through to the prompt-as-preview branch and we can assert on
+	// whitespace flattening.
+	prompt := "first\nline\tlast — implement the OAuth refresh-token rotation"
+	got := formatCompletionDescription("/x", prompt, "")
 	if strings.ContainsAny(got, "\n\r\t") {
 		t.Errorf("whitespace not flattened: %q", got)
 	}
@@ -100,8 +109,36 @@ func TestFormatCompletionDescription_FlattensWhitespace(t *testing.T) {
 func TestFormatCompletionDescription_TruncatesLongPreview(t *testing.T) {
 	t.Parallel()
 	long := strings.Repeat("x", 200)
-	got := formatCompletionDescription("/x", long)
+	got := formatCompletionDescription("/x", long, "")
 	if !strings.HasSuffix(got, "…") {
 		t.Errorf("expected ellipsis on truncation, got %q", got)
+	}
+}
+
+func TestFormatCompletionDescription_PrefersSummaryTopic(t *testing.T) {
+	t.Parallel()
+	body := `{"topic":"Refactoring the ingest pipeline","what_was_done":["..."]}`
+	got := formatCompletionDescription("/x", "go ahead", body)
+	if !strings.Contains(got, "Refactoring the ingest pipeline") {
+		t.Errorf("summary topic should win over short first_prompt: %q", got)
+	}
+	if strings.Contains(got, "go ahead") {
+		t.Errorf("filler first_prompt leaked: %q", got)
+	}
+}
+
+func TestFormatCompletionDescription_FallsBackToPlaceholderWhenNeitherSubstantive(t *testing.T) {
+	t.Parallel()
+	got := formatCompletionDescription("/x", "go ahead", "")
+	if !strings.Contains(got, "(no summary)") {
+		t.Errorf("expected placeholder, got %q", got)
+	}
+}
+
+func TestFormatCompletionDescription_RejectsBareSlashCommands(t *testing.T) {
+	t.Parallel()
+	got := formatCompletionDescription("/x", "/loop", "")
+	if strings.Contains(got, "/loop") {
+		t.Errorf("bare slash command should be rejected as filler: %q", got)
 	}
 }

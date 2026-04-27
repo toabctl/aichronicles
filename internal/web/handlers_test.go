@@ -286,13 +286,18 @@ func TestSessionsPage_ShowsSummaryTopicInRow(t *testing.T) {
 	defer stop()
 
 	_, body := fetch(t, base+"/")
-	if !strings.Contains(body, "Reproducing the kitten kerning bug") {
-		t.Errorf("topic should render inline for summarised session:\n%s", body)
+	// Summary topic now drives the row's primary preview cell —
+	// the model's distillation is a far better signal than the
+	// first user_prompt, which is often filler ("yes", "/loop").
+	if !strings.Contains(body, `class="preview preview-topic">Reproducing the kitten kerning bug</span>`) {
+		t.Errorf("topic should render as the primary preview for summarised sessions:\n%s", body)
 	}
-	// The row uses <small class="topic"> — confirm we wrap it so the
-	// topic stays muted/italic per the CSS contract.
-	if !strings.Contains(body, `<small class="topic">`) {
-		t.Errorf("expected <small class=\"topic\"> wrapper for the topic line:\n%s", body)
+	// And the un-summarised sister session should NOT show its
+	// short first_prompt — "another question" is below the
+	// substantiveMinRunes floor, so the row falls through to the
+	// muted "(no summary yet)" placeholder.
+	if !strings.Contains(body, `class="preview preview-muted">(no summary yet)</span>`) {
+		t.Errorf("un-summarised + short first_prompt should render the muted placeholder:\n%s", body)
 	}
 }
 

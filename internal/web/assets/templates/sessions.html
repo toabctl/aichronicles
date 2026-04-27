@@ -39,7 +39,7 @@
         <th>Session</th>
         <th>Last activity</th>
         <th>Events</th>
-        <th>First prompt &amp; cwd</th>
+        <th>What &amp; where</th>
         <th>Latest event</th>
         <th></th>
       </tr>
@@ -52,9 +52,13 @@
         <td class="ts">{{.LastActivity}}</td>
         <td>{{.EventCount}}</td>
         <td class="prompt-cell">
-          {{.FirstPrompt}}
+          {{/* Preview is the model's summary topic when available,
+               else a substantive first user_prompt, else a muted
+               "no summary yet" placeholder — pickRowPreview in the
+               handler chooses. PreviewKind drives the styling so
+               muted placeholders render in the empty colour. */}}
+          <span class="preview preview-{{.PreviewKind}}">{{.Preview}}</span>
           <br><small class="cwd">{{.Cwd}}</small>
-          {{if .SummaryTopic}}<br><small class="topic">{{.SummaryTopic}}</small>{{end}}
         </td>
         <td class="latest"
             sse-swap="session-{{.ID}}"

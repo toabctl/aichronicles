@@ -99,8 +99,8 @@ func TestSessionsPage_ToolFilterChip(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)
 	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
-	bashID := seedSession(t, st, "sess-bash", "alpha-marker bash session", now)
-	editID := seedSession(t, st, "sess-edit", "beta-marker edit session", now.Add(time.Hour))
+	bashID := seedSession(t, st, "sess-bash", "alpha-marker bash session prompt about debugging", now)
+	editID := seedSession(t, st, "sess-edit", "beta-marker edit session for the unrelated path", now.Add(time.Hour))
 	addToolEvent(t, st, bashID, "Bash", now.Add(time.Minute))
 	addToolEvent(t, st, editID, "Edit", now.Add(time.Hour+time.Minute))
 
@@ -127,8 +127,8 @@ func TestSessionsPage_SkillFilterChip(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)
 	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
-	skID := seedSession(t, st, "sess-skill", "alpha-marker skill session", now)
-	plainID := seedSession(t, st, "sess-plain", "beta-marker plain session", now.Add(time.Hour))
+	skID := seedSession(t, st, "sess-skill", "alpha-marker skill session prompt about test creation", now)
+	plainID := seedSession(t, st, "sess-plain", "beta-marker plain session prompt with no skill load", now.Add(time.Hour))
 	_ = plainID
 	addExtraction(t, st, skID, "skill_load", "test-creation")
 
@@ -151,8 +151,8 @@ func TestSessionsPage_FileFilterChip_SubstringMatch(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)
 	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
-	fileID := seedSession(t, st, "sess-file", "alpha-marker file session", now)
-	otherID := seedSession(t, st, "sess-other", "beta-marker other session", now.Add(time.Hour))
+	fileID := seedSession(t, st, "sess-file", "alpha-marker file session prompt about migrate", now)
+	otherID := seedSession(t, st, "sess-other", "beta-marker other session prompt unrelated to files", now.Add(time.Hour))
 	_ = otherID
 	addExtraction(t, st, fileID, "file_path", "internal/store/migrate.go")
 
@@ -176,8 +176,8 @@ func TestSessionsPage_WithFailuresChip(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)
 	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
-	failID := seedSession(t, st, "sess-fail", "alpha-marker fail session", now)
-	cleanID := seedSession(t, st, "sess-clean", "beta-marker clean session", now.Add(time.Hour))
+	failID := seedSession(t, st, "sess-fail", "alpha-marker fail session prompt about a tool crash", now)
+	cleanID := seedSession(t, st, "sess-clean", "beta-marker clean session prompt with no failures", now.Add(time.Hour))
 	_ = cleanID
 	addFailureEvent(t, st, failID, now.Add(time.Minute))
 
@@ -204,9 +204,9 @@ func TestSessionsPage_MultipleFiltersCombine(t *testing.T) {
 	//  - matchID: claude-code AND has Bash → wins
 	//  - bashID:  gemini-cli  AND has Bash → fails agent filter
 	//  - ccID:    claude-code AND no Bash  → fails tool filter
-	matchID := seedSessionFull(t, st, "claude-code", "sess-match", "alpha-marker match", "/work/m", now)
-	bashID := seedSessionFull(t, st, "gemini-cli", "sess-bash", "beta-marker bash", "/work/b", now.Add(time.Hour))
-	_ = seedSessionFull(t, st, "claude-code", "sess-cc", "gamma-marker cc", "/work/c", now.Add(2*time.Hour))
+	matchID := seedSessionFull(t, st, "claude-code", "sess-match", "alpha-marker match for the multi-filter combine test", "/work/m", now)
+	bashID := seedSessionFull(t, st, "gemini-cli", "sess-bash", "beta-marker bash session for the AND-combine test", "/work/b", now.Add(time.Hour))
+	_ = seedSessionFull(t, st, "claude-code", "sess-cc", "gamma-marker cc claude-code session no Bash", "/work/c", now.Add(2*time.Hour))
 	addToolEvent(t, st, matchID, "Bash", now.Add(time.Minute))
 	addToolEvent(t, st, bashID, "Bash", now.Add(time.Hour+time.Minute))
 
