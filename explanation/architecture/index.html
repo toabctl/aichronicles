@@ -1,0 +1,1326 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Capture your AI coding sessions, locally, with secrets scrubbed before they hit disk.">
+      
+      
+        <meta name="author" content="Thomas Bechtold">
+      
+      
+      
+        <link rel="prev" href="../../reference/redaction-detectors/">
+      
+      
+        <link rel="next" href="../data-flow/">
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.39">
+    
+    
+      
+        <title>Architecture - aichronicles</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.8c3ca2c6.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#architecture" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="aichronicles" class="md-header__button md-logo" aria-label="aichronicles" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            aichronicles
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Architecture
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/toabctl/aichronicles" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.6.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="aichronicles" class="md-nav__button md-logo" aria-label="aichronicles" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    aichronicles
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/toabctl/aichronicles" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.6.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/getting-started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Get started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/first-summary/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Your first summary
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CLI
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/schema/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Schema
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/redaction-detectors/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Detectors
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    Architecture
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    Architecture
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#process-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Process model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#package-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      Package map
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Package map">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dependency-direction" class="md-nav__link">
+    <span class="md-ellipsis">
+      Dependency direction
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Schema">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-these-five-tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why these five tables
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cascade-rules-in-plain-language" class="md-nav__link">
+    <span class="md-ellipsis">
+      Cascade rules, in plain language
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#migrations" class="md-nav__link">
+    <span class="md-ellipsis">
+      Migrations
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#llm-provider-abstraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      LLM provider abstraction
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mcp-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      MCP server
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trust-boundaries-in-code-terms" class="md-nav__link">
+    <span class="md-ellipsis">
+      Trust boundaries (in code terms)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related" class="md-nav__link">
+    <span class="md-ellipsis">
+      Related
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../data-flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Data flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../threat-model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Threat model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#process-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Process model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#package-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      Package map
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Package map">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dependency-direction" class="md-nav__link">
+    <span class="md-ellipsis">
+      Dependency direction
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Schema">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-these-five-tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why these five tables
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cascade-rules-in-plain-language" class="md-nav__link">
+    <span class="md-ellipsis">
+      Cascade rules, in plain language
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#migrations" class="md-nav__link">
+    <span class="md-ellipsis">
+      Migrations
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#llm-provider-abstraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      LLM provider abstraction
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mcp-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      MCP server
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trust-boundaries-in-code-terms" class="md-nav__link">
+    <span class="md-ellipsis">
+      Trust boundaries (in code terms)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related" class="md-nav__link">
+    <span class="md-ellipsis">
+      Related
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+    <a href="https://github.com/toabctl/aichronicles/edit/main/docs/explanation/architecture.md" title="Edit this page" class="md-content__button md-icon">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h1>
+<p>This page is the map you read when you're about to change code, or
+when something doesn't make sense and you want to understand why
+it's shaped the way it is. It complements
+<a href="../data-flow/">data-flow.md</a> (the dynamic view) with the static
+view: what packages exist, what they depend on, what the schema
+looks like, and which design decisions are load-bearing.</p>
+<p>For the high-level system overview (the Mermaid component diagram
+showing process boundaries), see the <a href="../../README.md">README</a>. It's
+linked here intentionally — that diagram is the canonical "what are
+the moving parts," and duplicating it here would just guarantee
+they drift.</p>
+<h2 id="process-model">Process model<a class="headerlink" href="#process-model" title="Permanent link">&para;</a></h2>
+<p>aichronicles ships <strong>two binaries plus one CLI multiplexer</strong>, each
+mapping to a distinct lifecycle:</p>
+<table>
+<thead>
+<tr>
+<th>Binary</th>
+<th>Process kind</th>
+<th>Lifecycle</th>
+<th>Owns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>aichroniclesd</code></td>
+<td>Long-running daemon</td>
+<td>systemd <code>--user</code> unit, socket-activated</td>
+<td>The HTTP server, the writeable handle to the SQLite store</td>
+</tr>
+<tr>
+<td><code>aichronicles ingest</code></td>
+<td>Short-lived subprocess</td>
+<td>Forked per Claude Code hook event</td>
+<td>One envelope's worth of edge redaction + one POST to the daemon</td>
+</tr>
+<tr>
+<td><code>aichronicles &lt;other&gt;</code></td>
+<td>Short-lived subprocess</td>
+<td>Forked per user command</td>
+<td>Read paths (<code>sessions</code>, <code>search</code>, <code>summaries</code>), import paths, summarize/reflect/propose, MCP server (<code>mcp-serve</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>Why the split:</p>
+<ul>
+<li>The daemon owns the <strong>write path</strong> to SQLite. Centralizing writes
+  in one process means we don't need cross-process coordination for
+  the <code>ingest_seq</code> counter or the FTS5 trigger machinery — SQLite's
+  WAL handles concurrency, but the daemon serializes the writes
+  that matter.</li>
+<li>The ingest CLI is <strong>fire-and-forget</strong> by design. A wedged daemon
+  can never block a Claude Code hook; the CLI exits 0 even on
+  POST failures, logging structured warnings to stderr. The hook
+  contract demands this.</li>
+<li>The other CLIs are <strong>read-mostly</strong>. They open the same SQLite
+  file in read mode (with a few exceptions like <code>import-*</code>,
+  <code>scrub</code>, <code>summarize</code>'s <code>llm_outputs</code> write). WAL mode tolerates
+  concurrent readers during writes, so they don't conflict with
+  the live daemon.</li>
+</ul>
+<h2 id="package-map">Package map<a class="headerlink" href="#package-map" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>cmd/
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  aichronicles/         CLI multiplexer entrypoint
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  aichroniclesd/        daemon entrypoint
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>internal/
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>  cli/                  cobra subcommands (the user-facing surface)
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    summarize.go        ┐ each subcommand a small file; tests
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    reflect.go          ├ alongside; llm_render.go shared by all
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    propose.go          │ three for terminal vs --json output
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    summaries.go        ┘
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    ingest.go           the hook subprocess body
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    setup.go, teardown.go         systemd + Claude Code wiring
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    import_claude.go, import_jsonl.go    backfill paths
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    audit.go, scrub.go            redaction inspection
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    search.go, sessions.go        FTS + listing
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    mcp_serve.go                  the MCP host
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>  daemon/               HTTP server + UDS listener
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>  store/                SQLite layer (one file per concern)
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>    migrations/         embedded *.sql, ordered by NNN_ prefix
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>  ingest/               on-the-wire Envelope schema; validation
+</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    extract/            URL/file-path/shell-command pullers
+</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>  redact/               detector library + scanner combinators
+</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>  llm/                  provider-neutral interface
+</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>    config.go           Provider / Config / FromConfig switchboard
+</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>    anthropic.go        adapter using anthropic-sdk-go
+</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>    openai.go           adapter using openai-go
+</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>    prompts/            BuildSummary / BuildReflect / BuildPropose
+</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>  mcp/                  MCP JSON-RPC server + tools_aichronicles
+</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>  config/               TOML config (Notifications, Capture, LLM)
+</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>  paths/                XDG resolution (StorePath, Socket, ConfigFile)
+</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>  notify/               freedesktop notifications via dbus
+</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>
+</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>api/
+</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>  openapi.yaml          authoritative spec for /v1/ingest, /v1/healthz
+</span><span id="__span-0-36"><a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>
+</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>integration/            //go:build integration tests
+</span></code></pre></div>
+<p>A few non-obvious choices:</p>
+<ul>
+<li><strong><code>internal/ingest</code> (the envelope) is separate from <code>internal/cli/
+  ingest.go</code> (the hook subprocess body).</strong> The first is the on-the-
+  wire schema shared by every importer and the daemon; the second
+  is the cobra command. They couple at the type level but live in
+  different layers.</li>
+<li><strong><code>internal/llm/prompts</code> lives under <code>llm/</code>.</strong> It's tightly
+  coupled to <code>llm.Tool</code> and <code>llm.Request</code>; promoting it to a
+  sibling would create an import cycle.</li>
+<li><strong><code>api/openapi.yaml</code> is the source of truth, not the Go types.</strong>
+  The daemon enforces field constraints via <code>ingest.Envelope.Validate</code>
+  in Go, but third-party agents reading the contract should target
+  the YAML. The two are kept in lockstep; the test suite has a
+  parser that catches drift.</li>
+</ul>
+<h3 id="dependency-direction">Dependency direction<a class="headerlink" href="#dependency-direction" title="Permanent link">&para;</a></h3>
+<p>The arrow is "imports":</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>cli  ──▶  daemon, store, ingest, redact, llm, llm/prompts, mcp, config, paths, notify
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>daemon  ──▶  store, ingest
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>mcp  ──▶  store, redact
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>llm  ──▶  redact (egress scrub)
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>llm/prompts  ──▶  llm, redact, store
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>store  ──▶  ingest, ingest/extract
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>ingest  ──▶  (no internal deps)
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>redact  ──▶  (no internal deps)
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>config  ──▶  paths
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>paths, notify  ──▶  (no internal deps)
+</span></code></pre></div>
+<p><code>cli</code> is the heaviest importer; everything that ends in user-facing
+output flows through it. <code>redact</code> is at the bottom — provider-
+neutral, dependency-free, used by everyone who handles user content.</p>
+<p>The strict directionality is enforced by Go's package rules; there
+are no cycles, no exceptions.</p>
+<h2 id="schema">Schema<a class="headerlink" href="#schema" title="Permanent link">&para;</a></h2>
+<p>Five tables plus one FTS5 virtual table, all in a single SQLite file
+at <code>$XDG_STATE_HOME/aichronicles/store.db</code>.</p>
+<pre class="mermaid"><code>erDiagram
+    raw_envelopes ||--o{ events : "PK = event_id, ON DELETE CASCADE"
+    sessions      ||--o{ events : "session_id, ON DELETE CASCADE"
+    events        ||--o{ extractions : "event_id, ON DELETE CASCADE"
+    sessions      ||--o{ extractions : "session_id, ON DELETE CASCADE"
+    sessions      ||--o{ llm_outputs : "session_id, ON DELETE SET NULL"
+
+    raw_envelopes {
+        TEXT    event_id PK
+        INTEGER ingest_seq UK
+        TEXT    source_agent
+        TEXT    source_session_id
+        INTEGER ts_source_ms
+        INTEGER ts_server_ms
+        TEXT    envelope_json
+    }
+    sessions {
+        TEXT    id PK
+        TEXT    source_agent
+        TEXT    source_session_id
+        TEXT    cwd
+        INTEGER started_at_ms
+        INTEGER ended_at_ms
+        INTEGER event_count
+    }
+    events {
+        TEXT    event_id PK
+        TEXT    session_id FK
+        TEXT    source_agent
+        TEXT    kind
+        TEXT    role
+        INTEGER ts_source_ms
+        TEXT    cwd
+        TEXT    tool_name
+        TEXT    tool_call_id
+        TEXT    content_text
+    }
+    extractions {
+        INTEGER id PK
+        TEXT    event_id FK
+        TEXT    session_id FK
+        TEXT    kind
+        TEXT    value
+        TEXT    extra_json
+    }
+    llm_outputs {
+        INTEGER id PK
+        TEXT    session_id FK
+        TEXT    kind
+        TEXT    model
+        TEXT    prompt_hash
+        INTEGER input_tokens
+        INTEGER output_tokens
+        TEXT    body
+        INTEGER created_at_ms
+    }</code></pre>
+<p>Plus an FTS5 virtual table <code>events_fts</code> indexing
+<code>events.content_text</code>, with <code>AFTER INSERT/UPDATE/DELETE</code> triggers
+keeping it in sync. Source: <code>internal/store/migrations/001_initial.sql:62-78</code>.</p>
+<h3 id="why-these-five-tables">Why these five tables<a class="headerlink" href="#why-these-five-tables" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>raw_envelopes</code> is sacred.</strong> Every accepted envelope is stored
+  byte-for-byte in <code>envelope_json</code> <em>before</em> any projection. If our
+  schema or extraction logic ever changes, we replay from
+  <code>raw_envelopes</code> rather than re-asking Claude Code for the data.
+  This is the source-of-truth invariant; tests in
+  <code>store/ingest_test.go</code> enforce that the stored bytes equal the
+  POST body.</li>
+<li><strong><code>sessions</code> is a derived rollup.</strong> Created on first event for a
+  session, then maintained by an <code>AFTER INSERT ON events</code> trigger
+  that bumps <code>event_count</code>, <code>started_at_ms</code> (min), <code>ended_at_ms</code>
+  (max), and <code>cwd</code> (last-write-wins). Listed by <code>aichronicles
+  sessions</code>.</li>
+<li><strong><code>events</code> is the queryable projection.</strong> Typed columns extracted
+  from the envelope JSON: <code>kind</code>, <code>role</code>, <code>tool_name</code>,
+  <code>content_text</code>. FTS5 indexes <code>content_text</code>. This is what
+  <code>aichronicles search</code> queries against.</li>
+<li><strong><code>extractions</code> is the typed-fact layer.</strong> URLs, file paths, and
+  shell commands pulled out of envelope content at ingest time by
+  <code>internal/ingest/extract</code>. Discriminated by <code>kind</code>. The Block-B
+  features feed <code>kind='url'</code> rows back into prompts so the LLM
+  annotates real links rather than hallucinating new ones.</li>
+<li><strong><code>llm_outputs</code> is the LLM-output cache.</strong> Indexed by
+  <code>(kind, prompt_hash)</code> — same prompt = cache hit, no API call,
+  no token charge. <code>session_id</code> is <code>ON DELETE SET NULL</code> so
+  deleting a session preserves the summary as a historical record
+  (just detached).</li>
+</ul>
+<h3 id="cascade-rules-in-plain-language">Cascade rules, in plain language<a class="headerlink" href="#cascade-rules-in-plain-language" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Delete a <code>raw_envelope</code> → its <code>event</code> cascades, which cascades to
+  its <code>extractions</code>. Clean.</li>
+<li>Delete a <code>session</code> → all its events, extractions, AND raw
+  envelopes (via the events FK back to raw) cascade. The session's
+  LLM outputs get <code>session_id</code> nulled but otherwise survive.</li>
+<li>Delete an LLM output → standalone; nothing else cares.</li>
+</ul>
+<p>The "delete a session removes everything" path matters because
+<code>aichronicles teardown</code> and <code>aichronicles scrub</code> both rely on it.</p>
+<h2 id="migrations">Migrations<a class="headerlink" href="#migrations" title="Permanent link">&para;</a></h2>
+<p>Schema migrations are embedded SQL files under
+<code>internal/store/migrations/NNN_description.sql</code>. Versioned via the
+<code>meta</code> table's <code>schema_version</code> row. Each migration runs in a single
+transaction; partial application is impossible. Migration runner
+lives in <code>internal/store/migrate.go</code>.</p>
+<p>Three migrations live in the tree today:
+- <code>001_initial.sql</code> — the five tables + FTS5.
+- <code>002_llm_outputs.sql</code> — adds the <code>llm_outputs</code> table.
+- <code>003_sessions_effective_ts_index.sql</code> — expression index on
+  <code>COALESCE(ended_at_ms, started_at_ms, 0) DESC</code> for the
+  time-window queries in <code>sessions</code> and <code>summaries list</code>.</p>
+<p>Adding a new migration: drop a <code>004_*.sql</code> file, bump the meta
+update at the bottom (<code>UPDATE meta SET value='4' WHERE
+key='schema_version'</code>), update the <code>TestOpen_FreshCreatesSchema</code>
+expectation. The runner handles the rest.</p>
+<h2 id="llm-provider-abstraction">LLM provider abstraction<a class="headerlink" href="#llm-provider-abstraction" title="Permanent link">&para;</a></h2>
+<p>Two adapters — <code>internal/llm/anthropic.go</code> and <code>internal/llm/openai.go</code>
+— behind one provider-neutral interface (<code>Client.Complete(ctx, Request)
+*Response</code>). Both wrap official vendor SDKs:</p>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Anthropic adapter</th>
+<th>OpenAI adapter</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SDK</td>
+<td><code>github.com/anthropics/anthropic-sdk-go</code></td>
+<td><code>github.com/openai/openai-go</code></td>
+</tr>
+<tr>
+<td>System prompt</td>
+<td>TextBlockParam with cache_control: ephemeral</td>
+<td>First message with <code>role: system</code></td>
+</tr>
+<tr>
+<td>Forced tool</td>
+<td><code>tool_choice={type:"tool",name:...}</code></td>
+<td><code>tool_choice={type:"function",function:{name:...}}</code></td>
+</tr>
+<tr>
+<td>Strict schema</td>
+<td>Inherent</td>
+<td><code>strict: true</code> on the function definition</td>
+</tr>
+<tr>
+<td>Retries</td>
+<td>SDK <code>option.WithMaxRetries</code></td>
+<td>SDK <code>option.WithMaxRetries</code></td>
+</tr>
+<tr>
+<td>Default model</td>
+<td><code>claude-sonnet-4-6</code></td>
+<td><code>gpt-4o-mini</code></td>
+</tr>
+</tbody>
+</table>
+<p>The adapters translate <code>llm.Request</code> ↔ SDK params on the way in,
+and SDK response ↔ <code>llm.Response</code> on the way out. Tool input
+schemas (raw <code>json.RawMessage</code> on our side) are mapped into typed
+SDK structs. Tool-call output (typed object on Anthropic, JSON
+string on OpenAI) is normalized to <code>json.RawMessage</code> so callers
+unmarshal into the same <code>*Result</code> types either way.</p>
+<p>The <code>prompt_hash</code> used for the <code>llm_outputs</code> cache is computed on
+the provider-neutral <code>Request</code>, so switching providers does not
+invalidate the cache for prompts that haven't actually changed.</p>
+<p>For the why-and-how of switching providers, see
+<a href="../how-to/switch-providers.md">../how-to/switch-providers.md</a>.</p>
+<h2 id="mcp-server">MCP server<a class="headerlink" href="#mcp-server" title="Permanent link">&para;</a></h2>
+<p><code>aichronicles mcp-serve</code> is a stdio-attached JSON-RPC 2.0 server
+implementing a minimal subset of the <a href="https://modelcontextprotocol.io">Model Context
+Protocol</a>. It registers three
+read-only tools:</p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>search_events</code></td>
+<td>FTS5 query against <code>events.content_text</code>, deduped by (session, role, kind, content)</td>
+</tr>
+<tr>
+<td><code>list_sessions</code></td>
+<td>Recent sessions filtered by cwd / time window</td>
+</tr>
+<tr>
+<td><code>get_summary</code></td>
+<td>Latest <code>llm_outputs</code> body for a (session, kind) pair</td>
+</tr>
+</tbody>
+</table>
+<p>All three accept session-id prefixes (resolved via
+<code>store.ResolveSessionIDPrefix</code>). Output is rendered verbatim from
+the store: ingest is the single point of redaction truth, and
+re-scanning every byte on every read was removed in favour of
+the explicit <code>aichronicles scrub</code> operational primitive when the
+detector set changes. See the "Ingest is the single point of
+redaction truth" section in
+<a href="../threat-model/"><code>threat-model.md</code></a> for the full rationale.</p>
+<p>We deliberately do not depend on an external MCP SDK. The
+protocol surface we use is small and stable, and keeping it
+self-contained matches the rest of the tree's tight dependency
+posture. Source: <code>internal/mcp/mcp.go:1-13</code> for the rationale.</p>
+<h2 id="trust-boundaries-in-code-terms">Trust boundaries (in code terms)<a class="headerlink" href="#trust-boundaries-in-code-terms" title="Permanent link">&para;</a></h2>
+<p>The threat model page describes trust boundaries narratively. Here's
+where they're enforced in code:</p>
+<ul>
+<li><strong>Edge redaction (hook write path):</strong> <code>internal/cli/ingest.go:94</code>,
+  <code>ingest.ApplyRedaction(&amp;env, redact.Default())</code>.</li>
+<li><strong>Daemon refusal (hook write path):</strong> <code>internal/daemon/server.go:123</code>,
+  rejects envelopes where <code>Redaction.Applied != true</code> with HTTP 400.</li>
+<li><strong>Store enforcement, envelopes (hook write path):</strong>
+  <code>internal/store/ingest.go:36-38</code>, returns <code>ErrRedactionRequired</code>
+  even for callers that bypass the daemon.</li>
+<li><strong>Store enforcement, LLM outputs (LLM-response write path):</strong>
+  <code>internal/store/llm_outputs.go:SaveLLMOutput</code>, scrubs the body
+  through <code>redact.Outbound</code> before insertion. The edge redactor
+  never sees an LLM response — it doesn't go through /v1/ingest
+  — so the store is the enforcement point.</li>
+<li><strong>LLM-egress redaction (outbound network):</strong> prompt builders in
+  <code>pkg/llm/prompts/prompts.go</code> route every user-content string
+  through <code>redact.Outbound</code> before composing the user message.
+  Different threat model from the local read paths (MCP, CLI,
+  web): this layer protects content crossing to a third-party LLM
+  provider over HTTPS.</li>
+<li><strong>API error scrub:</strong> <code>pkg/llm/anthropic.go:scrubAnthropicError</code>
+  and <code>pkg/llm/openai.go:scrubOpenAIError</code>.</li>
+<li><strong>Config-file mode check:</strong> <code>internal/config/config.go:LoadFrom</code>,
+  refuses 0644-or-permissive files when any provider has
+  <code>api_key_command</code> set.</li>
+</ul>
+<h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../data-flow/">Data flow</a> — sequence diagrams for ingest and summarize.</li>
+<li><a href="../threat-model/">Threat model</a> — what this all defends and what it doesn't.</li>
+<li><a href="redaction-design.md">Redaction design</a> — TODO; the why behind credentials-only,
+  the layering rationale, the regex choices.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.path", "toc.follow", "content.code.copy", "content.code.annotate", "content.action.edit", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.525ec568.min.js"></script>
+      
+    
+  </body>
+</html>
