@@ -1,10 +1,11 @@
 site_name: aichronicles
 site_description: Capture your AI coding sessions, locally, with secrets scrubbed before they hit disk.
 site_author: Thomas Bechtold
-# repo_url and edit_uri get filled in once the repo lives on GitHub.
-# Pages still renders without them; the "Edit on GitHub" link just stays hidden.
-# repo_url: https://github.com/toabctl/aichronicles
-# edit_uri: edit/main/docs/
+# Wires up "Edit on GitHub" links on every page. Material theme reads
+# both: repo_url renders the icon in the header; edit_uri renders the
+# "edit" pencil over each page.
+repo_url: https://github.com/toabctl/aichronicles
+edit_uri: edit/main/docs/
 
 theme:
   name: material
