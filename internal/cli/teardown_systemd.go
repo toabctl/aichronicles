@@ -15,10 +15,11 @@ func newTeardownSystemdCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "systemd",
 		Short: "Remove aichronicles systemd --user units",
-		Long: "Disables + stops aichronicles.socket and aichronicles.service,\n" +
-			"deletes the unit files from ~/.config/systemd/user/, and reloads\n" +
-			"the user manager. Idempotent: running when nothing is installed\n" +
-			"is a no-op.\n\n" +
+		Long: "Disables + stops both unit pairs (aichronicles.socket /\n" +
+			".service for the daemon; aichronicles-web.socket / .service\n" +
+			"for the web UI), deletes the unit files from\n" +
+			"~/.config/systemd/user/, and reloads the user manager.\n" +
+			"Idempotent: running when nothing is installed is a no-op.\n\n" +
 			"Runs in dry-run mode by default: it reports what would be\n" +
 			"disabled and deleted without invoking systemctl or removing\n" +
 			"files. Pass --yes to actually remove.",

@@ -1,0 +1,14 @@
+[Unit]
+Description=aichronicles web UI socket
+
+[Socket]
+# Loopback-only TCP. The web server has no auth; the bind boundary
+# is the trust model (same shape as the daemon's 0600 UDS). Pick the
+# same default port the `aichronicles web` CLI uses so muscle memory
+# survives the migration to socket activation.
+ListenStream=127.0.0.1:7878
+# Accept=no (default) hands the listening fd to one long-lived
+# service instance; we don't want a service-per-connection.
+
+[Install]
+WantedBy=sockets.target

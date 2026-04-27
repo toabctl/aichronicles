@@ -18,12 +18,36 @@ var systemdSocketUnit []byte
 //go:embed assets/aichronicles.service
 var systemdServiceUnit []byte
 
-// unitFilenames lists the two systemd --user units aichronicles owns,
-// in dependency order (socket before service so a partial install
-// lands in a functional state).
+//go:embed assets/aichronicles-web.socket
+var systemdWebSocketUnit []byte
+
+//go:embed assets/aichronicles-web.service
+var systemdWebServiceUnit []byte
+
+// unitFilenames lists the systemd --user units aichronicles owns,
+// in dependency order (socket before its service so a partial
+// install lands in a functional state). Two pairs:
+//
+//   - aichronicles.socket / .service      — the ingest daemon (UDS,
+//     long-lived under default.target)
+//   - aichronicles-web.socket / .service  — the web UI (TCP loopback,
+//     socket-activated and idle-shutdown after 5 min of no traffic)
+//
+// Both are enabled together by `aichronicles setup systemd` and
+// removed together by `aichronicles teardown systemd`.
 var unitFilenames = []string{
 	"aichronicles.socket",
 	"aichronicles.service",
+	"aichronicles-web.socket",
+	"aichronicles-web.service",
+}
+
+// activatedSockets lists every .socket unit setup enables. Kept
+// separate from unitFilenames so the enable loop doesn't try to
+// `enable` plain .service units (only sockets and timers want it).
+var activatedSockets = []string{
+	"aichronicles.socket",
+	"aichronicles-web.socket",
 }
 
 func newSetupSystemdCmd() *cobra.Command {
@@ -31,11 +55,17 @@ func newSetupSystemdCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "systemd",
 		Short: "Install socket-activated systemd --user units",
-		Long: "Writes aichronicles.socket and aichronicles.service into\n" +
+		Long: "Writes the daemon and web-UI unit pairs into\n" +
 			"~/.config/systemd/user/, reloads the user manager, and enables\n" +
-			"the socket so aichroniclesd starts on demand when a hook\n" +
-			"connects. The service unit expects `aichroniclesd` to be\n" +
-			"discoverable on systemd's user manager PATH.\n\n" +
+			"both sockets so the matching service starts on demand when\n" +
+			"someone connects:\n\n" +
+			"  - aichronicles.socket        UDS for hook ingest\n" +
+			"  - aichronicles.service       the long-lived ingest daemon\n" +
+			"  - aichronicles-web.socket    TCP 127.0.0.1:7878 for the web UI\n" +
+			"  - aichronicles-web.service   web UI; idle-shutdown after 5m\n\n" +
+			"The service units expect `aichronicles` and `aichroniclesd`\n" +
+			"to be discoverable on systemd's user manager PATH (~/.local/bin\n" +
+			"by default, via `make install`).\n\n" +
 			"Requires `systemctl` on PATH. Idempotent.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			dir := unitDir
@@ -103,7 +133,11 @@ func InstallSystemdUnits(unitDir string, runner SystemctlRunner) (string, error)
 	if err := runner("daemon-reload"); err != nil {
 		return "", err
 	}
-	if err := runner("enable", "--now", "aichronicles.socket"); err != nil {
+	// Enable both sockets in one call so systemd's reload sees a
+	// consistent target state. enable --now is idempotent; running
+	// again is a cheap no-op when the units are already enabled.
+	enableArgs := append([]string{"enable", "--now"}, activatedSockets...)
+	if err := runner(enableArgs...); err != nil {
 		return "", err
 	}
 
@@ -119,6 +153,10 @@ func unitContent(name string) []byte {
 		return systemdSocketUnit
 	case "aichronicles.service":
 		return systemdServiceUnit
+	case "aichronicles-web.socket":
+		return systemdWebSocketUnit
+	case "aichronicles-web.service":
+		return systemdWebServiceUnit
 	default:
 		panic("unknown unit: " + name)
 	}
@@ -200,6 +238,6 @@ func formatSystemdSetupReport(unitDir string, written []string) string {
 		}
 	}
 	fmt.Fprint(&b, "reloaded systemd user manager\n")
-	fmt.Fprint(&b, "enabled + started aichronicles.socket")
+	fmt.Fprintf(&b, "enabled + started %s", strings.Join(activatedSockets, ", "))
 	return b.String()
 }

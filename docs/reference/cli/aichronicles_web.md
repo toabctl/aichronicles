@@ -15,6 +15,13 @@ a non-loopback address surfaces a startup warning. The server
 has no authentication; the localhost-only boundary is the
 trust model, mirroring the daemon's 0600 UDS.
 
+Socket activation: when launched by systemd via
+aichronicles-web.socket (LISTEN_FDS in env), the server
+adopts the inherited fd, ignores --bind/--port, and enables
+idle auto-shutdown (default 5m of zero connections) so the
+service exits between bursts and the .socket unit relaunches
+it on the next request.
+
 ```
 aichronicles web [flags]
 ```
@@ -22,10 +29,11 @@ aichronicles web [flags]
 ### Options
 
 ```
-      --bind string   address to listen on (loopback by default; set to 0.0.0.0 for LAN access) (default "127.0.0.1")
-      --db string     SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
-  -h, --help          help for web
-      --port int      port to listen on (default 7878)
+      --bind string             address to listen on (loopback by default; set to 0.0.0.0 for LAN access; ignored under systemd socket activation) (default "127.0.0.1")
+      --db string               SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
+  -h, --help                    help for web
+      --idle-timeout duration   shut down after this long with zero open connections (0 = no auto-shutdown when launched directly; defaults to 5m under systemd socket activation)
+      --port int                port to listen on (ignored under systemd socket activation) (default 7878)
 ```
 
 ### SEE ALSO

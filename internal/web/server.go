@@ -73,6 +73,20 @@ type Config struct {
 	// after Run's ctx is cancelled. 5 s is plenty for the read
 	// paths this server exposes.
 	ShutdownTimeout time.Duration
+
+	// IdleTimeout, when > 0, exits the server cleanly once it has
+	// had zero open connections for that long. Designed for
+	// systemd socket activation: the .socket unit stays listening,
+	// so the next request after exit spins the service back up.
+	// Set automatically when the cmd-layer detects LISTEN_FDS;
+	// zero (the default) disables idle-shutdown so `aichronicles
+	// web` from a terminal stays up forever.
+	//
+	// SSE handlers stay in StateActive for the life of the stream,
+	// so a tab actively rendering the livefeed pins the connection
+	// count above zero — idle == "no browser tabs", not "user
+	// stopped clicking".
+	IdleTimeout time.Duration
 }
 
 // Server is one running web instance. Constructed via NewServer,
@@ -247,10 +261,19 @@ func (s *Server) Addr() string {
 	return fmt.Sprintf("%s:%d", s.cfg.Bind, s.cfg.Port)
 }
 
-// Run starts the HTTP server and blocks until ctx is cancelled or
-// the server errors out. ctx cancellation triggers a graceful
-// shutdown bounded by Config.ShutdownTimeout.
+// Run starts the HTTP server and blocks until ctx is cancelled, the
+// idle timeout fires, or the server errors out. Cancellation /
+// idle-fire triggers a graceful shutdown bounded by
+// Config.ShutdownTimeout.
 func (s *Server) Run(ctx context.Context) error {
+	// Idle-shutdown: when configured, install a tracker that fires
+	// onIdle once no connection has been open for IdleTimeout. fire
+	// cancels the derived ctx, so the shutdown path is the same as
+	// SIGTERM — Drains in-flight, runs ShutdownTimeout, exits clean.
+	tracker := newIdleTracker(s.cfg.IdleTimeout, nil)
+	derivedCtx, stopIdle := idleShutdownContext(ctx, tracker)
+	defer stopIdle()
+
 	srv := &http.Server{
 		Handler: s.mux,
 		// Read/Write timeouts protect against slow-loris-style
@@ -263,7 +286,10 @@ func (s *Server) Run(ctx context.Context) error {
 		// immediately. Without this, http.Server.Shutdown blocks
 		// for the full ShutdownTimeout because Shutdown only
 		// stops new connections; it doesn't cancel handlers.
-		BaseContext: func(_ net.Listener) context.Context { return ctx },
+		BaseContext: func(_ net.Listener) context.Context { return derivedCtx },
+		// ConnState wires connection lifecycle into the idle tracker.
+		// Cheap; runs per-conn-state-transition.
+		ConnState: tracker.trackConn,
 	}
 
 	ln := s.cfg.Listener
@@ -277,7 +303,8 @@ func (s *Server) Run(ctx context.Context) error {
 
 	s.log.Info("aichronicles web listening",
 		"addr", ln.Addr().String(),
-		"public", isPublicBind(s.cfg.Bind))
+		"public", isPublicBind(s.cfg.Bind),
+		"idle_timeout", s.cfg.IdleTimeout)
 
 	serveErr := make(chan error, 1)
 	go func() {
@@ -289,7 +316,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}()
 
 	select {
-	case <-ctx.Done():
+	case <-derivedCtx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.cfg.ShutdownTimeout)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {

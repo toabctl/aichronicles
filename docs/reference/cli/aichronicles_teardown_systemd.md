@@ -4,10 +4,11 @@ Remove aichronicles systemd --user units
 
 ### Synopsis
 
-Disables + stops aichronicles.socket and aichronicles.service,
-deletes the unit files from ~/.config/systemd/user/, and reloads
-the user manager. Idempotent: running when nothing is installed
-is a no-op.
+Disables + stops both unit pairs (aichronicles.socket /
+.service for the daemon; aichronicles-web.socket / .service
+for the web UI), deletes the unit files from
+~/.config/systemd/user/, and reloads the user manager.
+Idempotent: running when nothing is installed is a no-op.
 
 Runs in dry-run mode by default: it reports what would be
 disabled and deleted without invoking systemctl or removing

@@ -63,8 +63,9 @@ func TestInstallSystemdUnits_RunsDaemonReloadAndEnable(t *testing.T) {
 	if got := strings.Join(r.calls[0], " "); got != "daemon-reload" {
 		t.Errorf("first call: got %q, want daemon-reload", got)
 	}
-	if got := strings.Join(r.calls[1], " "); got != "enable --now aichronicles.socket" {
-		t.Errorf("second call: got %q, want enable --now aichronicles.socket", got)
+	wantEnable := "enable --now aichronicles.socket aichronicles-web.socket"
+	if got := strings.Join(r.calls[1], " "); got != wantEnable {
+		t.Errorf("second call: got %q, want %q", got, wantEnable)
 	}
 }
 

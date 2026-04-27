@@ -1,0 +1,27 @@
+[Unit]
+Description=aichronicles web UI
+Requires=aichronicles-web.socket
+After=aichronicles-web.socket
+
+[Service]
+# Reference the binary by absolute path via %h: systemd's spawned-
+# service environment does not reliably inherit the user manager's
+# PATH, and we ship the CLI into ~/.local/bin per XDG convention.
+ExecStart=%h/.local/bin/aichronicles web
+
+# Type=simple is enough — the web server is read-only, has no
+# external dependencies it needs to declare ready, and inherits the
+# listening fd from systemd so it's ready to accept the moment Run
+# starts. No sd_notify required.
+Type=simple
+
+# Restart=no is deliberate: when the service exits cleanly (idle
+# timeout fires after 5 min of no connections), we want it to STAY
+# DOWN until the socket activator brings it back on the next
+# request. Restart=on-success would loop the service immediately,
+# defeating the auto-shutdown.
+Restart=no
+
+[Install]
+# No WantedBy — the socket unit handles activation. The service
+# launches lazily on first connect to the socket.
