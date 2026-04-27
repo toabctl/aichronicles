@@ -1,0 +1,93 @@
+{{define "content"}}
+<hgroup>
+  <h1>Weekly digests</h1>
+  <p>Cached <code>reflect_weekly</code> artefacts. Each card is a
+     model-written rollup of one week's recurring task patterns and
+     frictions, persisted in <code>llm_outputs</code> and produced by
+     <code>aichronicles digest weekly</code> (run by the systemd
+     timer every Monday morning).</p>
+</hgroup>
+
+{{if .Digests}}
+{{range .Digests}}
+<article class="digest-card">
+  <header>
+    <h2>{{if .Period}}{{.Period}}{{else}}digest #{{.ID}}{{end}}</h2>
+    <small class="digest-meta">
+      generated {{.Generated}}
+      <span title="{{.GeneratedAt}}">·</span>
+      model <code>{{.Model}}</code>
+      · <a href="/digests?limit={{$.Limit}}#digest-{{.ID}}" class="muted">id {{.ID}}</a>
+    </small>
+  </header>
+
+  {{if .RawBody}}
+  {{/* Envelope didn't parse — older shape or hand-edited row.
+       Surface the raw JSON so the user can see what's there
+       rather than a blank card. */}}
+  <details>
+    <summary class="muted">unparseable envelope — show raw body</summary>
+    <pre><code>{{.RawBody}}</code></pre>
+  </details>
+  {{else}}
+
+  {{if .WorkflowChange}}
+  <p class="workflow-change"><strong>Workflow change:</strong> {{.WorkflowChange}}</p>
+  {{end}}
+
+  {{if .TaskTypes}}
+  <details open>
+    <summary><strong>Task patterns</strong> <small>({{len .TaskTypes}})</small></summary>
+    {{range .TaskTypes}}
+    <div class="digest-block">
+      <h3>{{.Label}} <small class="muted">×{{.Frequency}}</small></h3>
+      {{if .Evidence}}
+      <ul class="digest-evidence">
+        {{range .Evidence}}
+        <li>
+          <a href="/sessions/{{.SessionID}}" class="sid">{{.ShortID}}</a>
+          {{if .WhatHappened}}— {{.WhatHappened}}{{end}}
+          {{if .Quote}}<br><blockquote>{{.Quote}}</blockquote>{{end}}
+        </li>
+        {{end}}
+      </ul>
+      {{end}}
+    </div>
+    {{end}}
+  </details>
+  {{end}}
+
+  {{if .Frictions}}
+  <details open>
+    <summary><strong>Frictions</strong> <small>({{len .Frictions}})</small></summary>
+    {{range .Frictions}}
+    <div class="digest-block">
+      <h3>{{.Label}} <small class="muted">×{{.Frequency}} · {{.Severity}}</small></h3>
+      {{if .Evidence}}
+      <ul class="digest-evidence">
+        {{range .Evidence}}
+        <li>
+          <a href="/sessions/{{.SessionID}}" class="sid">{{.ShortID}}</a>
+          {{if .WhatHappened}}— {{.WhatHappened}}{{end}}
+          {{if .Quote}}<br><blockquote>{{.Quote}}</blockquote>{{end}}
+        </li>
+        {{end}}
+      </ul>
+      {{end}}
+    </div>
+    {{end}}
+  </details>
+  {{end}}
+
+  {{end}}{{/* end RawBody/parsed branch */}}
+</article>
+{{end}}
+{{else}}
+<article>
+  <p class="empty">No weekly digests yet — run
+     <code>aichronicles digest weekly</code> to create one
+     manually, or wait for the systemd timer (configured by
+     <code>aichronicles setup cron</code>) to fire on Monday morning.</p>
+</article>
+{{end}}
+{{end}}

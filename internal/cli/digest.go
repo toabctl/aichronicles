@@ -168,17 +168,13 @@ type DigestWeeklyOptions struct {
 	JSON        bool
 }
 
-// WeeklyDigestEnvelope is what we marshal into llm_outputs.body for
-// kind=reflect_weekly. The reflect result lands inside Result so a
-// reader can recover both the underlying analysis and the period
-// the digest covers without having to parse dates out of the
-// prompt. Stable JSON shape; the Period fields are RFC3339 strings
-// so they round-trip cleanly through JSON.
-type WeeklyDigestEnvelope struct {
-	PeriodStart string                    `json:"period_start"`
-	PeriodEnd   string                    `json:"period_end"`
-	Result      *prompts.ReflectionResult `json:"result"`
-}
+// WeeklyDigestEnvelope is a re-export of prompts.WeeklyDigestEnvelope
+// kept here for backwards compatibility with the in-package callers.
+// New callers (especially anything outside internal/cli) should
+// reference the canonical type in pkg/llm/prompts directly so that
+// the cli package doesn't accumulate import-cycle pressure when
+// other layers (web, mcp) need to read the persisted body shape.
+type WeeklyDigestEnvelope = prompts.WeeklyDigestEnvelope
 
 // RunDigestWeekly is the reusable entry point: builds the reflect
 // prompt over [PeriodStart, PeriodEnd), calls the LLM through the

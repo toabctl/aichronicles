@@ -97,6 +97,24 @@ type LinkAnnotation struct {
 	UsedFor string `json:"used_for"`
 }
 
+// WeeklyDigestEnvelope is what callers marshal into llm_outputs.body
+// for kind=reflect_weekly. The reflect result lands inside Result so
+// a reader can recover both the underlying analysis and the period
+// the digest covers without having to parse dates out of the prompt.
+// Stable JSON shape; the Period fields are RFC3339 strings so they
+// round-trip cleanly through JSON.
+//
+// Lives in this package (rather than internal/cli, where the digest
+// command does its work) so other layers — internal/web rendering
+// the /digests page, future MCP tools — can decode the persisted
+// body without dragging in the cli package and tripping import
+// cycles.
+type WeeklyDigestEnvelope struct {
+	PeriodStart string            `json:"period_start"`
+	PeriodEnd   string            `json:"period_end"`
+	Result      *ReflectionResult `json:"result"`
+}
+
 // ReflectionResult is the schema-validated payload of a
 // record_reflection tool call.
 type ReflectionResult struct {

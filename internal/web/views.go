@@ -259,6 +259,57 @@ type InsightsSessionRow struct {
 	FirstPrompt string
 }
 
+// DigestsPage drives /digests: cards of cached weekly reflection
+// artefacts (llm_outputs.kind = reflect_weekly), newest first.
+// One card per persisted digest; each card carries the analysed
+// week, the workflow_change one-liner, and collapsible sections
+// for task_types and frictions with linked evidence.
+type DigestsPage struct {
+	Title   string
+	Limit   int
+	Digests []DigestCard
+}
+
+// DigestCard is one rendered digest. Period / WorkflowChange /
+// TaskTypes / Frictions land when the persisted body parses;
+// RawBody holds the unparsed JSON when it doesn't, so a single
+// bad artifact doesn't break the whole page.
+type DigestCard struct {
+	ID             int64
+	Model          string
+	Generated      string // relative ("3d ago")
+	GeneratedAt    string // absolute UTC
+	Period         string // "Apr 14 – Apr 21, 2026"
+	WorkflowChange string
+	TaskTypes      []DigestTaskTypeRow
+	Frictions      []DigestFrictionRow
+	RawBody        string // populated when the envelope failed to parse
+}
+
+// DigestTaskTypeRow / DigestFrictionRow / DigestEvidenceRow mirror
+// the prompts.Reflection* shapes with display-ready helpers
+// (ShortID for evidence). Kept separate from prompts types so the
+// template stays free of method calls.
+type DigestTaskTypeRow struct {
+	Label     string
+	Frequency int
+	Evidence  []DigestEvidenceRow
+}
+
+type DigestFrictionRow struct {
+	Label     string
+	Frequency int
+	Severity  string
+	Evidence  []DigestEvidenceRow
+}
+
+type DigestEvidenceRow struct {
+	SessionID    string // full UUID — drives the /sessions/<id> link
+	ShortID      string // 8-char preview for display
+	Quote        string
+	WhatHappened string
+}
+
 // SearchPage is the data shape the /search full-page template
 // consumes. Most of the heavy lifting is done by the htmx
 // fragment endpoint at /search/hits, so this struct is mostly

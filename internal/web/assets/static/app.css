@@ -252,6 +252,45 @@ tr.nav-row:focus-visible {
   font-style: italic;
 }
 
+/* Digests page (/digests) — one <article> per cached
+   reflect_weekly row. Per-card metadata renders muted; the
+   evidence quotes get their own faint border so a wall of cards
+   stays scannable. Inheritance from Pico's <article> styling
+   covers the rest. */
+.digest-card .digest-meta {
+  color: var(--pico-muted-color);
+}
+.digest-card .workflow-change {
+  border-left: 3px solid var(--pico-primary);
+  padding: 0.25rem 0.75rem;
+  margin: 0.5rem 0;
+}
+.digest-card .digest-block {
+  margin: 0.5rem 0 0.75rem 0;
+}
+.digest-card .digest-block h3 {
+  font-size: 1rem;
+  margin: 0.25rem 0;
+}
+.digest-card ul.digest-evidence {
+  list-style: none;
+  padding-left: 0;
+  margin: 0.25rem 0;
+}
+.digest-card ul.digest-evidence li {
+  margin: 0.25rem 0;
+}
+.digest-card ul.digest-evidence blockquote {
+  margin: 0.25rem 0 0.25rem 1rem;
+  padding: 0.1rem 0.5rem;
+  border-left: 2px solid var(--pico-muted-border-color);
+  color: var(--pico-muted-color);
+  font-size: 0.9em;
+}
+.muted {
+  color: var(--pico-muted-color);
+}
+
 /* Sessions table — let the prompt cell breathe (it carries the
    first prompt + cwd + topic) and keep the timestamp column tight.
    The cwd is a sub-line of the prompt cell rather than its own
