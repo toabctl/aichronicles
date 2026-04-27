@@ -409,3 +409,141 @@ func TestLoadLatestEventsIndexedByID_OneSessionInLargeCohort(t *testing.T) {
 		t.Error("requested session should be present")
 	}
 }
+
+func TestLoadSessionsMissingSummary_ExcludesSessionsWithSummary(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	base := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+
+	// Three sessions in the window: A summarized, B and C missing.
+	seedEvents(t, s, "sess-A", 1, base)
+	seedEvents(t, s, "sess-B", 1, base.Add(time.Hour))
+	seedEvents(t, s, "sess-C", 1, base.Add(2*time.Hour))
+
+	idA := ingest.DeriveSessionID("claude-code", "sess-A")
+	withTx(t, s, func(tx *sql.Tx) {
+		out := &LLMOutput{
+			SessionID:   sql.NullString{String: idA, Valid: true},
+			Kind:        LLMKindSummary,
+			Model:       "test",
+			PromptHash:  "hash-A",
+			Body:        `{"topic":"A"}`,
+			CreatedAtMs: base.UnixMilli(),
+		}
+		if _, _, err := SaveLLMOutput(t.Context(), tx, out); err != nil {
+			t.Fatalf("seed summary: %v", err)
+		}
+	})
+
+	got, err := LoadSessionsMissingSummary(t.Context(), s.DB(),
+		base.Add(-time.Hour).UnixMilli(), SessionFilter{}, 0)
+	if err != nil {
+		t.Fatalf("LoadSessionsMissingSummary: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 missing-summary rows, got %d", len(got))
+	}
+	idB := ingest.DeriveSessionID("claude-code", "sess-B")
+	idC := ingest.DeriveSessionID("claude-code", "sess-C")
+	ids := map[string]bool{got[0].ID: true, got[1].ID: true}
+	if !ids[idB] || !ids[idC] {
+		t.Errorf("expected sess-B and sess-C in missing set, got %v", ids)
+	}
+	if ids[idA] {
+		t.Errorf("sess-A has a summary; should NOT appear in missing set")
+	}
+}
+
+func TestLoadSessionsMissingSummary_OrderingNewestFirst(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	base := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+
+	seedEvents(t, s, "old", 1, base)
+	seedEvents(t, s, "mid", 1, base.Add(time.Hour))
+	seedEvents(t, s, "new", 1, base.Add(2*time.Hour))
+
+	got, err := LoadSessionsMissingSummary(t.Context(), s.DB(),
+		base.Add(-time.Hour).UnixMilli(), SessionFilter{}, 0)
+	if err != nil {
+		t.Fatalf("LoadSessionsMissingSummary: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(got))
+	}
+	wantOrder := []string{
+		ingest.DeriveSessionID("claude-code", "new"),
+		ingest.DeriveSessionID("claude-code", "mid"),
+		ingest.DeriveSessionID("claude-code", "old"),
+	}
+	for i, want := range wantOrder {
+		if got[i].ID != want {
+			t.Errorf("row %d: got %s, want %s", i, got[i].ID, want)
+		}
+	}
+}
+
+func TestLoadSessionsMissingSummary_FilterByCwdAndAgent(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	base := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+
+	seedEvents(t, s, "in-cwd", 1, base)
+	seedEvents(t, s, "out-of-cwd", 1, base.Add(time.Hour))
+
+	// Tweak the cwd on one session to test the filter — seedEvents
+	// hardcodes "/work/<sessionKey>".
+	idIn := ingest.DeriveSessionID("claude-code", "in-cwd")
+	if _, err := s.DB().Exec(`UPDATE sessions SET cwd = ? WHERE id = ?`,
+		"/devel/target", idIn); err != nil {
+		t.Fatalf("set cwd: %v", err)
+	}
+
+	got, err := LoadSessionsMissingSummary(t.Context(), s.DB(),
+		base.Add(-time.Hour).UnixMilli(),
+		SessionFilter{Cwd: "/devel/target"}, 0)
+	if err != nil {
+		t.Fatalf("LoadSessionsMissingSummary: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("cwd filter: got %d rows, want 1", len(got))
+	}
+	if got[0].ID != idIn {
+		t.Errorf("got %s, want %s", got[0].ID, idIn)
+	}
+
+	// Agent filter — every fixture is "claude-code" so this should
+	// match everything in the window; a bogus agent should match
+	// nothing.
+	all, _ := LoadSessionsMissingSummary(t.Context(), s.DB(),
+		base.Add(-time.Hour).UnixMilli(),
+		SessionFilter{Agent: "claude-code"}, 0)
+	if len(all) != 2 {
+		t.Errorf("agent=claude-code: got %d, want 2", len(all))
+	}
+	none, _ := LoadSessionsMissingSummary(t.Context(), s.DB(),
+		base.Add(-time.Hour).UnixMilli(),
+		SessionFilter{Agent: "no-such-agent"}, 0)
+	if len(none) != 0 {
+		t.Errorf("bogus agent: got %d, want 0", len(none))
+	}
+}
+
+func TestLoadSessionsMissingSummary_LimitClamps(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	base := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+
+	for i := range 5 {
+		seedEvents(t, s, "sess-"+string(rune('a'+i)), 1, base.Add(time.Duration(i)*time.Hour))
+	}
+
+	got, err := LoadSessionsMissingSummary(t.Context(), s.DB(),
+		base.Add(-time.Hour).UnixMilli(), SessionFilter{}, 2)
+	if err != nil {
+		t.Fatalf("LoadSessionsMissingSummary: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("explicit limit: got %d rows, want 2", len(got))
+	}
+}

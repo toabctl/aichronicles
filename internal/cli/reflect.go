@@ -214,7 +214,7 @@ func digestsFromRowsWithLinks(
 		return nil, fmt.Errorf(
 			"need ≥2 sessions with summaries to reflect/propose; %d of %d in window are summarized. "+
 				"Run `aichronicles summaries missing --since <window>` to see candidates, "+
-				"then `aichronicles summarize <id>` for each",
+				"then `aichronicles summaries fill --since <window>` to fill them in one shot",
 			len(out), len(rows))
 	}
 	return out, nil

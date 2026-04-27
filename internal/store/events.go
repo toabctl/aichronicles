@@ -490,6 +490,82 @@ func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs int64, li
 	return out, rows.Err()
 }
 
+// SessionFilter narrows session-level queries by cwd / agent. Empty
+// strings disable each filter independently; both empty == every
+// session in the window. Used by LoadSessionsMissingSummary to keep
+// the call shape consistent with the `sessions` CLI flags.
+type SessionFilter struct {
+	Cwd   string
+	Agent string
+}
+
+// LoadSessionsMissingSummary returns the most-recently-ended sessions
+// in the [sinceMs, ∞) window that have no llm_outputs row of
+// kind='summary'. Used by `aichronicles summaries missing` and
+// `aichronicles summaries fill` to enumerate the pre-LLM work
+// surface — sessions that the user can summarize before running
+// reflect/propose, which are mandatory-summary as of 9746cef.
+//
+// Same row shape as LoadRecentSessionDigests so callers can hand the
+// result to the existing prompts.SessionDigest pipeline without a
+// shape conversion. LatestSummary is always invalid here by
+// construction (NOT EXISTS on the join) — included for shape
+// compatibility, never populated.
+//
+// Limit ≤0 falls back to 200; a wider default than the LLM-bound
+// reflect/propose because this path is read-only and just renders.
+func LoadSessionsMissingSummary(ctx context.Context, db *sql.DB, sinceMs int64, filter SessionFilter, limit int) ([]SessionDigestRow, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+
+	conds := []string{"COALESCE(s.ended_at_ms, s.started_at_ms, 0) >= ?"}
+	args := []any{sinceMs}
+	if filter.Cwd != "" {
+		conds = append(conds, "s.cwd = ?")
+		args = append(args, filter.Cwd)
+	}
+	if filter.Agent != "" {
+		conds = append(conds, "s.source_agent = ?")
+		args = append(args, filter.Agent)
+	}
+	// The "missing" predicate: no llm_outputs row of kind='summary'
+	// for this session_id. NOT EXISTS rather than LEFT JOIN so the
+	// optimiser can short-circuit on the first hit.
+	conds = append(conds, `NOT EXISTS (
+		SELECT 1 FROM llm_outputs lo
+		 WHERE lo.session_id = s.id AND lo.kind = 'summary'
+	)`)
+
+	q := `SELECT s.id, s.started_at_ms, s.ended_at_ms, s.cwd,
+			(SELECT content_text FROM events
+				WHERE session_id = s.id AND kind = 'user_prompt'
+				ORDER BY ts_source_ms ASC LIMIT 1) AS first_prompt
+		FROM sessions s
+		WHERE ` + strings.Join(conds, " AND ") + `
+		ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC
+		LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query sessions missing summary: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []SessionDigestRow
+	for rows.Next() {
+		var r SessionDigestRow
+		// LatestSummary stays at its zero value (Valid=false)
+		// since the WHERE clause guarantees no summary exists.
+		if err := rows.Scan(&r.ID, &r.StartedAtMs, &r.EndedAtMs, &r.Cwd, &r.FirstPrompt); err != nil {
+			return nil, fmt.Errorf("scan missing-summary row: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // DefaultEventsPerSessionLimit caps LoadEventsForSession's result set
 // when the caller does not supply a tighter bound. 10k events per
 // session is generous (an hour of hot tool use is typically under 1k

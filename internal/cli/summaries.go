@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,13 +11,24 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/llm"
 )
 
-// newSummariesCmd is the `summaries` subcommand tree. `list` gives
-// a scannable recent history across all kinds; `show` prints one
-// stored body through the human renderer (or raw via --json).
+// newSummariesCmd is the `summaries` subcommand tree.
+//
+//	list    — scannable recent history across all output kinds
+//	show    — render one stored body via the human renderer
+//	missing — list sessions in a window that have no summary
+//	fill    — summarize the missing sessions in a window (LLM)
+//
+// `missing` + `fill` exist because reflect/propose became
+// mandatory-summary in 9746cef; before then a user could let
+// summaries pile up un-noticed, run reflect, and get an
+// underwhelming output. `missing` makes the gap visible; `fill`
+// closes it.
 func newSummariesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "summaries",
@@ -24,7 +36,318 @@ func newSummariesCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newSummariesListCmd())
 	cmd.AddCommand(newSummariesShowCmd())
+	cmd.AddCommand(newSummariesMissingCmd())
+	cmd.AddCommand(newSummariesFillCmd())
 	return cmd
+}
+
+// defaultSummariesWindow is the --since default for missing/fill.
+// Matches reflect's and propose's defaults: a rolling week is the
+// natural "what hasn't been summarized for the next reflect run"
+// window. Override for one-off backfills (e.g. --since 720h for
+// the last 30 days).
+const defaultSummariesWindow = 7 * 24 * time.Hour
+
+func newSummariesMissingCmd() *cobra.Command {
+	var (
+		since    time.Duration
+		limit    int
+		cwd      string
+		agent    string
+		dbPath   string
+		formatIn string
+	)
+	cmd := &cobra.Command{
+		Use:   "missing",
+		Short: "List sessions in the window that have no cached summary",
+		Long: "Reads the sessions table for entries whose ended_at falls\n" +
+			"within --since AND that have no llm_outputs row of\n" +
+			"kind='summary'. Useful as the first step before reflect or\n" +
+			"propose, both of which now require summaries on every\n" +
+			"input session (see commit 9746cef).\n\n" +
+			"Read-only: no LLM calls. Pipe `--format=json | jq -r '.[].id'`\n" +
+			"into `aichronicles summarize` for a manual fill, or use\n" +
+			"`aichronicles summaries fill` to do it in one shot.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			format, err := ParseOutputFormat(formatIn)
+			if err != nil {
+				return err
+			}
+			s, err := openStoreFromFlag(dbPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = s.Close() }()
+
+			sinceMs := time.Now().Add(-since).UnixMilli()
+			rows, err := store.LoadSessionsMissingSummary(cmd.Context(), s.DB(),
+				sinceMs, store.SessionFilter{Cwd: cwd, Agent: agent}, limit)
+			if err != nil {
+				return fmt.Errorf("summaries missing: %w", err)
+			}
+			return writeMissingSummaries(cmd.OutOrStdout(), rows, format)
+		},
+	}
+	cmd.Flags().DurationVar(&since, "since", defaultSummariesWindow,
+		"only consider sessions whose ended_at is within this window (e.g. 168h)")
+	cmd.Flags().IntVar(&limit, "limit", 200, "max sessions to list")
+	cmd.Flags().StringVar(&cwd, "cwd", "", "filter by exact cwd")
+	cmd.Flags().StringVar(&agent, "agent", "", "filter by source_agent (claude-code | codex)")
+	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	addFormatFlag(cmd, &formatIn)
+	return cmd
+}
+
+func newSummariesFillCmd() *cobra.Command {
+	var (
+		since    time.Duration
+		limit    int
+		cwd      string
+		agent    string
+		model    string
+		dbPath   string
+		formatIn string
+	)
+	cmd := &cobra.Command{
+		Use:   "fill",
+		Short: "Summarize every session in the window that has no cached summary",
+		Long: "Iterates the missing-summary list (see `summaries missing`)\n" +
+			"and calls summarize on each entry. Sequential: one LLM call\n" +
+			"at a time. Per-session failures (rate limits, malformed\n" +
+			"sessions) are reported and skipped — the batch continues.\n" +
+			"Ctrl-C stops cleanly after the in-flight session commits.\n\n" +
+			"Idempotent: re-running on the same window does nothing once\n" +
+			"every session has a summary. The default --limit=100 caps a\n" +
+			"runaway fill on a wide window; loosen as needed.\n\n" +
+			"Requires ANTHROPIC_API_KEY (or the configured api_key_command).",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			format, err := ParseOutputFormat(formatIn)
+			if err != nil {
+				return err
+			}
+			s, err := openStoreFromFlag(dbPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = s.Close() }()
+
+			cfg, cfgErr := config.Load()
+			if cfgErr != nil {
+				return cfgErr
+			}
+			llmCfg := llmConfigFromFile(cfg.LLM)
+			newClient := func() (llm.Client, error) {
+				return llm.FromConfig(cmd.Context(), llmCfg)
+			}
+
+			sinceMs := time.Now().Add(-since).UnixMilli()
+			rows, err := store.LoadSessionsMissingSummary(cmd.Context(), s.DB(),
+				sinceMs, store.SessionFilter{Cwd: cwd, Agent: agent}, limit)
+			if err != nil {
+				return fmt.Errorf("summaries fill: %w", err)
+			}
+			if len(rows) == 0 {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no sessions missing a summary in the window")
+				return nil
+			}
+			return runSummariesFill(cmd.Context(), s, newClient,
+				rows, model, cfg.Limits.SummarizeTimeout.Or(defaultSummarizeTimeout),
+				format, cmd.OutOrStdout())
+		},
+	}
+	cmd.Flags().DurationVar(&since, "since", defaultSummariesWindow,
+		"only consider sessions whose ended_at is within this window (e.g. 168h)")
+	cmd.Flags().IntVar(&limit, "limit", 100, "max sessions to summarize in this run")
+	cmd.Flags().StringVar(&cwd, "cwd", "", "filter by exact cwd")
+	cmd.Flags().StringVar(&agent, "agent", "", "filter by source_agent (claude-code | codex)")
+	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
+	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	addFormatFlag(cmd, &formatIn)
+	return cmd
+}
+
+// fillStatus is one row of the streaming output `summaries fill`
+// emits. status is "summarized" | "failed" | "skipped" so callers
+// piping to jq can branch on a stable string.
+type fillStatus struct {
+	SessionID  string `json:"session_id"`
+	Status     string `json:"status"`
+	Topic      string `json:"topic,omitempty"`
+	Error      string `json:"error,omitempty"`
+	DurationMs int64  `json:"duration_ms"`
+}
+
+// runSummariesFill drives the per-session loop. Streams a one-line
+// status to out as each summarize completes (table mode) or
+// accumulates and emits one JSON array at the end (json mode).
+//
+// Per-session timeouts come from the same config knob `summarize`
+// uses; ctx cancellation propagates so Ctrl-C stops between
+// sessions cleanly.
+func runSummariesFill(
+	ctx context.Context,
+	s *store.Store,
+	newClient func() (llm.Client, error),
+	rows []store.SessionDigestRow,
+	model string,
+	perCallTimeout time.Duration,
+	format OutputFormat,
+	out io.Writer,
+) error {
+	results := make([]fillStatus, 0, len(rows))
+	var filled, failed, skipped int
+
+	defer func() {
+		// Always emit json if requested, even on early-exit so the
+		// caller's pipeline doesn't see a half-built stream.
+		if format == FormatJSON {
+			_ = writeJSONFillResults(out, results)
+			return
+		}
+		_, _ = fmt.Fprintf(out, "\nfilled: %d  failed: %d  skipped: %d  total: %d\n",
+			filled, failed, skipped, len(results))
+	}()
+
+	for _, row := range rows {
+		// Honor ctx cancellation between sessions so Ctrl-C
+		// doesn't kill an in-flight summarize mid-write.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		callCtx, cancel := context.WithTimeout(ctx, perCallTimeout)
+		start := time.Now()
+		// RunSummarize writes the rendered summary to its out
+		// arg; we discard that here because the per-row line
+		// is what the user reads. The cached body is also
+		// available via `summaries show` after the run.
+		_, err := RunSummarize(callCtx, s, newClient, SummarizeOptions{
+			SessionID: row.ID,
+			Model:     model,
+		}, io.Discard)
+		elapsed := time.Since(start).Milliseconds()
+		cancel()
+
+		st := fillStatus{SessionID: row.ID, DurationMs: elapsed}
+		if err != nil {
+			st.Status = "failed"
+			st.Error = err.Error()
+			failed++
+		} else {
+			st.Status = "summarized"
+			st.Topic = topicForSession(ctx, s, row.ID)
+			filled++
+		}
+		results = append(results, st)
+		if format != FormatJSON {
+			emitFillStatusLine(out, st)
+		}
+	}
+	return nil
+}
+
+// emitFillStatusLine prints one human-readable line per session
+// as the fill progresses. The status glyph (✓ / ✗) is constant-width
+// so columns align even when topics are long.
+func emitFillStatusLine(w io.Writer, s fillStatus) {
+	short := shortSessionID(s.SessionID)
+	switch s.Status {
+	case "summarized":
+		_, _ = fmt.Fprintf(w, "%s ✓ summarized   %q  (%dms)\n",
+			short, s.Topic, s.DurationMs)
+	case "failed":
+		_, _ = fmt.Fprintf(w, "%s ✗ failed       %s\n",
+			short, s.Error)
+	case "skipped":
+		_, _ = fmt.Fprintf(w, "%s ⚠ skipped      (%s)\n",
+			short, s.Error)
+	}
+}
+
+// writeJSONFillResults emits the accumulated fillStatus slice as
+// indented JSON. Separate function so the deferred emitter in
+// runSummariesFill can call it without a closure.
+func writeJSONFillResults(w io.Writer, results []fillStatus) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	return enc.Encode(results)
+}
+
+// topicForSession looks up the just-written summary's topic for the
+// per-row status line. Best-effort: a parse failure or a missing
+// row (race window between RunSummarize commit and our query)
+// returns "" so the line still emits.
+func topicForSession(ctx context.Context, s *store.Store, sessionID string) string {
+	outs, err := store.LoadLLMOutputsForSession(ctx, s.DB(), sessionID)
+	if err != nil {
+		return ""
+	}
+	for _, o := range outs {
+		if o.Kind == store.LLMKindSummary {
+			return extractTopic(store.LLMKindSummary, o.Body)
+		}
+	}
+	return ""
+}
+
+// writeMissingSummaries renders the LoadSessionsMissingSummary
+// result. Reuses the `aichronicles sessions` formatters so the
+// table layout matches column-for-column — muscle memory carries.
+func writeMissingSummaries(w io.Writer, rows []store.SessionDigestRow, format OutputFormat) error {
+	if format == FormatJSON {
+		return writeMissingSummariesJSON(w, rows)
+	}
+	if len(rows) == 0 {
+		_, err := fmt.Fprintln(w, "no sessions missing a summary in the window")
+		return err
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "SESSION\tSTARTED\tENDED\tCWD\tFIRST_PROMPT")
+	for _, r := range rows {
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			shortSessionID(r.ID),
+			formatTsNullable(r.StartedAtMs),
+			formatTsNullable(r.EndedAtMs),
+			nullStringOrDash(r.Cwd),
+			truncatePrompt(nullStringOrDash(r.FirstPrompt)),
+		)
+	}
+	return tw.Flush()
+}
+
+// writeMissingSummariesJSON shapes the rows into the same JSON that
+// `aichronicles sessions --format=json` produces, so jq pipelines
+// work unchanged.
+func writeMissingSummariesJSON(w io.Writer, rows []store.SessionDigestRow) error {
+	type out struct {
+		ID          string `json:"id"`
+		StartedAtMs int64  `json:"started_at_ms,omitempty"`
+		EndedAtMs   int64  `json:"ended_at_ms,omitempty"`
+		Cwd         string `json:"cwd,omitempty"`
+		FirstPrompt string `json:"first_prompt,omitempty"`
+	}
+	dst := make([]out, 0, len(rows))
+	for _, r := range rows {
+		o := out{ID: r.ID}
+		if r.StartedAtMs.Valid {
+			o.StartedAtMs = r.StartedAtMs.Int64
+		}
+		if r.EndedAtMs.Valid {
+			o.EndedAtMs = r.EndedAtMs.Int64
+		}
+		if r.Cwd.Valid {
+			o.Cwd = r.Cwd.String
+		}
+		if r.FirstPrompt.Valid {
+			o.FirstPrompt = r.FirstPrompt.String
+		}
+		dst = append(dst, o)
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	return enc.Encode(dst)
 }
 
 func newSummariesListCmd() *cobra.Command {

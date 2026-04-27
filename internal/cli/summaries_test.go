@@ -12,6 +12,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
@@ -304,4 +305,194 @@ func dbPathFromStore(t *testing.T, s *store.Store) string {
 		t.Fatalf("pragma database_list: %v", err)
 	}
 	return path
+}
+
+// seedSessionForMissing ingests one user_prompt event so a session
+// row exists. Used to give the missing/fill paths something to
+// surface. The summary slot is left empty; tests that want a
+// summary on the session call SaveLLMOutput separately.
+func seedSessionForMissing(t *testing.T, s *store.Store, sourceSession string, ts time.Time) string {
+	t.Helper()
+	env := ingest.Envelope{
+		V:               1,
+		EventID:         uuid.Must(uuid.NewV7()).String(),
+		SourceAgent:     "claude-code",
+		SourceSessionID: sourceSession,
+		Kind:            "user_prompt",
+		Role:            "user",
+		TsSource:        ts.UTC(),
+		Cwd:             "/work/" + sourceSession,
+		ContentText:     "first prompt for " + sourceSession,
+		Payload:         map[string]any{},
+		Redaction:       &ingest.Redaction{Applied: true},
+	}
+	raw, _ := json.Marshal(env)
+	tx, _ := s.DB().Begin()
+	if _, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli()); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("seed: %v", err)
+	}
+	_ = tx.Commit()
+	return ingest.DeriveSessionID("claude-code", sourceSession)
+}
+
+func TestSummariesMissing_OnlyUnsummarizedRowsAppear(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	now := time.Now()
+	idA := seedSessionForMissing(t, s, "miss-A", now.Add(-time.Hour))
+	idB := seedSessionForMissing(t, s, "miss-B", now.Add(-2*time.Hour))
+
+	// Plant a summary on A only.
+	tx, _ := s.DB().Begin()
+	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
+		SessionID:   sql.NullString{String: idA, Valid: true},
+		Kind:        store.LLMKindSummary,
+		Model:       "test",
+		PromptHash:  "h-A",
+		Body:        `{"topic":"A"}`,
+		CreatedAtMs: now.UnixMilli(),
+	}); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("seed summary: %v", err)
+	}
+	_ = tx.Commit()
+
+	cmd := newSummariesMissingCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--db", dbPathFromStore(t, s), "--since", "24h"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	body := out.String()
+	if strings.Contains(body, idA[:8]) {
+		t.Errorf("session A has a summary; should NOT appear:\n%s", body)
+	}
+	if !strings.Contains(body, idB[:8]) {
+		t.Errorf("session B is missing a summary; should appear:\n%s", body)
+	}
+}
+
+func TestSummariesMissing_JSONFormatShape(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	id := seedSessionForMissing(t, s, "miss-json", time.Now().Add(-time.Hour))
+
+	cmd := newSummariesMissingCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--db", dbPathFromStore(t, s), "--since", "24h", "--format", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	var parsed []struct {
+		ID          string `json:"id"`
+		Cwd         string `json:"cwd"`
+		FirstPrompt string `json:"first_prompt"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &parsed); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, out.String())
+	}
+	if len(parsed) != 1 || parsed[0].ID != id {
+		t.Fatalf("expected one row with id=%s, got %+v", id, parsed)
+	}
+	if parsed[0].FirstPrompt != "first prompt for miss-json" {
+		t.Errorf("unexpected first_prompt: %q", parsed[0].FirstPrompt)
+	}
+}
+
+func TestSummariesMissing_EmptyWindowReportsCleanly(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+
+	cmd := newSummariesMissingCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--db", dbPathFromStore(t, s), "--since", "24h"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(out.String(), "no sessions missing") {
+		t.Errorf("empty result should print a friendly placeholder; got:\n%s", out.String())
+	}
+}
+
+func TestRunSummariesFill_StreamsAndTallies(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	now := time.Now()
+	idA := seedSessionForMissing(t, s, "fill-A", now.Add(-time.Hour))
+	idB := seedSessionForMissing(t, s, "fill-B", now.Add(-2*time.Hour))
+
+	rows := []store.SessionDigestRow{
+		{ID: idA},
+		{ID: idB},
+	}
+
+	// fakeLLM returns a structured summary for any tool call. Both
+	// sessions should "summarize" successfully and the tally line
+	// should report 2 / 0 / 0.
+	f := &fakeLLM{reply: ""}
+	newClient := func() (llm.Client, error) { return f, nil }
+
+	var out bytes.Buffer
+	if err := runSummariesFill(t.Context(), s, newClient,
+		rows, "", 5*time.Second, FormatTable, &out); err != nil {
+		t.Fatalf("runSummariesFill: %v", err)
+	}
+
+	body := out.String()
+	for _, want := range []string{
+		"summarized",
+		idA[:8],
+		idB[:8],
+		"filled: 2",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("output missing %q:\n%s", want, body)
+		}
+	}
+	// Both sessions should now have a summary row.
+	for _, id := range []string{idA, idB} {
+		var n int
+		_ = s.DB().QueryRow(
+			`SELECT COUNT(*) FROM llm_outputs WHERE session_id=? AND kind='summary'`, id,
+		).Scan(&n)
+		if n != 1 {
+			t.Errorf("session %s: expected 1 summary row after fill, got %d", id, n)
+		}
+	}
+}
+
+func TestRunSummariesFill_JSONFormatShape(t *testing.T) {
+	t.Parallel()
+	s := testStore(t)
+	id := seedSessionForMissing(t, s, "fill-json", time.Now().Add(-time.Hour))
+
+	f := &fakeLLM{reply: ""}
+	newClient := func() (llm.Client, error) { return f, nil }
+
+	var out bytes.Buffer
+	if err := runSummariesFill(t.Context(), s, newClient,
+		[]store.SessionDigestRow{{ID: id}}, "", 5*time.Second, FormatJSON, &out); err != nil {
+		t.Fatalf("runSummariesFill: %v", err)
+	}
+	var parsed []fillStatus
+	if err := json.Unmarshal(out.Bytes(), &parsed); err != nil {
+		t.Fatalf("unmarshal json: %v\n%s", err, out.String())
+	}
+	if len(parsed) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(parsed))
+	}
+	if parsed[0].SessionID != id {
+		t.Errorf("session_id: got %q, want %q", parsed[0].SessionID, id)
+	}
+	if parsed[0].Status != "summarized" {
+		t.Errorf("status: got %q, want summarized", parsed[0].Status)
+	}
 }
