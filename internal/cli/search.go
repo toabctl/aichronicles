@@ -89,7 +89,7 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&kind, "kind", "", "filter by event kind (user_prompt, tool_use, …)")
 	cmd.Flags().StringVar(&sessionID, "session", "", "filter by session id or unique prefix")
 	registerSessionFlagCompletion(cmd)
-	cmd.Flags().DurationVar(&since, "since", 0, "only events within this duration (e.g. 24h, 7d)")
+	addFlexDurationFlag(cmd, &since, "since", 0, "only events within this duration (e.g. 24h, 7d)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	cmd.Flags().BoolVar(&noDedup, "no-dedup", false, "show every row even when the same turn was captured from multiple sources (hook + import)")
 	addFormatFlag(cmd, &formatIn)

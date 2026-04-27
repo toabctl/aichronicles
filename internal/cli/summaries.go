@@ -88,8 +88,8 @@ func newSummariesMissingCmd() *cobra.Command {
 			return writeMissingSummaries(cmd.OutOrStdout(), rows, format)
 		},
 	}
-	cmd.Flags().DurationVar(&since, "since", defaultSummariesWindow,
-		"only consider sessions whose ended_at is within this window (e.g. 168h)")
+	addFlexDurationFlag(cmd, &since, "since", defaultSummariesWindow,
+		"only consider sessions whose ended_at is within this window (e.g. 24h, 7d)")
 	cmd.Flags().IntVar(&limit, "limit", 200, "max sessions to list")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "filter by exact cwd")
 	cmd.Flags().StringVar(&agent, "agent", "", "filter by source_agent (claude-code | codex)")
@@ -155,8 +155,8 @@ func newSummariesFillCmd() *cobra.Command {
 				format, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().DurationVar(&since, "since", defaultSummariesWindow,
-		"only consider sessions whose ended_at is within this window (e.g. 168h)")
+	addFlexDurationFlag(cmd, &since, "since", defaultSummariesWindow,
+		"only consider sessions whose ended_at is within this window (e.g. 24h, 7d)")
 	cmd.Flags().IntVar(&limit, "limit", 100, "max sessions to summarize in this run")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "filter by exact cwd")
 	cmd.Flags().StringVar(&agent, "agent", "", "filter by source_agent (claude-code | codex)")

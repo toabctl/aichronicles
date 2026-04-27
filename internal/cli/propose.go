@@ -88,7 +88,7 @@ func newProposeCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().DurationVar(&since, "since", defaultProposeWindow, "only consider sessions whose ended_at is within this window")
+	addFlexDurationFlag(cmd, &since, "since", defaultProposeWindow, "only consider sessions whose ended_at is within this window (e.g. 24h, 7d)")
 	cmd.Flags().IntVar(&limit, "limit", defaultProposeLimit, "max sessions to feed the LLM, newest first")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
