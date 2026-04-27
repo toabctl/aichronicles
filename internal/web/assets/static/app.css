@@ -51,23 +51,30 @@ table.activity .bar {
   flex-wrap: wrap;
 }
 .agent-chip {
+  /* IMPORTANT: don't read var(--pico-color) here. Pico re-binds
+     --pico-color to var(--pico-primary) inside <a> elements (see
+     :where(a:not([role=button])) in pico.min.css), so the chip's
+     "regular" text colour would resolve to the brand blue —
+     blue-on-blue, exactly the contrast bug we just fixed. Pair
+     --pico-secondary-background with --pico-secondary-inverse
+     (white in both themes); that variable isn't redefined by
+     the link selector. */
   display: inline-block;
   padding: 0.1rem 0.5rem;
   border-radius: 1rem;
   border: 1px solid var(--pico-muted-border-color);
   background: var(--pico-secondary-background);
-  color: var(--pico-color);
+  color: var(--pico-secondary-inverse);
   font-size: 0.8em;
   font-family: var(--pico-font-family-monospace);
   text-decoration: none;
 }
 .agent-chip:hover {
-  /* --pico-primary-background is a SOFT alpha tint of primary
-     (light blue-ish); regular --pico-color reads on it. Don't pair
-     with --pico-primary-inverse (the white-on-solid-primary
-     foreground) — that produces white text on a pale tint. */
-  background: var(--pico-primary-background);
-  color: var(--pico-color);
+  /* Slightly-brighter secondary on hover, same white text. The
+     subtle bg shift signals interactivity without flipping to
+     the brand colour (which would look identical to active). */
+  background: var(--pico-secondary-hover-background);
+  color: var(--pico-secondary-inverse);
 }
 .agent-chip-active {
   /* Explicit white on saturated blue: relying on Pico's
