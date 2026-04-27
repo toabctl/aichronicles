@@ -62,12 +62,20 @@ table.activity .bar {
   text-decoration: none;
 }
 .agent-chip:hover {
+  /* --pico-primary-background is a SOFT alpha tint of primary
+     (light blue-ish); regular --pico-color reads on it. Don't pair
+     with --pico-primary-inverse (the white-on-solid-primary
+     foreground) — that produces white text on a pale tint. */
   background: var(--pico-primary-background);
-  color: var(--pico-primary-inverse);
+  color: var(--pico-color);
 }
 .agent-chip-active {
+  /* Explicit white on saturated blue: relying on Pico's
+     --pico-primary-inverse here was theme-dependent and could
+     resolve to dark text on saturated blue (unreadable). Hardcode
+     the contrast so light + dark themes both look the same. */
   background: var(--pico-primary);
-  color: var(--pico-primary-inverse);
+  color: #fff;
   border-color: var(--pico-primary);
 }
 
@@ -90,8 +98,11 @@ table.activity .bar {
 }
 
 .badge-summary {
+  /* Soft alpha-tinted bg → use the regular text color so the
+     badge stays legible in both themes (same fix as agent-chip
+     hover above). */
   background: var(--pico-primary-background);
-  color: var(--pico-primary-inverse);
+  color: var(--pico-color);
 }
 
 /* Per-kind badge colours so the live feed and event tables are
@@ -199,8 +210,11 @@ tr.nav-row:focus-visible {
   width: auto;
 }
 .resume-btn:hover {
+  /* Same soft-bg + regular-text pairing as the chip hover. Using
+     --pico-primary-inverse here washed out the label to white-on-
+     light-blue. */
   background: var(--pico-primary-background);
-  color: var(--pico-primary-inverse);
+  color: var(--pico-color);
 }
 .resume-btn.resume-btn-copied {
   background: #16a34a;
