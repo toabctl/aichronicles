@@ -6,3 +6,7 @@
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Claude Code session state (local agent settings, schedule lock).
+# Personal to whoever runs `claude` in this repo — never useful upstream.
+/.claude/
