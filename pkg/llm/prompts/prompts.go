@@ -65,6 +65,7 @@ const (
 	ToolNameSkillRevision  = "record_skill_revision"
 	ToolNameInduction      = "record_induction"
 	ToolNameChallenge      = "record_challenge"
+	ToolNameWorkflow       = "record_workflow"
 )
 
 // --- result types ---
@@ -1052,6 +1053,219 @@ func BuildInduce(in InduceFromSessionInputs) (Built, error) {
 			InputSchema: json.RawMessage(inductionToolSchema),
 		}},
 		ForceTool: ToolNameInduction,
+	}
+	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
+}
+
+// --- single-session workflow induction (AWM — Agent Workflow Memory) ---
+
+// WorkflowResult is the schema-validated payload of a record_workflow
+// tool call. AWM's central insight (Wang et al. 2024,
+// arXiv:2409.07429) is procedural ABSTRACTION: drop the concrete
+// values that vary across runs (URLs, ticket IDs, file paths) and
+// keep the procedure shape. The resulting workflow is reusable as a
+// retrieved exemplar at task-planning time without polluting the
+// retrieval index with one-shot specifics.
+//
+// Distinguished from InductionResult/ProposalResult (which produce
+// SKILL.md artefacts the user may apply to disk): a workflow lives
+// only in the database, identified by task_shape, retrieved by
+// embedding similarity to the user's current task at planning time.
+type WorkflowResult struct {
+	// Found is the explicit "this session DID contain a reusable
+	// workflow" signal. False means the session was a one-off and
+	// no abstraction is worth saving — the rationale field
+	// explains why.
+	Found bool `json:"found"`
+
+	// TaskShape is the abstracted task description: ≤120 chars,
+	// no concrete URLs, IDs, or file paths. Examples:
+	//   * "deploy a Go service to staging"  (good — abstracted)
+	//   * "deploy aichronicles to staging"   (bad — names the project)
+	//   * "investigate failing CI run"        (good)
+	//   * "fix CI run #4825 in repo X"        (bad — references a
+	//                                          specific run)
+	TaskShape string `json:"task_shape"`
+
+	// Procedure is the ordered sequence of abstract actions that
+	// accomplish the task_shape. Each step is a NL action — not a
+	// shell line; not a code snippet. Use {placeholder} tokens
+	// where a value varies per task (matches the same kebab-case
+	// convention as ProposedSkillScript.Steps). Cap at 12.
+	Procedure []WorkflowStep `json:"procedure"`
+
+	// Preconditions are state assumptions the procedure relies on
+	// — what must be true BEFORE step 1 to make the procedure
+	// applicable. e.g. "git working tree is clean", "the failing
+	// CI run id is known". Cap at 5.
+	Preconditions []string `json:"preconditions"`
+
+	// SuccessChecks are observable signals that confirm the
+	// procedure worked. e.g. "kubectl rollout status returns
+	// rollout complete", "the failing test now passes locally".
+	// Cap at 5.
+	SuccessChecks []string `json:"success_checks"`
+
+	// Evidence is the session(s) that grounded this workflow.
+	// Same shape as ProposalEvidence — verbatim quote, ≤160
+	// chars, drawn from the session's text. For online induction
+	// this is always one entry (the session being induced).
+	Evidence []WorkflowEvidence `json:"evidence"`
+
+	// Rationale is a short (≤200 char) explanation of the verdict.
+	// On Found=false: "session was a one-off bug fix; no
+	// reusable procedure". On Found=true: "extracted the deploy
+	// recipe — same git-tag/kubectl-rollout sequence the user
+	// repeated three times this session".
+	Rationale string `json:"rationale"`
+}
+
+// WorkflowStep is one entry in WorkflowResult.Procedure.
+type WorkflowStep struct {
+	// Action is the abstract step description. Should read as a
+	// natural-language imperative ("Tag the release commit with
+	// {version}", "Run the staging integration suite"). NOT a
+	// shell line — the abstraction is the point.
+	Action string `json:"action"`
+
+	// Placeholders, when non-empty, lists the {token} placeholders
+	// that appear in Action with one-line descriptions and an
+	// example value drawn from the cited session.
+	Placeholders []WorkflowPlaceholder `json:"placeholders,omitempty"`
+}
+
+// WorkflowPlaceholder documents one {brace-token} from the action
+// text. Same convention as ProposedScriptPlaceholder for
+// consistency across the two surfaces.
+type WorkflowPlaceholder struct {
+	Token       string `json:"token"`
+	Description string `json:"description"`
+	Example     string `json:"example,omitempty"`
+}
+
+// WorkflowEvidence pairs a session_id with a verbatim quote
+// supporting the workflow's existence.
+type WorkflowEvidence struct {
+	SessionID    string `json:"session_id"`
+	Quote        string `json:"quote"`
+	WhatHappened string `json:"what_happened"`
+}
+
+// WorkflowFromSessionInputs carries everything BuildWorkflow needs.
+// Mirrors InduceFromSessionInputs deliberately — keeping the
+// shapes parallel makes the CLI plumbing straightforward.
+type WorkflowFromSessionInputs struct {
+	Digest SessionDigest
+}
+
+const workflowMaxTokens = 4096
+
+const workflowSystem = `You inspect ONE coding session and decide whether it contained a reusable WORKFLOW worth saving in the user's procedural memory. You MUST call the record_workflow tool exactly once.
+
+This is AWM (Agent Workflow Memory) — the artefact you produce is a deliberately ABSTRACT procedure, not a script and not a skill. The point is reusability across DIFFERENT future tasks of the same shape. Do not save concrete URLs, ticket IDs, file paths, or branch names; replace them with {placeholder} tokens.
+
+Hard rules:
+
+1. Default to found=false. Sessions where the user just answered a question or fixed one specific bug are NOT workflows. A workflow exists when the session ran a recognisable PROCEDURE — a sequence of steps the same user, or a different user with a similar goal, would benefit from following next time.
+
+2. task_shape MUST be abstracted. "Deploy a Go service to staging" — yes. "Deploy aichronicles to staging" — no, names the project. The test: would a different user with a different project recognise their task in your task_shape?
+
+3. Procedure steps are NL actions, not shell lines. "Tag the release commit with {version}", "Run the staging integration suite". Replace varying values with {kebab-case} tokens and document each in the action's placeholders[].
+
+4. Preconditions and success_checks are observable: "the failing test passes locally", "the kubectl rollout completes". Avoid vague preconditions ("you have time", "you're focused") — those don't ground the workflow.
+
+5. Evidence: ONE entry, drawn from this session, ≤160 char verbatim quote that anchors the procedure in real text the user can grep for.
+
+6. Rationale ≤200 chars. On found=false explain why ("one-off bug fix; no recurring procedure"). On found=true name the procedure ("git-tag → kubectl-rollout → smoke-test sequence the user ran three times").
+
+Skill vs workflow: skills are HIGH-CONFIDENCE reusable capabilities the user keeps as SKILL.md on disk. Workflows are LOOSER procedural exemplars stored in the database for retrieval at task-planning time. If a session warrants a SKILL, prefer that. If the procedure is real but doesn't yet justify a skill (single-session evidence, lower-confidence pattern), a workflow is the right artefact.`
+
+const workflowToolSchema = `{
+  "type": "object",
+  "required": ["found", "rationale"],
+  "additionalProperties": false,
+  "properties": {
+    "found":      {"type": "boolean"},
+    "task_shape": {"type": "string", "maxLength": 120},
+    "procedure": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "required": ["action"],
+        "additionalProperties": false,
+        "properties": {
+          "action": {"type": "string", "minLength": 1, "maxLength": 240},
+          "placeholders": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 6,
+            "items": {
+              "type": "object",
+              "required": ["token", "description"],
+              "additionalProperties": false,
+              "properties": {
+                "token":       {"type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 32},
+                "description": {"type": "string", "minLength": 1, "maxLength": 160},
+                "example":     {"type": "string", "maxLength": 160}
+              }
+            }
+          }
+        }
+      }
+    },
+    "preconditions":  {"type": "array", "minItems": 0, "maxItems": 5, "items": {"type": "string", "minLength": 1, "maxLength": 200}},
+    "success_checks": {"type": "array", "minItems": 0, "maxItems": 5, "items": {"type": "string", "minLength": 1, "maxLength": 200}},
+    "evidence": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["session_id", "quote", "what_happened"],
+        "additionalProperties": false,
+        "properties": {
+          "session_id":    {"type": "string", "minLength": 1},
+          "quote":         {"type": "string", "minLength": 1, "maxLength": 160},
+          "what_happened": {"type": "string", "minLength": 1, "maxLength": 240}
+        }
+      }
+    },
+    "rationale": {"type": "string", "minLength": 1, "maxLength": 200}
+  }
+}`
+
+const workflowTemplate = `One session. Decide whether it contained a reusable WORKFLOW (abstract procedure), not a one-off fix.
+
+Session follows.
+
+---
+%s
+---
+`
+
+// BuildWorkflow composes the single-session workflow-induction
+// prompt. Same single-session shape as BuildInduce, but the system
+// prompt and tool schema target ABSTRACT procedural recipes (AWM)
+// rather than skill-shaped artefacts.
+func BuildWorkflow(in WorkflowFromSessionInputs) (Built, error) {
+	if in.Digest.ID == "" {
+		return Built{}, fmt.Errorf("BuildWorkflow: digest.ID required")
+	}
+	pats := patternSet{}
+	body := renderDigests([]SessionDigest{in.Digest}, pats)
+	userMsg := fmt.Sprintf(workflowTemplate, body)
+	req := llm.Request{
+		System:    workflowSystem,
+		Messages:  []llm.Message{{Role: llm.RoleUser, Content: userMsg}},
+		MaxTokens: workflowMaxTokens,
+		Tools: []llm.Tool{{
+			Name:        ToolNameWorkflow,
+			Description: "Record an abstract procedural workflow induced from one session (AWM-style).",
+			InputSchema: json.RawMessage(workflowToolSchema),
+		}},
+		ForceTool: ToolNameWorkflow,
 	}
 	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
 }

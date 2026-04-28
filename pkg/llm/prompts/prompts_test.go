@@ -614,6 +614,58 @@ func TestBuildPropose_RendersPriorProposalsStanza(t *testing.T) {
 	}
 }
 
+func TestBuildWorkflow_RequiresDigestID(t *testing.T) {
+	t.Parallel()
+	_, err := BuildWorkflow(WorkflowFromSessionInputs{Digest: SessionDigest{}})
+	if err == nil {
+		t.Errorf("expected error on empty Digest.ID")
+	}
+}
+
+func TestBuildWorkflow_RendersSessionAndForcesTool(t *testing.T) {
+	t.Parallel()
+	digest := SessionDigest{
+		ID:          "sess-wf-1",
+		Cwd:         "/work/proj",
+		FirstPrompt: "deploy the latest build to staging",
+		Summary:     "ran git tag, kubectl rollout, smoke test.",
+	}
+	built, err := BuildWorkflow(WorkflowFromSessionInputs{Digest: digest})
+	if err != nil {
+		t.Fatalf("BuildWorkflow: %v", err)
+	}
+	if built.Request.ForceTool != ToolNameWorkflow {
+		t.Errorf("ForceTool: got %q, want %q", built.Request.ForceTool, ToolNameWorkflow)
+	}
+	if len(built.Request.Tools) != 1 || built.Request.Tools[0].Name != ToolNameWorkflow {
+		t.Errorf("tools wiring wrong: %+v", built.Request.Tools)
+	}
+
+	body := built.Request.Messages[0].Content
+	for _, want := range []string{"sess-wf-1", "deploy the latest build to staging", "kubectl rollout"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q\n--- body ---\n%s", want, body)
+		}
+	}
+
+	// System prompt must enforce abstraction (the AWM property).
+	if !strings.Contains(built.Request.System, "ABSTRACT") &&
+		!strings.Contains(built.Request.System, "abstract") {
+		t.Errorf("workflow system prompt should emphasise abstraction; got:\n%s",
+			built.Request.System)
+	}
+}
+
+func TestBuildWorkflow_HashStableAcrossCalls(t *testing.T) {
+	t.Parallel()
+	digest := SessionDigest{ID: "stable", Summary: "x"}
+	a, _ := BuildWorkflow(WorkflowFromSessionInputs{Digest: digest})
+	b, _ := BuildWorkflow(WorkflowFromSessionInputs{Digest: digest})
+	if a.Hash != b.Hash {
+		t.Errorf("hash unstable: %q != %q", a.Hash, b.Hash)
+	}
+}
+
 func TestBuildPropose_OmitsPriorProposalsStanzaWhenEmpty(t *testing.T) {
 	t.Parallel()
 	in := ProposeInputs{
