@@ -27,6 +27,36 @@ func TestProviderLabel(t *testing.T) {
 	}
 }
 
+// TestResolveModelLabel covers the model-name resolver used by
+// command headers. flagModel wins when non-empty; otherwise the
+// per-provider default constant is surfaced so the user sees the
+// real model id (e.g. "claude-sonnet-4-6") rather than a generic
+// "(provider default)" placeholder.
+func TestResolveModelLabel(t *testing.T) {
+	t.Parallel()
+	type tc struct {
+		cfg       llm.Config
+		flagModel string
+		want      string
+	}
+	cases := []tc{
+		// flag wins regardless of provider.
+		{llm.Config{Provider: llm.ProviderAnthropic}, "claude-opus-4-7", "claude-opus-4-7"},
+		{llm.Config{Provider: llm.ProviderOpenAI}, "gpt-4.1", "gpt-4.1"},
+		// Empty flag → provider default.
+		{llm.Config{Provider: llm.ProviderAnthropic}, "", llm.DefaultAnthropicModel},
+		{llm.Config{Provider: ""}, "", llm.DefaultAnthropicModel}, // empty == anthropic
+		{llm.Config{Provider: llm.ProviderOpenAI}, "", llm.DefaultOpenAIModel},
+	}
+	for i, c := range cases {
+		got := resolveModelLabel(c.cfg, c.flagModel)
+		if got != c.want {
+			t.Errorf("case %d (provider=%q flag=%q): got %q, want %q",
+				i, c.cfg.Provider, c.flagModel, got, c.want)
+		}
+	}
+}
+
 // TestParseToolResult_RejectsMultipleToolUses pins the exact-1
 // contract: forced tool use means one call, period. Silently
 // using ToolUses[0] would discard the rest and the user couldn't

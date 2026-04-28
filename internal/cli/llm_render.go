@@ -28,6 +28,30 @@ func providerLabel(cfg llm.Config) string {
 	}
 }
 
+// resolveModelLabel returns the model identifier the user can
+// expect to see in API requests for the given provider. When a
+// flag-supplied model is non-empty it wins; otherwise we pick up
+// the provider-specific default constant from pkg/llm so the
+// command header shows the real model id ("claude-sonnet-4-6")
+// rather than a generic "(provider default)" placeholder.
+//
+// The constants stay the source of truth — bump them in pkg/llm
+// and headers across the cli automatically reflect the new
+// default with no second list to keep in sync.
+func resolveModelLabel(cfg llm.Config, flagModel string) string {
+	if flagModel != "" {
+		return flagModel
+	}
+	switch cfg.Provider {
+	case "", llm.ProviderAnthropic:
+		return llm.DefaultAnthropicModel
+	case llm.ProviderOpenAI:
+		return llm.DefaultOpenAIModel
+	default:
+		return "(unknown provider " + string(cfg.Provider) + " default)"
+	}
+}
+
 // llmConfigFromFile translates the file-shaped config.LLM into the
 // runtime-shaped llm.Config that the llm package's FromConfig expects.
 // Lives in the cli package so the llm package never imports config —

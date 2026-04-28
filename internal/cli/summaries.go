@@ -166,13 +166,10 @@ func newSummariesFillCmd() *cobra.Command {
 			// notice. JSON mode skips it: pipelines want a clean
 			// JSON array, not prose preamble.
 			if format != FormatJSON {
-				modelLabel := model
-				if modelLabel == "" {
-					modelLabel = "(provider default)"
-				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 					"filling %d sessions  window=%s  model=%s  provider=%s\n",
-					len(rows), humanDuration(since), modelLabel,
+					len(rows), humanDuration(since),
+					resolveModelLabel(llmCfg, model),
 					providerLabel(llmCfg))
 			}
 			return runSummariesFill(cmd.Context(), s, newClient,
