@@ -14,6 +14,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/searchquery"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/timefmt"
+	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 // RegisterAichroniclesTools adds the three read-only tools Block C
@@ -122,6 +123,32 @@ func RegisterAichroniclesTools(s *Server, st *store.Store) {
 			"required": ["cwd"]
 		}`),
 		Handler: getUnresolvedForCwdHandler(st),
+	})
+
+	s.RegisterTool(Tool{
+		Name: "list_workflows",
+		Description: "List abstract procedural workflows aichronicles has induced from past " +
+			"sessions (AWM — Agent Workflow Memory). Each workflow is a task_shape (abstract " +
+			"description) plus a numbered procedure of NL action steps with {placeholder} tokens " +
+			"for varying values. " +
+			"Use when the user is about to start a task and you want to check whether a similar " +
+			"task shape has been done before — e.g. 'I'm about to deploy to staging, is there a " +
+			"workflow for that?'. The agent should scan task_shape values and pick the most " +
+			"relevant one to follow as a recipe (substituting values for the {placeholders}). " +
+			"Distinct from skills (which are SKILL.md artefacts on disk applied via the Skill " +
+			"tool); workflows live only in the database as retrievable exemplars. " +
+			"Pass `task_shape_contains` to narrow by substring (case-insensitive). Empty result " +
+			"means no workflow has been induced yet — try `aichronicles workflow induce --session " +
+			"<id>` on a relevant past session first.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"task_shape_contains": {"type": "string", "description": "Optional case-insensitive substring filter on task_shape."},
+				"limit":               {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
+				"include_not_found":   {"type": "boolean", "default": false, "description": "When true, include workflow rows with found=false (the no-workflow verdicts). Default omits them."}
+			}
+		}`),
+		Handler: listWorkflowsHandler(st),
 	})
 }
 
@@ -421,6 +448,91 @@ func getUnresolvedForCwdHandler(st *store.Store) ToolHandler {
 				it.SessionShort, when, topic, it.Item)
 		}
 		return TextResult(b.String()), nil
+	}
+}
+
+// --- list_workflows ---
+
+func listWorkflowsHandler(st *store.Store) ToolHandler {
+	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
+		var req struct {
+			TaskShapeContains string `json:"task_shape_contains"`
+			Limit             int    `json:"limit"`
+			IncludeNotFound   bool   `json:"include_not_found"`
+		}
+		if len(args) > 0 {
+			if err := json.Unmarshal(args, &req); err != nil {
+				return nil, &Error{Code: InvalidParams, Message: "list_workflows: bad args: " + err.Error()}
+			}
+		}
+		if req.Limit <= 0 || req.Limit > 50 {
+			req.Limit = 10
+		}
+
+		// Pull more rows than the cap to leave room for the
+		// post-load Found / task_shape_contains filter — without
+		// over-fetching, a strict filter could empty the result
+		// even when matching rows exist further back. 5x leaves
+		// margin without unbounded scan.
+		rows, err := store.LoadLLMOutputs(ctx, st.DB(), store.LLMOutputFilter{
+			Kind:  store.LLMKindWorkflow,
+			Limit: req.Limit * 5,
+		})
+		if err != nil {
+			return nil, &Error{Code: InternalError, Message: "list_workflows: load: " + err.Error()}
+		}
+
+		needle := strings.ToLower(strings.TrimSpace(req.TaskShapeContains))
+		type entry struct {
+			row   store.LLMOutput
+			parse prompts.WorkflowResult
+		}
+		var keep []entry
+		for _, r := range rows {
+			var w prompts.WorkflowResult
+			if jerr := json.Unmarshal([]byte(r.Body), &w); jerr != nil {
+				continue
+			}
+			if !w.Found && !req.IncludeNotFound {
+				continue
+			}
+			if needle != "" && !strings.Contains(strings.ToLower(w.TaskShape), needle) {
+				continue
+			}
+			keep = append(keep, entry{row: r, parse: w})
+			if len(keep) >= req.Limit {
+				break
+			}
+		}
+		if len(keep) == 0 {
+			return TextResult("(no workflows yet — try `aichronicles workflow induce --session <id>` on a relevant past session)"), nil
+		}
+
+		var b strings.Builder
+		for _, e := range keep {
+			sessShort := "(none)"
+			if e.row.SessionID.Valid && len(e.row.SessionID.String) >= 8 {
+				sessShort = e.row.SessionID.String[:8]
+			}
+			when := formatTS(e.row.CreatedAtMs)
+			if !e.parse.Found {
+				fmt.Fprintf(&b, "%s\t%s\t(no workflow — %s)\n",
+					sessShort, when, e.parse.Rationale)
+				continue
+			}
+			fmt.Fprintf(&b, "%s\t%s\t%s\n",
+				sessShort, when, e.parse.TaskShape)
+			for i, step := range e.parse.Procedure {
+				fmt.Fprintf(&b, "  %d. %s\n", i+1, step.Action)
+			}
+			if len(e.parse.Preconditions) > 0 {
+				fmt.Fprintln(&b, "  preconditions:")
+				for _, p := range e.parse.Preconditions {
+					fmt.Fprintf(&b, "    - %s\n", p)
+				}
+			}
+		}
+		return TextResult(strings.TrimRight(b.String(), "\n")), nil
 	}
 }
 

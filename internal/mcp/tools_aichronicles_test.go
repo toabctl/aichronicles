@@ -89,11 +89,147 @@ func TestRegisterAichroniclesTools_InstallsAllFive(t *testing.T) {
 
 	for _, want := range []string{
 		"search_events", "list_sessions", "get_summary",
-		"list_subagents", "get_unresolved_for_cwd",
+		"list_subagents", "get_unresolved_for_cwd", "list_workflows",
 	} {
 		if _, ok := s.tools[want]; !ok {
 			t.Errorf("tool %q not registered", want)
 		}
+	}
+}
+
+// seedWorkflowOutput inserts one llm_outputs row with kind=workflow
+// carrying the supplied parsed body. Returns the row id.
+func seedWorkflowOutput(t *testing.T, st *store.Store, sessionID, taskShape, rationale string, found bool) int64 {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"found":      found,
+		"task_shape": taskShape,
+		"procedure": []any{
+			map[string]any{"action": "Do step one with {arg}"},
+			map[string]any{"action": "Do step two"},
+		},
+		"preconditions":  []string{"git working tree clean"},
+		"success_checks": []string{"all tests pass"},
+		"evidence":       []any{},
+		"rationale":      rationale,
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	res, err := st.DB().Exec(
+		`INSERT INTO sessions(id, source_agent, source_session_id) VALUES (?, 'claude-code', ?)
+		 ON CONFLICT(id) DO NOTHING`,
+		sessionID, "src-"+sessionID,
+	)
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	_ = res
+	r, err := st.DB().Exec(
+		`INSERT INTO llm_outputs(session_id, kind, model, prompt_hash, body, created_at_ms)
+		 VALUES (?, 'workflow', 'fake-model', ?, ?, ?)`,
+		sessionID, "h-"+t.Name()+"-"+sessionID, string(body), time.Now().UnixMilli(),
+	)
+	if err != nil {
+		t.Fatalf("insert workflow: %v", err)
+	}
+	id, err := r.LastInsertId()
+	if err != nil {
+		t.Fatalf("last id: %v", err)
+	}
+	return id
+}
+
+func TestListWorkflows_ReturnsFoundWorkflowsWithProcedure(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	seedWorkflowOutput(t, st, "00000000-0000-0000-0000-0000000000aa",
+		"deploy a backend service to staging", "extracted from session", true)
+	seedWorkflowOutput(t, st, "00000000-0000-0000-0000-0000000000bb",
+		"investigate a failing CI run", "extracted from session", true)
+
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "list_workflows", `{}`)
+	if res == nil || len(res.Content) == 0 {
+		t.Fatal("empty result")
+	}
+	body := res.Content[0].Text
+	for _, want := range []string{
+		"deploy a backend service to staging",
+		"investigate a failing CI run",
+		"1. Do step one with {arg}",
+		"2. Do step two",
+		"preconditions:",
+		"git working tree clean",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in body:\n%s", want, body)
+		}
+	}
+}
+
+func TestListWorkflows_FiltersByTaskShapeContains(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	seedWorkflowOutput(t, st, "00000000-0000-0000-0000-0000000000cc",
+		"deploy a backend service to staging", "x", true)
+	seedWorkflowOutput(t, st, "00000000-0000-0000-0000-0000000000dd",
+		"investigate a failing CI run", "x", true)
+
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "list_workflows", `{"task_shape_contains":"deploy"}`)
+	body := res.Content[0].Text
+	if !strings.Contains(body, "deploy a backend service to staging") {
+		t.Errorf("expected deploy match, got:\n%s", body)
+	}
+	if strings.Contains(body, "investigate a failing CI") {
+		t.Errorf("expected non-matching workflow filtered out, got:\n%s", body)
+	}
+}
+
+func TestListWorkflows_DefaultsExcludeNotFound(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	seedWorkflowOutput(t, st, "00000000-0000-0000-0000-0000000000ee",
+		"", "session was a one-off bug fix", false) // found=false
+	seedWorkflowOutput(t, st, "00000000-0000-0000-0000-0000000000ff",
+		"deploy something", "extracted", true)
+
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	// Default omits found=false rows.
+	res := callTool(t, s, "list_workflows", `{}`)
+	body := res.Content[0].Text
+	if strings.Contains(body, "no workflow") || strings.Contains(body, "one-off bug fix") {
+		t.Errorf("default should exclude found=false rows, body:\n%s", body)
+	}
+	if !strings.Contains(body, "deploy something") {
+		t.Errorf("expected found=true row to appear, body:\n%s", body)
+	}
+
+	// Explicit include_not_found surfaces them.
+	res2 := callTool(t, s, "list_workflows", `{"include_not_found":true}`)
+	body2 := res2.Content[0].Text
+	if !strings.Contains(body2, "no workflow") {
+		t.Errorf("include_not_found:true should surface no-workflow verdicts, body:\n%s", body2)
+	}
+}
+
+func TestListWorkflows_EmptyResultIsHelpful(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "list_workflows", `{}`)
+	body := res.Content[0].Text
+	if !strings.Contains(body, "no workflows yet") {
+		t.Errorf("expected helpful empty-state message, got:\n%s", body)
 	}
 }
 
@@ -663,8 +799,8 @@ func TestToolsList_IncludesInputSchema(t *testing.T) {
 	}
 	result := resp["result"].(map[string]any)
 	tools := result["tools"].([]any)
-	if len(tools) != 5 {
-		t.Errorf("expected 5 tools, got %d", len(tools))
+	if len(tools) != 6 {
+		t.Errorf("expected 6 tools, got %d", len(tools))
 	}
 	for _, t0 := range tools {
 		tool := t0.(map[string]any)
