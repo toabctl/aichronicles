@@ -251,6 +251,11 @@ type cachedLLMInput struct {
 	force   bool
 	jsonRaw bool
 	output  io.Writer
+	// sessionID, when non-empty, attributes the output row to one
+	// session. Empty for multi-session features (reflect, propose);
+	// set for single-session features (summary, induction) so the
+	// CLI listing can join back to sessions cleanly.
+	sessionID string
 }
 
 // runCachedLLM implements the cache-first / lazy-client / clean-on-
@@ -296,8 +301,10 @@ func runCachedLLM(
 	}
 
 	id, err := persistSummary(ctx, s, &persistInput{
-		// session_id intentionally empty: reflect/propose span many
-		// sessions. Summary uses this same helper with a real id.
+		// session_id intentionally empty for reflect/propose:
+		// they span many sessions. Single-session callers
+		// (summary, induction) populate it.
+		sessionID:  in.sessionID,
 		kind:       in.kind,
 		hash:       in.hash,
 		model:      resp.Model,
