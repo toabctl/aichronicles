@@ -75,25 +75,35 @@ func LoadUnresolvedForCwd(
 		maxItemsPerSession = 5
 	}
 
+	// "Latest summary per session" via a small CTE that picks
+	// MAX(id) GROUPed by session_id. Replaces the previous
+	// correlated-IN subquery (`o.id IN (SELECT MAX(id) WHERE
+	// session_id = s.id GROUP BY session_id)`), which
+	// referenced the outer `s.id` once per row. The CTE form
+	// pre-aggregates one pass over llm_outputs and then joins,
+	// which the SQLite planner can flatten into a single scan
+	// (idx_llm_outputs_session_kind_created covers the
+	// kind/session predicate). Behaviour-equivalent.
 	q := `
+		WITH latest AS (
+		  SELECT session_id, MAX(id) AS llm_output_id
+		    FROM llm_outputs
+		   WHERE kind = ?
+		   GROUP BY session_id
+		)
 		SELECT s.id,
 		       COALESCE(s.ended_at_ms, 0),
 		       o.body
 		  FROM sessions s
-		  JOIN llm_outputs o ON o.session_id = s.id AND o.kind = ?
+		  JOIN latest      l ON l.session_id = s.id
+		  JOIN llm_outputs o ON o.id        = l.llm_output_id
 		 WHERE s.cwd = ?
 		   AND ` + EffectiveTsExpr + ` >= ?
-		   AND o.id IN (
-		     SELECT MAX(id) FROM llm_outputs
-		      WHERE kind = ? AND session_id = s.id
-		      GROUP BY session_id
-		   )
 		 ORDER BY ` + EffectiveTsExpr + ` DESC
 		 LIMIT ?
 	`
 	rows, err := db.QueryContext(ctx, q,
-		string(LLMKindSummary), cwd, sinceMs,
-		string(LLMKindSummary), maxSessions)
+		string(LLMKindSummary), cwd, sinceMs, maxSessions)
 	if err != nil {
 		return nil, fmt.Errorf("query unresolved: %w", err)
 	}
