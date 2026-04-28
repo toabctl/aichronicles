@@ -16,12 +16,15 @@ type SearchOrder int
 
 const (
 	// OrderRank sorts by a recency-boosted FTS5 relevance score.
-	// Concretely: bm25(...) / (1 + days_old / 30). bm25 is
-	// lower-is-better (typically negative); dividing by a value
-	// > 1 pushes older rows toward zero (worse) without flipping
-	// the sign, so a strongly relevant old event still beats a
-	// weakly relevant new one but two equally relevant events
-	// resolve in favour of the more recent. Default for the CLI.
+	// Concretely: bm25(...) / pow(2, days_old / recencyHalfLifeDays).
+	// bm25 is lower-is-better (typically negative); dividing by a
+	// value > 1 pushes older rows toward zero (worse) without
+	// flipping the sign, so a strongly relevant old event still
+	// beats a weakly relevant new one but two equally relevant
+	// events resolve in favour of the more recent. Exponential
+	// (rather than linear) decay so the constant honestly maps to
+	// "the score halves every recencyHalfLifeDays days." Default
+	// for the CLI.
 	OrderRank SearchOrder = iota
 
 	// OrderRecency sorts by ts_source_ms DESC (newest first),
@@ -31,19 +34,33 @@ const (
 	OrderRecency
 )
 
-// recencyHalfDays is the divisor in the recency-boost denominator
-// (days_old / recencyHalfDays). Larger values flatten the recency
-// curve (older rows penalised less); smaller values steepen it.
+// recencyHalfLifeDays is the half-life of the recency-boost decay:
+// the score halves for every recencyHalfLifeDays of age. Day 0 →
+// divisor 1; day H → 2; day 2H → 4; day 3H → 8. Larger H flattens
+// the curve (older rows penalised less); smaller H steepens it.
 // 30 days picked as a default — week-old work still ranks well,
-// month-plus-old work starts to drop. Exposed as a const so it can
-// be tuned without grepping for magic numbers.
-const recencyHalfDays = 30.0
+// month-plus-old work drops by half, three-months-old drops to an
+// eighth. Exposed as a const so it can be tuned without grepping
+// for magic numbers.
+//
+// The previous formula was linear (1 + days_old/30) and was
+// (mis)named recencyHalfDays despite producing harmonic decay
+// (day 30 → ½, day 60 → ⅓, day 90 → ¼). Exponential decay is
+// honest about what the constant means and matches the standard
+// retrieval-system convention (e.g. Elasticsearch's gauss/exp
+// score function defaults).
+const recencyHalfLifeDays = 30.0
 
 // recencyBoostedRankExpr returns the SQL expression that takes an
 // FTS5 bm25 rank column and a ts_source_ms column and produces a
-// recency-boosted score: rank / (1 + days_old / recencyHalfDays).
+// recency-boosted score:
+//
+//	rank / MAX(1.0, pow(2.0, days_old / recencyHalfLifeDays))
+//
 // bm25 is lower-is-better (typically negative), so dividing by a
 // value > 1 pushes older rows toward zero without flipping sign.
+// Uses SQLite's pow(2, x) — supplied by the modernc.org/sqlite
+// math extension — for a true 2^x curve.
 //
 // The MAX(1.0, ...) clamp guards against future-dated events: a
 // clock-skewed ts_source_ms greater than the now bind would push
@@ -55,8 +72,8 @@ const recencyHalfDays = 30.0
 // dedup, searchExtractions) can't drift on the formula.
 func recencyBoostedRankExpr(rankCol, tsCol string) string {
 	return fmt.Sprintf(
-		`%s / MAX(1.0, 1.0 + ((? - %s) / 86400000.0) / %.1f)`,
-		rankCol, tsCol, recencyHalfDays,
+		`%s / MAX(1.0, pow(2.0, ((? - %s) / 86400000.0) / %.1f))`,
+		rankCol, tsCol, recencyHalfLifeDays,
 	)
 }
 
@@ -294,7 +311,7 @@ func buildSearchSQL(opts SearchEventOpts, index string) (string, []any) {
 
 	if opts.NoDedup {
 		// Bare path. f.rank is the FTS5 bm25 score (lower-is-better).
-		// For OrderRank we divide by (1 + days_old / recencyHalfDays)
+		// For OrderRank we divide by pow(2, days_old / recencyHalfLifeDays)
 		// so older rows drift toward zero without flipping sign.
 		// `?` for now_ms is appended to args before LIMIT.
 		var order string

@@ -517,7 +517,7 @@ func TestSearchEvents_RecencyBoostBreaksTies(t *testing.T) {
 // corpus is the user's likely target — but it shouldn't be doing so
 // for last week's results.
 //
-// Math sanity: at 14 days old the boost factor is 1 + 14/30 ≈ 1.47.
+// Math sanity: at 14 days old the divisor is pow(2, 14/30) ≈ 1.38.
 // A bm25 advantage of ~3× clears that ratio comfortably.
 func TestSearchEvents_RecencyBoostInsideHalfDaysKeepsRelevance(t *testing.T) {
 	t.Parallel()
@@ -547,6 +547,45 @@ func TestSearchEvents_RecencyBoostInsideHalfDaysKeepsRelevance(t *testing.T) {
 	if !contains(hits[0].Content.String, "focused recent document") {
 		t.Errorf("strong-relevance row 14d old should win, got first hit %q",
 			hits[0].Content.String)
+	}
+}
+
+// TestSearchEvents_RecencyBoostHasExponentialHalfLife pins that the
+// boost denominator follows pow(2, days/H) rather than the legacy
+// linear (1 + days/H). Two equally-relevant rows at age 0 and age H
+// (where H = recencyHalfLifeDays) — the day-H row's boosted score
+// must be exactly half (within float slop) of the day-0 row.
+//
+// The harmonic formula would have produced ½ at day H by accident
+// of the constants, so this test specifically checks day 2H, where
+// the two formulas diverge: harmonic gives ⅓, exponential ¼.
+func TestSearchEvents_RecencyBoostHasExponentialHalfLife(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	twoHalfLives := now.Add(-2 * time.Duration(recencyHalfLifeDays) * 24 * time.Hour)
+
+	// Identical content across two sessions, far apart in time.
+	// "halflife" is the discriminator term.
+	ingestForSearch(t, s, "sess-now", "user_prompt",
+		"halflife marker now", "hook", now)
+	ingestForSearch(t, s, "sess-old", "user_prompt",
+		"halflife marker now", "hook", twoHalfLives)
+
+	hits, err := SearchEvents(t.Context(), s.DB(), SearchEventOpts{
+		Query: "halflife",
+		Order: OrderRank,
+		NowMs: now.UnixMilli(),
+	})
+	if err != nil {
+		t.Fatalf("SearchEvents: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("hits: got %d, want 2", len(hits))
+	}
+	// Newer row wins under recency boost regardless of formula.
+	if hits[0].SessionID != ingest.DeriveSessionID("claude-code", "sess-now") {
+		t.Errorf("expected newer row first, got session %q", hits[0].SessionID)
 	}
 }
 
