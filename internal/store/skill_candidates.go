@@ -3,12 +3,30 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/toabctl/aichronicles/pkg/ingest"
 	"github.com/toabctl/aichronicles/pkg/ingest/extract"
 )
+
+// InitialSkillVersion is the version stamp every newly-recorded
+// candidate gets if no version is supplied. Follows AutoSkill's
+// example examples (v0.1.0, v0.1.34) and standard semver-ish form;
+// the merge path bumps the patch number on the existing skill so
+// "v0.1.0 → v0.1.1 → v0.1.2" is the natural progression of a skill
+// that gets refined over time.
+const InitialSkillVersion = "v0.1.0"
+
+// SkillExample is one (input, output) demonstration in the
+// AutoSkill ξ set — a representative user query paired with a short
+// summary of what the skill does for it. Stored as a JSON array of
+// these objects in the skill_candidates.examples column.
+type SkillExample struct {
+	Input  string `json:"input"`
+	Output string `json:"output"`
+}
 
 // MaintenanceAction names the AutoSkill (Yang et al., 2026 —
 // arXiv:2603.01145) maintenance decisions. After a candidate skill
@@ -54,6 +72,11 @@ const (
 // signal a future propose run uses to avoid re-suggesting the same
 // idea. AddPath is set only for Decision==MaintenanceAdd;
 // MergedIntoID is set only for Decision==MaintenanceMerge.
+//
+// Triggers, Tags, Examples, and Version are the AutoSkill 7-tuple
+// metadata (τ, γ, ξ, v) — populated when the candidate is recorded
+// via RecordSkillCandidateWithMetadata. Empty for legacy rows
+// recorded before metadata persistence shipped.
 type SkillCandidate struct {
 	ID           int64
 	LLMOutputID  int64
@@ -63,6 +86,10 @@ type SkillCandidate struct {
 	AddPath      sql.NullString
 	Decision     MaintenanceAction
 	MergedIntoID sql.NullInt64
+	Triggers     []string
+	Tags         []string
+	Examples     []SkillExample
+	Version      string
 }
 
 // ErrSkillCandidateNotFound is returned by the Mark* helpers when
@@ -70,6 +97,21 @@ type SkillCandidate struct {
 // Distinct from a database error — surfaces a missing
 // RecordSkillCandidate call upstream.
 var ErrSkillCandidateNotFound = errors.New("skill_candidates row not found")
+
+// SkillCandidateMetadata is the AutoSkill 7-tuple metadata
+// (τ triggers, γ tags, ξ examples, v version) the LLM emits
+// alongside the rest of the proposal. Persisted as JSON columns on
+// the skill_candidates row so the merge path can read what the
+// previous run captured without re-asking the LLM. All fields are
+// optional; missing pieces just store as NULL.
+type SkillCandidateMetadata struct {
+	Triggers []string
+	Tags     []string
+	Examples []SkillExample
+	// Version stamps the candidate row. Empty falls back to
+	// InitialSkillVersion at write time.
+	Version string
+}
 
 // RecordSkillCandidate inserts the (llm_output_id, skill_name) pair
 // into skill_candidates if it isn't already present (INSERT OR
@@ -82,7 +124,23 @@ var ErrSkillCandidateNotFound = errors.New("skill_candidates row not found")
 // happens to run. Defensive zero-check: the schema requires
 // proposed_at_ms NOT NULL; passing 0 would persist a meaningless
 // epoch value.
+//
+// This thin form is kept for code paths that don't have AutoSkill
+// metadata to hand (legacy paths, tests). New writers should prefer
+// RecordSkillCandidateWithMetadata so triggers / tags / examples /
+// version land on the row at extraction time, not after.
 func RecordSkillCandidate(ctx context.Context, db *sql.DB, llmOutputID int64, skillName string, proposedAtMs int64) error {
+	return RecordSkillCandidateWithMetadata(ctx, db, llmOutputID, skillName, proposedAtMs, SkillCandidateMetadata{})
+}
+
+// RecordSkillCandidateWithMetadata is the AutoSkill-aware writer:
+// stores triggers / tags / examples / version on the row in the
+// same INSERT that creates it. INSERT OR IGNORE on the natural-key
+// UNIQUE keeps re-runs idempotent; metadata on a duplicate name
+// (rare, only happens if RecordSkillCandidate landed first then
+// metadata was filled in later) goes through DO UPDATE so the
+// row converges to the metadata-rich form.
+func RecordSkillCandidateWithMetadata(ctx context.Context, db *sql.DB, llmOutputID int64, skillName string, proposedAtMs int64, meta SkillCandidateMetadata) error {
 	if llmOutputID <= 0 {
 		return errors.New("RecordSkillCandidate: llm_output_id is required")
 	}
@@ -92,16 +150,108 @@ func RecordSkillCandidate(ctx context.Context, db *sql.DB, llmOutputID int64, sk
 	if proposedAtMs <= 0 {
 		return errors.New("RecordSkillCandidate: proposed_at_ms is required")
 	}
-	_, err := db.ExecContext(ctx,
-		`INSERT INTO skill_candidates(llm_output_id, skill_name, proposed_at_ms)
-		 VALUES (?, ?, ?)
-		 ON CONFLICT(llm_output_id, skill_name) DO NOTHING`,
+
+	triggersJSON, err := marshalSkillStringList("triggers", meta.Triggers)
+	if err != nil {
+		return err
+	}
+	tagsJSON, err := marshalSkillStringList("tags", meta.Tags)
+	if err != nil {
+		return err
+	}
+	examplesJSON, err := marshalSkillExamples(meta.Examples)
+	if err != nil {
+		return err
+	}
+	version := meta.Version
+	if version == "" {
+		version = InitialSkillVersion
+	}
+
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO skill_candidates(
+			llm_output_id, skill_name, proposed_at_ms,
+			triggers, tags, examples, version
+		)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(llm_output_id, skill_name) DO UPDATE SET
+		     triggers = COALESCE(excluded.triggers, skill_candidates.triggers),
+		     tags     = COALESCE(excluded.tags,     skill_candidates.tags),
+		     examples = COALESCE(excluded.examples, skill_candidates.examples),
+		     version  = COALESCE(skill_candidates.version, excluded.version)`,
 		llmOutputID, skillName, proposedAtMs,
+		nullableJSON(triggersJSON), nullableJSON(tagsJSON), nullableJSON(examplesJSON), version,
 	)
 	if err != nil {
 		return fmt.Errorf("insert skill_candidates: %w", err)
 	}
 	return nil
+}
+
+// marshalSkillStringList serialises a string slice to a JSON array,
+// returning empty bytes when the slice is empty so the caller can
+// store NULL rather than "[]". The label feeds the error message.
+func marshalSkillStringList(label string, in []string) ([]byte, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	b, err := json.Marshal(in)
+	if err != nil {
+		return nil, fmt.Errorf("marshal %s: %w", label, err)
+	}
+	return b, nil
+}
+
+// marshalSkillExamples serialises the AutoSkill ξ examples as a JSON
+// array. Empty slice → nil bytes (column stays NULL).
+func marshalSkillExamples(in []SkillExample) ([]byte, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	b, err := json.Marshal(in)
+	if err != nil {
+		return nil, fmt.Errorf("marshal examples: %w", err)
+	}
+	return b, nil
+}
+
+// nullableJSON converts a possibly-empty JSON byte slice into the
+// any value Go's database/sql driver maps to NULL when nil. Lets
+// the INSERT bind NULL for absent metadata without writing two
+// branches per call site.
+func nullableJSON(b []byte) any {
+	if len(b) == 0 {
+		return nil
+	}
+	return string(b)
+}
+
+// scanSkillStringList parses a JSON-array column into a []string,
+// tolerating NULL (returns nil) and empty strings. A malformed body
+// returns an error so a corrupted row surfaces rather than silently
+// giving an empty list.
+func scanSkillStringList(s sql.NullString) ([]string, error) {
+	if !s.Valid || s.String == "" {
+		return nil, nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(s.String), &out); err != nil {
+		return nil, fmt.Errorf("decode string list: %w", err)
+	}
+	return out, nil
+}
+
+// scanSkillExamples parses the JSON-array examples column into
+// []SkillExample. NULL / empty → nil; malformed body → error.
+func scanSkillExamples(s sql.NullString) ([]SkillExample, error) {
+	if !s.Valid || s.String == "" {
+		return nil, nil
+	}
+	var out []SkillExample
+	if err := json.Unmarshal([]byte(s.String), &out); err != nil {
+		return nil, fmt.Errorf("decode examples: %w", err)
+	}
+	return out, nil
 }
 
 // MarkSkillCandidateAdded sets decision='add' on the candidate row
@@ -203,6 +353,57 @@ func MarkSkillCandidateDiscarded(ctx context.Context, db *sql.DB, llmOutputID in
 	return nil
 }
 
+// scanSkillCandidate scans the canonical column list (id,
+// llm_output_id, skill_name, proposed_at_ms, decision_at_ms,
+// add_path, decision, merged_into_id, triggers, tags, examples,
+// version) into a SkillCandidate. Centralised because three
+// loaders all SELECT this same projection — drift between them
+// would mean the AutoSkill metadata silently disappears from one
+// of the call paths.
+func scanSkillCandidate(rows *sql.Rows) (SkillCandidate, error) {
+	var r SkillCandidate
+	var (
+		decision    string
+		triggersStr sql.NullString
+		tagsStr     sql.NullString
+		examplesStr sql.NullString
+		versionStr  sql.NullString
+	)
+	if err := rows.Scan(&r.ID, &r.LLMOutputID, &r.SkillName, &r.ProposedAtMs,
+		&r.DecisionAtMs, &r.AddPath, &decision, &r.MergedIntoID,
+		&triggersStr, &tagsStr, &examplesStr, &versionStr); err != nil {
+		return SkillCandidate{}, fmt.Errorf("scan: %w", err)
+	}
+	r.Decision = MaintenanceAction(decision)
+
+	triggers, err := scanSkillStringList(triggersStr)
+	if err != nil {
+		return SkillCandidate{}, err
+	}
+	r.Triggers = triggers
+	tags, err := scanSkillStringList(tagsStr)
+	if err != nil {
+		return SkillCandidate{}, err
+	}
+	r.Tags = tags
+	examples, err := scanSkillExamples(examplesStr)
+	if err != nil {
+		return SkillCandidate{}, err
+	}
+	r.Examples = examples
+	if versionStr.Valid {
+		r.Version = versionStr.String
+	}
+	return r, nil
+}
+
+// candidateColumns is the canonical SELECT list for SkillCandidate
+// scans. Keep in lockstep with scanSkillCandidate's column order.
+const candidateColumns = `id, llm_output_id, skill_name, proposed_at_ms,
+		        decision_at_ms, add_path,
+		        COALESCE(decision, ''), merged_into_id,
+		        triggers, tags, examples, version`
+
 // LoadSkillCandidatesByName returns every skill_candidates row for
 // the given skill name across history, newest-first. Used by the
 // CLI / web / MCP "is this skill on disk one that aichronicles
@@ -218,9 +419,7 @@ func LoadSkillCandidatesByName(ctx context.Context, db *sql.DB, skillName string
 		limit = 20
 	}
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, llm_output_id, skill_name, proposed_at_ms,
-		        decision_at_ms, add_path,
-		        COALESCE(decision, ''), merged_into_id
+		`SELECT `+candidateColumns+`
 		   FROM skill_candidates
 		  WHERE skill_name = ?
 		  ORDER BY proposed_at_ms DESC
@@ -233,16 +432,46 @@ func LoadSkillCandidatesByName(ctx context.Context, db *sql.DB, skillName string
 	defer func() { _ = rows.Close() }()
 	var out []SkillCandidate
 	for rows.Next() {
-		var r SkillCandidate
-		var decision string
-		if err := rows.Scan(&r.ID, &r.LLMOutputID, &r.SkillName, &r.ProposedAtMs,
-			&r.DecisionAtMs, &r.AddPath, &decision, &r.MergedIntoID); err != nil {
-			return nil, fmt.Errorf("scan: %w", err)
+		r, err := scanSkillCandidate(rows)
+		if err != nil {
+			return nil, err
 		}
-		r.Decision = MaintenanceAction(decision)
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// LoadAddedSkillCandidate returns the most recent skill_candidates
+// row whose Decision==MaintenanceAdd for the given skill name. Used
+// by the merge path to find the surviving candidate that owns the
+// on-disk SKILL.md (the merge target). Returns (nil, nil) when no
+// added candidate exists for the name — the caller then knows the
+// skill is hand-authored and there is no candidate to merge into.
+func LoadAddedSkillCandidate(ctx context.Context, db *sql.DB, skillName string) (*SkillCandidate, error) {
+	if skillName == "" {
+		return nil, errors.New("LoadAddedSkillCandidate: skill_name is required")
+	}
+	rows, err := db.QueryContext(ctx,
+		`SELECT `+candidateColumns+`
+		   FROM skill_candidates
+		  WHERE skill_name = ?
+		    AND decision = ?
+		  ORDER BY decision_at_ms DESC
+		  LIMIT 1`,
+		skillName, string(MaintenanceAdd),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query added candidate: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	r, err := scanSkillCandidate(rows)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
 }
 
 // SkillCandidateEffectiveness summarises the post-add usage of one
@@ -350,9 +579,7 @@ func LoadPendingSkillCandidates(ctx context.Context, db *sql.DB, sinceMs int64, 
 	if limit <= 0 {
 		limit = 50
 	}
-	q := `SELECT id, llm_output_id, skill_name, proposed_at_ms,
-	             decision_at_ms, add_path,
-	             COALESCE(decision, ''), merged_into_id
+	q := `SELECT ` + candidateColumns + `
 	        FROM skill_candidates
 	       WHERE decision IS NULL`
 	args := []any{}
@@ -369,13 +596,10 @@ func LoadPendingSkillCandidates(ctx context.Context, db *sql.DB, sinceMs int64, 
 	seen := make(map[string]struct{})
 	var out []SkillCandidate
 	for rows.Next() {
-		var r SkillCandidate
-		var decision string
-		if err := rows.Scan(&r.ID, &r.LLMOutputID, &r.SkillName, &r.ProposedAtMs,
-			&r.DecisionAtMs, &r.AddPath, &decision, &r.MergedIntoID); err != nil {
-			return nil, fmt.Errorf("scan: %w", err)
+		r, err := scanSkillCandidate(rows)
+		if err != nil {
+			return nil, err
 		}
-		r.Decision = MaintenanceAction(decision)
 		if _, dup := seen[r.SkillName]; dup {
 			continue
 		}

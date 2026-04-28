@@ -380,15 +380,18 @@ func loadFailureShapesForPrompt(ctx context.Context, s *store.Store, sinceMs int
 }
 
 // recordSkillCandidatesFromProposal writes one skill_candidates row
-// per skill in the proposal. Best-effort: lifecycle tracking
-// failures are logged but do not propagate, so a transient DB error
-// here doesn't make the user think their LLM call failed when in
-// fact the cached row landed cleanly.
+// per skill in the proposal, capturing the AutoSkill 7-tuple
+// metadata (triggers, tags, examples, version) the LLM emitted.
+// Best-effort: lifecycle tracking failures are logged but do not
+// propagate, so a transient DB error here doesn't make the user
+// think their LLM call failed when in fact the cached row landed
+// cleanly.
 //
 // proposed_at_ms anchors to the llm_outputs row's created_at_ms so
 // re-runs that hit the cache write the same proposed_at_ms — the
-// PK is (llm_output_id, skill_name) so the INSERT OR IGNORE in
-// RecordSkillCandidate keeps writes idempotent regardless.
+// PK is (llm_output_id, skill_name) so the upsert in
+// RecordSkillCandidateWithMetadata keeps writes idempotent
+// regardless.
 func recordSkillCandidatesFromProposal(ctx context.Context, s *store.Store, llmOutputID int64, r *prompts.ProposalResult) {
 	if r == nil || llmOutputID <= 0 {
 		return
@@ -403,10 +406,36 @@ func recordSkillCandidatesFromProposal(ctx context.Context, s *store.Store, llmO
 		if sk.Name == "" {
 			continue
 		}
-		if rerr := store.RecordSkillCandidate(ctx, s.DB(), llmOutputID, sk.Name, row.CreatedAtMs); rerr != nil {
+		meta := skillMetadataFromProposed(sk)
+		if rerr := store.RecordSkillCandidateWithMetadata(ctx, s.DB(),
+			llmOutputID, sk.Name, row.CreatedAtMs, meta); rerr != nil {
 			slog.Warn("propose: failed to record skill candidate",
 				"llm_output_id", llmOutputID, "skill", sk.Name, "err", rerr)
 		}
+	}
+}
+
+// skillMetadataFromProposed lifts the AutoSkill 7-tuple metadata
+// (triggers τ, tags γ, examples ξ, version v) from a
+// prompts.ProposedSkill into the store's SkillCandidateMetadata
+// shape. Centralised so the propose and induction call paths can't
+// drift on the field mapping.
+func skillMetadataFromProposed(sk prompts.ProposedSkill) store.SkillCandidateMetadata {
+	examples := make([]store.SkillExample, 0, len(sk.Examples))
+	for _, e := range sk.Examples {
+		examples = append(examples, store.SkillExample{
+			Input:  e.Input,
+			Output: e.Output,
+		})
+	}
+	return store.SkillCandidateMetadata{
+		Triggers: append([]string(nil), sk.Triggers...),
+		Tags:     append([]string(nil), sk.Tags...),
+		Examples: examples,
+		// Version is set by the store at insert time
+		// (InitialSkillVersion) when meta.Version is empty —
+		// new candidates always start at v0.1.0; the merge path
+		// is what bumps the patch.
 	}
 }
 

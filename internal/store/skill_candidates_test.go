@@ -488,6 +488,133 @@ func TestCountPendingSkillCandidates(t *testing.T) {
 	}
 }
 
+// TestRecordSkillCandidateWithMetadata_PersistsAutoSkillFields
+// asserts triggers / tags / examples / version land on the row at
+// extraction time and round-trip cleanly through the loader. Empty
+// metadata still inserts the row (the legacy thin form goes
+// through the same path with a zero-valued struct).
+func TestRecordSkillCandidateWithMetadata_PersistsAutoSkillFields(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+	loID := mkProposeRow(t, s, 1_700_000_000_000)
+
+	meta := SkillCandidateMetadata{
+		Triggers: []string{"deploy staging", "ship to staging", "push to staging"},
+		Tags:     []string{"deploy", "ci"},
+		Examples: []SkillExample{{Input: "deploy this branch", Output: "runs deploy script with current branch"}},
+		// Version intentionally empty — store should default it.
+	}
+	if err := RecordSkillCandidateWithMetadata(ctx, s.DB(),
+		loID, "deploy-staging", 1_700_000_000_000, meta); err != nil {
+		t.Fatalf("record with metadata: %v", err)
+	}
+	rows, err := LoadSkillCandidatesByName(ctx, s.DB(), "deploy-staging", 0)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows: got %d want 1", len(rows))
+	}
+	r := rows[0]
+	if got, want := len(r.Triggers), 3; got != want {
+		t.Errorf("triggers: got %d entries want %d", got, want)
+	}
+	if got, want := r.Triggers[0], "deploy staging"; got != want {
+		t.Errorf("triggers[0]: got %q want %q", got, want)
+	}
+	if got, want := len(r.Tags), 2; got != want {
+		t.Errorf("tags: got %d entries want %d", got, want)
+	}
+	if len(r.Examples) != 1 || r.Examples[0].Input == "" || r.Examples[0].Output == "" {
+		t.Errorf("examples: got %#v", r.Examples)
+	}
+	if r.Version != InitialSkillVersion {
+		t.Errorf("version: got %q want %q", r.Version, InitialSkillVersion)
+	}
+}
+
+// TestRecordSkillCandidate_ThinFormStillWorks asserts the legacy
+// no-metadata form remains a no-op upsert: the row exists with
+// empty metadata fields and the default version.
+func TestRecordSkillCandidate_ThinFormStillWorks(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+	loID := mkProposeRow(t, s, 1_700_000_000_000)
+	if err := RecordSkillCandidate(ctx, s.DB(), loID, "no-meta", 1_700_000_000_000); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	rows, err := LoadSkillCandidatesByName(ctx, s.DB(), "no-meta", 0)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	r := rows[0]
+	if r.Version != InitialSkillVersion {
+		t.Errorf("version default: got %q want %q", r.Version, InitialSkillVersion)
+	}
+	if r.Triggers != nil || r.Tags != nil || r.Examples != nil {
+		t.Errorf("expected empty metadata, got triggers=%v tags=%v examples=%v",
+			r.Triggers, r.Tags, r.Examples)
+	}
+}
+
+// TestLoadAddedSkillCandidate exercises the merge-path lookup:
+// returns the most-recently-added candidate by name; nil when none
+// exists; isolated by Decision='add' (pending / discarded rows
+// don't surface).
+func TestLoadAddedSkillCandidate(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+
+	t.Run("nil when no candidate", func(t *testing.T) {
+		got, err := LoadAddedSkillCandidate(ctx, s.DB(), "missing")
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if got != nil {
+			t.Errorf("expected nil, got %#v", got)
+		}
+	})
+
+	loID := mkProposeRow(t, s, 1_700_000_000_000)
+	if err := RecordSkillCandidate(ctx, s.DB(), loID, "pending-only", 1_700_000_000_000); err != nil {
+		t.Fatalf("record pending: %v", err)
+	}
+	t.Run("nil when only pending", func(t *testing.T) {
+		got, err := LoadAddedSkillCandidate(ctx, s.DB(), "pending-only")
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if got != nil {
+			t.Errorf("pending should not surface as added: %#v", got)
+		}
+	})
+
+	if err := RecordSkillCandidate(ctx, s.DB(), loID, "added-skill", 1_700_000_000_000); err != nil {
+		t.Fatalf("record added: %v", err)
+	}
+	if err := MarkSkillCandidateAdded(ctx, s.DB(), loID, "added-skill", "/p/SKILL.md", 1_700_000_500_000); err != nil {
+		t.Fatalf("mark added: %v", err)
+	}
+	t.Run("returns added candidate", func(t *testing.T) {
+		got, err := LoadAddedSkillCandidate(ctx, s.DB(), "added-skill")
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if got == nil {
+			t.Fatalf("expected candidate, got nil")
+		}
+		if got.Decision != MaintenanceAdd {
+			t.Errorf("decision: got %q want %q", got.Decision, MaintenanceAdd)
+		}
+		if !got.AddPath.Valid || got.AddPath.String != "/p/SKILL.md" {
+			t.Errorf("add_path: got %v", got.AddPath)
+		}
+	})
+}
+
 // TestSkillCandidatesMigration_Backfills asserts migration 021's
 // backfill rule: any pre-migration row with applied_at_ms set
 // (now decision_at_ms) inherits decision='add' so old data fits

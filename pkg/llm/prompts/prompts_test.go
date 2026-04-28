@@ -900,6 +900,75 @@ func TestBuildPropose_SetsForcedTool(t *testing.T) {
 	}
 }
 
+// TestProposalToolSchema_AutoSkillFieldsRequired pins the AutoSkill
+// (Yang et al., 2026) 7-tuple metadata: every emitted skill MUST
+// carry triggers, tags, and examples alongside the existing fields.
+// The schema bytes are stable (hashRequest depends on them); a
+// regression here breaks both the LLM contract and the cache key,
+// so the test asserts presence loudly.
+func TestProposalToolSchema_AutoSkillFieldsRequired(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`"triggers"`,
+		`"tags"`,
+		`"examples"`,
+		`"#/$defs/triggers"`,
+		`"#/$defs/tags"`,
+		`"#/$defs/examples"`,
+	} {
+		if !strings.Contains(proposalToolSchema, want) {
+			t.Errorf("proposalToolSchema missing %q", want)
+		}
+	}
+	for _, want := range []string{
+		`"triggers"`,
+		`"tags"`,
+		`"examples"`,
+		`"input"`,
+		`"output"`,
+	} {
+		if !strings.Contains(inductionToolSchema, want) {
+			t.Errorf("inductionToolSchema missing %q", want)
+		}
+	}
+}
+
+// TestProposedSkill_AutoSkillRoundTrips asserts the Go struct
+// carries triggers, tags, and examples through a JSON round-trip.
+// Without this, an LLM emitting AutoSkill fields would deserialise
+// into a struct that drops them on the floor.
+func TestProposedSkill_AutoSkillRoundTrips(t *testing.T) {
+	t.Parallel()
+	in := ProposedSkill{
+		Name:                 "deploy-staging",
+		WhenToUse:            "when deploying to staging",
+		Why:                  "stops manual mistakes",
+		Triggers:             []string{"deploy staging", "ship to staging", "push to staging"},
+		Tags:                 []string{"deploy", "ci"},
+		Examples:             []ProposedSkillExample{{Input: "deploy this branch to staging", Output: "runs the staging deploy script with current branch"}},
+		Frequency:            2,
+		Effort:               "small",
+		AlternativesRejected: "",
+	}
+	body, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out ProposedSkill
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.Triggers) != 3 || out.Triggers[0] != "deploy staging" {
+		t.Errorf("triggers: got %#v", out.Triggers)
+	}
+	if len(out.Tags) != 2 || out.Tags[0] != "deploy" {
+		t.Errorf("tags: got %#v", out.Tags)
+	}
+	if len(out.Examples) != 1 || out.Examples[0].Input == "" || out.Examples[0].Output == "" {
+		t.Errorf("examples: got %#v", out.Examples)
+	}
+}
+
 func TestBuildPropose_ScrubsAndReportsPatterns(t *testing.T) {
 	t.Parallel()
 	digests := []SessionDigest{

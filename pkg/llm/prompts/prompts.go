@@ -212,15 +212,37 @@ type ProposalEvidence struct {
 // directory layout (and hermes-agent's skill_manager_tool) treat
 // scripts as supporting files inside a skill, not free-floating
 // helpers on PATH.
+//
+// Triggers, Tags, and Examples are the AutoSkill (Yang et al.,
+// 2026 — arXiv:2603.01145) skill-tuple metadata (τ, γ, ξ in the
+// paper). Triggers are short query-shaped phrases that activate
+// retrieval; tags are categorical labels for browsing; examples
+// are concrete (input → output) demonstrations. The LLM emits
+// these alongside the existing fields so the skill_candidates row
+// — and any SKILL.md materialised from it — can carry standard
+// metadata without aichronicles having to reconstruct it post-hoc.
 type ProposedSkill struct {
-	Name                 string                `json:"name"`
-	WhenToUse            string                `json:"when_to_use"`
-	Why                  string                `json:"why"`
-	Scripts              []ProposedSkillScript `json:"scripts,omitempty"`
-	Evidence             []ProposalEvidence    `json:"evidence"`
-	Frequency            int                   `json:"frequency"`
-	Effort               string                `json:"effort"`
-	AlternativesRejected string                `json:"alternatives_rejected"`
+	Name                 string                 `json:"name"`
+	WhenToUse            string                 `json:"when_to_use"`
+	Why                  string                 `json:"why"`
+	Triggers             []string               `json:"triggers,omitempty"`
+	Tags                 []string               `json:"tags,omitempty"`
+	Examples             []ProposedSkillExample `json:"examples,omitempty"`
+	Scripts              []ProposedSkillScript  `json:"scripts,omitempty"`
+	Evidence             []ProposalEvidence     `json:"evidence"`
+	Frequency            int                    `json:"frequency"`
+	Effort               string                 `json:"effort"`
+	AlternativesRejected string                 `json:"alternatives_rejected"`
+}
+
+// ProposedSkillExample is one entry in ProposedSkill.Examples —
+// a concrete demonstration of when/how the skill is used. Input
+// is a representative user query (the kind of prompt that should
+// trigger the skill); Output is a short summary of what the skill
+// does for that input. AutoSkill ξ.
+type ProposedSkillExample struct {
+	Input  string `json:"input"`
+	Output string `json:"output"`
 }
 
 // ProposedSkillScript is one helper script associated with a
@@ -667,6 +689,11 @@ Hard rules:
 6. frequency = the count of distinct session_ids in your evidence array.
 7. effort: "small" = an afternoon. "medium" = a few days, well-scoped. "large" = a project-shaped effort that probably wants its own design doc.
 
+7a. AUTOSKILL METADATA (triggers, tags, examples) — required for every emitted skill, follows the AutoSkill 7-tuple convention (Yang et al., 2026):
+    - triggers: 3–8 short keyword PHRASES the user would actually type or speak when this skill should activate. Lowercase, query-shaped, NOT prose: "ci failing on go service", "redirect path tests", "deploy staging", "rebase conflict resolved". Distinct from when_to_use which is the descriptive form; triggers are retrieval anchors — what BM25 or dense-retrieval would match against. Pull triggers from verbatim quotes in the evidence sessions when possible.
+    - tags: 1–5 categorical labels the skill belongs to. Lowercase kebab-case. Use standard buckets when applicable: language ("go", "python", "rust", "typescript"), domain ("ci", "deploy", "testing", "git", "database", "infra"), level ("workflow", "single-tool", "diagnostic"). The skill listing groups by tags; pick the discriminating ones.
+    - examples: 1–3 concrete (input → output) demonstrations. input is a representative user query that should fire the skill ("the CI build is red on main"); output is a short summary of what the skill does for that input ("runs the failing test locally with -count=1, captures stderr, opens a fix PR"). Examples ground the skill's intent; downstream retrieval and the SKILL.md scaffold both consume them.
+
 Skill-awareness rules (the "Skills installed" and "Skills invoked recently" sections at the top of the user message are CANONICAL — do not invent skill names):
 
 8. If a recurring pattern overlaps an *installed* skill (same domain or trigger), do NOT propose a new skill with that name or near-duplicate name. Skip the pattern.
@@ -720,14 +747,46 @@ const proposalToolSchema = `{
     "frequency": {"type":"integer","minimum":2},
     "effort":    {"type":"string","enum":["small","medium","large"]},
     "alternatives_rejected": {"type":"string"},
+    "triggers": {
+      "type":"array",
+      "description":"Short keyword phrases that activate retrieval — the terms a user would actually type when this skill should fire (3-8 entries, lowercase, query-shaped).",
+      "minItems": 3,
+      "maxItems": 8,
+      "items": {"type":"string","minLength":2,"maxLength":80}
+    },
+    "tags": {
+      "type":"array",
+      "description":"Categorical labels for browsing the skill library (1-5 entries, lowercase kebab-case).",
+      "minItems": 1,
+      "maxItems": 5,
+      "items": {"type":"string","pattern":"^[a-z][a-z0-9-]*$","maxLength":32}
+    },
+    "examples": {
+      "type":"array",
+      "description":"Concrete (input → output) demonstrations of the skill (1-3 entries). Input is a representative user query; output is a short summary of what the skill does for that input.",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "type":"object",
+        "required":["input","output"],
+        "additionalProperties": false,
+        "properties": {
+          "input":  {"type":"string","minLength":1,"maxLength":240},
+          "output": {"type":"string","minLength":1,"maxLength":240}
+        }
+      }
+    },
     "proposalSkill": {
       "type":"object",
-      "required":["name","when_to_use","why","evidence","frequency","effort","alternatives_rejected"],
+      "required":["name","when_to_use","why","triggers","tags","examples","evidence","frequency","effort","alternatives_rejected"],
       "additionalProperties": false,
       "properties": {
         "name":                  {"type":"string","pattern":"^[a-z][a-z0-9-]*$"},
         "when_to_use":           {"type":"string","minLength":1},
         "why":                   {"type":"string","minLength":1},
+        "triggers":              {"$ref":"#/$defs/triggers"},
+        "tags":                  {"$ref":"#/$defs/tags"},
+        "examples":              {"$ref":"#/$defs/examples"},
         "scripts": {
           "type":"array",
           "minItems": 0,
@@ -1152,6 +1211,10 @@ Hard rules:
    c. No installed skill already covers the same condition (the "Skills installed" stanza is canonical; near-duplicate names OR triggers both disqualify).
    d. PREFER parameterised steps[] + placeholders[] when the underlying actions are observable shell commands.
    e. frequency=1, effort ∈ {small,medium,large}.
+   f. AUTOSKILL METADATA (triggers, tags, examples) — the AutoSkill 7-tuple convention (Yang et al., 2026):
+      - triggers: 3–8 short query-shaped phrases the user would type ("ci red on go", "rebase conflict resolved"). NOT prose; retrieval anchors.
+      - tags: 1–5 lowercase kebab-case categorical labels ("go", "ci", "deploy", "testing", "workflow", "single-tool").
+      - examples: 1–3 (input → output) demonstrations. input is a representative user query; output is a short summary of what the skill does for it.
 
 4. WORKFLOW CRITERIA — emit a workflow ONLY when:
    a. The session ran a recognisable PROCEDURE (sequence of high-level actions the same user, or a different user with a similar goal, would benefit from following next time).
@@ -1176,12 +1239,41 @@ const inductionToolSchema = `{
   "properties": {
     "skill": {
       "type":"object",
-      "required":["name","when_to_use","why","evidence","frequency","effort","alternatives_rejected"],
+      "required":["name","when_to_use","why","triggers","tags","examples","evidence","frequency","effort","alternatives_rejected"],
       "additionalProperties": false,
       "properties": {
         "name":                  {"type":"string","pattern":"^[a-z][a-z0-9-]*$"},
         "when_to_use":           {"type":"string","minLength":1},
         "why":                   {"type":"string","minLength":1},
+        "triggers": {
+          "type":"array",
+          "description":"Short keyword phrases that activate retrieval — the terms a user would actually type when this skill should fire (3-8 entries, lowercase, query-shaped).",
+          "minItems": 3,
+          "maxItems": 8,
+          "items": {"type":"string","minLength":2,"maxLength":80}
+        },
+        "tags": {
+          "type":"array",
+          "description":"Categorical labels for browsing the skill library (1-5 entries, lowercase kebab-case).",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {"type":"string","pattern":"^[a-z][a-z0-9-]*$","maxLength":32}
+        },
+        "examples": {
+          "type":"array",
+          "description":"Concrete (input → output) demonstrations of the skill (1-3 entries). Input is a representative user query; output is a short summary of what the skill does for that input.",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": {
+            "type":"object",
+            "required":["input","output"],
+            "additionalProperties": false,
+            "properties": {
+              "input":  {"type":"string","minLength":1,"maxLength":240},
+              "output": {"type":"string","minLength":1,"maxLength":240}
+            }
+          }
+        },
         "scripts": {
           "type":"array",
           "minItems": 0,

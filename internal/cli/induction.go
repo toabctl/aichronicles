@@ -558,13 +558,17 @@ func RunInductionForSession(
 		return id, fmt.Errorf("induction: parse persisted body: %w", err)
 	}
 	// Lifecycle tracking: if the LLM extracted a skill, record it
-	// in skill_candidates so a later maintenance decision (add /
-	// merge / discard) can attribute the resulting SKILL.md back
-	// to this induction run, and so the candidate survives in the
-	// index even if the user never acts on it (the abandonment-rate
-	// signal). Best-effort — see recordSkillCandidatesFromProposal.
+	// in skill_candidates with its AutoSkill metadata (triggers,
+	// tags, examples, version). A later maintenance decision (add /
+	// merge / discard) attributes the resulting SKILL.md back to
+	// this induction run, and the candidate survives in the index
+	// even if the user never acts on it (the abandonment-rate
+	// signal). Best-effort — same pattern as
+	// recordSkillCandidatesFromProposal.
 	if result.Skill != nil && result.Skill.Name != "" {
-		if rerr := store.RecordSkillCandidate(ctx, s.DB(), id, result.Skill.Name, row.CreatedAtMs); rerr != nil {
+		meta := skillMetadataFromProposed(*result.Skill)
+		if rerr := store.RecordSkillCandidateWithMetadata(ctx, s.DB(),
+			id, result.Skill.Name, row.CreatedAtMs, meta); rerr != nil {
 			slog.Warn("induction: failed to record skill candidate",
 				"llm_output_id", id, "skill", result.Skill.Name, "err", rerr)
 		}
