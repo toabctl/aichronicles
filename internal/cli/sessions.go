@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
 )
 
@@ -165,26 +166,11 @@ func RunListSessions(s *store.Store, opts SessionsOptions, out io.Writer) error 
 	return err
 }
 
-// nullableInt64 lifts sql.NullInt64 into *int64 so JSON output renders
-// missing timestamps as `null` rather than `0`.
-func nullableInt64(n sql.NullInt64) *int64 {
-	if !n.Valid {
-		return nil
-	}
-	v := n.Int64
-	return &v
-}
-
-// nullableString lifts sql.NullString into *string. Empty-but-valid is
-// preserved as "" (distinct from null) — the schema treats empty cwd
-// as legitimately absent of a working directory rather than missing.
-func nullableString(n sql.NullString) *string {
-	if !n.Valid {
-		return nil
-	}
-	v := n.String
-	return &v
-}
+// nullableInt64 / nullableString are thin wrappers over
+// internal/nullable so the JSON-mode column renderings stay
+// shared with the web and MCP surfaces.
+func nullableInt64(n sql.NullInt64) *int64    { return nullable.Int64Ptr(n) }
+func nullableString(n sql.NullString) *string { return nullable.StringPtr(n) }
 
 // buildSessionsSQL composes the list query. Factored out for unit
 // tests that check filter composition without hitting SQLite.
@@ -250,12 +236,7 @@ func formatTsNullable(n sql.NullInt64) string {
 	return formatTimeForUser(n.Int64, time.Now())
 }
 
-func nullStringOrDash(s sql.NullString) string {
-	if !s.Valid || s.String == "" {
-		return "-"
-	}
-	return s.String
-}
+func nullStringOrDash(s sql.NullString) string { return nullable.OrDash(s) }
 
 func truncatePrompt(s string) string {
 	if s == "-" {

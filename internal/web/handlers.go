@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/timefmt"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
@@ -550,12 +551,10 @@ func relativeTime(ms int64, now time.Time) string {
 }
 
 // orDash returns the string content of a sql.NullString, or "-"
-// when NULL or empty. Mirrors the CLI's display contract.
+// when NULL or empty. Thin wrapper over internal/nullable so the
+// display contract stays identical across surfaces.
 func orDash(s sql.NullString) string {
-	if !s.Valid || s.String == "" {
-		return "-"
-	}
-	return s.String
+	return nullable.OrDash(s)
 }
 
 // truncatePreview flattens whitespace and rune-caps a prompt

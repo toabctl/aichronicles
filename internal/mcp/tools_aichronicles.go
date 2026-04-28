@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/searchquery"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/timefmt"
@@ -453,12 +454,7 @@ func formatTSNullable(n sql.NullInt64) string {
 	return timefmt.AbsoluteRFC3339OrDash(n)
 }
 
-func nullOrDash(s sql.NullString) string {
-	if !s.Valid || s.String == "" {
-		return "-"
-	}
-	return s.String
-}
+func nullOrDash(s sql.NullString) string { return nullable.OrDash(s) }
 
 // oneLineSnippet flattens whitespace and caps a content preview so
 // each tool row stays on a single terminal line.
