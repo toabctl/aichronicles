@@ -2,9 +2,12 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/llm"
@@ -267,6 +270,203 @@ func TestSemanticSearchEvents_RanksAndReturnsHits(t *testing.T) {
 	_ = jsonlEventID // retained as a sanity capture; rendered hits don't carry the full id
 	if embedder.called != 1 {
 		t.Errorf("embedder called %d times, want exactly 1", embedder.called)
+	}
+}
+
+// seedInductionWorkflowOutput inserts an llm_outputs row of
+// kind=induction whose body carries a non-null workflow with the
+// supplied task_shape. Returns the row id.
+func seedInductionWorkflowOutput(t *testing.T, st *store.Store, sessionID, taskShape string) int64 {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"workflow": map[string]any{
+			"task_shape": taskShape,
+			"procedure": []map[string]any{
+				{"action": "Step one for " + taskShape},
+				{"action": "Step two for " + taskShape},
+			},
+			"preconditions":  []string{},
+			"success_checks": []string{},
+			"evidence": []any{
+				map[string]any{"session_id": sessionID, "quote": "x", "what_happened": "y"},
+			},
+		},
+		"rationale": "extracted",
+	})
+	if _, err := st.DB().Exec(
+		`INSERT INTO sessions(id, source_agent, source_session_id) VALUES (?, 'claude-code', ?)
+		 ON CONFLICT(id) DO NOTHING`,
+		sessionID, "src-"+sessionID,
+	); err != nil {
+		t.Fatalf("seed session %s: %v", sessionID, err)
+	}
+	r, err := st.DB().Exec(
+		`INSERT INTO llm_outputs(session_id, kind, model, prompt_hash, body, created_at_ms)
+		 VALUES (?, 'induction', 'fake-model', ?, ?, ?)`,
+		sessionID, "h-find-"+sessionID, string(body), time.Now().UnixMilli(),
+	)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	id, _ := r.LastInsertId()
+	return id
+}
+
+// scriptedEmbedder returns a vector chosen by a per-call rule —
+// each input string can be matched to a vector via a key→vector
+// map. Falls back to a small all-zero vector for unmatched inputs.
+type scriptedEmbedder struct {
+	byInput func(string) []float32
+	called  int
+}
+
+func (s *scriptedEmbedder) Embed(_ context.Context, req llm.EmbedRequest) (*llm.EmbedResponse, error) {
+	s.called++
+	out := &llm.EmbedResponse{Model: req.Model}
+	for _, in := range req.Inputs {
+		out.Vectors = append(out.Vectors, s.byInput(in))
+	}
+	return out, nil
+}
+
+func TestFindWorkflows_RanksByCosineSimilarity(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+
+	seedInductionWorkflowOutput(t, st,
+		"00000000-0000-0000-0000-0000000000a1", "deploy a backend service to staging")
+	seedInductionWorkflowOutput(t, st,
+		"00000000-0000-0000-0000-0000000000a2", "investigate a failing CI run")
+	seedInductionWorkflowOutput(t, st,
+		"00000000-0000-0000-0000-0000000000a3", "rotate a database credential")
+
+	embedder := &scriptedEmbedder{
+		byInput: func(in string) []float32 {
+			switch in {
+			case "I want to ship this build to staging":
+				return []float32{1, 0, 0} // query
+			case "deploy a backend service to staging":
+				return []float32{1, 0, 0} // perfect match
+			case "investigate a failing CI run":
+				return []float32{0, 1, 0} // orthogonal
+			case "rotate a database credential":
+				return []float32{0, 0, 1} // orthogonal
+			default:
+				return []float32{0, 0, 0}
+			}
+		},
+	}
+
+	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesEmbeddingTools(srv, st,
+		func() (llm.Embedder, error) { return embedder, nil })
+
+	res := callTool(t, srv, "find_workflows",
+		`{"query":"I want to ship this build to staging","limit":3}`)
+	if res == nil || len(res.Content) == 0 {
+		t.Fatal("empty result")
+	}
+	body := res.Content[0].Text
+	lines := strings.Split(strings.TrimSpace(body), "\n")
+	// First non-step line should be the perfect-match workflow.
+	if !strings.Contains(lines[0], "deploy a backend service to staging") {
+		t.Errorf("rank 0 should be the deploy workflow, got: %q", lines[0])
+	}
+	if !strings.Contains(lines[0], "1.000") {
+		t.Errorf("rank 0 should have score 1.000, got: %q", lines[0])
+	}
+	if embedder.called != 1 {
+		t.Errorf("expected 1 batched embed call, got %d", embedder.called)
+	}
+}
+
+func TestFindWorkflows_EmptyCorpusIsHelpful(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	embedder := &scriptedEmbedder{
+		byInput: func(string) []float32 { return []float32{1, 0, 0} },
+	}
+	RegisterAichroniclesEmbeddingTools(srv, st,
+		func() (llm.Embedder, error) { return embedder, nil })
+
+	res := callTool(t, srv, "find_workflows", `{"query":"anything"}`)
+	body := res.Content[0].Text
+	if !strings.Contains(body, "no workflows yet") {
+		t.Errorf("expected helpful empty-state message, got:\n%s", body)
+	}
+	if embedder.called != 0 {
+		t.Errorf("embedder called on empty corpus: %d (we should short-circuit before embedding)", embedder.called)
+	}
+}
+
+func TestFindWorkflows_RejectsEmptyQuery(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	embedder := &scriptedEmbedder{
+		byInput: func(string) []float32 { return []float32{1, 0, 0} },
+	}
+	RegisterAichroniclesEmbeddingTools(srv, st,
+		func() (llm.Embedder, error) { return embedder, nil })
+
+	res := callTool(t, srv, "find_workflows", `{"query":"  "}`)
+	if !strings.Contains(res.Content[0].Text, "query is required") {
+		t.Errorf("expected validation error, got %+v", res)
+	}
+	if embedder.called != 0 {
+		t.Errorf("embedder called on empty query: %d", embedder.called)
+	}
+}
+
+func TestFindWorkflows_LimitTrimsCorpus(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+
+	for i, ts := range []string{"task A", "task B", "task C", "task D", "task E"} {
+		seedInductionWorkflowOutput(t, st,
+			fmt.Sprintf("00000000-0000-0000-0000-0000000000b%d", i), ts)
+	}
+	// Each shape gets a distinct vector along a different axis;
+	// query is closest to "task A".
+	embedder := &scriptedEmbedder{
+		byInput: func(in string) []float32 {
+			switch in {
+			case "find me task A please":
+				return []float32{1, 0.05, 0.05, 0.05, 0.05} // closest to A
+			case "task A":
+				return []float32{1, 0, 0, 0, 0}
+			case "task B":
+				return []float32{0, 1, 0, 0, 0}
+			case "task C":
+				return []float32{0, 0, 1, 0, 0}
+			case "task D":
+				return []float32{0, 0, 0, 1, 0}
+			case "task E":
+				return []float32{0, 0, 0, 0, 1}
+			default:
+				return []float32{0, 0, 0, 0, 0}
+			}
+		},
+	}
+
+	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesEmbeddingTools(srv, st,
+		func() (llm.Embedder, error) { return embedder, nil })
+
+	res := callTool(t, srv, "find_workflows", `{"query":"find me task A please","limit":2}`)
+	body := res.Content[0].Text
+	lines := strings.Split(strings.TrimSpace(body), "\n")
+	// Only top-2 task_shape lines should appear; each has 2 step
+	// rows below it (4 step rows total). 2 task lines + 4 step
+	// lines = 6 lines.
+	if len(lines) != 6 {
+		t.Errorf("limit=2 should render 2 workflows + 4 step lines (6 total), got %d:\n%s",
+			len(lines), body)
+	}
+	// First line must be task A (highest cosine).
+	if !strings.Contains(lines[0], "task A") {
+		t.Errorf("limit-2 top should be task A, got: %q", lines[0])
 	}
 }
 

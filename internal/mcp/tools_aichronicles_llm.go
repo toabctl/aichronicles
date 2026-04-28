@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -214,6 +216,28 @@ func RegisterAichroniclesEmbeddingTools(s *Server, st *store.Store, newEmbedder 
 		}`),
 		Handler: semanticSearchHandler(st, newEmbedder),
 	})
+
+	s.RegisterTool(Tool{
+		Name: "find_workflows",
+		Description: "Find workflows whose task_shape is semantically similar to a free-text " +
+			"query. Embeds the query and every workflow's task_shape, ranks by cosine similarity, " +
+			"returns the top-K. Use when the user is about to start a task and wants to know " +
+			"whether a similar shape has been done before — e.g. 'I need to roll out a config " +
+			"change to staging' should retrieve a 'deploy a backend service to staging' workflow " +
+			"even if the wording differs. " +
+			"Distinct from list_workflows (substring match on task_shape, no LLM cost): semantic " +
+			"ranking is more recall-friendly but costs one embedding call per request. " +
+			"Returns (no workflows yet) when the workflow corpus is empty.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"query": {"type": "string", "description": "Free-text task description. Embedded into the same vector space as the workflow task_shapes."},
+				"limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5}
+			},
+			"required": ["query"]
+		}`),
+		Handler: findWorkflowsHandler(st, newEmbedder),
+	})
 }
 
 func semanticSearchHandler(st *store.Store, newEmbedder func() (llm.Embedder, error)) ToolHandler {
@@ -303,6 +327,139 @@ func semanticSearchHandler(st *store.Store, newEmbedder func() (llm.Embedder, er
 		}
 		return TextResult(strings.TrimRight(b.String(), "\n")), nil
 	}
+}
+
+// findWorkflowsCorpusCap is the maximum number of induction rows
+// we'll scan per find_workflows call. Workflows are sparse (most
+// induction rows have body.workflow=null), so this loosely
+// translates to "the most recent ~N workflow inductions" rather
+// than 200 actual workflows. At our scale a brute-force embed +
+// cosine over the whole corpus is fine; if the corpus grows
+// past a few thousand workflows, we'd add a workflow_embeddings
+// cache here.
+const findWorkflowsCorpusCap = 200
+
+func findWorkflowsHandler(st *store.Store, newEmbedder func() (llm.Embedder, error)) ToolHandler {
+	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
+		var req struct {
+			Query string `json:"query"`
+			Limit int    `json:"limit"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, &Error{Code: InvalidParams, Message: "find_workflows: bad args: " + err.Error()}
+		}
+		if strings.TrimSpace(req.Query) == "" {
+			return TextError("find_workflows: query is required"), nil
+		}
+		if req.Limit <= 0 || req.Limit > 20 {
+			req.Limit = 5
+		}
+
+		// Pull the workflow corpus from kind=induction rows where
+		// body.workflow is non-null. Round 8 collapsed kind=workflow
+		// into the unified induction body.
+		rows, err := store.LoadLLMOutputs(ctx, st.DB(), store.LLMOutputFilter{
+			Kind:  store.LLMKindInduction,
+			Limit: findWorkflowsCorpusCap,
+		})
+		if err != nil {
+			return nil, &Error{Code: InternalError, Message: "find_workflows: load: " + err.Error()}
+		}
+		type candidate struct {
+			row store.LLMOutput
+			ind prompts.InductionResult
+		}
+		var corpus []candidate
+		for _, r := range rows {
+			var ind prompts.InductionResult
+			if jerr := json.Unmarshal([]byte(r.Body), &ind); jerr != nil {
+				continue
+			}
+			if ind.Workflow == nil || strings.TrimSpace(ind.Workflow.TaskShape) == "" {
+				continue
+			}
+			corpus = append(corpus, candidate{row: r, ind: ind})
+		}
+		if len(corpus) == 0 {
+			return TextResult("(no workflows yet — workflows are emitted by `aichronicles induction sweep` alongside skills)"), nil
+		}
+
+		// One batched embed call: [query, taskShape0, taskShape1, ...].
+		// Response.Vectors[0] is the query, [1:] correspond 1:1 with
+		// corpus entries.
+		embedder, err := newEmbedder()
+		if err != nil {
+			return TextError("find_workflows: embedder unavailable: %v", err), nil
+		}
+		inputs := make([]string, 0, 1+len(corpus))
+		inputs = append(inputs, req.Query)
+		for _, c := range corpus {
+			inputs = append(inputs, c.ind.Workflow.TaskShape)
+		}
+		resp, err := embedder.Embed(ctx, llm.EmbedRequest{
+			Model:  llm.DefaultEmbeddingModel,
+			Inputs: inputs,
+		})
+		if err != nil {
+			return nil, &Error{Code: InternalError, Message: "find_workflows: embed: " + err.Error()}
+		}
+		if len(resp.Vectors) != len(inputs) {
+			return nil, &Error{Code: InternalError, Message: fmt.Sprintf(
+				"find_workflows: expected %d vectors, got %d", len(inputs), len(resp.Vectors))}
+		}
+
+		queryVec := resp.Vectors[0]
+		shapeVecs := resp.Vectors[1:]
+
+		type scored struct {
+			cand  candidate
+			score float64
+		}
+		ranked := make([]scored, 0, len(corpus))
+		for i, c := range corpus {
+			ranked = append(ranked, scored{cand: c, score: float64(cosine(queryVec, shapeVecs[i]))})
+		}
+		sort.Slice(ranked, func(i, j int) bool { return ranked[i].score > ranked[j].score })
+		if len(ranked) > req.Limit {
+			ranked = ranked[:req.Limit]
+		}
+
+		var b strings.Builder
+		for _, r := range ranked {
+			sessShort := "(none)"
+			if r.cand.row.SessionID.Valid && len(r.cand.row.SessionID.String) >= 8 {
+				sessShort = r.cand.row.SessionID.String[:8]
+			}
+			fmt.Fprintf(&b, "%s\t%.3f\t%s\n",
+				sessShort, r.score, r.cand.ind.Workflow.TaskShape)
+			for i, step := range r.cand.ind.Workflow.Procedure {
+				fmt.Fprintf(&b, "  %d. %s\n", i+1, step.Action)
+			}
+		}
+		return TextResult(strings.TrimRight(b.String(), "\n")), nil
+	}
+}
+
+// cosine computes cosine similarity between two equal-length
+// float32 vectors. Returns 0 on length mismatch or zero norm — same
+// degenerate-but-finite contract the store package's cosineNormed
+// uses; here we keep a local copy because the find_workflows
+// handler doesn't need the precomputed-norm optimisation
+// SemanticSearch wants for its inner-loop hot path.
+func cosine(a, b []float32) float32 {
+	if len(a) != len(b) {
+		return 0
+	}
+	var dot, na, nb float64
+	for i := range a {
+		dot += float64(a[i]) * float64(b[i])
+		na += float64(a[i]) * float64(a[i])
+		nb += float64(b[i]) * float64(b[i])
+	}
+	if na == 0 || nb == 0 {
+		return 0
+	}
+	return float32(dot / math.Sqrt(na*nb))
 }
 
 // previewSemanticSnippet collapses whitespace and rune-truncates the
