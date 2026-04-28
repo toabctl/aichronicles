@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/timefmt"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
@@ -534,27 +535,18 @@ func effectiveTs(startedMs, endedMs sql.NullInt64) int64 {
 
 // relativeTime renders an epoch-millis timestamp as "2h ago" /
 // "3d ago" relative to now. Zero / future times render as "-".
-// We don't try to be cute about pluralisation — list cells need
-// to be uniform width.
+// Thin wrapper over internal/timefmt — kept here so handlers
+// stay readable, and so the web's "future is also -" override
+// (versus timefmt's "future?") lands in one place.
 func relativeTime(ms int64, now time.Time) string {
 	if ms <= 0 {
 		return "-"
 	}
-	d := now.Sub(time.UnixMilli(ms))
-	switch {
-	case d < 0:
+	r := timefmt.Relative(ms, now)
+	if r == "future?" {
 		return "-"
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
-	case d < 30*24*time.Hour:
-		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
-	default:
-		return time.UnixMilli(ms).UTC().Format("2006-01-02")
 	}
+	return r
 }
 
 // orDash returns the string content of a sql.NullString, or "-"

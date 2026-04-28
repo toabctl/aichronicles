@@ -11,6 +11,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/searchquery"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/timefmt"
 )
 
 // RegisterAichroniclesTools adds the three read-only tools Block C
@@ -423,29 +424,16 @@ func getUnresolvedForCwdHandler(st *store.Store) ToolHandler {
 	}
 }
 
-// relativeAgo formats epoch-millis as a short relative time. Local
-// to this package so the MCP tools don't reach into internal/cli
-// for its formatter — the layering is one-way (cli → mcp would
-// induce a cycle, and the formatter is small enough to duplicate).
+// relativeAgo formats epoch-millis as a short relative time. Wraps
+// internal/timefmt so MCP, web, and CLI agree on the thresholds and
+// labels; the only MCP-specific override is the empty-state token —
+// "active" instead of "-" so the agent reading the tool result
+// sees a verbal cue that the session is mid-flight.
 func relativeAgo(ms int64, now time.Time) string {
 	if ms <= 0 {
 		return "active"
 	}
-	d := now.Sub(time.UnixMilli(ms))
-	switch {
-	case d < 0:
-		return "future?"
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
-	case d < 30*24*time.Hour:
-		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
-	default:
-		return time.UnixMilli(ms).UTC().Format("2006-01-02")
-	}
+	return timefmt.Relative(ms, now)
 }
 
 // --- helpers ---
@@ -458,14 +446,11 @@ func first8(s string) string {
 }
 
 func formatTS(ms int64) string {
-	return time.UnixMilli(ms).UTC().Format("2006-01-02T15:04:05Z")
+	return timefmt.AbsoluteRFC3339(ms)
 }
 
 func formatTSNullable(n sql.NullInt64) string {
-	if !n.Valid {
-		return "-"
-	}
-	return formatTS(n.Int64)
+	return timefmt.AbsoluteRFC3339OrDash(n)
 }
 
 func nullOrDash(s sql.NullString) string {

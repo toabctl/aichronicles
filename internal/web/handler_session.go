@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/timefmt"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
@@ -412,11 +413,10 @@ func loadEventRows(ctx context.Context, st *store.Store, sessionID string, limit
 
 // absoluteOrDash renders a started/ended timestamp in a
 // machine-readable UTC form, or "-" when the column is NULL.
+// Wraps internal/timefmt so the date layout stays consistent
+// with the CLI table output.
 func absoluteOrDash(ms sql.NullInt64) string {
-	if !ms.Valid || ms.Int64 == 0 {
-		return "-"
-	}
-	return time.UnixMilli(ms.Int64).UTC().Format("2006-01-02 15:04 UTC")
+	return timefmt.AbsoluteOrDash(ms)
 }
 
 // endedOrActive renders the session-end timestamp. NULL means
