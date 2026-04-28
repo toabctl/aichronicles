@@ -197,13 +197,12 @@ func buildSessionsSQL(opts SessionsOptions) (string, []any) {
 	}
 	args = append(args, limit)
 
-	// The inner SELECT identifies each session by its first user_prompt
-	// so the user can recognize what the session was about. Subquery
-	// runs per row; at thousand-session scale it's still sub-ms.
+	// first_prompt_text is the column the migration-016 trigger
+	// keeps populated with the session's first user_prompt content
+	// — replaces the per-row correlated subquery the previous
+	// implementation ran.
 	return `SELECT s.id, s.started_at_ms, s.ended_at_ms, s.event_count, s.cwd,
-			(SELECT content_text FROM events
-				WHERE session_id = s.id AND kind = 'user_prompt'
-				ORDER BY ts_source_ms ASC LIMIT 1) AS first_prompt
+			s.first_prompt_text AS first_prompt
 		FROM sessions s
 		WHERE 1=1` + filter.String() + `
 		ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC

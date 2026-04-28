@@ -129,9 +129,7 @@ func LoadSessionsForCompletion(ctx context.Context, db *sql.DB, prefix string, l
 	rows, err := db.QueryContext(ctx,
 		`SELECT s.id,
 		        COALESCE(s.cwd, '-') AS cwd,
-		        (SELECT content_text FROM events
-		           WHERE session_id = s.id AND kind = 'user_prompt'
-		           ORDER BY ts_source_ms ASC LIMIT 1) AS first_prompt,
+		        s.first_prompt_text AS first_prompt,
 		        (SELECT body FROM llm_outputs
 		           WHERE session_id = s.id AND kind = 'summary'
 		           ORDER BY created_at_ms DESC LIMIT 1) AS summary_body
@@ -516,9 +514,7 @@ func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs int64, li
 	}
 	rows, err := db.QueryContext(ctx,
 		`SELECT s.id, s.started_at_ms, s.ended_at_ms, s.cwd,
-			(SELECT content_text FROM events
-				WHERE session_id = s.id AND kind = 'user_prompt'
-				ORDER BY ts_source_ms ASC LIMIT 1) AS first_prompt,
+			s.first_prompt_text AS first_prompt,
 			(SELECT body FROM llm_outputs
 				WHERE session_id = s.id AND kind = 'summary'
 				ORDER BY created_at_ms DESC LIMIT 1) AS latest_summary
@@ -557,9 +553,7 @@ func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs int64, li
 func LoadSessionDigest(ctx context.Context, db *sql.DB, sessionID string) (*SessionDigestRow, error) {
 	row := db.QueryRowContext(ctx,
 		`SELECT s.id, s.started_at_ms, s.ended_at_ms, s.cwd,
-			(SELECT content_text FROM events
-				WHERE session_id = s.id AND kind = 'user_prompt'
-				ORDER BY ts_source_ms ASC LIMIT 1) AS first_prompt,
+			s.first_prompt_text AS first_prompt,
 			(SELECT body FROM llm_outputs
 				WHERE session_id = s.id AND kind = 'summary'
 				ORDER BY created_at_ms DESC LIMIT 1) AS latest_summary
@@ -625,9 +619,7 @@ func LoadSessionsMissingSummary(ctx context.Context, db *sql.DB, sinceMs int64, 
 	)`)
 
 	q := `SELECT s.id, s.started_at_ms, s.ended_at_ms, s.cwd,
-			(SELECT content_text FROM events
-				WHERE session_id = s.id AND kind = 'user_prompt'
-				ORDER BY ts_source_ms ASC LIMIT 1) AS first_prompt
+			s.first_prompt_text AS first_prompt
 		FROM sessions s
 		WHERE ` + strings.Join(conds, " AND ") + `
 		ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC

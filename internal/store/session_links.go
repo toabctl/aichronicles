@@ -106,13 +106,7 @@ func LoadCandidatePriorSessions(ctx context.Context, db *sql.DB, forSession stri
 		  s.cwd,
 		  COALESCE(s.started_at_ms, 0),
 		  COALESCE(s.ended_at_ms, 0),
-		  COALESCE((
-		    SELECT json_extract(o.body, '$.topic')
-		      FROM llm_outputs o
-		     WHERE o.session_id = s.id AND o.kind = 'summary'
-		     ORDER BY o.created_at_ms DESC
-		     LIMIT 1
-		  ), '') AS topic
+		  COALESCE(s.summary_topic, '') AS topic
 		FROM sessions s
 		WHERE s.cwd = ?
 		  AND s.id != ?

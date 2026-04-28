@@ -242,9 +242,7 @@ func listSessionsHandler(st *store.Store) ToolHandler {
 		sqlArgs = append(sqlArgs, req.Limit)
 
 		q := `SELECT s.id, s.started_at_ms, s.ended_at_ms, s.event_count, s.cwd,
-			(SELECT content_text FROM events
-				WHERE session_id = s.id AND kind = 'user_prompt'
-				ORDER BY ts_source_ms ASC LIMIT 1) AS first_prompt
+			s.first_prompt_text AS first_prompt
 			FROM sessions s WHERE 1=1` + filter.String() + `
 			ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC
 			LIMIT ?`

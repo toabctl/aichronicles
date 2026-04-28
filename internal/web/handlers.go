@@ -253,9 +253,7 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int, f sess
 		       s.event_count,
 		       s.cwd,
 		       s.source_agent,
-		       (SELECT content_text FROM events
-		          WHERE session_id = s.id AND kind = 'user_prompt'
-		          ORDER BY ts_source_ms ASC LIMIT 1) AS first_prompt
+		       s.first_prompt_text AS first_prompt
 		  FROM sessions s`
 	var conds []string
 	args := []any{}

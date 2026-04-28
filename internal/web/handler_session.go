@@ -230,16 +230,9 @@ func loadTopicsForSessions(ctx context.Context, st *store.Store, ids map[string]
 		args = append(args, id)
 	}
 	q := `
-	  SELECT o.session_id, COALESCE(json_extract(o.body, '$.topic'), '')
-	    FROM llm_outputs o
-	   WHERE o.kind = 'summary'
-	     AND o.session_id IN (` + strings.Join(placeholders, ",") + `)
-	     AND o.id IN (
-	       SELECT MAX(id) FROM llm_outputs
-	        WHERE kind = 'summary' AND session_id IN (` + strings.Join(placeholders, ",") + `)
-	        GROUP BY session_id
-	     )`
-	args = append(args, args...) // duplicated for the inner IN
+	  SELECT s.id, COALESCE(s.summary_topic, '')
+	    FROM sessions s
+	   WHERE s.id IN (` + strings.Join(placeholders, ",") + `)`
 	rows, err := st.DB().QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err

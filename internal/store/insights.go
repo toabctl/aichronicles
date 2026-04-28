@@ -266,9 +266,7 @@ func loadActivityByHour(ctx context.Context, db *sql.DB, sinceMs int64) ([]HourB
 func loadTopSessions(ctx context.Context, db *sql.DB, sinceMs int64, limit int) ([]TopSession, error) {
 	rows, err := db.QueryContext(ctx,
 		`SELECT s.id, s.event_count, s.started_at_ms, s.ended_at_ms, s.cwd,
-		        COALESCE((SELECT content_text FROM events
-		                   WHERE session_id = s.id AND kind='user_prompt' AND content_text IS NOT NULL
-		                   ORDER BY ts_source_ms ASC LIMIT 1), '') AS first_prompt
+		        COALESCE(s.first_prompt_text, '') AS first_prompt
 		   FROM sessions s
 		  WHERE COALESCE(s.ended_at_ms, s.started_at_ms) >= ?
 		  ORDER BY s.event_count DESC, s.id ASC
