@@ -123,6 +123,33 @@ type SessionDetail struct {
 	SourceAgent     string
 	SourceSessionID string
 	ResumeCommand   string
+
+	// RelatedSessions groups outgoing+incoming session_links into
+	// the four canonical kinds for the sidebar. Empty groups stay
+	// in the slice with no entries; the template hides them. Nil
+	// when neither direction has any links.
+	RelatedSessions []RelatedSessionGroup
+}
+
+// RelatedSessionGroup is one kind's worth of links rendered into
+// the session-detail sidebar. Direction is "out" when this session
+// is the from-side, "in" when it's the to-side — surfaced in the
+// template so the user can tell "this builds on X" from "X builds
+// on this". Display is deliberately small: short id + topic +
+// rationale. The template links the short id back to the full
+// /sessions/<id> page.
+type RelatedSessionGroup struct {
+	Kind    string // "builds_on", "repeats_failure_of", "supersedes", "related"
+	Label   string // display label, e.g. "Builds on" / "Builds on this"
+	Entries []RelatedSessionEntry
+}
+
+type RelatedSessionEntry struct {
+	Direction string // "out" or "in"
+	ID        string // full UUID
+	ShortID   string
+	Topic     string // empty when the linked session has no summary
+	Rationale string
 }
 
 // SessionSummary is the rendered shape of an llm_outputs row of

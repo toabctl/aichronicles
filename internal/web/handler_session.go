@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/store"
@@ -47,8 +48,9 @@ func (s *Server) sessionDetailHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // loadSessionDetail builds the SessionDetail view for one id.
-// Three queries: the session row, the latest cached summary
-// (filtered by kind=summary), and the most recent N events.
+// Four queries: the session row, the latest cached summary
+// (filtered by kind=summary), the most recent N events, and the
+// session_links pointing in either direction.
 func loadSessionDetail(ctx context.Context, st *store.Store, id string) (*SessionDetail, error) {
 	header, err := loadSessionHeader(ctx, st, id)
 	if err != nil {
@@ -62,9 +64,169 @@ func loadSessionDetail(ctx context.Context, st *store.Store, id string) (*Sessio
 	if err != nil {
 		return nil, fmt.Errorf("load events: %w", err)
 	}
+	related, err := loadRelatedSessions(ctx, st, id)
+	if err != nil {
+		return nil, fmt.Errorf("load related sessions: %w", err)
+	}
 	header.Summary = summary
 	header.Events = events
+	header.RelatedSessions = related
 	return header, nil
+}
+
+// loadRelatedSessions assembles the "Related sessions" sidebar.
+// Pulls outgoing + incoming links and groups them by kind. For
+// each linked session id we fetch a topic from the latest summary
+// (best-effort — empty when the linked session hasn't been
+// summarized).
+//
+// Returns nil when neither direction has any links, so the
+// template can hide the entire sidebar with a single nil-check.
+func loadRelatedSessions(ctx context.Context, st *store.Store, id string) ([]RelatedSessionGroup, error) {
+	outgoing, err := store.LoadSessionLinksFrom(ctx, st.DB(), id)
+	if err != nil {
+		return nil, err
+	}
+	incoming, err := store.LoadSessionLinksTo(ctx, st.DB(), id)
+	if err != nil {
+		return nil, err
+	}
+	if len(outgoing) == 0 && len(incoming) == 0 {
+		return nil, nil
+	}
+
+	// Topics for every distinct linked id, batch-fetched so the
+	// sidebar doesn't issue one query per row.
+	relatedIDs := make(map[string]struct{})
+	for _, l := range outgoing {
+		relatedIDs[l.ToSessionID] = struct{}{}
+	}
+	for _, l := range incoming {
+		relatedIDs[l.FromSessionID] = struct{}{}
+	}
+	topics, err := loadTopicsForSessions(ctx, st, relatedIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Group by kind in canonical order. Outgoing entries first
+	// inside each group ("this session builds on X"), incoming
+	// after ("Y builds on this session") so a reader's eye lands
+	// on the more proximate framing first.
+	type bucket struct {
+		out []store.SessionLink
+		in  []store.SessionLink
+	}
+	by := make(map[string]*bucket)
+	for _, l := range outgoing {
+		b := by[l.Kind]
+		if b == nil {
+			b = &bucket{}
+			by[l.Kind] = b
+		}
+		b.out = append(b.out, l)
+	}
+	for _, l := range incoming {
+		b := by[l.Kind]
+		if b == nil {
+			b = &bucket{}
+			by[l.Kind] = b
+		}
+		b.in = append(b.in, l)
+	}
+
+	groups := make([]RelatedSessionGroup, 0, len(by))
+	for _, k := range store.SessionLinkKinds {
+		b, ok := by[k]
+		if !ok {
+			continue
+		}
+		entries := make([]RelatedSessionEntry, 0, len(b.out)+len(b.in))
+		for _, l := range b.out {
+			entries = append(entries, RelatedSessionEntry{
+				Direction: "out",
+				ID:        l.ToSessionID,
+				ShortID:   shortID(l.ToSessionID),
+				Topic:     topics[l.ToSessionID],
+				Rationale: l.Rationale,
+			})
+		}
+		for _, l := range b.in {
+			entries = append(entries, RelatedSessionEntry{
+				Direction: "in",
+				ID:        l.FromSessionID,
+				ShortID:   shortID(l.FromSessionID),
+				Topic:     topics[l.FromSessionID],
+				Rationale: l.Rationale,
+			})
+		}
+		groups = append(groups, RelatedSessionGroup{
+			Kind:    k,
+			Label:   relatedSessionLabel(k),
+			Entries: entries,
+		})
+	}
+	return groups, nil
+}
+
+// relatedSessionLabel maps a SessionLinkKinds value to the human
+// label rendered in the sidebar header. Kept symmetrical
+// regardless of direction — the template adds "(this session)" /
+// "(other session)" framing per-entry rather than per-group.
+func relatedSessionLabel(kind string) string {
+	switch kind {
+	case store.SessionLinkBuildsOn:
+		return "Builds on"
+	case store.SessionLinkRepeatsFailureOf:
+		return "Repeats failure of"
+	case store.SessionLinkSupersedes:
+		return "Supersedes"
+	case store.SessionLinkRelated:
+		return "Related"
+	default:
+		return kind
+	}
+}
+
+// loadTopicsForSessions fetches the latest summary topic for each
+// id in the set. Missing ids are returned with empty string —
+// callers fall back to the short id when topic is "".
+func loadTopicsForSessions(ctx context.Context, st *store.Store, ids map[string]struct{}) (map[string]string, error) {
+	out := make(map[string]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	// Build a placeholder list for IN (?, ?, ?…).
+	placeholders := make([]string, 0, len(ids))
+	args := make([]any, 0, len(ids))
+	for id := range ids {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	q := `
+	  SELECT o.session_id, COALESCE(json_extract(o.body, '$.topic'), '')
+	    FROM llm_outputs o
+	   WHERE o.kind = 'summary'
+	     AND o.session_id IN (` + strings.Join(placeholders, ",") + `)
+	     AND o.id IN (
+	       SELECT MAX(id) FROM llm_outputs
+	        WHERE kind = 'summary' AND session_id IN (` + strings.Join(placeholders, ",") + `)
+	        GROUP BY session_id
+	     )`
+	args = append(args, args...) // duplicated for the inner IN
+	rows, err := st.DB().QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id, topic string
+		if err := rows.Scan(&id, &topic); err != nil {
+			return nil, err
+		}
+		out[id] = topic
+	}
+	return out, rows.Err()
 }
 
 // loadSessionHeader pulls the sessions row for one id and

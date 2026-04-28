@@ -73,6 +73,28 @@
 </article>
 {{end}}
 
+{{with .RelatedSessions}}
+<article>
+  <header>
+    <h2>Related sessions</h2>
+    <small>cross-session links the summarizer drew from same-cwd history</small>
+  </header>
+  {{range .}}
+  <h3>{{.Label}}</h3>
+  <ul>
+    {{range .Entries}}
+    <li>
+      {{if eq .Direction "in"}}<small class="related-direction">(other → this)</small>{{else}}<small class="related-direction">(this → other)</small>{{end}}
+      <a href="/sessions/{{.ID}}" class="sid">{{.ShortID}}</a>
+      {{if .Topic}} — {{.Topic}}{{end}}
+      {{if .Rationale}}<br><small>{{.Rationale}}</small>{{end}}
+    </li>
+    {{end}}
+  </ul>
+  {{end}}
+</article>
+{{end}}
+
 <h2>Events</h2>
 {{if .Events}}
 <table>
