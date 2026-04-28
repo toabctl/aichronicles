@@ -223,11 +223,18 @@ func RunPropose(
 	}
 	_, _ = fmt.Fprintf(progress, "  prior-proposals enrichment: %d entries\n", len(priorProposals))
 
+	failureShapes, ferr := loadFailureShapesForPrompt(ctx, s, sinceMs)
+	if ferr != nil {
+		slog.Warn("propose: skipping failure-shapes enrichment", "err", ferr)
+	}
+	_, _ = fmt.Fprintf(progress, "  failure-shapes enrichment: %d entries\n", len(failureShapes))
+
 	built, err := prompts.BuildPropose(prompts.ProposeInputs{
 		Digests:         digests,
 		InstalledSkills: installed,
 		InvokedSkills:   invoked,
 		PriorProposals:  priorProposals,
+		FailureShapes:   failureShapes,
 	})
 	if err == nil && len(built.Patterns) > 0 {
 		slog.Info("propose: egress redaction fired",
@@ -331,6 +338,43 @@ func loadPriorProposalsForPrompt(ctx context.Context, s *store.Store, sinceMs in
 		if len(out) >= maxEntries {
 			break
 		}
+	}
+	return out, nil
+}
+
+// loadFailureShapesForPrompt assembles the FailureShapes slice
+// rendered as a contrastive corpus in the propose prompt. Pulls
+// session_outcomes rows where outcome=failure_likely from the same
+// window the digests use, capped so the stanza stays compact.
+//
+// The stanza is the negative half of ExpeL-style insight extraction:
+// the LLM also considers skills that PREVENT recurring failure modes
+// (system rule 13). Without it, propose only mines successful
+// patterns and misses the friction-prevention class entirely.
+//
+// Best-effort: a load error returns empty + nil so RunPropose
+// proceeds without the stanza rather than failing the LLM call.
+func loadFailureShapesForPrompt(ctx context.Context, s *store.Store, sinceMs int64) ([]prompts.FailureShapeDigest, error) {
+	rows, err := store.LoadFailureShapes(ctx, s.DB(), sinceMs, 0)
+	if err != nil {
+		return nil, fmt.Errorf("load failure shapes: %w", err)
+	}
+	out := make([]prompts.FailureShapeDigest, 0, len(rows))
+	for _, r := range rows {
+		fs := prompts.FailureShapeDigest{
+			SessionID:         r.SessionID,
+			Title:             r.Title,
+			ToolFailureCount:  r.ToolFailureCount,
+			GitUndoCount:      r.GitUndoCount,
+			PromptRepeatCount: r.PromptRepeatCount,
+		}
+		if r.Cwd.Valid {
+			fs.Cwd = r.Cwd.String
+		}
+		if r.LastEventKind.Valid {
+			fs.LastEventKind = r.LastEventKind.String
+		}
+		out = append(out, fs)
 	}
 	return out, nil
 }

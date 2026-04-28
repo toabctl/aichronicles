@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/toabctl/aichronicles/pkg/ingest"
@@ -426,6 +427,134 @@ func TestNormalizePrompt(t *testing.T) {
 		if got := normalizePrompt(c.in); got != c.want {
 			t.Errorf("normalizePrompt(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+func TestLoadFailureShapes_OnlyReturnsFailureLikely(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+
+	// Three sessions: a failure_likely, a success_likely, a mixed.
+	// Only the failure_likely should appear in the result.
+	specs := []struct {
+		id      string
+		outcome OutcomeLabel
+	}{
+		{"00000000-0000-0000-0000-0000000000fa", OutcomeFailureLikely},
+		{"00000000-0000-0000-0000-0000000000fb", OutcomeSuccessLikely},
+		{"00000000-0000-0000-0000-0000000000fc", OutcomeMixed},
+	}
+	now := int64(1_700_000_000_000)
+	for _, sp := range specs {
+		if _, err := s.DB().Exec(
+			`INSERT INTO sessions(id, source_agent, source_session_id, started_at_ms, ended_at_ms, summary_topic)
+			 VALUES (?, 'claude-code', ?, ?, ?, ?)`,
+			sp.id, "src-"+sp.id, now-60_000, now, "topic-"+string(sp.outcome),
+		); err != nil {
+			t.Fatalf("seed session %s: %v", sp.id, err)
+		}
+		if err := SaveSessionOutcome(ctx, s.DB(), SessionOutcome{
+			SessionID:        sp.id,
+			ComputedAtMs:     now,
+			ToolFailureCount: 5, // make sure markers render even on success_likely (no-op since success_likely won't be returned)
+			Outcome:          sp.outcome,
+		}); err != nil {
+			t.Fatalf("seed outcome %s: %v", sp.id, err)
+		}
+	}
+
+	got, err := LoadFailureShapes(ctx, s.DB(), 0, 0)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 failure_likely row, got %d (got %+v)", len(got), got)
+	}
+	if got[0].SessionID != "00000000-0000-0000-0000-0000000000fa" {
+		t.Errorf("got session %q, want failure_likely id", got[0].SessionID)
+	}
+	if got[0].ToolFailureCount != 5 {
+		t.Errorf("counter not roundtripped: %+v", got[0])
+	}
+	if got[0].Title != "topic-failure_likely" {
+		t.Errorf("title fallback wrong: %q", got[0].Title)
+	}
+}
+
+func TestLoadFailureShapes_FallsBackToFirstPromptWhenNoTopic(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+
+	const sessID = "00000000-0000-0000-0000-0000000000ff"
+	now := int64(1_700_000_000_000)
+	if _, err := s.DB().Exec(
+		`INSERT INTO sessions(id, source_agent, source_session_id, started_at_ms, ended_at_ms,
+		                      first_prompt_text, summary_topic)
+		 VALUES (?, 'claude-code', 'src-x', ?, ?, ?, NULL)`,
+		sessID, now-60_000, now, "fix the deploy that keeps failing",
+	); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	if err := SaveSessionOutcome(ctx, s.DB(), SessionOutcome{
+		SessionID:    sessID,
+		ComputedAtMs: now,
+		Outcome:      OutcomeFailureLikely,
+	}); err != nil {
+		t.Fatalf("seed outcome: %v", err)
+	}
+
+	got, err := LoadFailureShapes(ctx, s.DB(), 0, 0)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(got) != 1 || got[0].Title != "fix the deploy that keeps failing" {
+		t.Errorf("title should fall back to first_prompt_text when topic is empty, got %+v", got)
+	}
+}
+
+func TestLoadFailureShapes_RespectsSinceAndLimit(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+
+	for i := range 6 {
+		id := fmt.Sprintf("00000000-0000-0000-0000-00000000ff%02d", i)
+		ended := int64(1_700_000_000_000) + int64(i*1000)
+		if _, err := s.DB().Exec(
+			`INSERT INTO sessions(id, source_agent, source_session_id, started_at_ms, ended_at_ms, summary_topic)
+			 VALUES (?, 'claude-code', ?, ?, ?, ?)`,
+			id, "src-"+id, ended-60_000, ended, fmt.Sprintf("t%d", i),
+		); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		if err := SaveSessionOutcome(ctx, s.DB(), SessionOutcome{
+			SessionID: id, ComputedAtMs: ended, Outcome: OutcomeFailureLikely,
+		}); err != nil {
+			t.Fatalf("save outcome: %v", err)
+		}
+	}
+
+	// Limit=3 returns 3 newest-first.
+	got, err := LoadFailureShapes(ctx, s.DB(), 0, 3)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d want 3", len(got))
+	}
+	if got[0].Title != "t5" {
+		t.Errorf("newest-first violated: top=%q want t5", got[0].Title)
+	}
+
+	// sinceMs filter — only sessions ended at or after the cutoff.
+	got, err = LoadFailureShapes(ctx, s.DB(), 1_700_000_004_000, 0)
+	if err != nil {
+		t.Fatalf("load (since): %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("since filter: got %d want 2 (i=4 and i=5)", len(got))
 	}
 }
 

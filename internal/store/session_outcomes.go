@@ -280,6 +280,83 @@ func LoadSessionOutcome(ctx context.Context, db *sql.DB, sessionID string) (*Ses
 	return &o, nil
 }
 
+// FailureShape is one row of the contrastive-corpus query that
+// surfaces sessions where things went wrong. Used by propose to
+// give the LLM a NEGATIVE-example stanza alongside the recurring-
+// pattern positive corpus: "what failure shapes recur?" — same
+// data shape that ExpeL's contrastive insight extraction needs.
+//
+// Title is the most informative one-line label for the session
+// (summary_topic when available, else the first user_prompt
+// truncated). FailureMarkers describes WHY this session is in
+// the negative corpus: which counters non-zero, plus a one-word
+// label for the dominant failure mode (so the LLM can group them).
+type FailureShape struct {
+	SessionID         string
+	EndedAtMs         sql.NullInt64
+	Cwd               sql.NullString
+	Title             string
+	ToolFailureCount  int
+	GitUndoCount      int
+	PromptRepeatCount int
+	LastEventKind     sql.NullString
+}
+
+// LoadFailureShapes returns sessions whose computed outcome is
+// failure_likely (or mixed with concrete failure markers) within
+// the given time window. Newest-first, capped at limit.
+//
+// Used by propose: the LLM sees these alongside the success-
+// shaped digest corpus and is instructed (system rule 13) to
+// consider skills that PREVENT or short-circuit the recurring
+// failure modes — not just consolidate observed positive
+// patterns. This is the contrastive half of ExpeL.
+//
+// limit ≤0 falls back to 8 — enough to expose a recurring
+// failure mode without bloating the propose prompt; failure
+// shapes are dense (each row carries concrete counters) so a
+// smaller cap suffices than for the positive digest.
+func LoadFailureShapes(ctx context.Context, db *sql.DB, sinceMs int64, limit int) ([]FailureShape, error) {
+	if limit <= 0 {
+		limit = 8
+	}
+	const q = `
+SELECT s.id,
+       s.ended_at_ms,
+       s.cwd,
+       COALESCE(NULLIF(s.summary_topic, ''),
+                NULLIF(s.first_prompt_text, ''),
+                '') AS title,
+       so.tool_failure_count,
+       so.git_undo_count,
+       so.prompt_repeat_count,
+       so.last_event_kind
+  FROM sessions s
+  JOIN session_outcomes so ON so.session_id = s.id
+ WHERE so.outcome = 'failure_likely'
+   AND COALESCE(s.ended_at_ms, s.started_at_ms, 0) >= ?
+ ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC
+ LIMIT ?`
+	rows, err := db.QueryContext(ctx, q, sinceMs, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query failure shapes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []FailureShape
+	for rows.Next() {
+		var f FailureShape
+		if err := rows.Scan(
+			&f.SessionID, &f.EndedAtMs, &f.Cwd, &f.Title,
+			&f.ToolFailureCount, &f.GitUndoCount, &f.PromptRepeatCount,
+			&f.LastEventKind,
+		); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // LoadSessionOutcomes returns the outcome rows for the supplied set
 // of session IDs, keyed by session_id. Sessions without an outcome
 // row are absent from the result; callers handle that as "not yet

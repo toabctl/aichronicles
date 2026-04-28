@@ -691,6 +691,86 @@ func TestBuildFacts_HashStableAcrossCalls(t *testing.T) {
 	}
 }
 
+func TestBuildPropose_RendersFailureShapesStanza(t *testing.T) {
+	t.Parallel()
+	in := ProposeInputs{
+		Digests: []SessionDigest{
+			{ID: "s1", Summary: "x"}, {ID: "s2", Summary: "y"},
+		},
+		FailureShapes: []FailureShapeDigest{
+			{
+				SessionID:        "00000000-0000-0000-0000-0000000000aa",
+				Title:            "deploy went sideways three times",
+				ToolFailureCount: 3,
+				GitUndoCount:     1,
+			},
+			{
+				SessionID:         "00000000-0000-0000-0000-0000000000bb",
+				Title:             "fix the test flake",
+				PromptRepeatCount: 2,
+			},
+		},
+	}
+	built, err := BuildPropose(in)
+	if err != nil {
+		t.Fatalf("BuildPropose: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	for _, want := range []string{
+		"Failure shapes observed",
+		"deploy went sideways three times",
+		"3 tool_failures, 1 git_undos",
+		"fix the test flake",
+		"2 prompt_repeats",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q\n--- body ---\n%s", want, body)
+		}
+	}
+	// System prompt rule 13 must explain the negative-example role.
+	if !strings.Contains(built.Request.System, "Failure shapes observed") {
+		t.Errorf("system prompt missing rule 13 reference to failure shapes")
+	}
+}
+
+func TestBuildPropose_OmitsFailureShapesStanzaWhenEmpty(t *testing.T) {
+	t.Parallel()
+	in := ProposeInputs{
+		Digests:       []SessionDigest{{ID: "s1", Summary: "x"}, {ID: "s2", Summary: "y"}},
+		FailureShapes: nil,
+	}
+	built, err := BuildPropose(in)
+	if err != nil {
+		t.Fatalf("BuildPropose: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	if strings.Contains(body, "Failure shapes observed") {
+		t.Errorf("empty FailureShapes must produce empty stanza:\n%s", body)
+	}
+}
+
+func TestBuildPropose_FailureShapesPassThroughEgressRedaction(t *testing.T) {
+	t.Parallel()
+	in := ProposeInputs{
+		Digests: []SessionDigest{{ID: "s1", Summary: "x"}, {ID: "s2", Summary: "y"}},
+		FailureShapes: []FailureShapeDigest{
+			{
+				SessionID:        "s-secrets",
+				Title:            "deploying with key AKIAIOSFODNN7EXAMPLE leaked into the title",
+				ToolFailureCount: 2,
+			},
+		},
+	}
+	built, err := BuildPropose(in)
+	if err != nil {
+		t.Fatalf("BuildPropose: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	if strings.Contains(body, "AKIAIOSFODNN7EXAMPLE") {
+		t.Errorf("aws key leaked into prompt: %s", body)
+	}
+}
+
 func TestBuildPropose_OmitsPriorProposalsStanzaWhenEmpty(t *testing.T) {
 	t.Parallel()
 	in := ProposeInputs{

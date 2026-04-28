@@ -680,6 +680,12 @@ Skill-awareness rules (the "Skills installed" and "Skills invoked recently" sect
     - APPLIED but failing — the skill exists but trips tool_failures after load. If new evidence reveals the failure mode, you MAY propose a follow-up skill that addresses it; otherwise leave it alone.
     - NOT APPLIED — the user saw this proposal and did not act on it. Near-duplicate proposals are likely to be rejected the same way; skip the pattern.
 
+13. The "Failure shapes observed" stanza is the contrastive half of the corpus: sessions where things went wrong (high tool_failure / git_undo / prompt_repeat counts). Treat these as CANDIDATES for prevention skills, not just things to ignore. A skill that catches a known failure mode early — "when test X fails with Y, before retrying do Z" — is as valuable as one that codifies a successful workflow. RULES:
+    - Group failure-shaped sessions by dominant mode (tool_failures, git_undos, prompt_repeats). A failure mode that appears in ≥2 distinct failure-shaped sessions IS a recurring pattern worth a prevention skill.
+    - Skill names should reference the failure ("recover-from-rebase-conflict", "diagnose-test-flake", "unblock-stuck-deploy") rather than be generic.
+    - Evidence MUST cite the failure-shaped sessions (verbatim quotes from their summaries / first_prompts) — same anti-fabrication rule as positive evidence; do NOT invent failure modes the corpus doesn't show.
+    - If a failure mode appears once, it's a one-off — do not propose a prevention skill on its strength alone.
+
 For a typical 25-session window, expect 1–4 well-grounded skills total — not 0, not 5. Zero is acceptable only if every recurring pattern you see is already covered by an installed skill or is out of scope per the rules above. Lean toward proposing a clearly-grounded skill even when its time-saving estimate is moderate; the user wants concrete leads, not perfect ones.`
 
 const proposalToolSchema = `{
@@ -831,6 +837,23 @@ type PriorProposal struct {
 	LastLoadedMs     int64
 }
 
+// FailureShapeDigest is one row of the negative-example corpus the
+// propose prompt receives. Sessions surface here when their
+// session_outcomes row is failure_likely. The LLM is instructed to
+// consider skills that PREVENT or short-circuit the recurring
+// failure modes, not just consolidate observed successful patterns —
+// the contrastive half of ExpeL-style insight extraction (Zhao et
+// al. 2024, arXiv:2308.10144).
+type FailureShapeDigest struct {
+	SessionID         string
+	Cwd               string
+	Title             string // summary_topic, fallback first_prompt
+	ToolFailureCount  int
+	GitUndoCount      int
+	PromptRepeatCount int
+	LastEventKind     string
+}
+
 // ProposeInputs bundles every input BuildPropose consumes. Adding
 // a field here is non-breaking; callers that don't have it pass
 // the zero value. The shape was introduced when propose became
@@ -845,9 +868,15 @@ type ProposeInputs struct {
 	// repropose what we already tried" rule; renders as a stanza
 	// before the per-session digest body.
 	PriorProposals []PriorProposal
+	// FailureShapes, when non-empty, surfaces sessions that went
+	// wrong (high tool_failure / git_undo / prompt_repeat counts)
+	// alongside the recurring-pattern digest corpus. The LLM is
+	// instructed to consider skills that prevent these failure
+	// shapes — see system prompt rule 13.
+	FailureShapes []FailureShapeDigest
 }
 
-const proposeTemplate = `Below are %d recent sessions.%s%s%s
+const proposeTemplate = `Below are %d recent sessions.%s%s%s%s
 
 ---
 %s
@@ -867,6 +896,7 @@ func BuildPropose(in ProposeInputs) (Built, error) {
 		renderInstalledSkills(in.InstalledSkills),
 		renderInvokedSkills(in.InvokedSkills),
 		renderPriorProposals(in.PriorProposals),
+		renderFailureShapes(in.FailureShapes),
 		body,
 	)
 	req := llm.Request{
@@ -2211,6 +2241,51 @@ func renderDigests(digests []SessionDigest, pats patternSet) string {
 			}
 		}
 		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// renderFailureShapes formats the negative-example stanza for the
+// propose prompt. Empty input → empty string so the template
+// splices unconditionally. Each line is one failure-shaped session
+// with its dominant failure mode summarised in a counter tail —
+// the LLM groups by mode and decides whether a skill could
+// prevent or short-circuit it. ExpeL's contrastive principle.
+func renderFailureShapes(shapes []FailureShapeDigest) string {
+	if len(shapes) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nFailure shapes observed (sessions that went wrong — recurring failures here are CANDIDATES for prevention skills, not just things to ignore):\n")
+	for _, fs := range shapes {
+		title := fs.Title
+		if title == "" {
+			title = "(no topic)"
+		}
+		// Title can carry user-typed text — pass through outbound
+		// redact so any lingering secrets don't enter the prompt.
+		clean, _ := redact.Outbound(title)
+		const maxTitleRunes = 100
+		if r := []rune(clean); len(r) > maxTitleRunes {
+			clean = string(r[:maxTitleRunes]) + "…"
+		}
+		// Counter tail — only the non-zero counters render, so the
+		// dominant failure mode is visually obvious.
+		var markers []string
+		if fs.ToolFailureCount > 0 {
+			markers = append(markers, fmt.Sprintf("%d tool_failures", fs.ToolFailureCount))
+		}
+		if fs.GitUndoCount > 0 {
+			markers = append(markers, fmt.Sprintf("%d git_undos", fs.GitUndoCount))
+		}
+		if fs.PromptRepeatCount > 0 {
+			markers = append(markers, fmt.Sprintf("%d prompt_repeats", fs.PromptRepeatCount))
+		}
+		short := fs.SessionID
+		if len(short) > 8 {
+			short = short[:8]
+		}
+		fmt.Fprintf(&b, "- [%s] %s  (%s)\n", short, clean, strings.Join(markers, ", "))
 	}
 	return b.String()
 }
