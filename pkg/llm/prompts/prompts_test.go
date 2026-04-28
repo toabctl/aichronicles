@@ -23,7 +23,7 @@ func TestBuildSummary_IncludesTranscriptAndSessionID(t *testing.T) {
 		{EventID: "e2", Kind: "assistant_message", Role: nullS("assistant"),
 			ContentText: nullS("bufio.Scanner with Buffer() for long lines"), TsSourceMs: 2},
 	}
-	built, err := BuildSummary("sess-abc", events, nil, nil)
+	built, err := BuildSummary("sess-abc", events, SummaryInputs{})
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestBuildSummary_LabelsSubagentEventsInTranscript(t *testing.T) {
 			SubagentID:  nullS("agent-9"),
 			ContentText: nullS("worker step"), TsSourceMs: 3},
 	}
-	built, err := BuildSummary("sess", events, nil, nil)
+	built, err := BuildSummary("sess", events, SummaryInputs{})
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestBuildSummary_SchemaIncludesSubagents(t *testing.T) {
 	events := []store.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
-	built, err := BuildSummary("sess", events, nil, nil)
+	built, err := BuildSummary("sess", events, SummaryInputs{})
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestBuildSummary_SetsForcedTool(t *testing.T) {
 	events := []store.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
-	built, err := BuildSummary("sess", events, nil, nil)
+	built, err := BuildSummary("sess", events, SummaryInputs{})
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
@@ -138,8 +138,9 @@ func TestBuildSummary_RendersLinksBlockWhenPresent(t *testing.T) {
 	events := []store.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
-	built, err := BuildSummary("sess-l", events,
-		[]string{"https://a.example/", "https://b.example/"}, nil)
+	built, err := BuildSummary("sess-l", events, SummaryInputs{
+		Links: []string{"https://a.example/", "https://b.example/"},
+	})
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
@@ -166,7 +167,7 @@ func TestBuildSummary_RendersFilesBlockWhenPresent(t *testing.T) {
 		"/home/me/repo/internal/store/migrate.go",
 		"/home/me/repo/internal/store/search.go",
 	}
-	built, err := BuildSummary("sess-f", events, nil, files)
+	built, err := BuildSummary("sess-f", events, SummaryInputs{Files: files})
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
@@ -189,7 +190,7 @@ func TestBuildSummary_OmitsFilesBlockWhenNoneProvided(t *testing.T) {
 	events := []store.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
-	built, _ := BuildSummary("sess", events, nil, nil)
+	built, _ := BuildSummary("sess", events, SummaryInputs{})
 	if strings.Contains(built.Request.Messages[0].Content, "Files observed") {
 		t.Errorf("empty files list should omit the stanza:\n%s",
 			built.Request.Messages[0].Content)
@@ -201,8 +202,8 @@ func TestBuildSummary_HashChangesWhenFilesChange(t *testing.T) {
 	events := []store.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
-	a, _ := BuildSummary("sess", events, nil, nil)
-	b, _ := BuildSummary("sess", events, nil, []string{"/etc/hosts"})
+	a, _ := BuildSummary("sess", events, SummaryInputs{})
+	b, _ := BuildSummary("sess", events, SummaryInputs{Files: []string{"/etc/hosts"}})
 	if a.Hash == b.Hash {
 		t.Error("adding a file should change the hash")
 	}
@@ -213,7 +214,7 @@ func TestBuildSummary_SchemaInstructsAbsoluteFiles(t *testing.T) {
 	events := []store.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
-	built, _ := BuildSummary("sess", events, nil, nil)
+	built, _ := BuildSummary("sess", events, SummaryInputs{})
 	schema := string(built.Request.Tools[0].InputSchema)
 	for _, want := range []string{
 		`"key_files"`,
@@ -232,7 +233,7 @@ func TestBuildSummary_OmitsLinksBlockWhenNoneProvided(t *testing.T) {
 	events := []store.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
-	built, err := BuildSummary("sess", events, nil, nil)
+	built, err := BuildSummary("sess", events, SummaryInputs{})
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
@@ -251,7 +252,7 @@ func TestBuildSummary_LinksPassThroughEgressRedaction(t *testing.T) {
 	// extractions can capture verbatim. renderLinksBlock must scrub
 	// it before it reaches the prompt.
 	links := []string{"https://user:s3cret@example.com/foo"}
-	built, err := BuildSummary("sess-leak", events, links, nil)
+	built, err := BuildSummary("sess-leak", events, SummaryInputs{Links: links})
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
@@ -277,7 +278,7 @@ func TestBuildSummary_ScrubsSecretsAndReportsPatterns(t *testing.T) {
 		{EventID: "e1", Kind: "user_prompt", Role: nullS("user"),
 			ContentText: nullS("my AKIAIOSFODNN7EXAMPLE leak"), TsSourceMs: 1},
 	}
-	built, err := BuildSummary("sess-x", events, nil, nil)
+	built, err := BuildSummary("sess-x", events, SummaryInputs{})
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
@@ -295,10 +296,10 @@ func TestBuildSummary_ScrubsSecretsAndReportsPatterns(t *testing.T) {
 
 func TestBuildSummary_RejectsEmptyInputs(t *testing.T) {
 	t.Parallel()
-	if _, err := BuildSummary("", []store.EventView{{}}, nil, nil); err == nil {
+	if _, err := BuildSummary("", []store.EventView{{}}, SummaryInputs{}); err == nil {
 		t.Error("empty sessionID: expected error")
 	}
-	if _, err := BuildSummary("sess", nil, nil, nil); err == nil {
+	if _, err := BuildSummary("sess", nil, SummaryInputs{}); err == nil {
 		t.Error("nil events: expected error")
 	}
 }
@@ -308,8 +309,8 @@ func TestBuildSummary_HashDeterministicSameInput(t *testing.T) {
 	events := []store.EventView{
 		{Kind: "user_prompt", ContentText: nullS("identical prompt"), TsSourceMs: 1},
 	}
-	a, _ := BuildSummary("sess", events, nil, nil)
-	b, _ := BuildSummary("sess", events, nil, nil)
+	a, _ := BuildSummary("sess", events, SummaryInputs{})
+	b, _ := BuildSummary("sess", events, SummaryInputs{})
 	if a.Hash != b.Hash {
 		t.Errorf("hash not deterministic: %q vs %q", a.Hash, b.Hash)
 	}
@@ -319,10 +320,10 @@ func TestBuildSummary_HashChangesWhenContentChanges(t *testing.T) {
 	t.Parallel()
 	a, _ := BuildSummary("sess", []store.EventView{
 		{Kind: "user_prompt", ContentText: nullS("first"), TsSourceMs: 1},
-	}, nil, nil)
+	}, SummaryInputs{})
 	b, _ := BuildSummary("sess", []store.EventView{
 		{Kind: "user_prompt", ContentText: nullS("second"), TsSourceMs: 1},
-	}, nil, nil)
+	}, SummaryInputs{})
 	if a.Hash == b.Hash {
 		t.Errorf("hash unchanged for different content: %q", a.Hash)
 	}
@@ -333,8 +334,8 @@ func TestBuildSummary_HashChangesWhenLinksChange(t *testing.T) {
 	events := []store.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
-	a, _ := BuildSummary("sess", events, nil, nil)
-	b, _ := BuildSummary("sess", events, []string{"https://example.com/"}, nil)
+	a, _ := BuildSummary("sess", events, SummaryInputs{})
+	b, _ := BuildSummary("sess", events, SummaryInputs{Links: []string{"https://example.com/"}})
 	if a.Hash == b.Hash {
 		t.Error("adding a link should change the hash")
 	}
@@ -351,7 +352,7 @@ func TestBuildSummary_NullToolUseEventDoesNotPanic(t *testing.T) {
 			ToolName:    nullS("Bash"),
 		},
 	}
-	built, err := BuildSummary("sess-null", events, nil, nil)
+	built, err := BuildSummary("sess-null", events, SummaryInputs{})
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
@@ -369,13 +370,101 @@ func TestBuildSummary_AllNullEventFieldsRenderKindLabel(t *testing.T) {
 			TsSourceMs: 1,
 		},
 	}
-	built, err := BuildSummary("sess-bare", events, nil, nil)
+	built, err := BuildSummary("sess-bare", events, SummaryInputs{})
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
 	}
 	body := built.Request.Messages[0].Content
 	if !strings.Contains(body, "[session_start]") {
 		t.Errorf("bare event missing kind label:\n%s", body)
+	}
+}
+
+func TestBuildSummary_RendersPriorSessionsStanzaWhenCandidatesPresent(t *testing.T) {
+	t.Parallel()
+	events := []store.EventView{
+		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
+	}
+	prior := []CandidatePriorSession{
+		{
+			ID:          "11111111-1111-1111-1111-111111111111",
+			StartedAtMs: 1_700_000_000_000,
+			EndedAtMs:   1_700_000_300_000,
+			Topic:       "fixed the auth middleware",
+		},
+		{
+			ID:          "22222222-2222-2222-2222-222222222222",
+			StartedAtMs: 1_700_001_000_000,
+			EndedAtMs:   1_700_001_300_000,
+			// No topic — should render "(no summary)" so the model
+			// knows the field was absent rather than empty.
+		},
+	}
+	built, err := BuildSummary("sess-pp", events, SummaryInputs{CandidatePriorSes: prior})
+	if err != nil {
+		t.Fatalf("BuildSummary: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	for _, want := range []string{
+		"Possibly-related prior sessions",
+		"11111111-1111-1111-1111-111111111111",
+		"fixed the auth middleware",
+		"22222222-2222-2222-2222-222222222222",
+		"(no summary)",
+		"DROP any you can't ground",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("prior-sessions stanza missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestBuildSummary_OmitsPriorSessionsStanzaWhenNoneProvided(t *testing.T) {
+	t.Parallel()
+	events := []store.EventView{
+		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
+	}
+	built, _ := BuildSummary("sess", events, SummaryInputs{})
+	if strings.Contains(built.Request.Messages[0].Content, "Possibly-related prior sessions") {
+		t.Errorf("empty candidate list should omit the stanza:\n%s",
+			built.Request.Messages[0].Content)
+	}
+}
+
+func TestBuildSummary_SchemaIncludesSessionLinks(t *testing.T) {
+	t.Parallel()
+	events := []store.EventView{
+		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
+	}
+	built, _ := BuildSummary("sess", events, SummaryInputs{})
+	schema := string(built.Request.Tools[0].InputSchema)
+	for _, want := range []string{
+		`"session_links"`,
+		`"to_session_id"`,
+		`"builds_on"`,
+		`"repeats_failure_of"`,
+		`"supersedes"`,
+		`"related"`,
+	} {
+		if !strings.Contains(schema, want) {
+			t.Errorf("schema missing %q:\n%s", want, schema)
+		}
+	}
+}
+
+func TestBuildSummary_HashChangesWhenCandidatesChange(t *testing.T) {
+	t.Parallel()
+	events := []store.EventView{
+		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
+	}
+	a, _ := BuildSummary("sess", events, SummaryInputs{})
+	b, _ := BuildSummary("sess", events, SummaryInputs{
+		CandidatePriorSes: []CandidatePriorSession{
+			{ID: "abc", StartedAtMs: 1, EndedAtMs: 2, Topic: "t"},
+		},
+	})
+	if a.Hash == b.Hash {
+		t.Error("adding candidate prior sessions should change the hash")
 	}
 }
 

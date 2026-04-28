@@ -70,12 +70,31 @@ const (
 // tool call. Fields are always populated (empty slices/strings on
 // fields the model had nothing to say about).
 type SummaryResult struct {
-	Topic       string            `json:"topic"`
-	WhatWasDone []string          `json:"what_was_done"`
-	Unresolved  []string          `json:"unresolved"`
-	KeyFiles    []string          `json:"key_files"`
-	Links       []LinkAnnotation  `json:"links"`
-	Subagents   []SubagentSummary `json:"subagents"`
+	Topic        string                  `json:"topic"`
+	WhatWasDone  []string                `json:"what_was_done"`
+	Unresolved   []string                `json:"unresolved"`
+	KeyFiles     []string                `json:"key_files"`
+	Links        []LinkAnnotation        `json:"links"`
+	Subagents    []SubagentSummary       `json:"subagents"`
+	SessionLinks []SessionLinkAnnotation `json:"session_links"`
+}
+
+// SessionLinkAnnotation is one model-emitted typed link to a prior
+// session. The summarize prompt is shown a shortlist of recent
+// same-cwd sessions ("candidate prior sessions") and asked to emit
+// one link per session it can confidently relate to the current
+// one. The to_session_id MUST come from the candidate list — same
+// anti-fabrication rule as URL annotations: ground the connection
+// in something the model was actually shown, don't invent.
+//
+// kind is one of the four closed values that match the
+// session_links migration's CHECK clause. rationale is a short
+// (≤160 chars) line explaining the connection — surfaced verbatim
+// in the web UI.
+type SessionLinkAnnotation struct {
+	ToSessionID string `json:"to_session_id"`
+	Kind        string `json:"kind"`
+	Rationale   string `json:"rationale"`
 }
 
 // SubagentSummary describes one sub-agent thread that ran in the
@@ -243,14 +262,14 @@ type ProposedScriptPlaceholder struct {
 
 // --- summary ---
 
-const summarySystem = `You summarize a single coding session between a human and an AI coding assistant. You MUST call the record_summary tool exactly once. Be factual and tight. Do not invent details. Do not invent URLs — only annotate links that were observed in the session. If a list section has no content, return an empty array.`
+const summarySystem = `You summarize a single coding session between a human and an AI coding assistant. You MUST call the record_summary tool exactly once. Be factual and tight. Do not invent details. Do not invent URLs — only annotate links that were observed in the session. Do not invent prior sessions — only emit session_links to ids that appear in the "Possibly-related prior sessions" stanza, and only when the connection is grounded in this session's transcript or the prior session's topic. If a list section has no content, return an empty array.`
 
 // summaryToolSchema is the JSON Schema for record_summary. Kept as a
 // const so its bytes are stable; hashRequest includes these bytes
 // when computing prompt_hash.
 const summaryToolSchema = `{
   "type": "object",
-  "required": ["topic","what_was_done","unresolved","key_files","links","subagents"],
+  "required": ["topic","what_was_done","unresolved","key_files","links","subagents","session_links"],
   "additionalProperties": false,
   "properties": {
     "topic": {"type":"string","minLength":1},
@@ -286,36 +305,79 @@ const summaryToolSchema = `{
           "description":{"type":"string","minLength":1}
         }
       }
+    },
+    "session_links": {
+      "type":"array",
+      "maxItems": 5,
+      "description": "Typed links from THIS session to prior sessions. to_session_id MUST be a full id from the 'Possibly-related prior sessions' stanza — never invent ids, never use a short prefix. Emit at most one entry per kind per target. Empty array when no candidate connects, or when the candidate stanza is absent.",
+      "items":{
+        "type":"object",
+        "required":["to_session_id","kind","rationale"],
+        "additionalProperties": false,
+        "properties":{
+          "to_session_id":{"type":"string","minLength":1},
+          "kind":{"type":"string","enum":["builds_on","repeats_failure_of","supersedes","related"]},
+          "rationale":{"type":"string","minLength":1,"maxLength":160}
+        }
+      }
     }
   }
 }`
 
 const summaryTemplate = `Session: %s
 Events: %d
-%s%s
+%s%s%s
 Transcript follows, oldest first:
 ---
 %s
 ---
 `
 
+// CandidatePriorSession is one entry in the shortlist of recent
+// same-cwd sessions BuildSummary shows the model so it can emit
+// session_links. Must come from store.LoadCandidatePriorSessions
+// (or equivalent) — never synthesized, since the model is told to
+// only emit links to ids it sees here.
+type CandidatePriorSession struct {
+	ID          string
+	StartedAtMs int64
+	EndedAtMs   int64
+	Topic       string // empty when the candidate hasn't been summarized
+}
+
+// SummaryInputs bundles the optional inputs to BuildSummary that
+// have grown past comfortable positional-arg territory. Required
+// fields stay positional on BuildSummary; this struct collects the
+// "you can pass nil" extras.
+type SummaryInputs struct {
+	Links             []string                // observed URLs (kind=url extractions)
+	Files             []string                // observed file paths (kind=file_path)
+	CandidatePriorSes []CandidatePriorSession // candidate prior sessions for session_links
+}
+
 // BuildSummary returns the prompt for summarizing one session's
 // events.
 //
-// links is the distinct URL list observed in the session (typically
-// from store.LoadExtractionsForSession(kind='url')); the model is
-// prompted to annotate each with a `used_for` via the record_summary
-// tool, dropping any it cannot confidently attribute.
+// in.Links is the distinct URL list observed in the session
+// (typically from store.LoadExtractionsForSession(kind='url')); the
+// model is prompted to annotate each with a `used_for` via the
+// record_summary tool, dropping any it cannot confidently attribute.
 //
-// files is the distinct file_path list observed in the session
+// in.Files is the distinct file_path list observed in the session
 // (typically from store.LoadExtractionsForSession(kind='file_path'));
 // it grounds the model's `key_files` output in actually-touched
 // files rather than plausible-looking paths it might invent.
 //
-// Passing nil/empty for either slice is fine — the corresponding
-// stanza is omitted and the model receives an empty array (or
-// whatever it surfaces from prose mentions in the transcript).
-func BuildSummary(sessionID string, events []store.EventView, links, files []string) (Built, error) {
+// in.CandidatePriorSes is the shortlist of recent same-cwd sessions
+// (from store.LoadCandidatePriorSessions) the model is allowed to
+// emit session_links to. Same anti-fabrication rule as URLs: the
+// model is told to drop candidates it can't confidently relate to
+// the current session rather than guess a kind.
+//
+// Passing nil/empty for any of the optional slices is fine — the
+// corresponding stanza is omitted and the model receives an empty
+// array (or whatever it surfaces from prose mentions).
+func BuildSummary(sessionID string, events []store.EventView, in SummaryInputs) (Built, error) {
 	if sessionID == "" {
 		return Built{}, fmt.Errorf("BuildSummary: sessionID required")
 	}
@@ -325,10 +387,11 @@ func BuildSummary(sessionID string, events []store.EventView, links, files []str
 
 	pats := patternSet{}
 	transcript := renderEvents(events, pats)
-	linksBlock := renderLinksBlock(links, pats)
-	filesBlock := renderFilesBlock(files, pats)
+	linksBlock := renderLinksBlock(in.Links, pats)
+	filesBlock := renderFilesBlock(in.Files, pats)
+	priorBlock := renderPriorSessionsBlock(in.CandidatePriorSes, pats)
 
-	userMsg := fmt.Sprintf(summaryTemplate, sessionID, len(events), linksBlock, filesBlock, transcript)
+	userMsg := fmt.Sprintf(summaryTemplate, sessionID, len(events), linksBlock, filesBlock, priorBlock, transcript)
 
 	req := llm.Request{
 		System:    summarySystem,
@@ -360,6 +423,50 @@ func renderLinksBlock(links []string, pats patternSet) string {
 		pats.addAll(names)
 		b.WriteString("- ")
 		b.WriteString(clean)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// renderPriorSessionsBlock formats the "Possibly-related prior
+// sessions" stanza, or returns "" when there are no candidates.
+// The list is what BuildSummary's caller pulled from
+// store.LoadCandidatePriorSessions — recent same-cwd sessions that
+// ended before this one started. The model is told to drop
+// candidates it can't relate, same anti-fabrication contract as
+// the Links and Files stanzas.
+//
+// Each line carries: full id (the model MUST echo this verbatim
+// in to_session_id), an absolute date in UTC for orientation, and
+// the candidate's existing summary topic (or "(no summary)" so
+// the model knows the topic field was absent rather than empty).
+func renderPriorSessionsBlock(prior []CandidatePriorSession, pats patternSet) string {
+	if len(prior) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nPossibly-related prior sessions (same cwd, ended before this one started). Emit `session_links` entries ONLY for ones that genuinely connect to this session — pick the kind that fits (builds_on / repeats_failure_of / supersedes / related). DROP any you can't ground in a specific connection; do NOT invent ids:\n")
+	for _, p := range prior {
+		topic := p.Topic
+		if topic == "" {
+			topic = "(no summary)"
+		} else {
+			clean, names := redact.Outbound(topic)
+			pats.addAll(names)
+			topic = clean
+		}
+		// Use ended_at when present, fall back to started_at.
+		ts := p.EndedAtMs
+		if ts == 0 {
+			ts = p.StartedAtMs
+		}
+		when := time.UnixMilli(ts).UTC().Format("2006-01-02 15:04 UTC")
+		b.WriteString("- ")
+		b.WriteString(p.ID)
+		b.WriteString("  ")
+		b.WriteString(when)
+		b.WriteString("  ")
+		b.WriteString(topic)
 		b.WriteByte('\n')
 	}
 	return b.String()

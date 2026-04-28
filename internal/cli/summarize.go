@@ -160,7 +160,10 @@ func RunSummarize(
 		files = append(files, fx.Value)
 	}
 
-	built, err := prompts.BuildSummary(sessionID, events, links, files)
+	built, err := prompts.BuildSummary(sessionID, events, prompts.SummaryInputs{
+		Links: links,
+		Files: files,
+	})
 	if err != nil {
 		return 0, fmt.Errorf("summarize: build prompt: %w", err)
 	}
