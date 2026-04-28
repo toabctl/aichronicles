@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -160,9 +161,32 @@ func RunSummarize(
 		files = append(files, fx.Value)
 	}
 
+	// Recent same-cwd sessions the model is allowed to emit
+	// session_links to. Bounded shortlist (10 by default in the
+	// store helper) so the prompt stays compact; same anchor —
+	// "ended before this session started" — that prevents the
+	// LLM from fabricating a connection across overlapping
+	// timelines.
+	candidates, err := store.LoadCandidatePriorSessions(ctx, s.DB(), sessionID, 10)
+	if err != nil {
+		return 0, fmt.Errorf("summarize: load prior sessions: %w", err)
+	}
+	priorForPrompt := make([]prompts.CandidatePriorSession, 0, len(candidates))
+	candidateIDs := make(map[string]struct{}, len(candidates))
+	for _, c := range candidates {
+		priorForPrompt = append(priorForPrompt, prompts.CandidatePriorSession{
+			ID:          c.ID,
+			StartedAtMs: c.StartedAtMs,
+			EndedAtMs:   c.EndedAtMs,
+			Topic:       c.Topic,
+		})
+		candidateIDs[c.ID] = struct{}{}
+	}
+
 	built, err := prompts.BuildSummary(sessionID, events, prompts.SummaryInputs{
-		Links: links,
-		Files: files,
+		Links:             links,
+		Files:             files,
+		CandidatePriorSes: priorForPrompt,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("summarize: build prompt: %w", err)
@@ -184,6 +208,14 @@ func RunSummarize(
 			return 0, fmt.Errorf("summarize: cache lookup: %w", err)
 		}
 		if cached != nil {
+			// On cache hit we still re-derive session_links from the
+			// stored body. The links table is a projection, not the
+			// source of truth — a user who ran summarize before the
+			// links migration shipped should see them populate on
+			// the next no-op re-run.
+			if err := saveSessionLinksFromBody(ctx, s, sessionID, cached.Body, candidateIDs); err != nil {
+				return cached.ID, fmt.Errorf("summarize: persist session_links from cache: %w", err)
+			}
 			if renderErr := emitLLMBody(out, store.LLMKindSummary, cached.Body, opts.JSON); renderErr != nil {
 				return cached.ID, fmt.Errorf("summarize: render cached body: %w", renderErr)
 			}
@@ -226,10 +258,86 @@ func RunSummarize(
 		return 0, err
 	}
 
+	// Persist session_links derived from result.SessionLinks. Done
+	// after persistSummary so the FK to sessions(id) is irrelevant
+	// (we link to candidates, not to this summary row), but we keep
+	// it inside the same RunSummarize call so a partial failure
+	// surfaces here rather than as an orphaned summary.
+	if err := persistSessionLinks(ctx, s, sessionID, result.SessionLinks, candidateIDs); err != nil {
+		return id, fmt.Errorf("summarize: persist session_links: %w", err)
+	}
+
 	if renderErr := emitLLMBody(out, store.LLMKindSummary, body, opts.JSON); renderErr != nil {
 		return id, fmt.Errorf("summarize: render body: %w", renderErr)
 	}
 	return id, nil
+}
+
+// persistSessionLinks filters the model-emitted links down to ones
+// whose to_session_id is in `allowed` (the candidate shortlist the
+// model was given), then writes them via store.SaveSessionLinks.
+//
+// Filtering enforces the prompt's anti-fabrication contract: the
+// model is told to only emit ids from the candidate stanza, but
+// the schema can't constrain that. A rogue id gets silently
+// dropped here rather than failing the whole summarize call —
+// the structured summary itself is more valuable than the link
+// rows, which are advisory.
+//
+// `allowed` may be empty (no candidates were loaded), in which
+// case any emitted link gets dropped. That's the correct
+// degenerate behaviour: no candidates → no permitted targets.
+func persistSessionLinks(
+	ctx context.Context,
+	s *store.Store,
+	from string,
+	emitted []prompts.SessionLinkAnnotation,
+	allowed map[string]struct{},
+) error {
+	links := make([]store.SessionLink, 0, len(emitted))
+	dropped := 0
+	for _, l := range emitted {
+		if _, ok := allowed[l.ToSessionID]; !ok {
+			dropped++
+			continue
+		}
+		if !store.IsValidSessionLinkKind(l.Kind) {
+			dropped++
+			continue
+		}
+		links = append(links, store.SessionLink{
+			ToSessionID: l.ToSessionID,
+			Kind:        l.Kind,
+			Rationale:   l.Rationale,
+		})
+	}
+	if dropped > 0 {
+		slog.Info("summarize: dropped fabricated session_links",
+			"from_session_id", from, "dropped", dropped, "kept", len(links))
+	}
+	// Always call SaveSessionLinks (even with empty links) so a
+	// re-summarize that emits nothing clears stale rows from a
+	// previous run.
+	return store.SaveSessionLinks(ctx, s.DB(), from, links)
+}
+
+// saveSessionLinksFromBody re-projects session_links from a stored
+// summary JSON body. Used on cache hits — re-running summarize on
+// a cached row should rebuild the projection without re-calling
+// the LLM. Tolerates malformed bodies (logs and returns nil).
+func saveSessionLinksFromBody(
+	ctx context.Context,
+	s *store.Store,
+	from, body string,
+	allowed map[string]struct{},
+) error {
+	var result prompts.SummaryResult
+	if err := json.Unmarshal([]byte(body), &result); err != nil {
+		slog.Warn("summarize: cached body unparseable, skipping session_links projection",
+			"from_session_id", from, "err", err)
+		return nil
+	}
+	return persistSessionLinks(ctx, s, from, result.SessionLinks, allowed)
 }
 
 // persistInput groups every column we fill when storing an LLM
