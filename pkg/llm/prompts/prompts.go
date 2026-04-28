@@ -23,6 +23,7 @@
 package prompts
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -959,6 +960,129 @@ type InductionResult struct {
 	// the specific commands, plus an abstract deploy-service
 	// workflow generalising over services".
 	Rationale string `json:"rationale"`
+}
+
+// UnmarshalJSON decodes record_induction tool output, accepting
+// BOTH the schema-correct nested-object shape AND a known model
+// failure mode where Claude stringifies a complex nested object:
+//
+//	{"workflow": "{\"task_shape\":...}"}  // observed in practice
+//
+// instead of:
+//
+//	{"workflow": {"task_shape":...}}      // schema-correct
+//
+// Anthropic's tool-input validation is permissive about
+// type-vs-schema mismatches, so the bad shape arrives at our
+// decode layer rather than getting rejected upstream. We treat
+// both forms as equally valid IFF the inner payload round-trips
+// cleanly through the typed Go struct — anything else fails fast
+// rather than silently storing wrong data (CLAUDE.md rule #7).
+//
+// Same defence applies to Skill, which is structurally identical.
+func (r *InductionResult) UnmarshalJSON(data []byte) error {
+	// Two-phase decode: first into a struct that holds the
+	// nested fields as RawMessage so we can detect and recover
+	// from the string-wrapping mode without making the whole
+	// type loose.
+	type rawResult struct {
+		Skill     json.RawMessage `json:"skill,omitempty"`
+		Workflow  json.RawMessage `json:"workflow,omitempty"`
+		Rationale string          `json:"rationale"`
+	}
+	var raw rawResult
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	r.Rationale = raw.Rationale
+
+	skill, err := decodeMaybeStringified[ProposedSkill](raw.Skill, "skill")
+	if err != nil {
+		return err
+	}
+	r.Skill = skill
+
+	wf, err := decodeMaybeStringified[InducedWorkflow](raw.Workflow, "workflow")
+	if err != nil {
+		return err
+	}
+	r.Workflow = wf
+	return nil
+}
+
+// decodeMaybeStringified handles Claude's nested-object string-
+// wrapping failure mode. Returns:
+//
+//   - (nil, nil)        for null / empty / "null" / "" inputs
+//   - (*T,  nil)        when raw is a JSON object that decodes
+//     cleanly into T, OR when raw is a JSON
+//     string whose contents are a JSON object
+//     that decodes cleanly into T
+//   - (nil, err)        when neither shape decodes — surfaces the
+//     direct-decode error AND a preview of raw
+//     so operators can root-cause novel shapes
+//     without rerunning under a debugger
+//
+// Generic over the artefact type (ProposedSkill / InducedWorkflow)
+// because both InductionResult fields exhibit identical structure
+// and identical failure-mode susceptibility.
+func decodeMaybeStringified[T any](raw json.RawMessage, fieldName string) (*T, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	trim := bytes.TrimSpace(raw)
+	if len(trim) == 0 || bytes.Equal(trim, []byte("null")) {
+		return nil, nil
+	}
+
+	// Direct decode — the schema-correct path.
+	var direct T
+	directErr := json.Unmarshal(raw, &direct)
+	if directErr == nil {
+		return &direct, nil
+	}
+
+	// Stringified-object fallback. Claude sometimes emits the
+	// nested object as a JSON-encoded string; recover by
+	// unwrapping one layer and re-decoding into the typed
+	// struct. We only return success when the inner content
+	// round-trips cleanly — a string that doesn't contain a
+	// well-formed T must surface as an error (silently storing
+	// rationale-as-workflow would be exactly the kind of
+	// "confidently wrong" data CLAUDE.md rule #7 warns about).
+	var asString string
+	innerCtx := "not a JSON string"
+	if strErr := json.Unmarshal(raw, &asString); strErr == nil {
+		// Empty string is a stringified equivalent of null —
+		// the model occasionally writes "" instead of null
+		// when it has nothing to emit.
+		if strings.TrimSpace(asString) == "" {
+			return nil, nil
+		}
+		// Use a streaming Decoder rather than json.Unmarshal:
+		// Claude has been observed appending stray characters
+		// (e.g. one extra '}') AFTER an otherwise-well-formed
+		// stringified object. Decoder reads exactly one value
+		// and ignores trailing whitespace; truncation inside
+		// the object still surfaces as an error (Decode reads
+		// the partial value and returns an io.EOF / syntax
+		// error mid-parse, so we don't silently accept a
+		// torn-off prefix).
+		dec := json.NewDecoder(strings.NewReader(asString))
+		var inner T
+		innerErr := dec.Decode(&inner)
+		if innerErr == nil {
+			return &inner, nil
+		}
+		innerCtx = "inner string decode: " + innerErr.Error()
+	}
+
+	preview := string(raw)
+	if len(preview) > 200 {
+		preview = preview[:200] + "…"
+	}
+	return nil, fmt.Errorf("%s: cannot decode as object or stringified object: %w (%s); raw=%s",
+		fieldName, directErr, innerCtx, preview)
 }
 
 // InducedWorkflow is the workflow-shaped artefact embedded in an

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/toabctl/aichronicles/internal/config"
@@ -112,7 +113,27 @@ func parseToolResult(resp *llm.Response, toolName string, target any) error {
 		return fmt.Errorf("model called tool %q but %q was forced", tu.Name, toolName)
 	}
 	if err := json.Unmarshal(tu.Input, target); err != nil {
-		return fmt.Errorf("decode %s input: %w", toolName, err)
+		// Include a truncated preview of the raw tool input so an
+		// operator can see exactly what the LLM emitted when its
+		// shape disagrees with the Go struct. Without this, errors
+		// like "cannot unmarshal string into struct field X" are
+		// indistinguishable from one another and there's no way to
+		// root-cause without re-running with a debugger attached.
+		preview := string(tu.Input)
+		if len(preview) > 800 {
+			preview = preview[:800] + "…(truncated)"
+		}
+		// On decode failure, also dump the full raw payload to a
+		// temp file so an operator can root-cause without
+		// reproducing the exact LLM call. The path is logged at
+		// debug level so the message length stays bounded.
+		dumpPath := ""
+		if f, ferr := os.CreateTemp("", "aichronicles-tool-decode-*.json"); ferr == nil {
+			_, _ = f.Write(tu.Input)
+			_ = f.Close()
+			dumpPath = f.Name()
+		}
+		return fmt.Errorf("decode %s input: %w; raw=%s; full=%s", toolName, err, preview, dumpPath)
 	}
 	return nil
 }
