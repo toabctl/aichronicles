@@ -26,6 +26,13 @@ const (
 	// skill-name) pair so re-running apply on the same skill is
 	// free.
 	LLMKindProposeVerify LLMOutputKind = "propose_verify"
+	// LLMKindSkillRevision is the cached output of `aichronicles
+	// skills evolve` — a revision of an existing SKILL.md
+	// grounded in the failure events the staleness detector
+	// flagged. One row per (skill-name, current-skill-md-hash)
+	// so re-running on the same SKILL contents is free; a hand-
+	// edit to the SKILL.md invalidates the cache automatically.
+	LLMKindSkillRevision LLMOutputKind = "skill_revision"
 )
 
 // LLMOutput mirrors one row of the llm_outputs table. Callers

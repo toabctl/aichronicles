@@ -61,6 +61,7 @@ const (
 	ToolNameReflection     = "record_reflection"
 	ToolNameProposal       = "record_proposal"
 	ToolNameProposalVerify = "record_proposal_verification"
+	ToolNameSkillRevision  = "record_skill_revision"
 )
 
 // --- result types ---
@@ -871,6 +872,156 @@ func BuildVerifyProposal(in VerifyProposalInputs) (Built, error) {
 			InputSchema: json.RawMessage(verifyProposalToolSchema),
 		}},
 		ForceTool: ToolNameProposalVerify,
+	}
+	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
+}
+
+// --- skill revision (TDS-critique gap: act on stale flags) ---
+
+// SkillRevision is the schema-validated payload of a
+// record_skill_revision tool call. revised_body is the new SKILL.md
+// content (frontmatter PRESERVED — the LLM rewrites everything
+// after the closing ---). rationale is one short paragraph the user
+// can read to understand WHY the revision differs from the original;
+// no_change_needed=true means the model couldn't find a clear
+// improvement and the failures look unrelated to the SKILL itself.
+type SkillRevision struct {
+	RevisedBody    string `json:"revised_body"`
+	Rationale      string `json:"rationale"`
+	NoChangeNeeded bool   `json:"no_change_needed"`
+}
+
+// SkillFailureExample is one cited failure for the evolve prompt.
+// SessionID + ts let the model attribute. ContextSnippet is a tight
+// excerpt around the failure (a few hundred chars on each side) so
+// the revision is grounded in what actually went wrong, not just
+// "this skill correlates with failures."
+type SkillFailureExample struct {
+	SessionID      string
+	TsMs           int64
+	ContextSnippet string
+}
+
+// EvolveSkillInputs bundles the SKILL.md being revised + the
+// failure evidence the staleness detector flagged.
+type EvolveSkillInputs struct {
+	SkillName       string
+	CurrentSkillMd  string
+	FailureExamples []SkillFailureExample
+}
+
+const evolveSkillMaxTokens = 4096
+
+const evolveSkillSystem = `You revise an existing Claude Code skill (SKILL.md) so its instructions stop correlating with tool failures. You MUST call the record_skill_revision tool exactly once.
+
+Input shape:
+
+- The CURRENT SKILL.md the user has installed.
+- A list of FAILURE EXAMPLES — sessions where loading this skill was followed by a tool_failure event within ~10 minutes. Each example carries the verbatim tool failure text + nearby context.
+
+Your job is ONE of two outcomes:
+
+1. revised_body=<new SKILL.md>, no_change_needed=false. Revise the SKILL by:
+   - Tightening the when_to_use to exclude the failing case (the skill was firing too broadly).
+   - Adding a Pitfalls / Gotchas section listing the specific failure modes you see in the evidence.
+   - Fixing concrete instruction errors (a wrong flag, an outdated path, a step that no longer works).
+   - PRESERVING the YAML frontmatter VERBATIM — copy lines from --- to --- exactly. Do NOT rename the skill, do NOT change its description without a strong reason. The SKILL's identity stays.
+   - rationale = one short paragraph naming the specific failures you addressed.
+
+2. no_change_needed=true, revised_body="". Use this when:
+   - Failures look UNRELATED to the SKILL (e.g. a generic ENOENT that any skill would hit).
+   - Evidence is too thin (<2 distinct sessions) to ground a revision.
+   - The SKILL is already specific and the failures look like genuine user error.
+   - rationale = one short paragraph explaining why no revision is warranted.
+
+Hard rules:
+- Do NOT reinvent the skill from scratch. Edits should be surgical: "tighten this trigger, add a Pitfalls bullet, fix this step." Big rewrites usually mean the skill's CONCEPT is wrong, which is propose's territory, not evolve's.
+- Do NOT add fictional steps. Every claim about "do X to fix Y" must trace back to evidence in the failure examples.
+- Keep the revised SKILL.md under 4000 characters total — Claude Code's skill loader has practical limits and longer skills are less likely to be loaded by the host.`
+
+const evolveSkillToolSchema = `{
+  "type": "object",
+  "required": ["revised_body", "rationale", "no_change_needed"],
+  "additionalProperties": false,
+  "properties": {
+    "revised_body": {
+      "type": "string",
+      "description": "The full new SKILL.md text including the unchanged YAML frontmatter, OR an empty string when no_change_needed=true.",
+      "maxLength": 4000
+    },
+    "rationale": {
+      "type": "string",
+      "description": "One short paragraph (≤400 chars) explaining what changed and why, grounded in the failure examples.",
+      "minLength": 1,
+      "maxLength": 400
+    },
+    "no_change_needed": {
+      "type": "boolean",
+      "description": "true when the failures don't ground a revision (unrelated, evidence too thin, etc.). When true, revised_body must be empty."
+    }
+  }
+}`
+
+const evolveSkillTemplate = `Revise this Claude Code skill so its instructions stop correlating with tool failures.
+
+SKILL NAME: %s
+
+CURRENT SKILL.md (preserve the YAML frontmatter VERBATIM):
+---
+%s
+---
+
+FAILURE EXAMPLES (%d sessions, each with skill_load → tool_failure within ~10 minutes):
+%s
+
+Call record_skill_revision with your decision.`
+
+// BuildEvolveSkill composes the revision prompt. Returns Built so
+// the caller threads through runCachedLLM the same way every other
+// LLM-output kind does — a re-run on identical inputs hits the
+// cache.
+func BuildEvolveSkill(in EvolveSkillInputs) (Built, error) {
+	if in.SkillName == "" {
+		return Built{}, fmt.Errorf("BuildEvolveSkill: skill name required")
+	}
+	if strings.TrimSpace(in.CurrentSkillMd) == "" {
+		return Built{}, fmt.Errorf("BuildEvolveSkill: current SKILL.md required")
+	}
+	pats := patternSet{}
+	skillCleaned, snames := redact.Outbound(in.CurrentSkillMd)
+	pats.addAll(snames)
+
+	var examples strings.Builder
+	for i, ex := range in.FailureExamples {
+		short := ex.SessionID
+		if len(short) > 8 {
+			short = short[:8]
+		}
+		ctxClean, cnames := redact.Outbound(ex.ContextSnippet)
+		pats.addAll(cnames)
+		_, _ = fmt.Fprintf(&examples, "\n[%d] session %s, %s:\n%s\n",
+			i+1, short,
+			time.UnixMilli(ex.TsMs).UTC().Format("2006-01-02 15:04 UTC"),
+			ctxClean)
+	}
+	if examples.Len() == 0 {
+		examples.WriteString("(no failure examples — recommend no_change_needed=true)")
+	}
+
+	userMsg := fmt.Sprintf(evolveSkillTemplate,
+		in.SkillName, skillCleaned, len(in.FailureExamples), examples.String(),
+	)
+
+	req := llm.Request{
+		System:    evolveSkillSystem,
+		Messages:  []llm.Message{{Role: llm.RoleUser, Content: userMsg}},
+		MaxTokens: evolveSkillMaxTokens,
+		Tools: []llm.Tool{{
+			Name:        ToolNameSkillRevision,
+			Description: "Record a revised SKILL.md that addresses the cited failures, OR record that no revision is warranted.",
+			InputSchema: json.RawMessage(evolveSkillToolSchema),
+		}},
+		ForceTool: ToolNameSkillRevision,
 	}
 	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
 }

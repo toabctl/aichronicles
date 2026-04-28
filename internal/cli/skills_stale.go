@@ -27,6 +27,7 @@ func newSkillsCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newSkillsStaleCmd())
 	cmd.AddCommand(newSkillsImpactCmd())
+	cmd.AddCommand(newSkillsEvolveCmd())
 	return cmd
 }
 
