@@ -25,14 +25,10 @@ import (
 // Kind names for Extraction.Kind. Kept as exported constants so
 // callers (the store, future MCP search tools) match on them.
 const (
-	KindURL            = "url"
-	KindFilePath       = "file_path"
-	KindShellCommand   = "shell_command"
-	KindGrepPattern    = "grep_pattern"
-	KindGlobPattern    = "glob_pattern"
-	KindWebQuery       = "web_query"
-	KindSubagentPrompt = "subagent_prompt"
-	KindSkillLoad      = "skill_load"
+	KindURL          = "url"
+	KindFilePath     = "file_path"
+	KindShellCommand = "shell_command"
+	KindSkillLoad    = "skill_load"
 )
 
 // Extraction is one fact derived from an envelope. The caller writes
@@ -56,11 +52,7 @@ var Registered = []Extractor{
 	URLExtractor,
 	FilePathExtractor,
 	ShellCommandExtractor,
-	GrepExtractor,
-	GlobExtractor,
 	WebFetchExtractor,
-	WebSearchExtractor,
-	TaskExtractor,
 	SkillLoadExtractor,
 }
 
@@ -195,46 +187,6 @@ func toolInput(env *ingest.Envelope) (map[string]any, bool) {
 	return m, ok
 }
 
-// GrepExtractor emits the regex pattern from a Grep tool_use, with
-// the optional path attached as Extra.path so callers can filter to
-// "patterns I ran inside internal/" later. Path-less Grep
-// invocations still produce one extraction with the bare pattern.
-func GrepExtractor(env *ingest.Envelope) []Extraction {
-	if env.Tool == nil || env.Tool.Name != "Grep" {
-		return nil
-	}
-	input, ok := toolInput(env)
-	if !ok {
-		return nil
-	}
-	pat, ok := input["pattern"].(string)
-	if !ok || pat == "" {
-		return nil
-	}
-	ex := Extraction{Kind: KindGrepPattern, Value: pat}
-	if path, ok := input["path"].(string); ok && path != "" {
-		ex.Extra = map[string]any{"path": path}
-	}
-	return []Extraction{ex}
-}
-
-// GlobExtractor emits the glob pattern from a Glob tool_use. Glob
-// has no separate path argument worth attaching.
-func GlobExtractor(env *ingest.Envelope) []Extraction {
-	if env.Tool == nil || env.Tool.Name != "Glob" {
-		return nil
-	}
-	input, ok := toolInput(env)
-	if !ok {
-		return nil
-	}
-	pat, ok := input["pattern"].(string)
-	if !ok || pat == "" {
-		return nil
-	}
-	return []Extraction{{Kind: KindGlobPattern, Value: pat}}
-}
-
 // WebFetchExtractor emits the fetched URL as kind=url so the typed
 // fact joins the existing URL pool. Reusing KindURL keeps the
 // snippet labelling consistent — `[url] https://...` regardless of
@@ -252,25 +204,6 @@ func WebFetchExtractor(env *ingest.Envelope) []Extraction {
 		return nil
 	}
 	return []Extraction{{Kind: KindURL, Value: url}}
-}
-
-// WebSearchExtractor emits the search query from a WebSearch
-// tool_use. Distinct kind because a search query isn't a URL or a
-// pattern — it's a natural-language string that's useful to recall
-// on its own ("what did I search for last week").
-func WebSearchExtractor(env *ingest.Envelope) []Extraction {
-	if env.Tool == nil || env.Tool.Name != "WebSearch" {
-		return nil
-	}
-	input, ok := toolInput(env)
-	if !ok {
-		return nil
-	}
-	q, ok := input["query"].(string)
-	if !ok || q == "" {
-		return nil
-	}
-	return []Extraction{{Kind: KindWebQuery, Value: q}}
 }
 
 // skillToolInput pulls the Skill tool's invocation arguments out of
@@ -352,37 +285,6 @@ func SkillLoadExtractor(env *ingest.Envelope) []Extraction {
 	ex := Extraction{Kind: KindSkillLoad, Value: skill}
 	if args != "" {
 		ex.Extra = map[string]any{"args": args}
-	}
-	return []Extraction{ex}
-}
-
-// TaskExtractor emits the prompt a sub-agent was launched with as
-// a typed fact. Lets `aichronicles search` surface "I delegated
-// work about X to a sub-agent" without the user having to remember
-// the agent name. The Task tool carries both `description` (one-
-// line) and `prompt` (the full instructions); we extract `prompt`
-// because it's the high-recall field and the description is
-// already mirrored into content_text by toolDetail.
-//
-// The `subagent_type` field — when present — lands in Extra so
-// downstream queries can ask "what prompts did my planner get?"
-// without joining against the (forthcoming) subagent_threads
-// projection.
-func TaskExtractor(env *ingest.Envelope) []Extraction {
-	if env.Tool == nil || env.Tool.Name != "Task" {
-		return nil
-	}
-	input, ok := toolInput(env)
-	if !ok {
-		return nil
-	}
-	prompt, ok := input["prompt"].(string)
-	if !ok || prompt == "" {
-		return nil
-	}
-	ex := Extraction{Kind: KindSubagentPrompt, Value: prompt}
-	if t, ok := input["subagent_type"].(string); ok && t != "" {
-		ex.Extra = map[string]any{"subagent_type": t}
 	}
 	return []Extraction{ex}
 }
