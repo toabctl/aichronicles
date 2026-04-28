@@ -32,6 +32,7 @@ Auto-generated from the live `cobra.Command.Long` strings via `make docs-cli`. E
 - [`aichronicles setup gemini-cli`](./aichronicles_setup_gemini-cli.md)
 - [`aichronicles setup systemd`](./aichronicles_setup_systemd.md)
 - [`aichronicles skills`](./aichronicles_skills.md)
+- [`aichronicles skills impact`](./aichronicles_skills_impact.md)
 - [`aichronicles skills stale`](./aichronicles_skills_stale.md)
 - [`aichronicles summaries`](./aichronicles_summaries.md)
 - [`aichronicles summaries fill`](./aichronicles_summaries_fill.md)

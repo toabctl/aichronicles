@@ -590,9 +590,21 @@ type InstalledSkill struct {
 // user actually loaded inside the propose window. Distinct from
 // InstalledSkill: a skill can be installed but never invoked
 // (stale candidate), invoked but not installed (plugin), or both.
+//
+// SuccessRate / FailedLoads / TotalLoads, when populated, carry
+// the post-load tool_failure correlation from the same window.
+// SuccessRate is in [0, 1] (1.0 = no failures fired). When the
+// caller doesn't supply impact data (e.g. older callers), the
+// fields stay zero-valued and the prompt template skips the
+// per-skill success annotation rather than reporting a misleading
+// "0% success" — that's the CLAUDE.md correctness rule applied
+// to this layer.
 type InvokedSkill struct {
-	Name  string
-	Count int
+	Name        string
+	Count       int
+	SuccessRate float64
+	FailedLoads int
+	TotalLoads  int
 }
 
 // ProposeInputs bundles every input BuildPropose consumes. Adding
@@ -881,14 +893,29 @@ func renderInstalledSkills(skills []InstalledSkill) string {
 // Counts reflect actual skill_load extractions in the propose
 // window — patterns whose work the user is already serving via
 // these skills are solved and should not be re-proposed.
+//
+// When a row carries impact data (TotalLoads > 0), the line also
+// shows a success-rate annotation so the model sees which skills
+// are actually working vs. which are correlated with tool_failure.
+// A low-success skill is a different signal than a high-success
+// one: it might want REVISION (the skill exists but its
+// instructions are stale) rather than displacement by a brand-new
+// proposal. Rows without impact data render the bare count, same
+// as before.
 func renderInvokedSkills(skills []InvokedSkill) string {
 	if len(skills) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("\nSkills invoked recently (count = times loaded in the window — these are working for the user):\n")
+	b.WriteString("\nSkills invoked recently (count = times loaded in the window — these are working for the user; a low success rate suggests the existing skill needs a revision rather than displacement by a brand-new proposal):\n")
 	for _, s := range skills {
-		_, _ = fmt.Fprintf(&b, "- %s × %d\n", s.Name, s.Count)
+		if s.TotalLoads > 0 {
+			pct := int(s.SuccessRate * 100)
+			_, _ = fmt.Fprintf(&b, "- %s × %d  (success: %d%%, %d/%d loads followed by tool_failure)\n",
+				s.Name, s.Count, pct, s.FailedLoads, s.TotalLoads)
+		} else {
+			_, _ = fmt.Fprintf(&b, "- %s × %d\n", s.Name, s.Count)
+		}
 	}
 	return b.String()
 }

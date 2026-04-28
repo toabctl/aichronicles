@@ -11,4 +11,5 @@ Inspect captured skill activity (frequency, staleness, ...)
 ### SEE ALSO
 
 * [aichronicles](./aichronicles.md)	 - Capture AI coding agent session events
+* [aichronicles skills impact](./aichronicles_skills_impact.md)	 - Per-skill success rate over recent loads (positive view of the staleness signal)
 * [aichronicles skills stale](./aichronicles_skills_stale.md)	 - Surface skills whose loads correlate with subsequent tool_failures

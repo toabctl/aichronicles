@@ -190,6 +190,16 @@ func RunPropose(
 	if err != nil {
 		slog.Warn("propose: skipping invoked-skills enrichment", "err", err)
 	}
+	// Skill-impact enrichment: per-skill success rate over the
+	// same window so the model can see which invoked skills are
+	// actually working vs. correlated with tool_failure. Failures
+	// here are non-fatal — propose proceeds with bare counts.
+	if impact, ierr := store.LoadSkillImpact(ctx, s.DB(), sinceMs,
+		0 /* default 10-minute failure window */, store.SkillImpactLimits{}); ierr != nil {
+		slog.Warn("propose: skipping skill-impact enrichment", "err", ierr)
+	} else {
+		invoked = mergeImpactIntoInvoked(invoked, impact)
+	}
 	_, _ = fmt.Fprintf(progress, "  skills enrichment: %d installed, %d invoked\n",
 		len(installed), len(invoked))
 
@@ -218,4 +228,34 @@ func RunPropose(
 		jsonRaw:  opts.JSON,
 		output:   out,
 	})
+}
+
+// mergeImpactIntoInvoked enriches each InvokedSkill in `invoked`
+// with success-rate fields from a same-window LoadSkillImpact
+// scan. Skills that have an impact row get their TotalLoads /
+// FailedLoads / SuccessRate populated; skills without one stay
+// untouched (the prompt template falls back to the bare-count
+// rendering for those).
+//
+// Two queries instead of a single JOIN because impact comes from
+// store and invoked from internal/skills — keeping them
+// independent means LoadInvoked stays small and reusable, and
+// adding the impact source is a 5-line splice in propose.go
+// rather than a new shape parameter on every caller of LoadInvoked.
+func mergeImpactIntoInvoked(invoked []prompts.InvokedSkill, impact []store.SkillImpact) []prompts.InvokedSkill {
+	if len(impact) == 0 {
+		return invoked
+	}
+	byName := make(map[string]store.SkillImpact, len(impact))
+	for _, im := range impact {
+		byName[im.Name] = im
+	}
+	for i := range invoked {
+		if im, ok := byName[invoked[i].Name]; ok {
+			invoked[i].TotalLoads = im.TotalLoads
+			invoked[i].FailedLoads = im.FailedLoads
+			invoked[i].SuccessRate = im.SuccessRate
+		}
+	}
+	return invoked
 }
