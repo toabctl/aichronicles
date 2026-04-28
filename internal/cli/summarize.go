@@ -390,3 +390,14 @@ func marshalLLMBody(v any) (string, error) {
 	}
 	return string(b), nil
 }
+
+// unmarshalLLMBody is the inverse of marshalLLMBody. Used by
+// runCachedLLM's cache-hit branch to populate in.result from a
+// stored body so callers can read the parsed result uniformly
+// across hit and miss paths.
+func unmarshalLLMBody(body string, target any) error {
+	if err := json.Unmarshal([]byte(body), target); err != nil {
+		return fmt.Errorf("unmarshal llm_outputs.body: %w", err)
+	}
+	return nil
+}

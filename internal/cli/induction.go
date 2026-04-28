@@ -412,16 +412,28 @@ func RunInductionForSession(
 	if err != nil || row == nil {
 		return id, fmt.Errorf("induction: load persisted row: %w", err)
 	}
+	var result prompts.InductionResult
+	if err := json.Unmarshal([]byte(row.Body), &result); err != nil {
+		return id, fmt.Errorf("induction: parse persisted body: %w", err)
+	}
+	// Lifecycle tracking: if the LLM proposed a skill, record it in
+	// proposed_skills so a later `propose apply` can attribute the
+	// resulting SKILL.md back to this induction run, and so the
+	// skill survives in the proposed-skills index even if the user
+	// never applies it (the abandonment-rate signal). Best-effort —
+	// see recordProposedSkillsFromProposal.
+	if result.Skill != nil && result.Skill.Name != "" {
+		if rerr := store.RecordProposedSkill(ctx, s.DB(), id, result.Skill.Name, row.CreatedAtMs); rerr != nil {
+			slog.Warn("induction: failed to record proposed skill",
+				"llm_output_id", id, "skill", result.Skill.Name, "err", rerr)
+		}
+	}
 	if opts.JSON {
 		_, _ = io.WriteString(out, row.Body)
 		if !strings.HasSuffix(row.Body, "\n") {
 			_, _ = io.WriteString(out, "\n")
 		}
 		return id, nil
-	}
-	var result prompts.InductionResult
-	if err := json.Unmarshal([]byte(row.Body), &result); err != nil {
-		return id, fmt.Errorf("induction: parse persisted body: %w", err)
 	}
 	renderInductionResult(out, sessionID, &result)
 	return id, nil

@@ -276,6 +276,18 @@ func runCachedLLM(
 			return 0, fmt.Errorf("%s: cache lookup: %w", in.kind, err)
 		}
 		if cached != nil {
+			// Populate in.result from the cached body so callers
+			// can read the parsed result uniformly across hit and
+			// miss paths (the miss path populates it via
+			// parseToolResult below). Without this, hooks that act
+			// on the parsed result — e.g. recording proposed_skills
+			// after RunPropose / RunInductionForSession — only fire
+			// on cache misses, breaking the lifecycle invariant.
+			if in.result != nil {
+				if uerr := unmarshalLLMBody(cached.Body, in.result); uerr != nil {
+					return cached.ID, fmt.Errorf("%s: parse cached body: %w", in.kind, uerr)
+				}
+			}
 			if renderErr := emitLLMBody(in.output, in.kind, cached.Body, in.jsonRaw); renderErr != nil {
 				return cached.ID, fmt.Errorf("%s: render cached body: %w", in.kind, renderErr)
 			}

@@ -171,6 +171,82 @@ func TestProposeApply_SkillWritesScaffoldAndScripts(t *testing.T) {
 	}
 }
 
+// TestProposeApply_RecordsLifecycle: applying a skill must update
+// proposed_skills with applied_at_ms + applied_path, regardless of
+// whether the row was pre-recorded by RunPropose or absent (the
+// fallback path inserts a row post-hoc).
+func TestProposeApply_RecordsLifecycle(t *testing.T) {
+	t.Parallel()
+	s := openTempCLIStore(t)
+	id := seedProposalOutput(t, s, sampleProposal())
+	result, _, _ := loadLatestProposal(context.Background(), s, id)
+
+	// Path A: pre-record the row (the canonical RunPropose path).
+	if err := store.RecordProposedSkill(t.Context(), s.DB(), id, "build-test", time.Now().Add(-time.Hour).UnixMilli()); err != nil {
+		t.Fatalf("pre-record: %v", err)
+	}
+
+	dir := t.TempDir()
+	var out bytes.Buffer
+	if err := applyProposedSkill(t.Context(), s, result, id, "build-test", dir, false, true, nilLLMClient, &out); err != nil {
+		t.Fatalf("applyProposedSkill: %v", err)
+	}
+
+	rows, err := store.LoadProposedSkillsByName(t.Context(), s.DB(), "build-test", 0)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 proposed_skills row, got %d", len(rows))
+	}
+	r := rows[0]
+	if !r.AppliedAtMs.Valid {
+		t.Errorf("applied_at_ms not set after apply")
+	}
+	if !r.AppliedPath.Valid || !strings.HasSuffix(r.AppliedPath.String, "/build-test/SKILL.md") {
+		t.Errorf("applied_path: got %v", r.AppliedPath)
+	}
+
+	// Path B: a different output id has NO pre-recorded row; apply
+	// must auto-insert via the ErrProposedSkillNotFound fallback so
+	// the lifecycle index stays complete.
+	id2 := seedProposalOutput(t, s, &prompts.ProposalResult{
+		Skills: []prompts.ProposedSkill{
+			{
+				Name:                 "another-skill",
+				WhenToUse:            "when",
+				Why:                  "why",
+				Frequency:            2,
+				Effort:               "small",
+				AlternativesRejected: "n/a",
+				Evidence: []prompts.ProposalEvidence{
+					{SessionID: "s1", Quote: "q", WhatHappened: "w"},
+					{SessionID: "s2", Quote: "q", WhatHappened: "w"},
+				},
+			},
+		},
+	})
+	result2, _, _ := loadLatestProposal(context.Background(), s, id2)
+	dir2 := t.TempDir()
+	out.Reset()
+	if err := applyProposedSkill(t.Context(), s, result2, id2, "another-skill", dir2, false, true, nilLLMClient, &out); err != nil {
+		t.Fatalf("path B applyProposedSkill: %v", err)
+	}
+	rows2, err := store.LoadProposedSkillsByName(t.Context(), s.DB(), "another-skill", 0)
+	if err != nil {
+		t.Fatalf("load path B: %v", err)
+	}
+	if len(rows2) != 1 {
+		t.Fatalf("path B expected 1 row, got %d", len(rows2))
+	}
+	if !rows2[0].AppliedAtMs.Valid {
+		t.Errorf("path B: applied_at_ms not set on auto-inserted row")
+	}
+	if rows2[0].LLMOutputID != id2 {
+		t.Errorf("path B llm_output_id: got %d want %d", rows2[0].LLMOutputID, id2)
+	}
+}
+
 // TestProposeApply_SkillWithoutScripts confirms the no-scripts
 // branch still works (no scripts/ dir, no Helper-scripts section).
 func TestProposeApply_SkillWithoutScripts(t *testing.T) {

@@ -7,8 +7,9 @@ import (
 )
 
 // seedLLMOutput inserts one llm_outputs row with the supplied
-// fields. session_id may be empty (NULL); other fields are required.
-func seedLLMOutput(t *testing.T, s *Store, kind, model string, inputTok, outputTok int64, createdAt time.Time) {
+// fields and returns the new id. session_id may be empty (NULL);
+// other fields are required.
+func seedLLMOutput(t *testing.T, s *Store, kind, model string, inputTok, outputTok int64, createdAt time.Time) int64 {
 	t.Helper()
 	tx, err := s.DB().Begin()
 	if err != nil {
@@ -25,12 +26,14 @@ func seedLLMOutput(t *testing.T, s *Store, kind, model string, inputTok, outputT
 		Body:         "{}",
 		CreatedAtMs:  createdAt.UnixMilli(),
 	}
-	if _, _, err := SaveLLMOutput(t.Context(), tx, in); err != nil {
+	id, _, err := SaveLLMOutput(t.Context(), tx, in)
+	if err != nil {
 		t.Fatalf("seed llm_output: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
+	return id
 }
 
 func TestLoadTokenUsage_AggregatesByDayKindModel(t *testing.T) {

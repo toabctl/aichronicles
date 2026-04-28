@@ -231,10 +231,11 @@ func RunPropose(
 	}
 
 	_, _ = fmt.Fprintf(progress, "calling LLM (this is the long part — typically 10–30s)...\n")
-	return runCachedLLM(ctx, s, newClient, cachedLLMInput{
+	result := new(prompts.ProposalResult)
+	id, err := runCachedLLM(ctx, s, newClient, cachedLLMInput{
 		kind:     store.LLMKindPropose,
 		toolName: prompts.ToolNameProposal,
-		result:   new(prompts.ProposalResult),
+		result:   result,
 		hash:     built.Hash,
 		req:      built.Request,
 		model:    opts.Model,
@@ -242,6 +243,42 @@ func RunPropose(
 		jsonRaw:  opts.JSON,
 		output:   out,
 	})
+	if err != nil {
+		return id, err
+	}
+	recordProposedSkillsFromProposal(ctx, s, id, result)
+	return id, nil
+}
+
+// recordProposedSkillsFromProposal writes one proposed_skills row
+// per skill in the proposal. Best-effort: lifecycle tracking
+// failures are logged but do not propagate, so a transient DB error
+// here doesn't make the user think their LLM call failed when in
+// fact the cached row landed cleanly.
+//
+// proposed_at_ms anchors to the llm_outputs row's created_at_ms so
+// re-runs that hit the cache write the same proposed_at_ms — the
+// PK is (llm_output_id, skill_name) so the INSERT OR IGNORE in
+// RecordProposedSkill keeps writes idempotent regardless.
+func recordProposedSkillsFromProposal(ctx context.Context, s *store.Store, llmOutputID int64, r *prompts.ProposalResult) {
+	if r == nil || llmOutputID <= 0 {
+		return
+	}
+	row, err := store.LoadLLMOutputByID(ctx, s.DB(), llmOutputID)
+	if err != nil || row == nil {
+		slog.Warn("propose: skipping proposed_skills record",
+			"llm_output_id", llmOutputID, "err", err)
+		return
+	}
+	for _, sk := range r.Skills {
+		if sk.Name == "" {
+			continue
+		}
+		if rerr := store.RecordProposedSkill(ctx, s.DB(), llmOutputID, sk.Name, row.CreatedAtMs); rerr != nil {
+			slog.Warn("propose: failed to record proposed skill",
+				"llm_output_id", llmOutputID, "skill", sk.Name, "err", rerr)
+		}
+	}
 }
 
 // runChallenge is the --challenge path. Branched from RunPropose
