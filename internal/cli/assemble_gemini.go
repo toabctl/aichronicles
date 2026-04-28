@@ -78,7 +78,7 @@ func AssembleGemini(raw []byte, now time.Time) (ingest.Envelope, error) {
 		env.Cwd = cwd
 	}
 	if toolName, ok := hook["tool_name"].(string); ok && toolName != "" {
-		env.Tool = &ingest.Tool{Name: toolName, NameRaw: toolName}
+		env.Tool = &ingest.Tool{Name: toolName}
 	}
 	if content := extractGeminiContentText(kind, hookEvent, hook); content != "" {
 		env.ContentText = content

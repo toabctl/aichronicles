@@ -456,7 +456,7 @@ func geminiToolUseEnvelope(sess *geminiSession, parent *geminiMessage, tc *gemin
 		Role:            ingest.RoleAssistant,
 		TsSource:        ts,
 		Cwd:             cwd,
-		Tool:            &ingest.Tool{Name: tc.Name, NameRaw: tc.Name, CallID: tc.ID},
+		Tool:            &ingest.Tool{Name: tc.Name, CallID: tc.ID},
 		ContentText:     tc.Name,
 		Payload: map[string]any{
 			"sessionId":  sess.SessionID,
@@ -508,7 +508,7 @@ func geminiToolResultEnvelope(sess *geminiSession, parent *geminiMessage, tc *ge
 		Role:            ingest.RoleTool,
 		TsSource:        ts,
 		Cwd:             cwd,
-		Tool:            &ingest.Tool{Name: tc.Name, NameRaw: tc.Name, CallID: tc.ID},
+		Tool:            &ingest.Tool{Name: tc.Name, CallID: tc.ID},
 		ContentText:     text,
 		Payload: map[string]any{
 			"sessionId": sess.SessionID,

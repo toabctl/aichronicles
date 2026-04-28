@@ -496,7 +496,7 @@ func classifyAssistantEntry(entry *claudeEntry) (string, string, string, *ingest
 		name, _ := first["name"].(string)
 		callID, _ := first["id"].(string)
 		return "tool_use", "tool", name,
-			&ingest.Tool{Name: name, NameRaw: name, CallID: callID}
+			&ingest.Tool{Name: name, CallID: callID}
 	}
 	return "assistant_message", "assistant", joinTextBlocks(blocks), nil
 }

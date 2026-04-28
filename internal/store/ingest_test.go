@@ -371,7 +371,7 @@ func TestIngestEnvelope_ToolFieldsPersist(t *testing.T) {
 	env, raw := newValidEnvelope(t)
 	env.Kind = "tool_use"
 	env.Role = "tool"
-	env.Tool = &ingest.Tool{Name: "Bash", NameRaw: "Bash", CallID: "toolu_abc"}
+	env.Tool = &ingest.Tool{Name: "Bash", CallID: "toolu_abc"}
 
 	withTx(t, s, func(tx *sql.Tx) {
 		if _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {

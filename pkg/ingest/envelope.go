@@ -42,7 +42,6 @@ type Envelope struct {
 	SourceSessionID    string         `json:"source_session_id"`
 	Kind               string         `json:"kind"`
 	Role               string         `json:"role,omitempty"`
-	RoleRaw            string         `json:"role_raw,omitempty"`
 	TsSource           time.Time      `json:"ts_source"`
 	Cwd                string         `json:"cwd,omitempty"`
 	Host               string         `json:"host,omitempty"`
@@ -61,9 +60,8 @@ type Envelope struct {
 // Tool carries normalized tool-invocation metadata when kind is tool_use,
 // tool_result, or tool_failure.
 type Tool struct {
-	Name    string `json:"name,omitempty"`
-	NameRaw string `json:"name_raw,omitempty"`
-	CallID  string `json:"call_id,omitempty"`
+	Name   string `json:"name,omitempty"`
+	CallID string `json:"call_id,omitempty"`
 }
 
 // Subagent identifies the sub-agent thread an event belongs to. Nil

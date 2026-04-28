@@ -179,12 +179,9 @@ components:
         role:
           type: string
           description: |
-            Convenience hint derived from `kind`. Clients may omit; the
-            server does not currently validate.
+            Convenience hint derived from `kind`. Optional on the wire;
+            the server validates against the closed enum when set.
           enum: [user, assistant, tool, system]
-        role_raw:
-          type: string
-          description: The agent's native role string when role was translated.
         ts_source:
           type: string
           format: date-time
@@ -240,9 +237,6 @@ components:
         name:
           type: string
           description: Canonical tool name (e.g. `Bash`, `Read`, `Write`).
-        name_raw:
-          type: string
-          description: Agent-native tool name before canonicalization.
         call_id:
           type: string
           description: |
