@@ -289,20 +289,21 @@ func applyProposedSkill(
 	}
 
 	// Lifecycle tracking: the SKILL.md (and any scripts) landed —
-	// mark the proposed_skills row as applied so this skill on disk
-	// is attributable back to this propose / induction run.
+	// record AutoSkill maintenance action 'add' on the candidate
+	// row so this skill on disk is attributable back to this
+	// propose / induction run.
 	//
-	// Best-effort: a missing row (the proposal predates the
-	// proposed_skills migration, or was made via a path that
-	// doesn't seed the index) downgrades to a fresh insert with
-	// applied_at_ms set, so the lifecycle index converges to truth.
-	// All other errors are logged and the apply is reported as
-	// successful — the SKILL.md is on disk regardless.
+	// Best-effort: a missing row (the candidate predates the
+	// skill_candidates migration, or was extracted via a path that
+	// doesn't seed the index) downgrades to a fresh insert + add,
+	// so the lifecycle index converges to truth. All other errors
+	// are logged and the apply is reported as successful — the
+	// SKILL.md is on disk regardless.
 	now := time.Now().UnixMilli()
-	if merr := store.MarkProposedSkillApplied(ctx, st.DB(), outputID, sk.Name, skillMd, now); merr != nil {
-		if errors.Is(merr, store.ErrProposedSkillNotFound) {
-			if rerr := store.RecordProposedSkill(ctx, st.DB(), outputID, sk.Name, now); rerr == nil {
-				_ = store.MarkProposedSkillApplied(ctx, st.DB(), outputID, sk.Name, skillMd, now)
+	if merr := store.MarkSkillCandidateAdded(ctx, st.DB(), outputID, sk.Name, skillMd, now); merr != nil {
+		if errors.Is(merr, store.ErrSkillCandidateNotFound) {
+			if rerr := store.RecordSkillCandidate(ctx, st.DB(), outputID, sk.Name, now); rerr == nil {
+				_ = store.MarkSkillCandidateAdded(ctx, st.DB(), outputID, sk.Name, skillMd, now)
 			}
 		} else {
 			_, _ = fmt.Fprintf(out, "warning: failed to record skill lifecycle: %v\n", merr)

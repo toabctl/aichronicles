@@ -81,7 +81,7 @@ func TestProposePage_RendersHeaderAndEmptyState(t *testing.T) {
 }
 
 // TestProposePage_RendersLifecycleBuckets covers the merged
-// lifecycle view: when proposed_skills rows exist, /propose now
+// lifecycle view: when skill_candidates rows exist, /propose now
 // renders the four-bucket table that previously lived on
 // /proposals.
 func TestProposePage_RendersLifecycleBuckets(t *testing.T) {
@@ -104,15 +104,15 @@ func TestProposePage_RendersLifecycleBuckets(t *testing.T) {
 	}
 	loID, _ := loRes.LastInsertId()
 
-	if err := store.RecordProposedSkill(t.Context(), st.DB(),
+	if err := store.RecordSkillCandidate(t.Context(), st.DB(),
 		loID, "applied-unused", proposedAt); err != nil {
 		t.Fatalf("record: %v", err)
 	}
-	if err := store.MarkProposedSkillApplied(t.Context(), st.DB(),
+	if err := store.MarkSkillCandidateAdded(t.Context(), st.DB(),
 		loID, "applied-unused", "/p/x/SKILL.md", appliedAt); err != nil {
-		t.Fatalf("mark applied: %v", err)
+		t.Fatalf("mark added: %v", err)
 	}
-	if err := store.RecordProposedSkill(t.Context(), st.DB(),
+	if err := store.RecordSkillCandidate(t.Context(), st.DB(),
 		loID, "rejected-idea", proposedAt); err != nil {
 		t.Fatalf("record rejected: %v", err)
 	}

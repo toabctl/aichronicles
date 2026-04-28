@@ -172,9 +172,9 @@ func TestProposeApply_SkillWritesScaffoldAndScripts(t *testing.T) {
 }
 
 // TestProposeApply_RecordsLifecycle: applying a skill must update
-// proposed_skills with applied_at_ms + applied_path, regardless of
-// whether the row was pre-recorded by RunPropose or absent (the
-// fallback path inserts a row post-hoc).
+// skill_candidates with decision='add', decision_at_ms, and
+// add_path, regardless of whether the row was pre-recorded by
+// RunPropose or absent (the fallback path inserts a row post-hoc).
 func TestProposeApply_RecordsLifecycle(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
@@ -182,7 +182,7 @@ func TestProposeApply_RecordsLifecycle(t *testing.T) {
 	result, _, _ := loadLatestProposal(context.Background(), s, id)
 
 	// Path A: pre-record the row (the canonical RunPropose path).
-	if err := store.RecordProposedSkill(t.Context(), s.DB(), id, "build-test", time.Now().Add(-time.Hour).UnixMilli()); err != nil {
+	if err := store.RecordSkillCandidate(t.Context(), s.DB(), id, "build-test", time.Now().Add(-time.Hour).UnixMilli()); err != nil {
 		t.Fatalf("pre-record: %v", err)
 	}
 
@@ -192,24 +192,27 @@ func TestProposeApply_RecordsLifecycle(t *testing.T) {
 		t.Fatalf("applyProposedSkill: %v", err)
 	}
 
-	rows, err := store.LoadProposedSkillsByName(t.Context(), s.DB(), "build-test", 0)
+	rows, err := store.LoadSkillCandidatesByName(t.Context(), s.DB(), "build-test", 0)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if len(rows) != 1 {
-		t.Fatalf("expected 1 proposed_skills row, got %d", len(rows))
+		t.Fatalf("expected 1 skill_candidates row, got %d", len(rows))
 	}
 	r := rows[0]
-	if !r.AppliedAtMs.Valid {
-		t.Errorf("applied_at_ms not set after apply")
+	if r.Decision != store.MaintenanceAdd {
+		t.Errorf("decision: got %q want %q", r.Decision, store.MaintenanceAdd)
 	}
-	if !r.AppliedPath.Valid || !strings.HasSuffix(r.AppliedPath.String, "/build-test/SKILL.md") {
-		t.Errorf("applied_path: got %v", r.AppliedPath)
+	if !r.DecisionAtMs.Valid {
+		t.Errorf("decision_at_ms not set after add")
+	}
+	if !r.AddPath.Valid || !strings.HasSuffix(r.AddPath.String, "/build-test/SKILL.md") {
+		t.Errorf("add_path: got %v", r.AddPath)
 	}
 
 	// Path B: a different output id has NO pre-recorded row; apply
-	// must auto-insert via the ErrProposedSkillNotFound fallback so
-	// the lifecycle index stays complete.
+	// must auto-insert via the ErrSkillCandidateNotFound fallback
+	// so the lifecycle index stays complete.
 	id2 := seedProposalOutput(t, s, &prompts.ProposalResult{
 		Skills: []prompts.ProposedSkill{
 			{
@@ -232,15 +235,15 @@ func TestProposeApply_RecordsLifecycle(t *testing.T) {
 	if err := applyProposedSkill(t.Context(), s, result2, id2, "another-skill", dir2, false, true, nilLLMClient, &out); err != nil {
 		t.Fatalf("path B applyProposedSkill: %v", err)
 	}
-	rows2, err := store.LoadProposedSkillsByName(t.Context(), s.DB(), "another-skill", 0)
+	rows2, err := store.LoadSkillCandidatesByName(t.Context(), s.DB(), "another-skill", 0)
 	if err != nil {
 		t.Fatalf("load path B: %v", err)
 	}
 	if len(rows2) != 1 {
 		t.Fatalf("path B expected 1 row, got %d", len(rows2))
 	}
-	if !rows2[0].AppliedAtMs.Valid {
-		t.Errorf("path B: applied_at_ms not set on auto-inserted row")
+	if rows2[0].Decision != store.MaintenanceAdd {
+		t.Errorf("path B: decision not 'add' on auto-inserted row, got %q", rows2[0].Decision)
 	}
 	if rows2[0].LLMOutputID != id2 {
 		t.Errorf("path B llm_output_id: got %d want %d", rows2[0].LLMOutputID, id2)

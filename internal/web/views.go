@@ -418,7 +418,7 @@ type ProposePage struct {
 	Limit     int
 	Proposals []ProposeCard
 
-	// Lifecycle of past proposed_skills. Empty slices when the
+	// Lifecycle of past skill candidates. Empty slices when the
 	// store has nothing in that bucket — the template hides the
 	// section in that case.
 	AppliedWorking []ProposalRow

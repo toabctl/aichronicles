@@ -260,18 +260,18 @@ func RunPropose(
 	if err != nil {
 		return id, err
 	}
-	recordProposedSkillsFromProposal(ctx, s, id, result)
+	recordSkillCandidatesFromProposal(ctx, s, id, result)
 	return id, nil
 }
 
 // loadPriorProposalsForPrompt assembles the PriorProposals slice
-// rendered in the propose prompt. Joins LoadProposalEffectiveness
-// (every applied proposal's post-apply usage) with
-// LoadUnappliedProposedSkills (proposals the user did not act on)
-// and dedupes by skill_name (newest entry wins). The historical
-// horizon is intentionally LONGER than the propose digest window —
-// a skill applied 90 days ago is still load-bearing context the
-// LLM should see, even if its loads are outside the
+// rendered in the propose prompt. Joins
+// LoadSkillCandidateEffectiveness (every added candidate's post-add
+// usage) with LoadPendingSkillCandidates (candidates the user did
+// not act on) and dedupes by skill_name (newest entry wins). The
+// historical horizon is intentionally LONGER than the propose
+// digest window — a skill added 90 days ago is still load-bearing
+// context the LLM should see, even if its loads are outside the
 // 7-day digest window.
 //
 // Cap at 30 entries to keep the prompt tokens bounded; the entries
@@ -292,21 +292,21 @@ func loadPriorProposalsForPrompt(ctx context.Context, s *store.Store, sinceMs in
 
 	const maxEntries = 30
 
-	applied, err := store.LoadProposalEffectiveness(ctx, s.DB(), priorSinceMs, 0, maxEntries)
+	added, err := store.LoadSkillCandidateEffectiveness(ctx, s.DB(), priorSinceMs, 0, maxEntries)
 	if err != nil {
-		return nil, fmt.Errorf("load proposal effectiveness: %w", err)
+		return nil, fmt.Errorf("load skill candidate effectiveness: %w", err)
 	}
-	unapplied, err := store.LoadUnappliedProposedSkills(ctx, s.DB(), priorSinceMs, maxEntries)
+	pending, err := store.LoadPendingSkillCandidates(ctx, s.DB(), priorSinceMs, maxEntries)
 	if err != nil {
-		return nil, fmt.Errorf("load unapplied proposals: %w", err)
+		return nil, fmt.Errorf("load pending skill candidates: %w", err)
 	}
 
-	// Build one map keyed by skill_name; on a clash, the applied
-	// row wins (the lifecycle moved forward, the unapplied entry
+	// Build one map keyed by skill_name; on a clash, the added
+	// row wins (the lifecycle moved forward, the pending entry
 	// is now stale).
-	out := make([]prompts.PriorProposal, 0, len(applied)+len(unapplied))
-	seen := make(map[string]struct{}, len(applied)+len(unapplied))
-	for _, e := range applied {
+	out := make([]prompts.PriorProposal, 0, len(added)+len(pending))
+	seen := make(map[string]struct{}, len(added)+len(pending))
+	for _, e := range added {
 		if _, dup := seen[e.SkillName]; dup {
 			continue
 		}
@@ -319,13 +319,13 @@ func loadPriorProposalsForPrompt(ctx context.Context, s *store.Store, sinceMs in
 			SkillName:        e.SkillName,
 			ProposedAtMs:     e.ProposedAtMs,
 			Applied:          true,
-			AppliedAtMs:      e.AppliedAtMs,
-			LoadsAfterApply:  e.LoadsAfterApply,
+			AppliedAtMs:      e.AddedAtMs,
+			LoadsAfterApply:  e.LoadsAfterAdd,
 			FailedLoadsAfter: e.FailedLoadsAfter,
 			LastLoadedMs:     lastLoaded,
 		})
 	}
-	for _, u := range unapplied {
+	for _, u := range pending {
 		if _, dup := seen[u.SkillName]; dup {
 			continue
 		}
@@ -379,7 +379,7 @@ func loadFailureShapesForPrompt(ctx context.Context, s *store.Store, sinceMs int
 	return out, nil
 }
 
-// recordProposedSkillsFromProposal writes one proposed_skills row
+// recordSkillCandidatesFromProposal writes one skill_candidates row
 // per skill in the proposal. Best-effort: lifecycle tracking
 // failures are logged but do not propagate, so a transient DB error
 // here doesn't make the user think their LLM call failed when in
@@ -388,14 +388,14 @@ func loadFailureShapesForPrompt(ctx context.Context, s *store.Store, sinceMs int
 // proposed_at_ms anchors to the llm_outputs row's created_at_ms so
 // re-runs that hit the cache write the same proposed_at_ms — the
 // PK is (llm_output_id, skill_name) so the INSERT OR IGNORE in
-// RecordProposedSkill keeps writes idempotent regardless.
-func recordProposedSkillsFromProposal(ctx context.Context, s *store.Store, llmOutputID int64, r *prompts.ProposalResult) {
+// RecordSkillCandidate keeps writes idempotent regardless.
+func recordSkillCandidatesFromProposal(ctx context.Context, s *store.Store, llmOutputID int64, r *prompts.ProposalResult) {
 	if r == nil || llmOutputID <= 0 {
 		return
 	}
 	row, err := store.LoadLLMOutputByID(ctx, s.DB(), llmOutputID)
 	if err != nil || row == nil {
-		slog.Warn("propose: skipping proposed_skills record",
+		slog.Warn("propose: skipping skill_candidates record",
 			"llm_output_id", llmOutputID, "err", err)
 		return
 	}
@@ -403,8 +403,8 @@ func recordProposedSkillsFromProposal(ctx context.Context, s *store.Store, llmOu
 		if sk.Name == "" {
 			continue
 		}
-		if rerr := store.RecordProposedSkill(ctx, s.DB(), llmOutputID, sk.Name, row.CreatedAtMs); rerr != nil {
-			slog.Warn("propose: failed to record proposed skill",
+		if rerr := store.RecordSkillCandidate(ctx, s.DB(), llmOutputID, sk.Name, row.CreatedAtMs); rerr != nil {
+			slog.Warn("propose: failed to record skill candidate",
 				"llm_output_id", llmOutputID, "skill", sk.Name, "err", rerr)
 		}
 	}

@@ -36,13 +36,14 @@ func TestOpen_FreshCreatesSchema(t *testing.T) {
 	if err := s.DB().QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if v != "20" {
-		t.Errorf("schema_version: got %q, want 20", v)
+	if v != "21" {
+		t.Errorf("schema_version: got %q, want 21", v)
 	}
 
-	// Expected tables all exist. event_embeddings was dropped in
-	// migration 020 — keep this list in sync with the live schema.
-	for _, name := range []string{"meta", "raw_envelopes", "sessions", "events", "events_fts", "events_fts_trigram", "extractions", "extractions_fts", "llm_outputs", "session_links", "session_outcomes", "proposed_skills", "semantic_facts"} {
+	// Expected tables all exist. proposed_skills was renamed to
+	// skill_candidates in migration 021 (AutoSkill vocabulary
+	// alignment) — keep this list in sync with the live schema.
+	for _, name := range []string{"meta", "raw_envelopes", "sessions", "events", "events_fts", "events_fts_trigram", "extractions", "extractions_fts", "llm_outputs", "session_links", "session_outcomes", "skill_candidates", "semantic_facts"} {
 		var got string
 		err := s.DB().QueryRow(`SELECT name FROM sqlite_master WHERE name=?`, name).Scan(&got)
 		if err != nil {

@@ -65,42 +65,42 @@ func (s *Server) proposeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // loadProposalLifecycle fills the four lifecycle buckets on a
-// ProposePage from the proposed_skills table. Same horizon (90d)
+// ProposePage from the skill_candidates table. Same horizon (90d)
 // the propose system prompt's "Prior proposals" stanza uses, so
 // the human's view aligns with the LLM's prior view.
 func loadProposalLifecycle(ctx context.Context, s *Server, page *ProposePage, now time.Time) error {
 	priorSinceMs := now.Add(-90 * 24 * time.Hour).UnixMilli()
 
-	applied, err := store.LoadProposalEffectiveness(ctx, s.store.DB(),
+	added, err := store.LoadSkillCandidateEffectiveness(ctx, s.store.DB(),
 		priorSinceMs, 0, 100)
 	if err != nil {
-		return fmt.Errorf("applied: %w", err)
+		return fmt.Errorf("added: %w", err)
 	}
-	for _, e := range applied {
+	for _, e := range added {
 		row := ProposalRow{
 			SkillName:        e.SkillName,
 			ProposedAgo:      relativeTime(e.ProposedAtMs, now),
-			AppliedAgo:       relativeTime(e.AppliedAtMs, now),
-			LoadsAfterApply:  e.LoadsAfterApply,
+			AppliedAgo:       relativeTime(e.AddedAtMs, now),
+			LoadsAfterApply:  e.LoadsAfterAdd,
 			FailedLoadsAfter: e.FailedLoadsAfter,
-			AppliedPath:      e.AppliedPath,
+			AppliedPath:      e.AddPath,
 		}
 		switch {
 		case e.FailedLoadsAfter > 0:
 			page.AppliedFailing = append(page.AppliedFailing, row)
-		case e.LoadsAfterApply == 0:
+		case e.LoadsAfterAdd == 0:
 			page.AppliedUnused = append(page.AppliedUnused, row)
 		default:
 			page.AppliedWorking = append(page.AppliedWorking, row)
 		}
 	}
 
-	unapplied, err := store.LoadUnappliedProposedSkills(ctx, s.store.DB(),
+	pending, err := store.LoadPendingSkillCandidates(ctx, s.store.DB(),
 		priorSinceMs, 100)
 	if err != nil {
-		return fmt.Errorf("unapplied: %w", err)
+		return fmt.Errorf("pending: %w", err)
 	}
-	for _, u := range unapplied {
+	for _, u := range pending {
 		page.NotApplied = append(page.NotApplied, ProposalRow{
 			SkillName:   u.SkillName,
 			ProposedAgo: relativeTime(u.ProposedAtMs, now),
