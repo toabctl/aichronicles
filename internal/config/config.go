@@ -26,6 +26,75 @@ type Config struct {
 	LLM           LLM           `toml:"llm"`
 	Limits        Limits        `toml:"limits"`
 	Induction     Induction     `toml:"induction"`
+	MetaAnalysis  MetaAnalysis  `toml:"meta_analysis"`
+}
+
+// MetaAnalysis controls the daemon-resident meta-analysis sweeper.
+// Unlike per-session induction (driven by "session settled"), the
+// meta-analyses (propose, reflect, challenge, weekly digest, skill
+// revision) are time-driven — they fire on a fixed cadence per
+// kind. Disabled by default: enabling it accepts the LLM spend of
+// running these unsupervised.
+//
+// Cadences are absolute and read off the most-recent persisted row
+// of each kind, so a daemon restart does not double-fire and a
+// missed window is automatically picked up on the next tick.
+//
+// Per-kind Skip flags are independent: a user can run propose
+// auto-fired but keep weekly digest manual, or vice versa.
+type MetaAnalysis struct {
+	Enabled       bool     `toml:"enabled"`
+	SweepInterval Duration `toml:"sweep_interval"`
+
+	// ProposeCadence / ProposeSkip control the ad-hoc propose
+	// path. Zero cadence with Enabled=true means "use the
+	// built-in default" (24h). Set Skip=true to disable just
+	// this kind without unsetting the master switch.
+	ProposeCadence     Duration `toml:"propose_cadence"`
+	ProposeSkip        bool     `toml:"propose_skip"`
+	ProposeSinceWindow Duration `toml:"propose_since"`
+	ProposeLimit       int      `toml:"propose_limit"`
+
+	// ReflectCadence / ReflectSkip control the ad-hoc reflect
+	// path. Default cadence: 7d (matching the prompt's natural
+	// horizon — running it more often produces near-identical
+	// retrospectives).
+	ReflectCadence     Duration `toml:"reflect_cadence"`
+	ReflectSkip        bool     `toml:"reflect_skip"`
+	ReflectSinceWindow Duration `toml:"reflect_since"`
+	ReflectLimit       int      `toml:"reflect_limit"`
+
+	// ChallengeCadence / ChallengeSkip control the forward-
+	// looking (Voyager-style curriculum) variant of propose.
+	// Default cadence: 7d.
+	ChallengeCadence     Duration `toml:"challenge_cadence"`
+	ChallengeSkip        bool     `toml:"challenge_skip"`
+	ChallengeSinceWindow Duration `toml:"challenge_since"`
+	ChallengeLimit       int      `toml:"challenge_limit"`
+
+	// ReflectWeeklyCadence / ReflectWeeklySkip control the
+	// weekly digest. Default cadence: 7d. The period is anchored
+	// to the previous completed Monday-00:00-UTC week.
+	ReflectWeeklyCadence Duration `toml:"reflect_weekly_cadence"`
+	ReflectWeeklySkip    bool     `toml:"reflect_weekly_skip"`
+
+	// SkillRevisionCadence / SkillRevisionSkip gate the per-
+	// stale-skill evolve pass. Default cadence: 24h. MinRate
+	// (in [0,1]) filters which stale-correlated skills are
+	// eligible — defaults to 0.5 so only skills failing more
+	// than half their loads get auto-revised. Max caps the
+	// number of skills revised per overdue tick (default 5).
+	SkillRevisionCadence Duration `toml:"skill_revision_cadence"`
+	SkillRevisionSkip    bool     `toml:"skill_revision_skip"`
+	SkillRevisionMinRate float64  `toml:"skill_revision_min_rate"`
+	SkillRevisionSince   Duration `toml:"skill_revision_since"`
+	SkillRevisionWindow  Duration `toml:"skill_revision_window"`
+	SkillRevisionMax     int      `toml:"skill_revision_max"`
+
+	// Model, when non-empty, overrides the LLM model id for
+	// every call this sweep makes. Empty falls back to the
+	// provider's default.
+	Model string `toml:"model"`
 }
 
 // Induction controls the daemon-resident online-induction sweeper.

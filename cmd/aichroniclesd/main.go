@@ -150,6 +150,15 @@ func run(sockFlag, dbFlag string) error {
 		startInductionSweeper(sigCtx, st, cfg, logger)
 	}
 
+	// Meta-analysis sweeper — disabled-by-default. When enabled,
+	// the goroutine fires propose/reflect/challenge/digest_weekly/
+	// skill_revision on per-kind cadences. See config.MetaAnalysis;
+	// cli.RunMetaAnalysisSweep is the callback. No-op when
+	// cfg.MetaAnalysis.Enabled is false.
+	if cfg.MetaAnalysis.Enabled {
+		startMetaAnalysisSweeper(sigCtx, st, cfg, logger)
+	}
+
 	<-sigCtx.Done()
 	drainTimeout := cfg.Limits.ShutdownDrainTimeout.Or(defaultShutdownDrainTimeout)
 	logger.Info("aichroniclesd shutting down", "drain_timeout", drainTimeout)
@@ -227,4 +236,89 @@ func startInductionSweeper(ctx context.Context, st *store.Store, cfg *config.Con
 		"min_events", minEvents, "max_per_sweep", maxPerSweep,
 		"skip_summarize", cfg.Induction.SkipSummarize,
 		"skip_facts", cfg.Induction.SkipFacts)
+}
+
+// defaultMetaAnalysisInterval is the cadence-check tick. 1h is
+// fine: per-kind cadences are measured in days, so one wakeup per
+// hour is plenty (and a tighter loop would mostly burn cycles
+// finding "still in cadence, nothing to do").
+const defaultMetaAnalysisInterval = time.Hour
+
+// Per-kind cadence defaults — only applied when the operator
+// turned the feature on (cfg.MetaAnalysis.Enabled) but didn't
+// pick a number. Match the prompts' natural horizons.
+const (
+	defaultMetaProposeCadence     = 24 * time.Hour
+	defaultMetaReflectCadence     = 7 * 24 * time.Hour
+	defaultMetaChallengeCadence   = 7 * 24 * time.Hour
+	defaultMetaReflectWeeklyCad   = 7 * 24 * time.Hour
+	defaultMetaSkillRevisionCad   = 24 * time.Hour
+	defaultMetaSkillRevisionMinR  = 0.5
+	defaultMetaSkillRevisionMaxN  = 5
+	defaultMetaSkillRevisionSince = 30 * 24 * time.Hour
+)
+
+// startMetaAnalysisSweeper spawns the daemon-resident meta-analysis
+// goroutine. Pulled out of run() to keep the main path focused;
+// the actual cadence-gated dispatch happens in
+// cli.RunMetaAnalysisSweep. LLM client construction is deferred
+// per-tick so a transient credentials issue at daemon start does
+// not permanently disable the sweeper.
+func startMetaAnalysisSweeper(ctx context.Context, st *store.Store, cfg *config.Config, log *slog.Logger) {
+	interval := cfg.MetaAnalysis.SweepInterval.Or(defaultMetaAnalysisInterval)
+	llmCfg := cli.LLMConfigFromFile(cfg.LLM)
+
+	opts := cli.MetaAnalysisSweepOptions{
+		ProposeCadence:       cfg.MetaAnalysis.ProposeCadence.Or(defaultMetaProposeCadence),
+		ProposeSkip:          cfg.MetaAnalysis.ProposeSkip,
+		ProposeSinceWindow:   cfg.MetaAnalysis.ProposeSinceWindow.Or(0),
+		ProposeLimit:         cfg.MetaAnalysis.ProposeLimit,
+		ReflectCadence:       cfg.MetaAnalysis.ReflectCadence.Or(defaultMetaReflectCadence),
+		ReflectSkip:          cfg.MetaAnalysis.ReflectSkip,
+		ReflectSinceWindow:   cfg.MetaAnalysis.ReflectSinceWindow.Or(0),
+		ReflectLimit:         cfg.MetaAnalysis.ReflectLimit,
+		ChallengeCadence:     cfg.MetaAnalysis.ChallengeCadence.Or(defaultMetaChallengeCadence),
+		ChallengeSkip:        cfg.MetaAnalysis.ChallengeSkip,
+		ChallengeSinceWindow: cfg.MetaAnalysis.ChallengeSinceWindow.Or(0),
+		ChallengeLimit:       cfg.MetaAnalysis.ChallengeLimit,
+		ReflectWeeklyCadence: cfg.MetaAnalysis.ReflectWeeklyCadence.Or(defaultMetaReflectWeeklyCad),
+		ReflectWeeklySkip:    cfg.MetaAnalysis.ReflectWeeklySkip,
+		SkillRevisionCadence: cfg.MetaAnalysis.SkillRevisionCadence.Or(defaultMetaSkillRevisionCad),
+		SkillRevisionSkip:    cfg.MetaAnalysis.SkillRevisionSkip,
+		SkillRevisionSince:   cfg.MetaAnalysis.SkillRevisionSince.Or(defaultMetaSkillRevisionSince),
+		SkillRevisionWindow:  cfg.MetaAnalysis.SkillRevisionWindow.Or(0),
+		SkillRevisionMinRate: cfg.MetaAnalysis.SkillRevisionMinRate,
+		SkillRevisionMax:     cfg.MetaAnalysis.SkillRevisionMax,
+		Model:                cfg.MetaAnalysis.Model,
+	}
+	if opts.SkillRevisionMinRate <= 0 {
+		opts.SkillRevisionMinRate = defaultMetaSkillRevisionMinR
+	}
+	if opts.SkillRevisionMax <= 0 {
+		opts.SkillRevisionMax = defaultMetaSkillRevisionMaxN
+	}
+
+	sw := &daemon.MetaAnalysisSweeper{
+		Interval: interval,
+		Log:      log,
+		Sweep: func(sctx context.Context) error {
+			return cli.RunMetaAnalysisSweep(sctx, st,
+				func() (llm.Client, error) {
+					return llm.FromConfig(sctx, llmCfg)
+				},
+				opts,
+				daemon.DiscardWriter,
+				daemon.DiscardWriter,
+			)
+		},
+	}
+	go sw.Run(ctx)
+	log.Info("meta-analysis sweeper enabled",
+		"interval", interval,
+		"propose_cadence", opts.ProposeCadence,
+		"reflect_cadence", opts.ReflectCadence,
+		"challenge_cadence", opts.ChallengeCadence,
+		"reflect_weekly_cadence", opts.ReflectWeeklyCadence,
+		"skill_revision_cadence", opts.SkillRevisionCadence,
+		"skill_revision_min_rate", opts.SkillRevisionMinRate)
 }

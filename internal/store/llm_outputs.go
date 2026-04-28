@@ -174,6 +174,32 @@ func LoadLLMOutputByID(ctx context.Context, db *sql.DB, id int64) (*LLMOutput, e
 	return out, err
 }
 
+// LastLLMOutputCreatedAt returns created_at_ms of the most recent
+// llm_outputs row of the given kind, or 0 if no row exists. Used
+// by the daemon's meta-analysis sweeper to gate cadence — "fire
+// kind=X if it's been longer than cadence[X] since the last run."
+//
+// Returns 0 (not an error) for "no row yet" so the cadence check
+// reads as `now - 0 > cadence` → fire immediately, which is the
+// natural semantics for the first-run case.
+func LastLLMOutputCreatedAt(ctx context.Context, db *sql.DB, kind LLMOutputKind) (int64, error) {
+	if kind == "" {
+		return 0, errors.New("LastLLMOutputCreatedAt: kind is required")
+	}
+	var ts int64
+	err := db.QueryRowContext(ctx,
+		`SELECT created_at_ms FROM llm_outputs WHERE kind = ? ORDER BY created_at_ms DESC LIMIT 1`,
+		string(kind),
+	).Scan(&ts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("last created_at for %s: %w", kind, err)
+	}
+	return ts, nil
+}
+
 // HasLLMOutputForSession returns true when at least one row exists
 // in llm_outputs with session_id = sessionID AND kind = kind.
 //

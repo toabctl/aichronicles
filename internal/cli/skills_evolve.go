@@ -119,6 +119,30 @@ type skillsEvolveOptions struct {
 	Model       string
 }
 
+// SkillsEvolveOptions drives RunSkillsEvolve. Exported so the
+// daemon's meta-analysis sweeper (and external test callers)
+// can drive the same code path as the CLI command.
+type SkillsEvolveOptions = skillsEvolveOptions
+
+// RunSkillsEvolve drafts a revised SKILL.md for one skill name,
+// grounded in the captured failure events the staleness detector
+// flagged. Reads ~/.claude/skills/<name>/SKILL.md, persists the
+// revision under llm_outputs(kind=skill_revision), writes the
+// revised body to ~/.claude/skills/<name>/SKILL.md.v2.
+//
+// Cache-idempotent on (skill name, current SKILL.md body, failure
+// context) — re-running on an unchanged SKILL hits the cache for
+// free.
+func RunSkillsEvolve(
+	ctx context.Context,
+	s *store.Store,
+	newClient func() (llm.Client, error),
+	opts SkillsEvolveOptions,
+	out, errOut io.Writer,
+) error {
+	return runSkillsEvolve(ctx, s, newClient, opts, out, errOut)
+}
+
 func runSkillsEvolve(
 	ctx context.Context,
 	s *store.Store,
