@@ -64,6 +64,7 @@ const (
 	ToolNameProposal       = "record_proposal"
 	ToolNameProposalVerify = "record_proposal_verification"
 	ToolNameSkillRevision  = "record_skill_revision"
+	ToolNameSkillMerge     = "record_skill_merge"
 	ToolNameInduction      = "record_induction"
 	ToolNameChallenge      = "record_challenge"
 	ToolNameFacts          = "record_facts"
@@ -2143,6 +2144,236 @@ func BuildEvolveSkill(in EvolveSkillInputs) (Built, error) {
 		ForceTool: ToolNameSkillRevision,
 	}
 	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
+}
+
+// MergeSkillInputs is the input bundle for BuildMergeSkill — the
+// "skill merger" call that combines an existing SKILL.md with a
+// freshly-extracted candidate per AutoSkill (Yang et al., 2026 —
+// arXiv:2603.01145) maintenance action 'merge'. The deterministic
+// pieces (next version, target name) are decided by Go and
+// passed through; the LLM only fills in the prose / metadata.
+type MergeSkillInputs struct {
+	// SkillName is the kebab-case name. Merge replaces the existing
+	// skill in place, so the name stays the same on both sides; the
+	// LLM is instructed not to rename.
+	SkillName string
+
+	// CurrentSkillMd is the full text of the existing SKILL.md
+	// (frontmatter + body), read off disk. Passed verbatim to the
+	// LLM as the "existing skill" half of the merge.
+	CurrentSkillMd string
+
+	// Candidate is the freshly-extracted skill being merged in,
+	// carrying the LLM's most-recent emission of every skill-tuple
+	// field (triggers / tags / examples + the existing description /
+	// when_to_use / why fields).
+	Candidate ProposedSkill
+
+	// NextVersion is the deterministic version the merged skill
+	// should carry. The merge LLM does NOT decide this — Go's
+	// BumpPatch on the existing version does. Passing it through
+	// lets the LLM include it in the merged frontmatter verbatim
+	// without making it up.
+	NextVersion string
+}
+
+// MergedSkillResult is the parsed shape of a successful merge call.
+// Every field carries through to the rewritten SKILL.md: the
+// frontmatter scalars (name, description, when_to_use, version),
+// the AutoSkill metadata (triggers, tags, examples), and the
+// markdown body that lives below the frontmatter fence.
+type MergedSkillResult struct {
+	Name         string                 `json:"name"`
+	Description  string                 `json:"description"`
+	WhenToUse    string                 `json:"when_to_use"`
+	Triggers     []string               `json:"triggers"`
+	Tags         []string               `json:"tags"`
+	Examples     []ProposedSkillExample `json:"examples"`
+	BodyMarkdown string                 `json:"body_markdown"`
+	Rationale    string                 `json:"rationale"`
+}
+
+const mergeSkillMaxTokens = 4096
+
+const mergeSkillSystem = `You are a skill merger that combines an existing Claude Code skill (SKILL.md) with a new candidate refining or extending it. You MUST call the record_skill_merge tool exactly once. The output replaces the existing SKILL.md in place.
+
+This is the AutoSkill (Yang et al., 2026 — arXiv:2603.01145) maintenance action 'merge'. AutoSkill defines the shape:
+
+  "preserve the original capability identity"
+  "semantic union rather than raw concatenation"
+  "import only reusable, non-conflicting additions"
+  "avoid regressions; deduplicate sections"
+
+Hard rules:
+
+1. PRESERVE THE ORIGINAL CAPABILITY IDENTITY. Same kebab-case name (you'll be told what it is — copy it verbatim into the output). Same overall purpose. The merge is a refinement, not a replacement.
+
+2. SEMANTIC UNION, NOT RAW CONCATENATION. Combine the best of both into one coherent skill. Don't paste the candidate's text after the existing's; merge them at the level of meaning. Dedupe overlapping triggers, tags, examples; keep distinct ones from each side.
+
+3. IMPORT ONLY REUSABLE, NON-CONFLICTING ADDITIONS. If the candidate contradicts the existing skill on a hard fact (a flag, a path, a step), prefer the existing UNLESS the candidate's evidence is clearly stronger. State your reasoning in the rationale field when you go with the candidate.
+
+4. AVOID REGRESSIONS. The merged skill must still work for everything the existing skill worked for, plus what the candidate adds. If the candidate's content would BREAK the existing skill (incompatible trigger, conflicting steps), drop the conflicting parts of the candidate and note this in the rationale.
+
+5. THE VERSION FIELD IS DECIDED FOR YOU. The user will tell you the next_version to use. Copy it verbatim into the merged frontmatter. Do not invent your own version number.
+
+6. EVERY OUTPUT FIELD MUST BE POPULATED:
+   - name: the existing skill's kebab-case name, verbatim.
+   - description: ≤700 chars, what the merged skill does and when. Lead with the trigger condition.
+   - when_to_use: ≤700 chars, the trigger phrase the user would say to themselves.
+   - triggers: 3–8 short query-shaped phrases (lowercase, NOT prose) — the dedupe-d union of both sides' triggers.
+   - tags: 1–5 lowercase kebab-case categorical labels — the dedupe-d union.
+   - examples: 1–3 (input → output) demonstrations — pick the most illustrative from both sides; rewrite if needed for coherence.
+   - body_markdown: the full markdown body BELOW the frontmatter fence (do NOT include the --- fences; do NOT include the YAML frontmatter; the caller wraps your body_markdown in the rebuilt frontmatter). Keep the H1 + intro + ## Steps structure intact; merge content within those sections.
+   - rationale: ≤300 chars summarising what you kept, what you dropped, and why.
+
+7. KEEP THE BODY UNDER 4000 CHARACTERS. Claude Code's skill loader has practical limits and longer skills are less likely to be loaded. Trim verbose narration; keep the procedural core.
+
+8. DO NOT INVENT. Every claim in the merged skill must trace back to either the existing SKILL.md, the candidate, or both. If the candidate makes a claim with no evidence, drop it.`
+
+const mergeSkillToolSchema = `{
+  "type": "object",
+  "required": ["name","description","when_to_use","triggers","tags","examples","body_markdown","rationale"],
+  "additionalProperties": false,
+  "properties": {
+    "name":         {"type":"string","pattern":"^[a-z][a-z0-9-]*$"},
+    "description":  {"type":"string","minLength":1,"maxLength":700},
+    "when_to_use":  {"type":"string","minLength":1,"maxLength":700},
+    "triggers": {
+      "type":"array",
+      "minItems": 3,
+      "maxItems": 8,
+      "items": {"type":"string","minLength":2,"maxLength":80}
+    },
+    "tags": {
+      "type":"array",
+      "minItems": 1,
+      "maxItems": 5,
+      "items": {"type":"string","pattern":"^[a-z][a-z0-9-]*$","maxLength":32}
+    },
+    "examples": {
+      "type":"array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "type":"object",
+        "required":["input","output"],
+        "additionalProperties": false,
+        "properties": {
+          "input":  {"type":"string","minLength":1,"maxLength":240},
+          "output": {"type":"string","minLength":1,"maxLength":240}
+        }
+      }
+    },
+    "body_markdown": {
+      "type":"string",
+      "description":"The merged markdown body BELOW the frontmatter fence. Caller rebuilds the frontmatter; you return only the body. ≤4000 chars.",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "rationale":    {"type":"string","minLength":1,"maxLength":300}
+  }
+}`
+
+const mergeSkillTemplate = `Merge this Claude Code skill with the new candidate. The merged result REPLACES the existing SKILL.md in place.
+
+SKILL NAME: %s
+NEXT VERSION (use this verbatim — do not invent your own): %s
+
+EXISTING SKILL.md (frontmatter + body, verbatim):
+---
+%s
+---
+
+NEW CANDIDATE (the freshly-extracted skill being merged in):
+%s
+
+Call record_skill_merge with the merged result.`
+
+// BuildMergeSkill composes the merge prompt the AutoSkill action
+// 'merge' uses to combine an existing SKILL.md with a new
+// candidate. Returns Built so the caller threads through
+// runCachedLLM the same way every other LLM-output kind does — a
+// re-run on identical inputs hits the cache.
+func BuildMergeSkill(in MergeSkillInputs) (Built, error) {
+	if in.SkillName == "" {
+		return Built{}, fmt.Errorf("BuildMergeSkill: skill name required")
+	}
+	if strings.TrimSpace(in.CurrentSkillMd) == "" {
+		return Built{}, fmt.Errorf("BuildMergeSkill: current SKILL.md required")
+	}
+	if in.Candidate.Name == "" {
+		return Built{}, fmt.Errorf("BuildMergeSkill: candidate skill name required")
+	}
+	if in.Candidate.Name != in.SkillName {
+		return Built{}, fmt.Errorf("BuildMergeSkill: candidate name %q does not match target %q", in.Candidate.Name, in.SkillName)
+	}
+	if in.NextVersion == "" {
+		return Built{}, fmt.Errorf("BuildMergeSkill: next_version required (caller decides via store.BumpPatch)")
+	}
+
+	pats := patternSet{}
+	skillCleaned, snames := redact.Outbound(in.CurrentSkillMd)
+	pats.addAll(snames)
+
+	candidateRendered, cnames := renderCandidateForMerge(in.Candidate)
+	pats.addAll(cnames)
+
+	userMsg := fmt.Sprintf(mergeSkillTemplate,
+		in.SkillName, in.NextVersion, skillCleaned, candidateRendered,
+	)
+
+	req := llm.Request{
+		System:    mergeSkillSystem,
+		Messages:  []llm.Message{{Role: llm.RoleUser, Content: userMsg}},
+		MaxTokens: mergeSkillMaxTokens,
+		Tools: []llm.Tool{{
+			Name:        ToolNameSkillMerge,
+			Description: "Record the merged SKILL.md combining an existing skill with a new candidate.",
+			InputSchema: json.RawMessage(mergeSkillToolSchema),
+		}},
+		ForceTool: ToolNameSkillMerge,
+	}
+	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
+}
+
+// renderCandidateForMerge formats a ProposedSkill as a labelled
+// block for the merge prompt's user message. Pulls every
+// AutoSkill-relevant field through redact.Outbound so any pattern
+// the candidate carries gets reported back to the caller for
+// downstream pattern-tracking.
+func renderCandidateForMerge(c ProposedSkill) (string, []string) {
+	pats := patternSet{}
+	cleanWhen, p1 := redact.Outbound(c.WhenToUse)
+	pats.addAll(p1)
+	cleanWhy, p2 := redact.Outbound(c.Why)
+	pats.addAll(p2)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Name: %s\n", c.Name)
+	fmt.Fprintf(&b, "When to use: %s\n", cleanWhen)
+	fmt.Fprintf(&b, "Why: %s\n", cleanWhy)
+	if len(c.Triggers) > 0 {
+		fmt.Fprintf(&b, "Triggers (τ): %s\n", strings.Join(c.Triggers, ", "))
+	}
+	if len(c.Tags) > 0 {
+		fmt.Fprintf(&b, "Tags (γ): %s\n", strings.Join(c.Tags, ", "))
+	}
+	if len(c.Examples) > 0 {
+		b.WriteString("Examples (ξ):\n")
+		for i, e := range c.Examples {
+			cleanIn, p3 := redact.Outbound(e.Input)
+			pats.addAll(p3)
+			cleanOut, p4 := redact.Outbound(e.Output)
+			pats.addAll(p4)
+			fmt.Fprintf(&b, "  %d. input: %s\n     output: %s\n", i+1, cleanIn, cleanOut)
+		}
+	}
+	if c.AlternativesRejected != "" {
+		cleanAlt, p5 := redact.Outbound(c.AlternativesRejected)
+		pats.addAll(p5)
+		fmt.Fprintf(&b, "Alternatives rejected: %s\n", cleanAlt)
+	}
+	return b.String(), pats.sortedSlice()
 }
 
 // SearchHit is one row supplied to BuildSearchSummary. Every field

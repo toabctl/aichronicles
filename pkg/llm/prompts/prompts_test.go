@@ -933,6 +933,116 @@ func TestProposalToolSchema_AutoSkillFieldsRequired(t *testing.T) {
 	}
 }
 
+// TestBuildMergeSkill_ValidInputs covers the happy path: a
+// well-formed candidate + existing SKILL.md produces a Built whose
+// schema is valid JSON and whose user message references both
+// sides plus the supplied next_version.
+func TestBuildMergeSkill_ValidInputs(t *testing.T) {
+	t.Parallel()
+	in := MergeSkillInputs{
+		SkillName:      "deploy-staging",
+		NextVersion:    "v0.1.5",
+		CurrentSkillMd: "---\nname: deploy-staging\nversion: v0.1.4\n---\n# deploy-staging\n\nrun the staging deploy.\n",
+		Candidate: ProposedSkill{
+			Name:      "deploy-staging",
+			WhenToUse: "when the user wants to deploy to staging",
+			Why:       "single command instead of remembering the script",
+			Triggers:  []string{"deploy staging", "ship staging", "push to staging"},
+			Tags:      []string{"deploy", "ci"},
+			Examples:  []ProposedSkillExample{{Input: "deploy this branch", Output: "calls staging deploy"}},
+		},
+	}
+	built, err := BuildMergeSkill(in)
+	if err != nil {
+		t.Fatalf("BuildMergeSkill: %v", err)
+	}
+	if built.Request.ForceTool != ToolNameSkillMerge {
+		t.Errorf("ForceTool: got %q want %q", built.Request.ForceTool, ToolNameSkillMerge)
+	}
+	if !json.Valid(built.Request.Tools[0].InputSchema) {
+		t.Error("merge schema is not valid JSON")
+	}
+	body := built.Request.Messages[0].Content
+	for _, want := range []string{
+		"deploy-staging",
+		"v0.1.5",               // next version reaches the prompt
+		"v0.1.4",               // existing version surfaces too (via raw md)
+		"deploy staging",       // trigger from candidate
+		"calls staging deploy", // example output
+		"# deploy-staging",     // existing body
+		"record_skill_merge",   // tool name appears in prompt? actually only via system prompt; check no
+	} {
+		if want == "record_skill_merge" {
+			continue // checked via ForceTool above; tool name doesn't have to appear in user message
+		}
+		if !strings.Contains(body, want) {
+			t.Errorf("merge prompt missing %q", want)
+		}
+	}
+}
+
+// TestBuildMergeSkill_RequiresFields asserts the validation
+// guards fire for every load-bearing input.
+func TestBuildMergeSkill_RequiresFields(t *testing.T) {
+	t.Parallel()
+	good := MergeSkillInputs{
+		SkillName:      "x",
+		NextVersion:    "v0.1.1",
+		CurrentSkillMd: "---\nname: x\n---\nbody",
+		Candidate:      ProposedSkill{Name: "x"},
+	}
+	cases := []struct {
+		name   string
+		mutate func(in *MergeSkillInputs)
+	}{
+		{"missing skill name", func(in *MergeSkillInputs) { in.SkillName = "" }},
+		{"missing skill md", func(in *MergeSkillInputs) { in.CurrentSkillMd = "" }},
+		{"missing candidate name", func(in *MergeSkillInputs) { in.Candidate.Name = "" }},
+		{"missing next version", func(in *MergeSkillInputs) { in.NextVersion = "" }},
+		{"name mismatch", func(in *MergeSkillInputs) { in.Candidate.Name = "different" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			in := good
+			tc.mutate(&in)
+			if _, err := BuildMergeSkill(in); err == nil {
+				t.Errorf("expected error")
+			}
+		})
+	}
+}
+
+// TestBuildMergeSkill_ScrubsAndReportsPatterns asserts the merge
+// prompt routes both sides through the egress redactor and surfaces
+// any pattern hits in Built.Patterns. Without this, a leak in the
+// existing SKILL.md or the candidate would re-enter the LLM round-
+// trip via the merge call.
+func TestBuildMergeSkill_ScrubsAndReportsPatterns(t *testing.T) {
+	t.Parallel()
+	in := MergeSkillInputs{
+		SkillName:      "x",
+		NextVersion:    "v0.1.1",
+		CurrentSkillMd: "---\nname: x\n---\nleaked AKIAIOSFODNN7EXAMPLE",
+		Candidate: ProposedSkill{
+			Name:      "x",
+			WhenToUse: "when",
+			Why:       "and another AKIAIOSFODNN7EXAMPLE here",
+		},
+	}
+	built, err := BuildMergeSkill(in)
+	if err != nil {
+		t.Fatalf("BuildMergeSkill: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	if strings.Contains(body, "AKIAIOSFODNN7EXAMPLE") {
+		t.Errorf("merge prompt leaked secret:\n%s", body)
+	}
+	if len(built.Patterns) == 0 {
+		t.Errorf("expected at least one pattern reported")
+	}
+}
+
 // TestProposedSkill_AutoSkillRoundTrips asserts the Go struct
 // carries triggers, tags, and examples through a JSON round-trip.
 // Without this, an LLM emitting AutoSkill fields would deserialise
