@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -157,15 +158,27 @@ func RunSummarize(
 	}
 
 	// Recent same-cwd sessions the model is allowed to emit
-	// session_links to. Bounded shortlist (10 by default in the
-	// store helper) so the prompt stays compact; same anchor —
-	// "ended before this session started" — that prevents the
-	// LLM from fabricating a connection across overlapping
-	// timelines.
-	candidates, err := store.LoadCandidatePriorSessions(ctx, s.DB(), sessionID, 10)
+	// session_links to. Bounded shortlist so the prompt stays
+	// compact; same anchor — "ended before this session started" —
+	// that prevents the LLM from fabricating a connection across
+	// overlapping timelines.
+	//
+	// Two-stage selection: fetch a wider pool (30) by recency, then
+	// rerank by embedding similarity to the anchor session's first
+	// user_prompt and keep the top 10 for the prompt. When
+	// embeddings aren't present (the user hasn't run
+	// `aichronicles embed`), the rerank degenerates to recency
+	// order — same end result as the pre-embedding flow.
+	const (
+		candidatePoolSize  = 30
+		candidatePromptCap = 10
+	)
+	candidates, err := store.LoadCandidatePriorSessions(ctx, s.DB(), sessionID, candidatePoolSize)
 	if err != nil {
 		return 0, fmt.Errorf("summarize: load prior sessions: %w", err)
 	}
+	candidates = rerankCandidatesIfEmbeddings(ctx, s, sessionID, candidates, candidatePromptCap)
+
 	priorForPrompt := make([]prompts.CandidatePriorSession, 0, len(candidates))
 	candidateIDs := make(map[string]struct{}, len(candidates))
 	for _, c := range candidates {
@@ -266,6 +279,99 @@ func RunSummarize(
 		return id, fmt.Errorf("summarize: render body: %w", renderErr)
 	}
 	return id, nil
+}
+
+// rerankCandidatesIfEmbeddings reranks the candidate prior sessions
+// by cosine similarity of their first-user_prompt embedding to the
+// anchor session's first-user_prompt embedding. When embeddings are
+// missing (the typical case before `aichronicles embed` runs),
+// returns the input candidates truncated to limit — recency order.
+//
+// All store-call failures degrade gracefully: the rerank is an
+// enhancement, not a contract. A failure to load the anchor or any
+// candidate's embedding logs a warning and proceeds without the
+// rerank rather than failing the whole summarize call.
+//
+// The model+dim are pulled from the anchor's embedding row when
+// present so we don't have to thread llm.DefaultEmbeddingModel
+// through every caller — the embedded events already carry their
+// model+dim, and we just match the anchor's choice.
+func rerankCandidatesIfEmbeddings(
+	ctx context.Context,
+	s *store.Store,
+	anchorSessionID string,
+	candidates []store.CandidateSession,
+	limit int,
+) []store.CandidateSession {
+	if len(candidates) == 0 {
+		return candidates
+	}
+	if limit <= 0 || limit > len(candidates) {
+		limit = len(candidates)
+	}
+
+	model, dim, ok, err := loadAnchorEmbeddingMeta(ctx, s, anchorSessionID)
+	if err != nil {
+		slog.Warn("summarize: rerank: failed to load anchor embedding meta",
+			"session", anchorSessionID, "err", err)
+		return candidates[:limit]
+	}
+	if !ok {
+		// No embedding for the anchor — recency order is the best
+		// signal we have; fall back without doing per-candidate
+		// queries.
+		return candidates[:limit]
+	}
+
+	anchorVec, _, err := store.LoadFirstPromptEmbedding(ctx, s.DB(), anchorSessionID, model, dim)
+	if err != nil {
+		slog.Warn("summarize: rerank: failed to load anchor embedding",
+			"session", anchorSessionID, "err", err)
+		return candidates[:limit]
+	}
+	if len(anchorVec) == 0 {
+		return candidates[:limit]
+	}
+
+	inputs := make([]store.CandidateRerankInput, 0, len(candidates))
+	for _, c := range candidates {
+		vec, _, lerr := store.LoadFirstPromptEmbedding(ctx, s.DB(), c.ID, model, dim)
+		if lerr != nil {
+			slog.Warn("summarize: rerank: skipping candidate",
+				"candidate", c.ID, "err", lerr)
+			vec = nil
+		}
+		inputs = append(inputs, store.CandidateRerankInput{Candidate: c, Vec: vec})
+	}
+	return store.RerankCandidatesBySimilarity(anchorVec, inputs, limit)
+}
+
+// loadAnchorEmbeddingMeta returns the (model, dim) of the anchor
+// session's first-user_prompt embedding so the rerank pass uses the
+// same vector space as the seed events. Returns (false) when the
+// anchor has no embedding — caller falls back to recency.
+func loadAnchorEmbeddingMeta(ctx context.Context, s *store.Store, anchorSessionID string) (string, int, bool, error) {
+	const q = `
+SELECT ee.model, ee.dim
+  FROM events e
+  JOIN event_embeddings ee ON ee.event_id = e.event_id
+ WHERE e.session_id = ?
+   AND e.kind = 'user_prompt'
+   AND e.content_text IS NOT NULL
+ ORDER BY e.ts_source_ms ASC, e.rowid ASC
+ LIMIT 1`
+	var model string
+	var dim int
+	switch err := s.DB().QueryRowContext(ctx, q, anchorSessionID).Scan(&model, &dim); {
+	case errors.Is(err, sql.ErrNoRows):
+		return "", 0, false, nil
+	case err != nil:
+		return "", 0, false, fmt.Errorf("query anchor embedding meta: %w", err)
+	}
+	if dim <= 0 {
+		return "", 0, false, nil
+	}
+	return model, dim, true, nil
 }
 
 // persistSessionLinks filters the model-emitted links down to ones

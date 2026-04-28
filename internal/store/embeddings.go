@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 )
 
@@ -356,6 +357,152 @@ func SemanticSearch(ctx context.Context, db *sql.DB, opts SemanticSearchOpts) ([
 		return nil, fmt.Errorf("semantic iterate: %w", err)
 	}
 	return hits, nil
+}
+
+// LoadFirstPromptEmbedding returns the embedding of the chronologically
+// first user_prompt event for sessionID, under the given (model, dim).
+// Returns (vec, true, nil) when both the prompt event and an
+// embedding for it exist; (nil, false, nil) when either piece is
+// missing — that's the signal "this session has no embedding for
+// rerank purposes." Errors are reserved for genuine DB failures.
+//
+// Tie-break on rowid (matches sessions.first_prompt_text trigger
+// from migration 016) so the embedding always corresponds to the
+// same event the denormalized first_prompt_text column carries.
+func LoadFirstPromptEmbedding(ctx context.Context, db *sql.DB, sessionID, model string, dim int) ([]float32, bool, error) {
+	if sessionID == "" {
+		return nil, false, errors.New("LoadFirstPromptEmbedding: session_id is required")
+	}
+	if model == "" {
+		return nil, false, errors.New("LoadFirstPromptEmbedding: model is required")
+	}
+	if dim <= 0 {
+		return nil, false, errors.New("LoadFirstPromptEmbedding: dim must be > 0")
+	}
+	const q = `
+SELECT ee.vec
+  FROM events e
+  JOIN event_embeddings ee
+    ON ee.event_id = e.event_id
+ WHERE e.session_id = ?
+   AND e.kind = 'user_prompt'
+   AND e.content_text IS NOT NULL
+   AND ee.model = ?
+   AND ee.dim = ?
+ ORDER BY e.ts_source_ms ASC, e.rowid ASC
+ LIMIT 1`
+	var blob []byte
+	switch err := db.QueryRowContext(ctx, q, sessionID, model, dim).Scan(&blob); {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, false, nil
+	case err != nil:
+		return nil, false, fmt.Errorf("query first prompt embedding: %w", err)
+	}
+	vec, err := DecodeFloat32Vec(blob)
+	if err != nil {
+		return nil, false, fmt.Errorf("decode embedding for session %s: %w", sessionID, err)
+	}
+	if len(vec) != dim {
+		return nil, false, nil
+	}
+	return vec, true, nil
+}
+
+// CandidateRerankInput is one row fed to RerankCandidatesBySimilarity.
+// Wraps the existing CandidateSession plus the embedding lookup result
+// so the reranker can score without re-querying.
+type CandidateRerankInput struct {
+	Candidate CandidateSession
+	Vec       []float32 // empty/nil when no embedding exists
+}
+
+// RerankCandidatesBySimilarity scores each input by cosine similarity
+// to anchorVec and returns up to `limit` top-scoring candidates.
+//
+// Sessions without an embedding (Vec is empty) are placed AFTER
+// every scored candidate, in their original relative order. This
+// keeps unembedded candidates available as a fallback rather than
+// dropping them outright, while letting embedded candidates rank
+// based on actual similarity.
+//
+// When anchorVec is empty, the function returns inputs unchanged
+// (truncated to limit). Same when no input has an embedding —
+// without any signal to score on, recency-from-the-caller is the
+// best we have.
+//
+// Pure function over the inputs; the caller orchestrates the
+// LoadFirstPromptEmbedding queries.
+func RerankCandidatesBySimilarity(anchorVec []float32, inputs []CandidateRerankInput, limit int) []CandidateSession {
+	if limit <= 0 {
+		limit = len(inputs)
+	}
+	if len(anchorVec) == 0 {
+		return rerankFallback(inputs, limit)
+	}
+	anchorNorm := vecNorm(anchorVec)
+	if anchorNorm == 0 {
+		return rerankFallback(inputs, limit)
+	}
+
+	type scored struct {
+		c     CandidateSession
+		score float32
+		seen  bool
+	}
+	scoredAll := make([]scored, 0, len(inputs))
+	hasEmbeddedScore := false
+	for _, in := range inputs {
+		if len(in.Vec) == len(anchorVec) {
+			s := cosineNormed(anchorVec, in.Vec, anchorNorm)
+			scoredAll = append(scoredAll, scored{c: in.Candidate, score: s, seen: true})
+			hasEmbeddedScore = true
+			continue
+		}
+		scoredAll = append(scoredAll, scored{c: in.Candidate, seen: false})
+	}
+	if !hasEmbeddedScore {
+		return rerankFallback(inputs, limit)
+	}
+
+	// Stable sort: scored entries DESC by score, unscored entries
+	// keep their original order and follow the scored ones. The
+	// original order is encoded in the slice index — sort.SliceStable
+	// preserves it for ties.
+	sort.SliceStable(scoredAll, func(i, j int) bool {
+		// Both unembedded → preserve original order (return false
+		// keeps i before j when neither outranks the other).
+		if !scoredAll[i].seen && !scoredAll[j].seen {
+			return false
+		}
+		// Embedded outranks unembedded.
+		if scoredAll[i].seen != scoredAll[j].seen {
+			return scoredAll[i].seen
+		}
+		// Both embedded → DESC by score.
+		return scoredAll[i].score > scoredAll[j].score
+	})
+
+	out := make([]CandidateSession, 0, len(scoredAll))
+	for i := range scoredAll {
+		out = append(out, scoredAll[i].c)
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+// rerankFallback is used when no rerank signal is available: returns
+// the input candidates in their original order, capped at limit.
+func rerankFallback(inputs []CandidateRerankInput, limit int) []CandidateSession {
+	if limit <= 0 || limit > len(inputs) {
+		limit = len(inputs)
+	}
+	out := make([]CandidateSession, 0, limit)
+	for i := 0; i < limit; i++ {
+		out = append(out, inputs[i].Candidate)
+	}
+	return out
 }
 
 // insertSortedDesc inserts hit into a slice already sorted by Score

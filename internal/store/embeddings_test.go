@@ -364,6 +364,152 @@ func TestSemanticSearch_TopKCaps(t *testing.T) {
 	}
 }
 
+func TestLoadFirstPromptEmbedding_FoundOnFirstUserPrompt(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+	insertRawAndEvent(t, s, "evt-1", "sess-a", "src", "user_prompt", "first prompt", 100)
+	insertRawAndEvent(t, s, "evt-2", "sess-a", "src", "assistant_message", "noise", 200)
+	insertRawAndEvent(t, s, "evt-3", "sess-a", "src", "user_prompt", "second prompt", 300)
+
+	if err := SaveEmbedding(ctx, s.DB(), Embedding{
+		EventID: "evt-1", Model: "m", Dim: 3, Vec: []float32{1, 0, 0},
+	}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := SaveEmbedding(ctx, s.DB(), Embedding{
+		EventID: "evt-3", Model: "m", Dim: 3, Vec: []float32{0, 1, 0},
+	}); err != nil {
+		t.Fatalf("save evt-3: %v", err)
+	}
+
+	vec, ok, err := LoadFirstPromptEmbedding(ctx, s.DB(), "sess-a", "m", 3)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	// Must be evt-1's vector (chronologically first user_prompt).
+	if vec[0] != 1 || vec[1] != 0 || vec[2] != 0 {
+		t.Errorf("vec: got %v want [1 0 0]", vec)
+	}
+}
+
+func TestLoadFirstPromptEmbedding_MissingPrompt(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	insertRawAndEvent(t, s, "evt-tool", "sess-a", "src", "tool_use", "", 100)
+
+	_, ok, err := LoadFirstPromptEmbedding(context.Background(), s.DB(), "sess-a", "m", 3)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if ok {
+		t.Error("expected ok=false when no user_prompt event exists")
+	}
+}
+
+func TestLoadFirstPromptEmbedding_MissingEmbedding(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	insertRawAndEvent(t, s, "evt-1", "sess-a", "src", "user_prompt", "first", 100)
+	// No SaveEmbedding call.
+	_, ok, err := LoadFirstPromptEmbedding(context.Background(), s.DB(), "sess-a", "m", 3)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if ok {
+		t.Error("expected ok=false when no embedding exists for the prompt")
+	}
+}
+
+func TestLoadFirstPromptEmbedding_ModelDimMismatch(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+	insertRawAndEvent(t, s, "evt-1", "sess-a", "src", "user_prompt", "first", 100)
+	if err := SaveEmbedding(ctx, s.DB(), Embedding{
+		EventID: "evt-1", Model: "model-a", Dim: 3, Vec: []float32{1, 0, 0},
+	}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	// Different model — must miss.
+	_, ok, err := LoadFirstPromptEmbedding(ctx, s.DB(), "sess-a", "model-b", 3)
+	if err != nil {
+		t.Fatalf("load (wrong model): %v", err)
+	}
+	if ok {
+		t.Error("expected ok=false on model mismatch")
+	}
+	// Different dim — must miss.
+	_, ok, err = LoadFirstPromptEmbedding(ctx, s.DB(), "sess-a", "model-a", 4)
+	if err != nil {
+		t.Fatalf("load (wrong dim): %v", err)
+	}
+	if ok {
+		t.Error("expected ok=false on dim mismatch")
+	}
+}
+
+func TestRerankCandidatesBySimilarity_ScoredFirstThenUnscored(t *testing.T) {
+	t.Parallel()
+	anchor := []float32{1, 0, 0}
+	inputs := []CandidateRerankInput{
+		{Candidate: CandidateSession{ID: "y-aligned"}, Vec: []float32{0, 1, 0}},  // cos = 0
+		{Candidate: CandidateSession{ID: "x-aligned"}, Vec: []float32{1, 0, 0}},  // cos = 1
+		{Candidate: CandidateSession{ID: "no-vec"}, Vec: nil},                    // unembedded
+		{Candidate: CandidateSession{ID: "near-x"}, Vec: []float32{0.8, 0.2, 0}}, // high cos
+	}
+	got := RerankCandidatesBySimilarity(anchor, inputs, 0)
+	if len(got) != 4 {
+		t.Fatalf("got %d candidates, want 4", len(got))
+	}
+	// Embedded candidates first, sorted DESC by score:
+	if got[0].ID != "x-aligned" {
+		t.Errorf("rank 0: got %s want x-aligned", got[0].ID)
+	}
+	if got[1].ID != "near-x" {
+		t.Errorf("rank 1: got %s want near-x", got[1].ID)
+	}
+	if got[2].ID != "y-aligned" {
+		t.Errorf("rank 2: got %s want y-aligned", got[2].ID)
+	}
+	// Unembedded last:
+	if got[3].ID != "no-vec" {
+		t.Errorf("rank 3: got %s want no-vec", got[3].ID)
+	}
+}
+
+func TestRerankCandidatesBySimilarity_FallbackWhenAnchorEmpty(t *testing.T) {
+	t.Parallel()
+	inputs := []CandidateRerankInput{
+		{Candidate: CandidateSession{ID: "first"}, Vec: []float32{1, 0}},
+		{Candidate: CandidateSession{ID: "second"}, Vec: []float32{0, 1}},
+		{Candidate: CandidateSession{ID: "third"}, Vec: nil},
+	}
+	got := RerankCandidatesBySimilarity(nil, inputs, 2)
+	if len(got) != 2 {
+		t.Fatalf("limit not respected: got %d", len(got))
+	}
+	// Fallback preserves input (recency) order.
+	if got[0].ID != "first" || got[1].ID != "second" {
+		t.Errorf("fallback order: got %s,%s want first,second", got[0].ID, got[1].ID)
+	}
+}
+
+func TestRerankCandidatesBySimilarity_FallbackWhenNoEmbeddings(t *testing.T) {
+	t.Parallel()
+	inputs := []CandidateRerankInput{
+		{Candidate: CandidateSession{ID: "a"}},
+		{Candidate: CandidateSession{ID: "b"}},
+	}
+	got := RerankCandidatesBySimilarity([]float32{1, 0}, inputs, 0)
+	if len(got) != 2 || got[0].ID != "a" || got[1].ID != "b" {
+		t.Errorf("expected input order, got %+v", got)
+	}
+}
+
 func TestSemanticSearch_RejectsZeroQueryVector(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
