@@ -158,25 +158,56 @@ func LoadInsights(ctx context.Context, db *sql.DB, sinceMs int64, lim InsightsLi
 }
 
 func loadInsightsOverview(ctx context.Context, db *sql.DB, sinceMs int64) (InsightsOverview, error) {
+	// Six independent scalar counts, one query each. The previous
+	// implementation packed them all into a single SELECT with six
+	// uncorrelated subqueries; correct but unhelpful when one
+	// subquery's plan went off — the wrapping QueryRow surfaced
+	// only the combined error and the slow plan was hidden inside.
+	// Splitting localises failures and lets each query use its
+	// natural index without packed-query optimiser quirks.
 	var o InsightsOverview
-	// One scalar SELECT each — small and indexed.
-	err := db.QueryRowContext(ctx,
-		`SELECT
-		   (SELECT COUNT(*) FROM sessions WHERE COALESCE(ended_at_ms, started_at_ms) >= ?),
-		   (SELECT COUNT(*) FROM events WHERE ts_source_ms >= ?),
-		   (SELECT COUNT(*) FROM events WHERE ts_source_ms >= ? AND kind=?),
-		   (SELECT COUNT(*) FROM events WHERE ts_source_ms >= ? AND kind=?),
-		   (SELECT COUNT(DISTINCT tool_name) FROM events WHERE ts_source_ms >= ? AND kind=? AND tool_name IS NOT NULL),
-		   (SELECT COUNT(DISTINCT value) FROM extractions WHERE kind=?
-		      AND session_id IN (SELECT id FROM sessions WHERE COALESCE(ended_at_ms, started_at_ms) >= ?))`,
-		sinceMs, sinceMs,
-		sinceMs, ingest.KindToolUse,
-		sinceMs, ingest.KindUserPrompt,
-		sinceMs, ingest.KindToolUse,
-		extract.KindSkillLoad, sinceMs,
-	).Scan(&o.Sessions, &o.Events, &o.ToolUses, &o.UserPrompts, &o.DistinctTools, &o.DistinctSkills)
-	if err != nil {
-		return InsightsOverview{}, err
+	type scalar struct {
+		dst   *int
+		query string
+		args  []any
+	}
+	scalars := []scalar{
+		{
+			dst:   &o.Sessions,
+			query: `SELECT COUNT(*) FROM sessions WHERE COALESCE(ended_at_ms, started_at_ms) >= ?`,
+			args:  []any{sinceMs},
+		},
+		{
+			dst:   &o.Events,
+			query: `SELECT COUNT(*) FROM events WHERE ts_source_ms >= ?`,
+			args:  []any{sinceMs},
+		},
+		{
+			dst:   &o.ToolUses,
+			query: `SELECT COUNT(*) FROM events WHERE ts_source_ms >= ? AND kind = ?`,
+			args:  []any{sinceMs, ingest.KindToolUse},
+		},
+		{
+			dst:   &o.UserPrompts,
+			query: `SELECT COUNT(*) FROM events WHERE ts_source_ms >= ? AND kind = ?`,
+			args:  []any{sinceMs, ingest.KindUserPrompt},
+		},
+		{
+			dst:   &o.DistinctTools,
+			query: `SELECT COUNT(DISTINCT tool_name) FROM events WHERE ts_source_ms >= ? AND kind = ? AND tool_name IS NOT NULL`,
+			args:  []any{sinceMs, ingest.KindToolUse},
+		},
+		{
+			dst: &o.DistinctSkills,
+			query: `SELECT COUNT(DISTINCT value) FROM extractions WHERE kind = ?
+				    AND session_id IN (SELECT id FROM sessions WHERE COALESCE(ended_at_ms, started_at_ms) >= ?)`,
+			args: []any{extract.KindSkillLoad, sinceMs},
+		},
+	}
+	for i, s := range scalars {
+		if err := db.QueryRowContext(ctx, s.query, s.args...).Scan(s.dst); err != nil {
+			return InsightsOverview{}, fmt.Errorf("overview scalar #%d: %w", i, err)
+		}
 	}
 	return o, nil
 }
