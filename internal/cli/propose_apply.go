@@ -15,8 +15,10 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
@@ -45,6 +47,7 @@ func newProposeApplyCmd() *cobra.Command {
 		outputID  int64
 		skillsDir string
 		force     bool
+		noVerify  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "apply --skill <name>",
@@ -58,6 +61,15 @@ func newProposeApplyCmd() *cobra.Command {
 			"  - scripts/<name> for each helper script the proposal\n" +
 			"    listed under the skill (chmod 0755, with shebang and\n" +
 			"    purpose-comment header).\n\n" +
+			"Verification gate (Voyager-style critic): before writing,\n" +
+			"a second LLM pass evaluates the proposed skill against its\n" +
+			"cited evidence and your installed skills. On a refusal\n" +
+			"(near-duplicate of an installed skill, evidence too thin,\n" +
+			"generic when_to_use, or fabricated steps) the apply is\n" +
+			"aborted with the critic's concern + recommendation. Pass\n" +
+			"--no-verify to bypass the gate. The verification result is\n" +
+			"cached as kind=propose_verify so re-running on the same\n" +
+			"proposal is free.\n\n" +
 			"All targets are refused if they already exist unless\n" +
 			"--force is passed. Use `aichronicles propose list` to see\n" +
 			"what's in the cached proposal.",
@@ -80,8 +92,25 @@ func newProposeApplyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return applyProposedSkill(result, output.ID, skillName,
-				resolveSkillsDir(skillsDir), force, cmd.OutOrStdout())
+
+			// Lazy client + cfg: only constructed when verify
+			// fires. --no-verify skips it entirely so users can
+			// apply offline / without an API key.
+			cfg, cfgErr := config.Load()
+			if cfgErr != nil {
+				return cfgErr
+			}
+			llmCfg := llmConfigFromFile(cfg.LLM)
+			ctx, cancel := context.WithTimeout(cmd.Context(),
+				cfg.Limits.ReflectTimeout.Or(defaultMetaLLMTimeout))
+			defer cancel()
+			newClient := func() (llm.Client, error) {
+				return llm.FromConfig(ctx, llmCfg)
+			}
+
+			return applyProposedSkill(ctx, s, result, output.ID, skillName,
+				resolveSkillsDir(skillsDir), force, noVerify,
+				newClient, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&dbPath, "db", "",
@@ -94,6 +123,8 @@ func newProposeApplyCmd() *cobra.Command {
 		"override target directory (default: ~/.claude/skills)")
 	cmd.Flags().BoolVar(&force, "force", false,
 		"overwrite existing target files")
+	cmd.Flags().BoolVar(&noVerify, "no-verify", false,
+		"skip the critic-LLM verification gate (writes the SKILL without checking for duplicates / weak evidence)")
 	return cmd
 }
 
@@ -203,11 +234,34 @@ func renderProposalIndex(out io.Writer, r *prompts.ProposalResult, output *store
 // further editing — we leave "TODO" markers in the procedural
 // sections (Steps, Pitfalls, Verification) the user has to fill
 // in from the cited evidence.
-func applyProposedSkill(r *prompts.ProposalResult, outputID int64, name, root string, force bool, out io.Writer) error {
+//
+// Before writing, runs the Voyager-style critic gate via
+// verifyProposalOrAbort (unless noVerify is set). On a refusal the
+// function returns the critic's concern as an error and writes
+// nothing to disk — propose's evidence is the substrate the gate
+// checks against, and writing-then-rolling-back would risk leaving
+// a half-skill on disk.
+func applyProposedSkill(
+	ctx context.Context,
+	st *store.Store,
+	r *prompts.ProposalResult,
+	outputID int64,
+	name, root string,
+	force, noVerify bool,
+	newClient func() (llm.Client, error),
+	out io.Writer,
+) error {
 	sk, err := findProposedSkill(r, name)
 	if err != nil {
 		return err
 	}
+
+	if !noVerify {
+		if err := verifyProposalOrAbort(ctx, st, sk, outputID, newClient, out); err != nil {
+			return err
+		}
+	}
+
 	dir := filepath.Join(root, sk.Name)
 	skillMd := filepath.Join(dir, "SKILL.md")
 	if err := refuseExistingUnlessForce(skillMd, force); err != nil {

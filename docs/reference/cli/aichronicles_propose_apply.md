@@ -15,6 +15,16 @@ identified by --output-id) and writes the named skill to
     listed under the skill (chmod 0755, with shebang and
     purpose-comment header).
 
+Verification gate (Voyager-style critic): before writing,
+a second LLM pass evaluates the proposed skill against its
+cited evidence and your installed skills. On a refusal
+(near-duplicate of an installed skill, evidence too thin,
+generic when_to_use, or fabricated steps) the apply is
+aborted with the critic's concern + recommendation. Pass
+--no-verify to bypass the gate. The verification result is
+cached as kind=propose_verify so re-running on the same
+proposal is free.
+
 All targets are refused if they already exist unless
 --force is passed. Use `aichronicles propose list` to see
 what's in the cached proposal.
@@ -29,6 +39,7 @@ aichronicles propose apply --skill <name> [flags]
       --db string           SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
       --force               overwrite existing target files
   -h, --help                help for apply
+      --no-verify           skip the critic-LLM verification gate (writes the SKILL without checking for duplicates / weak evidence)
       --output-id int       specific llm_outputs row id (default: latest propose row)
       --skill string        name of a skill from the proposal to materialise
       --skills-dir string   override target directory (default: ~/.claude/skills)

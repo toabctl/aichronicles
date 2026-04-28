@@ -14,8 +14,15 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
+
+// nilLLMClient is the closure tests pass when noVerify=true short-
+// circuits before any actual LLM call. The client should never be
+// invoked under that flag, so returning a nil client is safe and
+// makes "we never reached the LLM path" explicit at the test site.
+func nilLLMClient() (llm.Client, error) { return nil, nil }
 
 // seedProposalOutput inserts one llm_outputs row with kind=propose
 // carrying the given ProposalResult body. Returns the row id.
@@ -104,7 +111,7 @@ func TestProposeApply_SkillWritesScaffoldAndScripts(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := applyProposedSkill(result, output.ID, "build-test", dir, false, &out); err != nil {
+	if err := applyProposedSkill(t.Context(), s, result, output.ID, "build-test", dir, false, true, nilLLMClient, &out); err != nil {
 		t.Fatalf("applyProposedSkill: %v", err)
 	}
 
@@ -174,7 +181,7 @@ func TestProposeApply_SkillWithoutScripts(t *testing.T) {
 
 	dir := t.TempDir()
 	var out bytes.Buffer
-	if err := applyProposedSkill(result, id, "another-skill", dir, false, &out); err != nil {
+	if err := applyProposedSkill(t.Context(), s, result, id, "another-skill", dir, false, true, nilLLMClient, &out); err != nil {
 		t.Fatalf("applyProposedSkill: %v", err)
 	}
 	body, _ := os.ReadFile(filepath.Join(dir, "another-skill", "SKILL.md"))
@@ -199,18 +206,18 @@ func TestProposeApply_RefusesOverwriteWithoutForce(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
 
-	if err := applyProposedSkill(result, id, "build-test", dir, false, &out); err != nil {
+	if err := applyProposedSkill(t.Context(), s, result, id, "build-test", dir, false, true, nilLLMClient, &out); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
 
 	out.Reset()
-	err := applyProposedSkill(result, id, "build-test", dir, false, &out)
+	err := applyProposedSkill(t.Context(), s, result, id, "build-test", dir, false, true, nilLLMClient, &out)
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("second apply without --force should error, got %v", err)
 	}
 
 	out.Reset()
-	if err := applyProposedSkill(result, id, "build-test", dir, true, &out); err != nil {
+	if err := applyProposedSkill(t.Context(), s, result, id, "build-test", dir, true, true, nilLLMClient, &out); err != nil {
 		t.Errorf("apply with --force should succeed, got %v", err)
 	}
 }
@@ -235,7 +242,7 @@ func TestProposeApply_RefusesWhenScriptExists(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := applyProposedSkill(result, id, "build-test", dir, false, &out)
+	err := applyProposedSkill(t.Context(), s, result, id, "build-test", dir, false, true, nilLLMClient, &out)
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("apply should refuse when script exists, got %v", err)
 	}

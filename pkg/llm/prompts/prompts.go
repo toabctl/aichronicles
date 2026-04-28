@@ -57,9 +57,10 @@ const (
 // can assert against a single source of truth rather than duplicating
 // the string literal.
 const (
-	ToolNameSummary    = "record_summary"
-	ToolNameReflection = "record_reflection"
-	ToolNameProposal   = "record_proposal"
+	ToolNameSummary        = "record_summary"
+	ToolNameReflection     = "record_reflection"
+	ToolNameProposal       = "record_proposal"
+	ToolNameProposalVerify = "record_proposal_verification"
 )
 
 // --- result types ---
@@ -635,6 +636,157 @@ func BuildPropose(in ProposeInputs) (Built, error) {
 			InputSchema: json.RawMessage(proposalToolSchema),
 		}},
 		ForceTool: ToolNameProposal,
+	}
+	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
+}
+
+// --- propose verification (Voyager-style critic gate) ---
+
+// ProposalVerification is the schema-validated payload of a
+// record_proposal_verification tool call. The critic decides
+// whether `propose apply` should proceed; on go_ahead=false the
+// CLI refuses to write and surfaces concern + recommendation.
+//
+// "Severity" gives the user a single axis to sort concerns by
+// when the critic returns multiple in one run (currently we only
+// verify one skill at a time, but keeping severity per-decision
+// makes batch-verification trivial later).
+type ProposalVerification struct {
+	GoAhead        bool   `json:"go_ahead"`
+	Concern        string `json:"concern"`
+	Severity       string `json:"severity"`
+	Recommendation string `json:"recommendation"`
+}
+
+// VerifyProposalInputs carries everything the critic needs to
+// decide. Keep it tight: the critic is a small focused call, not
+// a re-run of propose. We hand it ONE skill and the cited
+// evidence + the installed skills, and ask one yes/no.
+type VerifyProposalInputs struct {
+	Skill           ProposedSkill
+	InstalledSkills []InstalledSkill
+	EvidenceDigests []SessionDigest // sessions cited as evidence
+}
+
+const verifyProposalMaxTokens = 1024
+
+const verifyProposalSystem = `You are a strict critic deciding whether a proposed Claude Code skill should be installed to ~/.claude/skills/. You MUST call the record_proposal_verification tool exactly once.
+
+Refuse (go_ahead=false) when ANY of:
+
+1. Near-duplicate of an already-installed skill — same trigger condition, same purpose. Different name doesn't matter; if the user is already covered, refuse.
+2. Evidence is too thin to ground the trigger condition — fewer than 2 distinct sessions of clear, on-topic evidence; or evidence quotes that are filler ("go ahead", "/loop", "what's next?") rather than concrete task descriptions.
+3. The when_to_use is generic enough that the skill would fire on every session ("when working on code", "when debugging") — Claude Code skills only earn their cost when they fire SELECTIVELY.
+4. The proposed steps would actively mislead — e.g. a "use git rebase -i to fix the commits" steps section when the cited sessions never actually used rebase.
+
+Approve (go_ahead=true) when:
+
+- Trigger condition is concrete and observable (not "when X is hard" but "when the user runs aichronicles propose and the output is too verbose to scan").
+- Cited evidence shows the same problem in 2+ distinct sessions, with concrete quotes.
+- No installed skill already covers it.
+- The proposed steps are grounded in what actually happened in the sessions, not invented.
+
+Severity scale (when refusing):
+
+- "low" — proposal is fine but borderline; would benefit from another evidence session or tighter when_to_use.
+- "medium" — meaningful problem (duplicate of installed, weak evidence) — fix before applying.
+- "high" — actively wrong (would mislead the agent, fabricated steps) — do not apply.
+
+Recommendation is one short sentence the user can act on: "tighten the when_to_use to 'X'", "merge with installed skill 'Y'", "drop — only one session of evidence", etc. Empty when go_ahead=true.`
+
+const verifyProposalToolSchema = `{
+  "type": "object",
+  "required": ["go_ahead", "concern", "severity", "recommendation"],
+  "additionalProperties": false,
+  "properties": {
+    "go_ahead": {
+      "type": "boolean",
+      "description": "true to allow propose apply to write the SKILL.md; false to refuse."
+    },
+    "concern": {
+      "type": "string",
+      "description": "When go_ahead=false: one short paragraph explaining the issue (which rule was triggered + why this proposal is the offender). Empty when go_ahead=true."
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "none"],
+      "description": "How blocking the concern is. 'none' when go_ahead=true."
+    },
+    "recommendation": {
+      "type": "string",
+      "description": "When go_ahead=false: ONE concrete sentence the user can act on. Empty when go_ahead=true."
+    }
+  }
+}`
+
+const verifyProposalTemplate = `Decide whether to apply this proposed skill.
+
+PROPOSED SKILL:
+name: %s
+when_to_use: %s
+why: %s
+frequency: %d
+effort: %s
+
+EVIDENCE (sessions cited by the proposal):
+%s
+
+INSTALLED SKILLS (already on disk; near-duplicates trigger refusal):
+%s
+
+Call record_proposal_verification with your decision.`
+
+// BuildVerifyProposal composes the critic prompt that gates
+// `propose apply`. Returns a Built — caller threads through
+// runCachedLLM the same way summarize / reflect / propose do, so
+// repeated runs against the same proposal hit the cache for free.
+func BuildVerifyProposal(in VerifyProposalInputs) (Built, error) {
+	if in.Skill.Name == "" {
+		return Built{}, fmt.Errorf("BuildVerifyProposal: skill name is required")
+	}
+	pats := patternSet{}
+
+	// Render evidence as a compact list — one bullet per cited
+	// session, with the verbatim quote + what_happened so the
+	// critic can verify "is this real evidence or filler".
+	var evidence strings.Builder
+	for _, ev := range in.Skill.Evidence {
+		short := ev.SessionID
+		if len(short) > 8 {
+			short = short[:8]
+		}
+		quote, qpats := redact.Outbound(ev.Quote)
+		pats.addAll(qpats)
+		ctxText, cpats := redact.Outbound(ev.WhatHappened)
+		pats.addAll(cpats)
+		fmt.Fprintf(&evidence, "  - [%s] %q (%s)\n", short, quote, ctxText)
+	}
+	if evidence.Len() == 0 {
+		evidence.WriteString("  (no evidence — refuse if you take rule 2 seriously)\n")
+	}
+
+	whenClean, wpats := redact.Outbound(in.Skill.WhenToUse)
+	pats.addAll(wpats)
+	whyClean, wypats := redact.Outbound(in.Skill.Why)
+	pats.addAll(wypats)
+
+	userMsg := fmt.Sprintf(verifyProposalTemplate,
+		in.Skill.Name, whenClean, whyClean,
+		in.Skill.Frequency, in.Skill.Effort,
+		strings.TrimRight(evidence.String(), "\n"),
+		renderInstalledSkills(in.InstalledSkills),
+	)
+
+	req := llm.Request{
+		System:    verifyProposalSystem,
+		Messages:  []llm.Message{{Role: llm.RoleUser, Content: userMsg}},
+		MaxTokens: verifyProposalMaxTokens,
+		Tools: []llm.Tool{{
+			Name:        ToolNameProposalVerify,
+			Description: "Record the critic's decision on whether to install a proposed Claude Code skill.",
+			InputSchema: json.RawMessage(verifyProposalToolSchema),
+		}},
+		ForceTool: ToolNameProposalVerify,
 	}
 	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
 }

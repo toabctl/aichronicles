@@ -102,6 +102,18 @@ func synthMinimalToolInput(toolName, hint string) json.RawMessage {
 			}},
 		})
 		return b
+	case prompts.ToolNameProposalVerify:
+		// Default fake critic approves so existing tests that
+		// stumble through the verify gate don't fail. Tests
+		// that want a refusal use toolInput to supply a
+		// schema-compliant {go_ahead:false, …} payload.
+		b, _ := json.Marshal(prompts.ProposalVerification{
+			GoAhead:        true,
+			Concern:        "",
+			Severity:       "none",
+			Recommendation: "",
+		})
+		return b
 	}
 	return json.RawMessage(`{}`)
 }

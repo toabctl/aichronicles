@@ -20,6 +20,12 @@ const (
 	LLMKindReflect       LLMOutputKind = "reflect"
 	LLMKindPropose       LLMOutputKind = "propose"
 	LLMKindReflectWeekly LLMOutputKind = "reflect_weekly"
+	// LLMKindProposeVerify is the cached output of the critic LLM
+	// pass that `propose apply` runs before writing a SKILL.md
+	// (Voyager-style verification gate). One row per (proposal-id,
+	// skill-name) pair so re-running apply on the same skill is
+	// free.
+	LLMKindProposeVerify LLMOutputKind = "propose_verify"
 )
 
 // LLMOutput mirrors one row of the llm_outputs table. Callers
