@@ -301,6 +301,196 @@ func TestRunInductionSweep_SkipFactsSuppressesFactsLayer(t *testing.T) {
 	}
 }
 
+// TestRunInductionSweep_AutoSummarizesSessionsWithoutSummary: when
+// the candidate session has no kind=summary row yet, phase 1 fires
+// RunSummarize before phases 2+3 — the autonomous pipeline.
+// Expected total LLM calls per candidate: 3 (summarize + induction
+// + facts). A fakeLLM that returns the same toolInput for every call
+// is fine because we're asserting CALL COUNT and persistence
+// side-effects, not body content (the body is wrong-shaped for
+// most of the calls but unmarshalls into a zero-valued result —
+// also fine for this test).
+func TestRunInductionSweep_AutoSummarizesSessionsWithoutSummary(t *testing.T) {
+	t.Parallel()
+	s, sessID := seedSessionForSummarize(t)
+	oneHourAgo := time.Now().Add(-1 * time.Hour).UnixMilli()
+	if _, err := s.DB().Exec(
+		`UPDATE sessions SET ended_at_ms = ?, event_count = 30 WHERE id = ?`,
+		oneHourAgo, sessID,
+	); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	// NOTE: deliberately do NOT plantSummary — phase 1 is the
+	// thing under test.
+
+	// Generic toolInput that's accepted by every kind's parse path
+	// (the JSON unmarshals into zero-valued result structs for the
+	// kinds that don't share fields). The test only asserts call
+	// count + row persistence.
+	indResult := prompts.InductionResult{Rationale: "nothing reusable"}
+	toolInput, _ := json.Marshal(indResult)
+	f := &fakeLLM{toolInput: toolInput}
+
+	var out, errOut bytes.Buffer
+	if err := RunInductionSweep(context.Background(), s,
+		func() (llm.Client, error) { return f, nil },
+		InductionSweepOptions{Idle: 30 * time.Minute, MinEvents: 5, Limit: 10},
+		&out, &errOut); err != nil {
+		t.Fatalf("RunInductionSweep: %v", err)
+	}
+	if f.called != 3 {
+		t.Errorf("expected 3 LLM calls (summarize + induction + facts), got %d", f.called)
+	}
+
+	// Verify all three kinds landed.
+	for _, kind := range []store.LLMOutputKind{
+		store.LLMKindSummary, store.LLMKindInduction, store.LLMKindFacts,
+	} {
+		var n int
+		if err := s.DB().QueryRow(
+			`SELECT COUNT(*) FROM llm_outputs WHERE session_id = ? AND kind = ?`,
+			sessID, string(kind),
+		).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", kind, err)
+		}
+		if n != 1 {
+			t.Errorf("expected 1 llm_outputs row of kind=%s after sweep, got %d", kind, n)
+		}
+	}
+}
+
+// TestRunInductionSweep_AlreadySummarizedSessionSkipsPhase1: a
+// session with an existing kind=summary row should NOT trigger
+// RunSummarize — the existence check elides phase 1. Existing
+// tests rely on this (they plantSummary), but this test makes the
+// invariant explicit.
+func TestRunInductionSweep_AlreadySummarizedSessionSkipsPhase1(t *testing.T) {
+	t.Parallel()
+	s, sessID := seedSessionForSummarize(t)
+	oneHourAgo := time.Now().Add(-1 * time.Hour).UnixMilli()
+	if _, err := s.DB().Exec(
+		`UPDATE sessions SET ended_at_ms = ?, event_count = 30 WHERE id = ?`,
+		oneHourAgo, sessID,
+	); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	plantSummary(t, s, sessID, "already summarized",
+		"summary already present, phase 1 should detect and skip")
+
+	indResult := prompts.InductionResult{Rationale: "x"}
+	toolInput, _ := json.Marshal(indResult)
+	f := &fakeLLM{toolInput: toolInput}
+
+	if err := RunInductionSweep(context.Background(), s,
+		func() (llm.Client, error) { return f, nil },
+		InductionSweepOptions{Idle: 30 * time.Minute, MinEvents: 5, Limit: 10},
+		&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("RunInductionSweep: %v", err)
+	}
+	if f.called != 2 {
+		t.Errorf("expected 2 LLM calls (induction + facts only — phase 1 cache-skipped), got %d", f.called)
+	}
+}
+
+// TestRunInductionSweep_SkipSummarizeBypassesPhase1: with
+// SkipSummarize=true and a session lacking a summary, phase 1
+// is entirely suppressed. Phases 2+3 then bail with their
+// existing "no summary" error — neither calls the LLM.
+func TestRunInductionSweep_SkipSummarizeBypassesPhase1(t *testing.T) {
+	t.Parallel()
+	s, sessID := seedSessionForSummarize(t)
+	oneHourAgo := time.Now().Add(-1 * time.Hour).UnixMilli()
+	if _, err := s.DB().Exec(
+		`UPDATE sessions SET ended_at_ms = ?, event_count = 30 WHERE id = ?`,
+		oneHourAgo, sessID,
+	); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	// No summary planted, SkipSummarize=true → phases 2+3 hit
+	// their "no summary" guard and return without an LLM call.
+
+	f := &fakeLLM{reply: "should not be reached"}
+
+	if err := RunInductionSweep(context.Background(), s,
+		func() (llm.Client, error) { return f, nil },
+		InductionSweepOptions{
+			Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
+			SkipSummarize: true,
+		},
+		&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("RunInductionSweep: %v", err)
+	}
+	if f.called != 0 {
+		t.Errorf("expected 0 LLM calls (SkipSummarize + no summary → all phases bail), got %d", f.called)
+	}
+	// No rows of any LLM kind should exist for this session.
+	for _, kind := range []store.LLMOutputKind{
+		store.LLMKindSummary, store.LLMKindInduction, store.LLMKindFacts,
+	} {
+		var n int
+		_ = s.DB().QueryRow(
+			`SELECT COUNT(*) FROM llm_outputs WHERE session_id = ? AND kind = ?`,
+			sessID, string(kind),
+		).Scan(&n)
+		if n != 0 {
+			t.Errorf("expected 0 rows of kind=%s, got %d", kind, n)
+		}
+	}
+}
+
+// TestRunInductionSweep_SummarizeFailureSkipsDownstream: when
+// phase 1 fails, phases 2+3 must NOT fire for the same session
+// (they both gate on summary). fakeLLM that errors on every call;
+// expected total calls = 1 (summarize attempt only). Per-session
+// failure isolation: the sweep itself returns nil (logs +
+// continues).
+func TestRunInductionSweep_SummarizeFailureSkipsDownstream(t *testing.T) {
+	t.Parallel()
+	s, sessID := seedSessionForSummarize(t)
+	oneHourAgo := time.Now().Add(-1 * time.Hour).UnixMilli()
+	if _, err := s.DB().Exec(
+		`UPDATE sessions SET ended_at_ms = ?, event_count = 30 WHERE id = ?`,
+		oneHourAgo, sessID,
+	); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	// No summary planted, default options — phase 1 fires, errors.
+
+	f := &fakeLLM{err: errors.New("simulated LLM outage")}
+
+	var errOut bytes.Buffer
+	if err := RunInductionSweep(context.Background(), s,
+		func() (llm.Client, error) { return f, nil },
+		InductionSweepOptions{Idle: 30 * time.Minute, MinEvents: 5, Limit: 10},
+		&bytes.Buffer{}, &errOut); err != nil {
+		t.Fatalf("sweep should not return on per-session failure: %v", err)
+	}
+	if f.called != 1 {
+		t.Errorf("expected 1 LLM call (summarize fails first, downstream skipped), got %d", f.called)
+	}
+	// Stderr should mention summarize failure specifically — that's
+	// the contract: phase-1 failure is distinguishable from later
+	// failures.
+	body := errOut.String()
+	if !strings.Contains(body, "summarize") {
+		t.Errorf("expected stderr to log summarize failure, got:\n%s", body)
+	}
+	// Sanity: no rows persisted for any kind on this session.
+	for _, kind := range []store.LLMOutputKind{
+		store.LLMKindSummary, store.LLMKindInduction, store.LLMKindFacts,
+	} {
+		var n int
+		_ = s.DB().QueryRow(
+			`SELECT COUNT(*) FROM llm_outputs WHERE session_id = ? AND kind = ?`,
+			sessID, string(kind),
+		).Scan(&n)
+		if n != 0 {
+			t.Errorf("expected 0 rows of kind=%s after summarize failure, got %d", kind, n)
+		}
+	}
+	_ = sessID
+}
+
 // TestRunInductionSweep_FactsLayerErrorDoesNotAbortSweep: a per-
 // candidate facts failure must NOT stop the sweep — the user's
 // other induction work proceeds.

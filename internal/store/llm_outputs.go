@@ -174,6 +174,36 @@ func LoadLLMOutputByID(ctx context.Context, db *sql.DB, id int64) (*LLMOutput, e
 	return out, err
 }
 
+// HasLLMOutputForSession returns true when at least one row exists
+// in llm_outputs with session_id = sessionID AND kind = kind.
+//
+// Cheap existence check used by the daemon's pipeline sweeper to
+// decide whether the per-session phases (summarize / induction /
+// facts) need to run for a candidate session. Avoids building a
+// prompt + hashing it just to discover there's already a row —
+// the LIMIT-1 row read is essentially free against the
+// idx_llm_outputs_session_kind partial index.
+func HasLLMOutputForSession(ctx context.Context, db *sql.DB, sessionID string, kind LLMOutputKind) (bool, error) {
+	if sessionID == "" {
+		return false, errors.New("HasLLMOutputForSession: session_id is required")
+	}
+	if kind == "" {
+		return false, errors.New("HasLLMOutputForSession: kind is required")
+	}
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT 1 FROM llm_outputs WHERE session_id = ? AND kind = ? LIMIT 1`,
+		sessionID, string(kind),
+	).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check llm_output existence: %w", err)
+	}
+	return true, nil
+}
+
 // LLMOutputFilter composes a list-query. Any zero-value field is
 // omitted from the WHERE clause, so a zero-value filter lists every
 // row (subject to Limit).

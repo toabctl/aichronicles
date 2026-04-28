@@ -57,14 +57,22 @@ type Induction struct {
 	MinEvents     int      `toml:"min_events"`
 	MaxPerSweep   int      `toml:"max_per_sweep"`
 
+	// SkipSummarize, when true, suppresses the phase-1
+	// auto-summarize call. Defaults to false — the autonomous
+	// pipeline assumes the daemon owns summarize too. Set true to
+	// keep summarize manual (run `aichronicles summarize <id>`
+	// yourself); the sweeper will then skip phases 2+3 for
+	// sessions you haven't summarized.
+	SkipSummarize bool `toml:"skip_summarize"`
+
 	// SkipFacts, when true, suppresses the per-candidate
 	// facts-induction LLM call that the sweep would otherwise fire
 	// alongside the (skill+workflow merged) induction call.
 	// Defaults to false: a user who has opted into
 	// [induction].enabled has accepted the LLM-spend tradeoff for
-	// auto-extraction; running facts on the same candidate doubles
-	// the per-tick spend but completes the MIRIX semantic memory
-	// layer without manual intervention. Set to true if facts
+	// auto-extraction; running facts on the same candidate adds
+	// one LLM call per tick but completes the MIRIX semantic
+	// memory layer without manual intervention. Set true if facts
 	// induction is producing low-value rows for your workload.
 	SkipFacts bool `toml:"skip_facts"`
 }

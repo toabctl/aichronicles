@@ -61,31 +61,37 @@ func newInductionCmd() *cobra.Command {
 
 func newInductionSweepCmd() *cobra.Command {
 	var (
-		idle      time.Duration
-		minEvents int
-		limit     int
-		model     string
-		dbPath    string
-		skipFacts bool
+		idle          time.Duration
+		minEvents     int
+		limit         int
+		model         string
+		dbPath        string
+		skipSummarize bool
+		skipFacts     bool
 	)
 	cmd := &cobra.Command{
 		Use:   "sweep",
-		Short: "Walk recently-ended sessions and induce on each",
+		Short: "Walk recently-ended sessions and run the auto-extraction pipeline on each",
 		Long: "Selects sessions that (a) have an ended_at_ms older than\n" +
 			"--idle, (b) have at least --min-events recorded events,\n" +
-			"and (c) haven't been induced before, then runs two\n" +
-			"single-session induction passes on each: the unified\n" +
-			"induction call (extracts skill AND/OR abstract workflow\n" +
-			"from one prompt) and a separate semantic-fact induction.\n" +
-			"Idempotent — re-running skips sessions whose LLM rows\n" +
-			"already exist.\n\n" +
-			"Designed to be triggered from a systemd timer / cron job\n" +
-			"or by the daemon's resident sweeper. The CLI prints a\n" +
-			"per-session line so the operator can tell which session\n" +
-			"yielded a skill, a workflow, both, or nothing.\n\n" +
-			"Pass --skip-facts to suppress the facts induction call,\n" +
-			"halving per-candidate spend (useful for cost-bounded\n" +
-			"cron schedules).\n\n" +
+			"and (c) haven't been induced before, then runs the per-\n" +
+			"session pipeline on each:\n\n" +
+			"  phase 1: summarize       (when no kind=summary row exists)\n" +
+			"  phase 2: induction       (skill + workflow merged)\n" +
+			"  phase 3: facts           (typed semantic facts)\n\n" +
+			"Each phase is cache-idempotent on prompt-hash — re-running\n" +
+			"the sweep skips sessions whose rows already exist. Phase 1\n" +
+			"failure SKIPS phases 2+3 (they require a summary); phases\n" +
+			"2 and 3 are independent and run even if the other failed.\n\n" +
+			"Designed to be triggered from the daemon's resident\n" +
+			"sweeper. The CLI prints a per-session line so the\n" +
+			"operator can tell which session yielded a skill, a\n" +
+			"workflow, both, or nothing.\n\n" +
+			"Pass --skip-summarize to keep summarize manual (sessions\n" +
+			"without summaries will then bail with their existing 'no\n" +
+			"summary' error in phase 2). Pass --skip-facts to suppress\n" +
+			"the facts induction call. Either flag halves per-\n" +
+			"candidate spend.\n\n" +
 			"Requires " + llm.APIKeyEnv + ".",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			s, err := openStore(dbPath)
@@ -106,11 +112,12 @@ func newInductionSweepCmd() *cobra.Command {
 			return RunInductionSweep(ctx, s,
 				func() (llm.Client, error) { return llm.FromConfig(ctx, llmCfg) },
 				InductionSweepOptions{
-					Idle:      idle,
-					MinEvents: minEvents,
-					Limit:     limit,
-					Model:     model,
-					SkipFacts: skipFacts,
+					Idle:          idle,
+					MinEvents:     minEvents,
+					Limit:         limit,
+					Model:         model,
+					SkipSummarize: skipSummarize,
+					SkipFacts:     skipFacts,
 				}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -122,8 +129,10 @@ func newInductionSweepCmd() *cobra.Command {
 		"max sessions to process in one sweep")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().BoolVar(&skipSummarize, "skip-summarize", false,
+		"skip phase 1 (auto-summarize). Sessions without summaries will be skipped — keeps summarize manual.")
 	cmd.Flags().BoolVar(&skipFacts, "skip-facts", false,
-		"skip the per-candidate semantic-facts induction (saves one LLM call per candidate)")
+		"skip phase 3 (semantic-facts induction); saves one LLM call per candidate")
 	return cmd
 }
 
@@ -227,12 +236,21 @@ type InductionSweepOptions struct {
 	Limit     int
 	Model     string
 
+	// SkipSummarize, when true, suppresses the phase-1 summarize
+	// call that the sweep otherwise fires for sessions lacking a
+	// kind=summary llm_outputs row. Default (SkipSummarize=false)
+	// is "auto-summarize then auto-extract" — the autonomous
+	// pipeline. Set true to keep summarize manual; downstream
+	// phases (induction / facts) will then bail with their
+	// existing "no summary" error for sessions you haven't
+	// summarized by hand.
+	SkipSummarize bool
+
 	// SkipFacts, when true, suppresses the per-candidate
 	// facts-induction LLM call that the sweep otherwise fires
 	// alongside the (skill+workflow merged) induction call.
 	// Default (SkipFacts=false) is "auto-extract every memory
-	// type from a settled session" — 2 LLM calls per candidate.
-	// Set true to halve the per-tick spend at the cost of an
+	// type from a settled session". Set true at the cost of an
 	// empty semantic-facts table.
 	SkipFacts bool
 }
@@ -282,6 +300,45 @@ func RunInductionSweep(
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+
+		// Phase 1: auto-summarize when no kind=summary row exists
+		// for this session yet. Closes the manual gate that used
+		// to block phases 2+3 — the autonomous pipeline.
+		//
+		// Failure on phase 1 SKIPS phases 2+3 for this session:
+		// induction and facts both gate on summary and would just
+		// log "no summary" errors of their own. Next tick retries.
+		// summary cache-hits are detected by HasLLMOutputForSession
+		// (cheap row-exists check); we only call RunSummarize when
+		// the kind=summary row is genuinely missing.
+		summaryAvailable := true
+		if !opts.SkipSummarize {
+			has, herr := store.HasLLMOutputForSession(ctx, s.DB(), c.ID, store.LLMKindSummary)
+			if herr != nil {
+				slog.Warn("induction sweep: summary existence check failed",
+					"session_id", c.ID, "err", herr)
+				// Best-effort: try downstream phases — they have
+				// their own "no summary" branch and will bail with
+				// a clear error if needed.
+			} else if !has {
+				if _, serr := RunSummarize(ctx, s, newClient, SummarizeOptions{
+					SessionID: c.ID,
+					Model:     opts.Model,
+				}, io.Discard); serr != nil {
+					slog.Warn("induction sweep: summarize failed",
+						"session_id", c.ID, "err", serr)
+					_, _ = fmt.Fprintf(errOut,
+						"  ✗ summarize %s: %v\n", c.ID[:8], serr)
+					summaryAvailable = false
+				}
+			}
+		}
+		if !summaryAvailable {
+			// Skip phases 2+3 — they require a summary.
+			continue
+		}
+
+		// Phase 2: induction (skill+workflow merged after Round 8).
 		_, err := RunInductionForSession(ctx, s, newClient, InductionRunOptions{
 			SessionID: c.ID,
 			Model:     opts.Model,
@@ -296,11 +353,10 @@ func RunInductionSweep(
 				"  ✗ %s: %v\n", c.ID[:8], err)
 		}
 
-		// Auto-extract semantic facts from the same candidate when
-		// not opted out. Workflow extraction happens INLINE inside
-		// RunInductionForSession (Round 8: skill + workflow share
-		// one LLM call), so there's no separate workflow path here.
-		// Facts is the one auxiliary call that remains.
+		// Phase 3: auto-extract semantic facts from the same
+		// candidate when not opted out. Independent of phase-2
+		// success — facts only requires a summary, not an
+		// induction row, so it runs even if induction failed.
 		if !opts.SkipFacts {
 			if _, ferr := RunFactsForSession(ctx, s, newClient, FactsRunOptions{
 				SessionID: c.ID,
