@@ -86,6 +86,7 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newVacuumCmd())
 	cmd.AddCommand(newDigestCmd())
 	cmd.AddCommand(newEmbedCmd())
+	cmd.AddCommand(newUsageCmd())
 	cmd.AddCommand(web.NewCommand())
 	return cmd
 }
