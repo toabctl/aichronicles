@@ -753,36 +753,116 @@ func renderInvokedSkills(skills []InvokedSkill) string {
 // ID is the load-bearing identifier; type may be empty for hosts
 // that don't emit one and is rendered as "?" in that case so the
 // label shape stays uniform.
+// Per-kind transcript caps. Tool_result bodies are the bulk-size
+// offender (file dumps from Read, grep output, full command stdout)
+// AND the least useful for a *summary* — the assistant's next turn
+// already digested them into its decision. Head-truncate hard for
+// those; spend the budget on the high-signal kinds (user prompts,
+// assistant reasoning, errors).
+//
+// All values are in runes; 1 rune ≈ 0.5 tokens for English-ish
+// text, ~1 token for code-dense content. Multiply by ~0.7 for a
+// rough token estimate.
+const (
+	maxRunesUserPrompt       = 4000 // intent — high signal, keep almost full
+	maxRunesAssistantMessage = 4000 // decisions / reasoning — keep almost full
+	maxRunesToolFailure      = 2000 // error context — middle ground
+	maxRunesToolUse          = 1500 // tool input args — usually fits naturally
+	maxRunesToolResult       = 800  // file dumps and stdout — head-truncate hard
+	maxRunesDefault          = 2000 // any other / future kind — conservative
+)
+
+// capForKind returns the per-event rune cap for the named kind.
+// Centralises the table above so renderEvents stays simple and a
+// future kind can be added with a one-liner here.
+func capForKind(kind string) int {
+	switch kind {
+	case "user_prompt":
+		return maxRunesUserPrompt
+	case "assistant_message":
+		return maxRunesAssistantMessage
+	case "tool_failure":
+		return maxRunesToolFailure
+	case "tool_use":
+		return maxRunesToolUse
+	case "tool_result":
+		return maxRunesToolResult
+	default:
+		return maxRunesDefault
+	}
+}
+
+// renderEvents flattens the per-event timeline for the summariser.
+// Each event's body is capped to capForKind(e.Kind) runes — that
+// surgical truncation handles the common case of a single huge
+// tool_result blowing up the prompt without losing any chronology.
+//
+// We deliberately do NOT enforce a total transcript cap. If a
+// session is so large that even per-kind-capped events sum past
+// the API context window, the API will reject the request with a
+// "prompt is too long" 400 — and that's the right outcome for now:
+// summarising via silent middle-elision risks dropping decisions
+// the user cared about. Surfacing the failure makes the size
+// problem visible so we can decide whether to chunk, sample, or
+// just skip the outlier.
 func renderEvents(events []store.EventView, pats patternSet) string {
 	var b strings.Builder
 	for _, e := range events {
-		label := e.Kind
-		if e.Role.Valid && e.Role.String != "" {
-			label = e.Role.String + "/" + e.Kind
-		}
-		if e.ToolName.Valid && e.ToolName.String != "" {
-			clean, names := redact.Outbound(e.ToolName.String)
-			pats.addAll(names)
-			label += " (" + clean + ")"
-		}
-		if e.SubagentID.Valid && e.SubagentID.String != "" {
-			t := "?"
-			if e.SubagentType.Valid && e.SubagentType.String != "" {
-				t = e.SubagentType.String
-			}
-			label = "sa:" + e.SubagentID.String + ":" + t + " " + label
-		}
-		_, _ = fmt.Fprintf(&b, "[%s]\n", label)
+		b.WriteString(renderOneEvent(e, pats))
+	}
+	return b.String()
+}
 
-		if e.ContentText.Valid && e.ContentText.String != "" {
-			clean, names := redact.Outbound(e.ContentText.String)
-			pats.addAll(names)
-			b.WriteString(clean)
-			b.WriteByte('\n')
+// renderOneEvent is the per-event renderer extracted from the
+// previous monolithic renderEvents loop. Adds a per-kind cap on
+// content_text so a single huge tool_result can't blow the
+// prompt budget on its own.
+func renderOneEvent(e store.EventView, pats patternSet) string {
+	label := e.Kind
+	if e.Role.Valid && e.Role.String != "" {
+		label = e.Role.String + "/" + e.Kind
+	}
+	if e.ToolName.Valid && e.ToolName.String != "" {
+		clean, names := redact.Outbound(e.ToolName.String)
+		pats.addAll(names)
+		label += " (" + clean + ")"
+	}
+	if e.SubagentID.Valid && e.SubagentID.String != "" {
+		t := "?"
+		if e.SubagentType.Valid && e.SubagentType.String != "" {
+			t = e.SubagentType.String
+		}
+		label = "sa:" + e.SubagentID.String + ":" + t + " " + label
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "[%s]\n", label)
+	if e.ContentText.Valid && e.ContentText.String != "" {
+		clean, names := redact.Outbound(e.ContentText.String)
+		pats.addAll(names)
+		content, truncated := truncateTextRunes(clean, capForKind(e.Kind))
+		b.WriteString(content)
+		if truncated {
+			fmt.Fprintf(&b, "\n(… %s body truncated)", e.Kind)
 		}
 		b.WriteByte('\n')
 	}
+	b.WriteByte('\n')
 	return b.String()
+}
+
+// truncateTextRunes returns s capped at n runes; the bool is true
+// when truncation actually fired. Rune-aware so multibyte UTF-8
+// doesn't get split mid-character.
+func truncateTextRunes(s string, n int) (string, bool) {
+	if n <= 0 {
+		return "", true
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return s, false
+	}
+	return string(r[:n]), true
 }
 
 // renderDigests flattens session digests for reflect/propose.
