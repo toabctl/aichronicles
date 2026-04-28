@@ -1,0 +1,66 @@
+{{define "content"}}
+<hgroup>
+  <h1>Usage <small>· last {{.Days}} days</small></h1>
+  <p>{{.Since}} → {{.Until}}. Per-day LLM token totals from
+     <code>llm_outputs</code> grouped by kind and model. Pure SQL
+     aggregation; the optional COST column comes from a TOML pricing
+     table you maintain.</p>
+</hgroup>
+
+<nav class="agent-filter" aria-label="Window">
+  <a href="/usage?days=7" class="agent-chip{{if eq .Days 7}} agent-chip-active{{end}}">7d</a>
+  <a href="/usage?days=30" class="agent-chip{{if eq .Days 30}} agent-chip-active{{end}}">30d</a>
+  <a href="/usage?days=90" class="agent-chip{{if eq .Days 90}} agent-chip-active{{end}}">90d</a>
+</nav>
+
+{{if .Empty}}
+<p class="empty">(no LLM calls in this window)</p>
+{{else}}
+<article>
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Kind</th>
+        <th>Model</th>
+        <th class="num">Input</th>
+        <th class="num">Output</th>
+        {{if .HasCost}}<th class="num">Cost</th>{{end}}
+        <th class="num">Calls</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Rows}}
+      <tr>
+        <td class="ts">{{.Day}}</td>
+        <td><code>{{.Kind}}</code></td>
+        <td><code>{{.Model}}</code></td>
+        <td class="num">{{.InputTokens}}</td>
+        <td class="num">{{.OutputTokens}}</td>
+        {{if $.HasCost}}<td class="num">{{if .HasCost}}{{.Cost}}{{else}}-{{end}}</td>{{end}}
+        <td class="num">{{.RowCount}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+    <tfoot>
+      <tr>
+        <th colspan="3" scope="row">Total</th>
+        <td class="num"><strong>{{.Totals.InputTokens}}</strong></td>
+        <td class="num"><strong>{{.Totals.OutputTokens}}</strong></td>
+        {{if .HasCost}}<td class="num"><strong>{{.Totals.Cost}}</strong></td>{{end}}
+        <td class="num"><strong>{{.Totals.RowCount}}</strong></td>
+      </tr>
+    </tfoot>
+  </table>
+</article>
+
+{{if .NoPrices}}
+<p><small>Tip: drop a <code>prices.toml</code> under
+  <code>$XDG_CONFIG_HOME/aichronicles/</code> to add a Cost column.
+  Schema: <code>[models."&lt;name&gt;"] input_per_mtok = …,
+  output_per_mtok = …</code>. See
+  <code>aichronicles usage --help</code>.</small></p>
+{{end}}
+
+{{end}}{{/* if not Empty */}}
+{{end}}
