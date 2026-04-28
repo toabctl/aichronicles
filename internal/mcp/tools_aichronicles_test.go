@@ -90,6 +90,7 @@ func TestRegisterAichroniclesTools_InstallsAllFive(t *testing.T) {
 	for _, want := range []string{
 		"search_events", "list_sessions", "get_summary",
 		"list_subagents", "get_unresolved_for_cwd", "list_workflows",
+		"get_facts_for_subject", "find_fact_subjects",
 	} {
 		if _, ok := s.tools[want]; !ok {
 			t.Errorf("tool %q not registered", want)
@@ -138,6 +139,157 @@ func seedWorkflowOutput(t *testing.T, st *store.Store, sessionID, taskShape, rat
 		t.Fatalf("last id: %v", err)
 	}
 	return id
+}
+
+// seedFactsRow inserts an llm_outputs row of kind=facts (the FK
+// target for semantic_facts.source_llm_output_id) and returns its id.
+func seedFactsRow(t *testing.T, st *store.Store) int64 {
+	t.Helper()
+	r, err := st.DB().Exec(
+		`INSERT INTO llm_outputs(kind, model, prompt_hash, body, created_at_ms)
+		 VALUES ('facts', 'fake-model', ?, '{}', ?)`,
+		"h-"+t.Name(), time.Now().UnixMilli(),
+	)
+	if err != nil {
+		t.Fatalf("seed llm_output: %v", err)
+	}
+	id, err := r.LastInsertId()
+	if err != nil {
+		t.Fatalf("last id: %v", err)
+	}
+	return id
+}
+
+func TestGetFactsForSubject_RendersFacts(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	loID := seedFactsRow(t, st)
+
+	for _, f := range []store.SemanticFact{
+		{
+			SourceLLMOutputID: loID,
+			Subject:           "/work/aichronicles",
+			Predicate:         "uses_language_version",
+			Object:            "Go 1.26",
+			Confidence:        0.95,
+			AssertedAtMs:      time.Now().UnixMilli(),
+		},
+		{
+			SourceLLMOutputID: loID,
+			Subject:           "/work/aichronicles",
+			Predicate:         "runs_tests_via",
+			Object:            "go test ./...",
+			Confidence:        0.9,
+			AssertedAtMs:      time.Now().UnixMilli(),
+		},
+	} {
+		if _, err := store.SaveSemanticFact(t.Context(), st.DB(), f); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+	}
+
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "get_facts_for_subject", `{"subject":"/work/aichronicles"}`)
+	if res == nil || len(res.Content) == 0 {
+		t.Fatal("empty result")
+	}
+	body := res.Content[0].Text
+	for _, want := range []string{
+		"subject: /work/aichronicles",
+		"uses_language_version",
+		"Go 1.26",
+		"runs_tests_via",
+		"go test ./...",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in body:\n%s", want, body)
+		}
+	}
+}
+
+func TestGetFactsForSubject_EmptyResultIsHelpful(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "get_facts_for_subject", `{"subject":"/no-such-project"}`)
+	body := res.Content[0].Text
+	if !strings.Contains(body, "no facts known") {
+		t.Errorf("expected helpful empty-state message, got:\n%s", body)
+	}
+}
+
+func TestGetFactsForSubject_RejectsEmptySubject(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "get_facts_for_subject", `{"subject":"  "}`)
+	if !strings.Contains(res.Content[0].Text, "subject is required") {
+		t.Errorf("expected validation error, got %+v", res)
+	}
+}
+
+func TestFindFactSubjects_CaseInsensitiveSubstring(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	loID := seedFactsRow(t, st)
+	for _, sub := range []string{
+		"/work/aichronicles",
+		"/work/Aichronicles-fork",
+		"/work/systemd",
+	} {
+		if _, err := store.SaveSemanticFact(t.Context(), st.DB(), store.SemanticFact{
+			SourceLLMOutputID: loID,
+			Subject:           sub,
+			Predicate:         "primary_language",
+			Object:            "Go",
+			Confidence:        1.0,
+			AssertedAtMs:      time.Now().UnixMilli(),
+		}); err != nil {
+			t.Fatalf("save %s: %v", sub, err)
+		}
+	}
+
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "find_fact_subjects", `{"contains":"aichronicles"}`)
+	body := res.Content[0].Text
+	if !strings.Contains(body, "/work/aichronicles") || !strings.Contains(body, "/work/Aichronicles-fork") {
+		t.Errorf("expected case-insensitive match, body:\n%s", body)
+	}
+	if strings.Contains(body, "/work/systemd") {
+		t.Errorf("expected non-matching subject filtered out, body:\n%s", body)
+	}
+}
+
+func TestFindFactSubjects_RejectsEmptyNeedle(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "find_fact_subjects", `{"contains":"  "}`)
+	if !strings.Contains(res.Content[0].Text, "contains is required") {
+		t.Errorf("expected validation error, got %+v", res)
+	}
+}
+
+func TestFindFactSubjects_NoMatchesIsHelpful(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "find_fact_subjects", `{"contains":"absolutely-nothing"}`)
+	if !strings.Contains(res.Content[0].Text, "no fact subjects matched") {
+		t.Errorf("expected empty-state message, got %+v", res)
+	}
 }
 
 func TestListWorkflows_ReturnsFoundWorkflowsWithProcedure(t *testing.T) {
@@ -799,8 +951,8 @@ func TestToolsList_IncludesInputSchema(t *testing.T) {
 	}
 	result := resp["result"].(map[string]any)
 	tools := result["tools"].([]any)
-	if len(tools) != 6 {
-		t.Errorf("expected 6 tools, got %d", len(tools))
+	if len(tools) != 8 {
+		t.Errorf("expected 8 tools, got %d", len(tools))
 	}
 	for _, t0 := range tools {
 		tool := t0.(map[string]any)

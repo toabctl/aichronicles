@@ -66,6 +66,7 @@ const (
 	ToolNameInduction      = "record_induction"
 	ToolNameChallenge      = "record_challenge"
 	ToolNameWorkflow       = "record_workflow"
+	ToolNameFacts          = "record_facts"
 )
 
 // --- result types ---
@@ -1266,6 +1267,164 @@ func BuildWorkflow(in WorkflowFromSessionInputs) (Built, error) {
 			InputSchema: json.RawMessage(workflowToolSchema),
 		}},
 		ForceTool: ToolNameWorkflow,
+	}
+	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
+}
+
+// --- single-session SEMANTIC fact induction ---
+
+// FactsResult is the schema-validated payload of a record_facts tool
+// call. The LLM extracts (subject, predicate, object) triples from
+// one session's content — typed project-level facts like "uses Go
+// 1.26", "runs tests via go test ./...". The caller persists each
+// fact into the semantic_facts table for typed retrieval.
+//
+// Distinct from procedural memory (skills, workflows, propose):
+// facts answer "what is true?" rather than "how do I do X?". The
+// retrieval surface is keyed by subject (typically a cwd) so the
+// next session that opens in the same project can ground itself
+// without re-discovering the build/test/deploy contract from raw
+// events.
+type FactsResult struct {
+	// Found is the explicit "this session yielded at least one
+	// project-level fact worth saving" signal. False means the
+	// session was conversational / one-off and produced no
+	// reusable facts.
+	Found bool `json:"found"`
+
+	// Facts are the (subject, predicate, object) triples to
+	// persist. Each MUST be grounded in a verbatim quote from
+	// the session — same anti-fabrication contract as workflow
+	// evidence.
+	Facts []InducedFact `json:"facts"`
+
+	// Rationale is a short (≤200 char) explanation of the verdict.
+	// On found=false: "session was a Q&A about Go generics — no
+	// project-level facts asserted". On found=true: "extracted 4
+	// build/test/deploy facts from the session".
+	Rationale string `json:"rationale"`
+}
+
+// InducedFact is one (subject, predicate, object) triple emitted by
+// BuildFacts. Confidence reflects the LLM's certainty after reading
+// the session — high when the fact is asserted directly ("the
+// project uses Go 1.26"), lower when it's inferred from a sequence
+// of commands.
+type InducedFact struct {
+	Subject      string  `json:"subject"`
+	Predicate    string  `json:"predicate"`
+	Object       string  `json:"object"`
+	Confidence   float64 `json:"confidence"`
+	Quote        string  `json:"quote"`
+	WhatHappened string  `json:"what_happened"`
+}
+
+// FactsFromSessionInputs carries everything BuildFacts needs.
+// Mirrors WorkflowFromSessionInputs / InduceFromSessionInputs.
+type FactsFromSessionInputs struct {
+	Digest SessionDigest
+}
+
+const factsMaxTokens = 4096
+
+const factsSystem = `You inspect ONE coding session and extract any TYPED PROJECT-LEVEL FACTS the session reveals — the kind of fact a future agent opening the same project would benefit from knowing without re-discovering it. You MUST call the record_facts tool exactly once.
+
+A fact is a (subject, predicate, object) triple. For v1 the subject is usually the session's CWD (the project path). The predicate names the relation. The object is the value.
+
+The recommended predicate vocabulary (use these when applicable; the schema accepts free-form predicates but stable retrieval depends on stable names):
+
+  - uses_language_version       e.g. object="Go 1.26"
+  - runs_tests_via              e.g. object="go test ./..."
+  - runs_build_via              e.g. object="go build ./..."
+  - runs_lint_via               e.g. object="golangci-lint run ./..."
+  - deploys_to                  e.g. object="staging via systemd timer"
+  - uses_dependency             e.g. object="modernc.org/sqlite"
+  - key_directory               e.g. object="internal/store"
+  - git_branch_convention       e.g. object="feature branches off main"
+  - commit_convention           e.g. object="conventional commits"
+  - documentation_at            e.g. object="docs/explanation/threat-model.md"
+  - requires_setup_step         e.g. object="run aichronicles setup claude-code first"
+  - requires_environment        e.g. object="ANTHROPIC_API_KEY"
+  - primary_language            e.g. object="Go"
+  - build_artefact_location     e.g. object="./bin/"
+  - runs_via_command            (catchall when no specific predicate fits)
+
+Hard rules:
+
+1. Default to found=false. Sessions that don't establish anything reusable about a project — Q&A about generic programming, debugging-sympathy chats, single-shot bug fixes that don't reveal contract — produce zero facts. Empty facts[] array with found=false is correct.
+
+2. Every fact MUST be grounded in a verbatim quote from the session. The quote (≤160 chars) is the substrate the user can grep to verify. Don't paraphrase. Don't synthesise from inference alone — if the session never names the test command, do NOT invent it from a build_command observation.
+
+3. Use the documented predicate vocabulary when applicable. If your fact doesn't fit a documented predicate, use a kebab-case-with-underscores name following the same shape; flag the choice via what_happened so the maintainer can decide whether to add it to the canonical list.
+
+4. Subject is the session's cwd (the path where the work happened) for project-level facts. If the session has no cwd, omit the fact rather than guess — facts without an anchor don't retrieve.
+
+5. Confidence in [0, 1]: 1.0 when the session text directly asserts the fact ("we use Go 1.26"); 0.7-0.9 when the fact is observed indirectly (a go.mod line shown in tool output); below 0.7 the fact is too speculative — drop it.
+
+6. ONE fact per (subject, predicate, object) triple. If the session mentions the same triple twice, emit one entry with the strongest evidence quote.
+
+7. Rationale ≤200 chars. On found=false explain why ("session was a generics Q&A; no project-level facts established"). On found=true name the broad shape ("extracted 4 build/test/deploy facts").
+
+The point of this layer: a future agent opening the same cwd can retrieve "what do I know about this project?" without scanning raw events. Optimise for facts that survive across sessions — contracts and conventions, not session-specific events.`
+
+const factsToolSchema = `{
+  "type": "object",
+  "required": ["found", "facts", "rationale"],
+  "additionalProperties": false,
+  "properties": {
+    "found": {"type": "boolean"},
+    "facts": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "required": ["subject", "predicate", "object", "confidence", "quote", "what_happened"],
+        "additionalProperties": false,
+        "properties": {
+          "subject":       {"type": "string", "minLength": 1, "maxLength": 400},
+          "predicate":     {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 64},
+          "object":        {"type": "string", "minLength": 1, "maxLength": 400},
+          "confidence":    {"type": "number", "minimum": 0.7, "maximum": 1.0},
+          "quote":         {"type": "string", "minLength": 1, "maxLength": 160},
+          "what_happened": {"type": "string", "minLength": 1, "maxLength": 240}
+        }
+      }
+    },
+    "rationale": {"type": "string", "minLength": 1, "maxLength": 200}
+  }
+}`
+
+const factsTemplate = `One session. Extract any typed project-level facts it reveals.
+
+Session follows.
+
+---
+%s
+---
+`
+
+// BuildFacts composes the single-session semantic-facts induction
+// prompt. Same single-session shape as BuildWorkflow; the system
+// prompt and tool schema target (subject, predicate, object) facts
+// rather than abstract workflows.
+func BuildFacts(in FactsFromSessionInputs) (Built, error) {
+	if in.Digest.ID == "" {
+		return Built{}, fmt.Errorf("BuildFacts: digest.ID required")
+	}
+	pats := patternSet{}
+	body := renderDigests([]SessionDigest{in.Digest}, pats)
+	userMsg := fmt.Sprintf(factsTemplate, body)
+	req := llm.Request{
+		System:    factsSystem,
+		Messages:  []llm.Message{{Role: llm.RoleUser, Content: userMsg}},
+		MaxTokens: factsMaxTokens,
+		Tools: []llm.Tool{{
+			Name:        ToolNameFacts,
+			Description: "Record typed project-level facts induced from one session.",
+			InputSchema: json.RawMessage(factsToolSchema),
+		}},
+		ForceTool: ToolNameFacts,
 	}
 	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
 }

@@ -62,6 +62,14 @@ const (
 	// One row per (session_id, prompt-hash) so re-running on the
 	// same session is free.
 	LLMKindWorkflow LLMOutputKind = "workflow"
+	// LLMKindFacts is the cached output of single-session SEMANTIC
+	// fact induction. The LLM extracts typed (subject, predicate,
+	// object) triples from the session — project-level facts like
+	// "uses Go 1.26", "runs tests via go test ./..." — and the
+	// caller persists them into the semantic_facts table for typed
+	// retrieval. The llm_outputs row holds the raw LLM reply for
+	// caching + auditability; the truth lives in semantic_facts.
+	LLMKindFacts LLMOutputKind = "facts"
 )
 
 // LLMOutput mirrors one row of the llm_outputs table. Callers

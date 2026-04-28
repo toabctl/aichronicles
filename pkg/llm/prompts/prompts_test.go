@@ -666,6 +666,77 @@ func TestBuildWorkflow_HashStableAcrossCalls(t *testing.T) {
 	}
 }
 
+func TestBuildFacts_RequiresDigestID(t *testing.T) {
+	t.Parallel()
+	_, err := BuildFacts(FactsFromSessionInputs{Digest: SessionDigest{}})
+	if err == nil {
+		t.Errorf("expected error on empty Digest.ID")
+	}
+}
+
+func TestBuildFacts_ForcesRecordFactsTool(t *testing.T) {
+	t.Parallel()
+	digest := SessionDigest{
+		ID:          "sess-facts-1",
+		Cwd:         "/work/proj",
+		FirstPrompt: "what go version does this use?",
+		Summary:     "ran go.mod inspection: requires 1.26.",
+	}
+	built, err := BuildFacts(FactsFromSessionInputs{Digest: digest})
+	if err != nil {
+		t.Fatalf("BuildFacts: %v", err)
+	}
+	if built.Request.ForceTool != ToolNameFacts {
+		t.Errorf("ForceTool: got %q want %q", built.Request.ForceTool, ToolNameFacts)
+	}
+	if len(built.Request.Tools) != 1 || built.Request.Tools[0].Name != ToolNameFacts {
+		t.Errorf("tools wiring wrong: %+v", built.Request.Tools)
+	}
+}
+
+func TestBuildFacts_RendersSessionAndAdvocatesPredicateVocabulary(t *testing.T) {
+	t.Parallel()
+	digest := SessionDigest{
+		ID:      "sess-facts-2",
+		Summary: "ran go test -tags=integration ./...",
+	}
+	built, err := BuildFacts(FactsFromSessionInputs{Digest: digest})
+	if err != nil {
+		t.Fatalf("BuildFacts: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	if !strings.Contains(body, "sess-facts-2") {
+		t.Errorf("session id not rendered: %s", body)
+	}
+	if !strings.Contains(body, "ran go test -tags=integration") {
+		t.Errorf("session summary not rendered: %s", body)
+	}
+	// System prompt advertises the recommended predicate vocabulary.
+	for _, want := range []string{
+		"uses_language_version",
+		"runs_tests_via",
+		"primary_language",
+	} {
+		if !strings.Contains(built.Request.System, want) {
+			t.Errorf("system prompt missing recommended predicate %q", want)
+		}
+	}
+	// And enforces evidence-grounding.
+	if !strings.Contains(built.Request.System, "verbatim quote") {
+		t.Errorf("system prompt missing anti-fabrication rule")
+	}
+}
+
+func TestBuildFacts_HashStableAcrossCalls(t *testing.T) {
+	t.Parallel()
+	digest := SessionDigest{ID: "stable", Summary: "x"}
+	a, _ := BuildFacts(FactsFromSessionInputs{Digest: digest})
+	b, _ := BuildFacts(FactsFromSessionInputs{Digest: digest})
+	if a.Hash != b.Hash {
+		t.Errorf("hash unstable: %q != %q", a.Hash, b.Hash)
+	}
+}
+
 func TestBuildPropose_OmitsPriorProposalsStanzaWhenEmpty(t *testing.T) {
 	t.Parallel()
 	in := ProposeInputs{
