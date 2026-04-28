@@ -28,10 +28,12 @@ const (
 	OutcomeSuccessLikely OutcomeLabel = "success_likely"
 
 	// OutcomeFailureLikely — strong failure signals. Defined as
-	// any one of: tool_failure_count >= 3, git_undo_count >= 1,
-	// prompt_repeat_count >= 2, or "session ended on tool_failure
-	// or error" (last_event_kind in failure-shaped values AND
-	// tool_failure_count + error_count >= 1).
+	// any one of: tool_failure_count >= toolFailureFloor (where the
+	// floor scales with session size — see toolFailureFloor);
+	// git_undo_count >= 1; prompt_repeat_count >= 2; or "session
+	// ended on tool_failure or error" (last_event_kind in
+	// failure-shaped values AND tool_failure_count + error_count
+	// >= 1).
 	OutcomeFailureLikely OutcomeLabel = "failure_likely"
 
 	// OutcomeMixed — real activity with weak failure signals. The
@@ -512,6 +514,28 @@ func normalizePrompt(s string) string {
 	return promptWhitespaceRE.ReplaceAllString(strings.ToLower(strings.TrimSpace(s)), " ")
 }
 
+// toolFailureFloor returns the minimum tool_failure_count that
+// trips OutcomeFailureLikely for a session of the given size. The
+// floor stays at 3 for small sessions (≤30 tool attempts) so a
+// short failed session is still flagged, but scales linearly above
+// that — at 10% of total tool attempts. Without this, a 200-tool
+// session with 3 stray failures (1.5% failure rate) would be tagged
+// `failure_likely` identically to a 5-tool session with 3 of 5
+// failing (60%). The first is normal background noise; the second
+// is a broken session.
+//
+// Called from deriveOutcomeLabel; exposed via unit tests through
+// ComputeSessionOutcome.
+func toolFailureFloor(toolUseCount, toolFailureCount int) int {
+	const baseFloor = 3
+	attempts := toolUseCount + toolFailureCount
+	scaled := attempts / 10
+	if scaled > baseFloor {
+		return scaled
+	}
+	return baseFloor
+}
+
 // deriveOutcomeLabel applies the rules documented at the OutcomeLabel
 // constants. Pure function over the SessionOutcome counts; called by
 // ComputeSessionOutcome and exported (lowercase) for unit-test
@@ -525,8 +549,10 @@ func deriveOutcomeLabel(o SessionOutcome) OutcomeLabel {
 		(o.LastEventKind.String == ingest.KindToolFailure ||
 			o.LastEventKind.String == ingest.KindError)
 
+	failFloor := toolFailureFloor(o.ToolUseCount, o.ToolFailureCount)
+
 	switch {
-	case o.ToolFailureCount >= 3,
+	case o.ToolFailureCount >= failFloor,
 		o.GitUndoCount >= 1,
 		o.PromptRepeatCount >= 2,
 		endedOnFailure && (o.ToolFailureCount+o.ErrorCount) >= 1:

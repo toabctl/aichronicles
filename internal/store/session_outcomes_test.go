@@ -132,6 +132,78 @@ func TestComputeSessionOutcome_FailureLikelyByToolFailures(t *testing.T) {
 	}
 }
 
+// TestComputeSessionOutcome_ToolFailureFloorScalesWithSession encodes
+// the rate-aware failure threshold: small sessions still trip on 3
+// failures, but a long session with rare hiccups does not. Without
+// this gate, a 200-tool-use session with 3 stray failures (1.5%) was
+// labelled failure_likely identically to a 5-tool session with 3 of
+// 5 failing (60%) — the latter is broken, the former is normal noise.
+func TestComputeSessionOutcome_ToolFailureFloorScalesWithSession(t *testing.T) {
+	t.Parallel()
+	t.Run("absolute threshold", func(t *testing.T) {
+		// 5 attempts (3 successful tool uses, 3 failures) — small
+		// sample, hitting the 3-floor still labels failure_likely.
+		// Note: attempts here is 6, not 5 (3+3), well under the
+		// 30-floor cutoff so the absolute rule applies.
+		want := 3
+		if got := toolFailureFloor(3, 3); got != want {
+			t.Errorf("toolFailureFloor(3, 3) = %d, want %d", got, want)
+		}
+	})
+	t.Run("scales linearly above 30 attempts", func(t *testing.T) {
+		// 100 successful + 10 failed = 110 attempts → floor 11.
+		// 200 successful + 5 failed = 205 attempts → floor 20.
+		if got := toolFailureFloor(100, 10); got != 11 {
+			t.Errorf("toolFailureFloor(100, 10) = %d, want 11", got)
+		}
+		if got := toolFailureFloor(200, 5); got != 20 {
+			t.Errorf("toolFailureFloor(200, 5) = %d, want 20", got)
+		}
+	})
+	t.Run("3 failures in 200-tool session is no longer failure_likely",
+		func(t *testing.T) {
+			f := newOutcomeFixture(t, "00000000-0000-0000-0000-000000000111")
+			f.addEvent(ingest.KindUserPrompt, "long session")
+			for range 197 {
+				f.addEvent(ingest.KindToolUse, "")
+			}
+			for range 3 {
+				f.addEvent(ingest.KindToolFailure, "transient")
+			}
+			f.addEvent(ingest.KindAssistantMessage, "done")
+			o, err := ComputeSessionOutcome(context.Background(), f.s.DB(), f.session)
+			if err != nil {
+				t.Fatalf("compute: %v", err)
+			}
+			// 200 attempts → floor 20; 3 failures fall short.
+			if o.Outcome == OutcomeFailureLikely {
+				t.Errorf("expected non-failure for 3/200 (1.5%%); got %q", o.Outcome)
+			}
+			if o.ToolFailureCount != 3 {
+				t.Errorf("tool_failure_count: got %d want 3", o.ToolFailureCount)
+			}
+		})
+	t.Run("25 failures in 200-tool session is failure_likely",
+		func(t *testing.T) {
+			f := newOutcomeFixture(t, "00000000-0000-0000-0000-000000000112")
+			f.addEvent(ingest.KindUserPrompt, "really broken session")
+			for range 175 {
+				f.addEvent(ingest.KindToolUse, "")
+			}
+			for range 25 {
+				f.addEvent(ingest.KindToolFailure, "broke")
+			}
+			f.addEvent(ingest.KindAssistantMessage, "giving up")
+			o, err := ComputeSessionOutcome(context.Background(), f.s.DB(), f.session)
+			if err != nil {
+				t.Fatalf("compute: %v", err)
+			}
+			if o.Outcome != OutcomeFailureLikely {
+				t.Errorf("expected failure_likely for 25/200 (12.5%%); got %q", o.Outcome)
+			}
+		})
+}
+
 func TestComputeSessionOutcome_FailureLikelyByGitUndo(t *testing.T) {
 	t.Parallel()
 	f := newOutcomeFixture(t, "00000000-0000-0000-0000-000000000012")
