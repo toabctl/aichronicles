@@ -58,6 +58,15 @@ const (
 	// retrieval. The llm_outputs row holds the raw LLM reply for
 	// caching + auditability; the truth lives in semantic_facts.
 	LLMKindFacts LLMOutputKind = "facts"
+	// LLMKindSkillMerge is the cached output of `aichronicles
+	// propose merge` — the AutoSkill (Yang et al., 2026) maintenance
+	// action 'merge' that combines an existing SKILL.md with a
+	// freshly-extracted candidate. One row per (output-id, skill-name)
+	// pair so re-running merge on the same proposal is free. Distinct
+	// from LLMKindSkillRevision: revision tightens an existing skill
+	// against its observed failures; merge folds a new candidate into
+	// an existing skill that's working but could be enriched.
+	LLMKindSkillMerge LLMOutputKind = "skill_merge"
 )
 
 // LLMOutput mirrors one row of the llm_outputs table. Callers

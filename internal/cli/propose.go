@@ -119,6 +119,8 @@ func newProposeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	addFormatFlag(cmd, &formatIn)
 	cmd.AddCommand(newProposeApplyCmd())
+	cmd.AddCommand(newProposeMergeCmd())
+	cmd.AddCommand(newProposeDiscardCmd())
 	cmd.AddCommand(newProposeListCmd())
 	return cmd
 }
