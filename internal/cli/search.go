@@ -27,23 +27,21 @@ const maxSnippetRunes = 140
 
 func newSearchCmd() *cobra.Command {
 	var (
-		limit      int
-		kind       string
-		sessionID  string
-		since      time.Duration
-		dbPath     string
-		noDedup    bool
-		formatIn   string
-		summarize  bool
-		topN       int
-		model      string
-		agent      string
-		toolName   string
-		skillName  string
-		fileMatch  string
-		withFails  bool
-		semantic   bool
-		embedModel string
+		limit     int
+		kind      string
+		sessionID string
+		since     time.Duration
+		dbPath    string
+		noDedup   bool
+		formatIn  string
+		summarize bool
+		topN      int
+		model     string
+		agent     string
+		toolName  string
+		skillName string
+		fileMatch string
+		withFails bool
 	)
 	cmd := &cobra.Command{
 		Use:   "search <query>",
@@ -94,24 +92,9 @@ func newSearchCmd() *cobra.Command {
 				SkillName:         skillName,
 				FilePathSubstring: fileMatch,
 				WithFailures:      withFails,
-				Semantic:          semantic,
-				EmbeddingModel:    embedModel,
 			}
 			if since > 0 {
 				opts.SinceMs = time.Now().Add(-since).UnixMilli()
-			}
-			if semantic {
-				cfg, cfgErr := config.Load()
-				if cfgErr != nil {
-					return cfgErr
-				}
-				llmCfg := LLMConfigFromFile(cfg.LLM)
-				ctx, cancel := context.WithTimeout(cmd.Context(),
-					cfg.Limits.ReflectTimeout.Or(defaultMetaLLMTimeout))
-				defer cancel()
-				return RunSemanticSearch(ctx, s, opts,
-					func() (llm.Embedder, error) { return llm.EmbedderFromConfig(ctx, llmCfg) },
-					cmd.OutOrStdout())
 			}
 			if summarize {
 				cfg, cfgErr := config.Load()
@@ -144,10 +127,6 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&skillName, "skill", "", "filter to sessions that loaded this skill")
 	cmd.Flags().StringVar(&fileMatch, "file", "", "filter to sessions that touched a file matching this substring")
 	cmd.Flags().BoolVar(&withFails, "with-failures", false, "filter to sessions that produced at least one tool_failure event")
-	cmd.Flags().BoolVar(&semantic, "semantic", false,
-		"vector search via stored embeddings (requires `aichronicles embed` to have populated event_embeddings; OpenAI key required)")
-	cmd.Flags().StringVar(&embedModel, "embed-model", "",
-		"with --semantic: embedding model id to query against (default: "+llm.DefaultEmbeddingModel+")")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
@@ -181,14 +160,6 @@ type SearchOptions struct {
 	SkillName         string // sessions that loaded this skill
 	FilePathSubstring string // sessions that touched a file matching this substring
 	WithFailures      bool   // sessions that produced ≥1 tool_failure event
-
-	// Semantic, when true, runs vector search via event_embeddings
-	// instead of FTS5. Cosine similarity over float32 vectors;
-	// requires `aichronicles embed` to have populated rows for the
-	// configured embedding model. EmbeddingModel narrows the candidate
-	// pool — empty falls back to llm.DefaultEmbeddingModel.
-	Semantic       bool
-	EmbeddingModel string
 }
 
 // SearchHitJSON is the JSON shape emitted by `search --format=json`.
@@ -483,132 +454,4 @@ func RunSearchSummary(
 
 	_, err = fmt.Fprintln(out, resp.Text)
 	return err
-}
-
-// RunSemanticSearch embeds the query via the LLM provider's embeddings
-// endpoint, then ranks every stored event_embeddings row by cosine
-// similarity in Go. The candidate pool is narrowed by the same facet
-// filters as RunSearch (session, agent, kind, since), so semantic
-// queries can be combined with "only this project" or "only the last
-// 7 days" without an extra step.
-//
-// Requires the events to have been embedded already — call
-// `aichronicles embed` first. Empty result is presented identically
-// to the FTS path so the caller can swap modes without retraining
-// their pipeline.
-func RunSemanticSearch(
-	ctx context.Context,
-	s *store.Store,
-	opts SearchOptions,
-	newEmbedder func() (llm.Embedder, error),
-	out io.Writer,
-) error {
-	if strings.TrimSpace(opts.Query) == "" {
-		return errors.New("search query must not be empty")
-	}
-	model := opts.EmbeddingModel
-	if model == "" {
-		model = llm.DefaultEmbeddingModel
-	}
-
-	embedder, err := newEmbedder()
-	if err != nil {
-		return err
-	}
-	resp, err := embedder.Embed(ctx, llm.EmbedRequest{
-		Model:  model,
-		Inputs: []string{opts.Query},
-	})
-	if err != nil {
-		return fmt.Errorf("embed query: %w", err)
-	}
-	if len(resp.Vectors) != 1 {
-		return fmt.Errorf("embed query: expected 1 vector, got %d", len(resp.Vectors))
-	}
-	queryVec := resp.Vectors[0]
-
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 20
-	}
-	hits, err := store.SemanticSearch(ctx, s.DB(), store.SemanticSearchOpts{
-		QueryVec:    queryVec,
-		Model:       model,
-		Dim:         len(queryVec),
-		SessionID:   opts.SessionID,
-		SourceAgent: opts.SourceAgent,
-		Kind:        opts.Kind,
-		SinceMs:     opts.SinceMs,
-		TopK:        limit,
-	})
-	if err != nil {
-		return err
-	}
-
-	if opts.Format == FormatJSON {
-		payload := make([]SemanticHitJSON, 0, len(hits))
-		for _, h := range hits {
-			snippet := nullStringValue(h.Content)
-			truncated := false
-			runes := []rune(snippet)
-			if len(runes) > maxSnippetRunes {
-				snippet = string(runes[:maxSnippetRunes])
-				truncated = true
-			}
-			payload = append(payload, SemanticHitJSON{
-				EventID:    h.EventID,
-				SessionID:  h.SessionID,
-				Kind:       h.Kind,
-				Cwd:        nullStringValue(h.Cwd),
-				TsSourceMs: h.TsSourceMs,
-				Score:      h.Score,
-				Snippet:    snippet,
-				Truncated:  truncated,
-			})
-		}
-		return emitJSON(out, payload)
-	}
-
-	if len(hits) == 0 {
-		_, err := fmt.Fprintf(out, "(no semantic hits for %q under model=%s)\n", opts.Query, model)
-		return err
-	}
-
-	var buf bytes.Buffer
-	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "SCORE\tWHEN\tSESSION\tKIND\tCWD\tCONTENT"); err != nil {
-		return err
-	}
-	for _, h := range hits {
-		ts := formatTimeForUser(h.TsSourceMs, time.Now())
-		sess := h.SessionID
-		if len(sess) > 8 {
-			sess = sess[:8]
-		}
-		cwd := nullStringValue(h.Cwd)
-		if cwd == "" {
-			cwd = "-"
-		}
-		_, _ = fmt.Fprintf(tw, "%.3f\t%s\t%s\t%s\t%s\t%s\n",
-			h.Score, ts, sess, h.Kind, cwd, truncateSnippet(nullStringValue(h.Content)))
-	}
-	if err := tw.Flush(); err != nil {
-		return err
-	}
-	_, err = io.Copy(out, &buf)
-	return err
-}
-
-// SemanticHitJSON is the JSON shape emitted by `search --semantic
-// --format=json`. Mirrors SearchHitJSON with the addition of the
-// cosine-similarity score (in [-1, 1]; higher is more similar).
-type SemanticHitJSON struct {
-	EventID    string  `json:"event_id"`
-	SessionID  string  `json:"session_id"`
-	Kind       string  `json:"kind"`
-	Cwd        string  `json:"cwd,omitempty"`
-	TsSourceMs int64   `json:"ts_source_ms"`
-	Score      float32 `json:"score"`
-	Snippet    string  `json:"snippet"`
-	Truncated  bool    `json:"truncated"`
 }
