@@ -589,6 +589,24 @@ header > nav > ul li:has(> .navsearch) {
   color: rgba(255, 255, 255, 0.6);
   font-style: italic;
 }
+/* Per-kind badges use dark coloured text (#1e40af, #047857, …)
+   designed for the page's light bg. Inside the livebanner they
+   become invisible. Re-skin them with the dark-mode-style bright
+   foregrounds — same hue family per kind so colour-coded scanning
+   still works, just lifted to the brightness range that reads on
+   the dark grey-blue livebanner. The page's regular badges (in the
+   events table below) keep their darker text against the white
+   page bg unchanged. */
+.livebanner .badge-user_prompt        { color: #93c5fd; }
+.livebanner .badge-assistant_message  { color: #c4b5fd; }
+.livebanner .badge-tool_use           { color: #6ee7b7; }
+.livebanner .badge-tool_result        { color: #5eead4; }
+.livebanner .badge-tool_failure       { color: #fca5a5; }
+.livebanner .badge-summary            { color: #fff; }
+.livebanner .badge-session_start,
+.livebanner .badge-session_end {
+  color: rgba(255, 255, 255, 0.65);
+}
 .livebanner-list {
   list-style: none;
   margin: 0;
