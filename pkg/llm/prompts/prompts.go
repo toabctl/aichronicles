@@ -65,7 +65,6 @@ const (
 	ToolNameSkillRevision  = "record_skill_revision"
 	ToolNameInduction      = "record_induction"
 	ToolNameChallenge      = "record_challenge"
-	ToolNameWorkflow       = "record_workflow"
 	ToolNameFacts          = "record_facts"
 )
 
@@ -884,24 +883,84 @@ func BuildPropose(in ProposeInputs) (Built, error) {
 	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
 }
 
-// --- single-session induction (online AWM trigger) ---
+// --- single-session induction (unified skill + workflow extraction) ---
 
 // InductionResult is the schema-validated payload of a
-// record_induction tool call. Same shape as ProposalResult so the
-// existing apply path (`propose apply --output=<llm_outputs.id>`)
-// can consume it without translation, but capped at one skill —
-// online induction is "did THIS session contain a single concrete
-// workflow worth saving?" rather than "what patterns recur across
-// many?".
+// record_induction tool call. ONE LLM call extracts BOTH possible
+// reusable artefacts from a settled session:
 //
-// NoSkillFound is the explicit "this session was not worth a
-// skill" verdict — separate from a zero-length Skill array so the
-// CLI can distinguish "model declined" from "model emitted
-// malformed output and we coerced it to empty".
+//   - Skill (Voyager-style): a high-confidence specific reusable
+//     capability the user could materialise as a SKILL.md on disk
+//     via `propose apply`. when_to_use names a concrete trigger
+//     condition; the model is biased to NOT emit one.
+//
+//   - Workflow (AWM-style; Wang et al. 2024, arXiv:2409.07429): an
+//     ABSTRACT procedural recipe — drop concrete URLs/IDs/file
+//     paths, keep the procedure shape — that lives in the database
+//     for retrieval at task-planning time, not on disk.
+//
+// Both fields are optional. The LLM emits zero, one, or both
+// depending on what the session reveals. Most sessions emit
+// neither (one-off bug fixes don't ground reusable artefacts);
+// some emit just a workflow (loose recipe); rare sessions emit
+// just a skill (tight specific capability); occasionally both
+// (specific tactical capability AND general procedure).
+//
+// Replaces the previous (Skill, NoSkillFound) shape and the
+// separate kind=workflow LLM call: one LLM call, two optional
+// outputs, half the per-session induction cost.
 type InductionResult struct {
-	Skill        *ProposedSkill `json:"skill,omitempty"`
-	NoSkillFound bool           `json:"no_skill_found"`
-	Rationale    string         `json:"rationale"`
+	// Skill, if non-nil, is a Voyager-style concrete reusable
+	// capability. Same shape ProposalResult.Skills carries — so
+	// `propose apply --output-id=<llm_outputs.id>` consumes it
+	// without translation.
+	Skill *ProposedSkill `json:"skill,omitempty"`
+
+	// Workflow, if non-nil, is an AWM-style abstract procedural
+	// recipe. Lives only in the LLM-output body — there is no
+	// "apply workflow to disk" path; the value is retrieval at
+	// task-planning time via list_workflows / get_project_context.
+	Workflow *InducedWorkflow `json:"workflow,omitempty"`
+
+	// Rationale is a short (≤200 char) line explaining the
+	// emission decision: which artefacts the model chose to emit
+	// (or none), and why. e.g. "no reusable artefact — one-off
+	// debug session"; "extracted both: deploy-staging skill from
+	// the specific commands, plus an abstract deploy-service
+	// workflow generalising over services".
+	Rationale string `json:"rationale"`
+}
+
+// InducedWorkflow is the workflow-shaped artefact embedded in an
+// InductionResult. Carries the AWM properties (abstract task_shape,
+// {placeholder}-bearing procedure, observable preconditions and
+// success_checks). Evidence is bound to the inducing session.
+type InducedWorkflow struct {
+	// TaskShape is the abstracted task description: ≤120 chars,
+	// no concrete URLs / IDs / file paths. The test: would a
+	// different user with a different project recognise their
+	// task in this string?
+	TaskShape string `json:"task_shape"`
+
+	// Procedure is the ordered sequence of abstract NL actions —
+	// not shell lines. {placeholder} tokens for varying values,
+	// each documented in the action's placeholders[].
+	Procedure []WorkflowStep `json:"procedure"`
+
+	// Preconditions: state assumptions the procedure relies on
+	// before step 1 (e.g. "git working tree clean", "failing
+	// run id is known"). ≤5 entries.
+	Preconditions []string `json:"preconditions"`
+
+	// SuccessChecks: observable signals confirming the procedure
+	// worked (e.g. "kubectl rollout status returns complete").
+	// ≤5 entries.
+	SuccessChecks []string `json:"success_checks"`
+
+	// Evidence is the verbatim quote(s) from the inducing
+	// session that ground the workflow. Same shape as
+	// WorkflowEvidence retained for compatibility.
+	Evidence []WorkflowEvidence `json:"evidence"`
 }
 
 // InduceFromSessionInputs carries everything BuildInduce needs:
@@ -915,31 +974,50 @@ type InduceFromSessionInputs struct {
 
 const inductionMaxTokens = 4096
 
-const inductionSystem = `You inspect ONE coding session that just ended and decide whether it contained a single concrete, reusable workflow worth saving as a Claude Code skill. You MUST call the record_induction tool exactly once.
+const inductionSystem = `You inspect ONE coding session that just ended and decide whether it contained any reusable artefact worth saving. You MUST call the record_induction tool exactly once.
 
-This is online induction — the trigger fires the moment a session ends, so the bar is HIGH. A casual "fixed a bug" session is NOT a skill. A session where the user demonstrably ran a specific multi-step workflow (sequence of shell commands, a recurring file-fixing recipe, a deploy procedure) IS a candidate.
+This is online induction — the trigger fires the moment a session ends, so the bar is HIGH. Most sessions yield nothing reusable. A casual "fixed a typo" session emits no skill, no workflow. The default is to emit BOTH skill AND workflow as null with rationale="no reusable artefact". Only emit a non-null artefact when you can specifically defend it against the rules below.
+
+There are TWO kinds of artefact you can emit:
+
+  * skill — a Voyager-style HIGH-CONFIDENCE SPECIFIC reusable capability that should land as a SKILL.md on disk. The user invokes it explicitly via the Skill tool. Has a concrete trigger condition (when_to_use), a tight scope, and ideally a parameterised steps[] template with {placeholder} tokens.
+
+  * workflow — an AWM-style ABSTRACT PROCEDURAL recipe. Drop concrete URLs / IDs / file paths; keep the procedure shape. Lives only in the database; retrieved as guidance at task-planning time, never installed to disk. Looser confidence than a skill — the right artefact when the procedure is real but doesn't yet warrant becoming an installed capability.
+
+Either, both, or neither may be emitted from one session.
 
 Hard rules:
 
-1. Default to no_skill_found=true. Saving a skill that won't fire again is worse than saving nothing — false positives clutter ~/.claude/skills/ and erode trust in the system. Only set no_skill_found=false when you can name a SPECIFIC trigger condition the user is likely to hit again.
+1. DEFAULT to emitting nothing. Saving an artefact that won't ever fire again is worse than saving nothing — false positives clutter the corpus and erode trust. Only emit when you can name what makes the artefact reusable BEYOND this single session.
 
-2. Evidence comes from this ONE session. Single-session induction is the explicit point — the multi-session minimum the offline propose path enforces does NOT apply here. But the evidence quote MUST be substantive: at least 30 chars, concrete, drawn from the session's summary text or first_prompt. Filler ("go ahead", "/loop", "ok", "next") never grounds an induction; emit no_skill_found=true.
+2. Evidence comes from this ONE session. The multi-session minimum the offline propose path enforces does NOT apply here. But every emitted artefact MUST be grounded in a verbatim quote (≥30 chars for a skill, ≥1 char for a workflow's evidence entries) drawn from the session's summary or first_prompt. Filler ("go ahead", "/loop", "ok", "next") never grounds anything; emit nothing.
 
-3. The skill, when proposed, MUST be a parameterised template (steps[] + placeholders[]) when the underlying actions are observable shell commands. AWM (Agent Workflow Memory) — the abstract pattern is what survives, not the literal commands. Replace the values that vary per task with {placeholder} tokens, kebab-case, and document each in placeholders[] with a real example pulled from this session.
+3. SKILL CRITERIA — emit a skill ONLY when:
+   a. The session shows a concrete, repeatable trigger condition the user would name themselves ("when CI fails on a Go service", "when deploying to staging").
+   b. The actions are tight enough to fit in a SKILL.md scaffold; ≤4-word kebab-case name; when_to_use leads with the trigger.
+   c. No installed skill already covers the same condition (the "Skills installed" stanza is canonical; near-duplicate names OR triggers both disqualify).
+   d. PREFER parameterised steps[] + placeholders[] when the underlying actions are observable shell commands.
+   e. frequency=1, effort ∈ {small,medium,large}.
 
-4. Skip if an installed skill already covers the same trigger condition. The "Skills installed" stanza is canonical; refuse to repropose a near-duplicate. Same name OR same trigger condition both qualify as duplicates.
+4. WORKFLOW CRITERIA — emit a workflow ONLY when:
+   a. The session ran a recognisable PROCEDURE (sequence of high-level actions the same user, or a different user with a similar goal, would benefit from following next time).
+   b. task_shape is ABSTRACTED: "deploy a Go service to staging" (good), NOT "deploy aichronicles to staging" (names the project — bad). The test: would a different user with a different project recognise their task in your task_shape?
+   c. Procedure steps are NL actions, NOT shell lines. Replace varying values with {kebab-case} tokens; document each in the action's placeholders[].
+   d. Preconditions and success_checks are OBSERVABLE (testable, not vibes).
 
-5. Skill names: ≤4 words, kebab-case (matches a directory name under ~/.claude/skills/). when_to_use leads with the trigger condition.
+5. EMIT BOTH when the session reveals a specific tactical capability (skill) AND a generalisable procedure (workflow) that aren't simply two views of the same thing. Most sessions don't qualify for both. If both fields end up describing the same kebab-case action sequence, just emit one — the more specific (skill) if the trigger is tight, otherwise the workflow.
 
-6. frequency=1 is correct for induction (one session of evidence). effort: "small" = an afternoon. "medium" = a few days. "large" = a project.
+6. Outcome cue (Outcome: success_likely / failure_likely / mixed / unknown) is a HEURISTIC. A failure_likely session biases TOWARD emitting nothing UNLESS the session reveals a clear reusable debugging trigger. A success_likely session is more likely to ground a real artefact but does not automatically warrant one. An unknown session almost always emits nothing.
 
-7. Outcome cue (Outcome: success_likely / failure_likely / mixed / unknown) is a HEURISTIC over observable signals. A failure_likely session should bias TOWARD no_skill_found=true UNLESS the session reveals a clear, reusable trigger (e.g. the same root-cause investigation recipe used to recover from the failure — that's a debug skill). A success_likely session is more likely to ground a real workflow but does not automatically warrant one. An unknown session almost always justifies no_skill_found=true (too thin to ground anything).
-
-Rationale is a short (≤200 chars) line explaining the decision either way. On no_skill_found=true: "no concrete reusable workflow — session was a one-off bug fix". On a proposed skill: "extracted the deploy-staging recipe — same shell sequence the user ran twice this session".`
+Rationale (≤200 chars) explains the emission decision. Examples:
+  * "no reusable artefact — session was a one-off bug fix"
+  * "skill only: deploy-staging trigger is concrete; the deploy-service workflow form would be too generic against the existing skill"
+  * "workflow only: recurring debug procedure, but the trigger varies too much per session to qualify as a skill"
+  * "both: deploy-staging skill (specific) + an abstract deploy-service workflow (generalises over services in this project's pattern)"`
 
 const inductionToolSchema = `{
   "type": "object",
-  "required": ["no_skill_found","rationale"],
+  "required": ["rationale"],
   "additionalProperties": false,
   "properties": {
     "skill": {
@@ -1014,7 +1092,59 @@ const inductionToolSchema = `{
         "alternatives_rejected": {"type":"string"}
       }
     },
-    "no_skill_found": {"type":"boolean"},
+    "workflow": {
+      "type":"object",
+      "required":["task_shape","procedure","preconditions","success_checks","evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "task_shape": {"type":"string","minLength":1,"maxLength":120},
+        "procedure": {
+          "type":"array",
+          "minItems":1,
+          "maxItems":12,
+          "items": {
+            "type":"object",
+            "required":["action"],
+            "additionalProperties": false,
+            "properties": {
+              "action": {"type":"string","minLength":1,"maxLength":240},
+              "placeholders": {
+                "type":"array",
+                "minItems":0,
+                "maxItems":6,
+                "items": {
+                  "type":"object",
+                  "required":["token","description"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "token":       {"type":"string","pattern":"^[a-z][a-z0-9-]*$","maxLength":32},
+                    "description": {"type":"string","minLength":1,"maxLength":160},
+                    "example":     {"type":"string","maxLength":160}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "preconditions":  {"type":"array","minItems":0,"maxItems":5,"items":{"type":"string","minLength":1,"maxLength":200}},
+        "success_checks": {"type":"array","minItems":0,"maxItems":5,"items":{"type":"string","minLength":1,"maxLength":200}},
+        "evidence": {
+          "type":"array",
+          "minItems":1,
+          "maxItems":1,
+          "items": {
+            "type":"object",
+            "required":["session_id","quote","what_happened"],
+            "additionalProperties": false,
+            "properties": {
+              "session_id":    {"type":"string","minLength":1},
+              "quote":         {"type":"string","minLength":1,"maxLength":160},
+              "what_happened": {"type":"string","minLength":1,"maxLength":240}
+            }
+          }
+        }
+      }
+    },
     "rationale":      {"type":"string","minLength":1,"maxLength":200}
   }
 }`
@@ -1058,85 +1188,24 @@ func BuildInduce(in InduceFromSessionInputs) (Built, error) {
 	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
 }
 
-// --- single-session workflow induction (AWM — Agent Workflow Memory) ---
+// --- workflow shapes (used by InducedWorkflow inside InductionResult) ---
 
-// WorkflowResult is the schema-validated payload of a record_workflow
-// tool call. AWM's central insight (Wang et al. 2024,
-// arXiv:2409.07429) is procedural ABSTRACTION: drop the concrete
-// values that vary across runs (URLs, ticket IDs, file paths) and
-// keep the procedure shape. The resulting workflow is reusable as a
-// retrieved exemplar at task-planning time without polluting the
-// retrieval index with one-shot specifics.
-//
-// Distinguished from InductionResult/ProposalResult (which produce
-// SKILL.md artefacts the user may apply to disk): a workflow lives
-// only in the database, identified by task_shape, retrieved by
-// embedding similarity to the user's current task at planning time.
-type WorkflowResult struct {
-	// Found is the explicit "this session DID contain a reusable
-	// workflow" signal. False means the session was a one-off and
-	// no abstraction is worth saving — the rationale field
-	// explains why.
-	Found bool `json:"found"`
-
-	// TaskShape is the abstracted task description: ≤120 chars,
-	// no concrete URLs, IDs, or file paths. Examples:
-	//   * "deploy a Go service to staging"  (good — abstracted)
-	//   * "deploy aichronicles to staging"   (bad — names the project)
-	//   * "investigate failing CI run"        (good)
-	//   * "fix CI run #4825 in repo X"        (bad — references a
-	//                                          specific run)
-	TaskShape string `json:"task_shape"`
-
-	// Procedure is the ordered sequence of abstract actions that
-	// accomplish the task_shape. Each step is a NL action — not a
-	// shell line; not a code snippet. Use {placeholder} tokens
-	// where a value varies per task (matches the same kebab-case
-	// convention as ProposedSkillScript.Steps). Cap at 12.
-	Procedure []WorkflowStep `json:"procedure"`
-
-	// Preconditions are state assumptions the procedure relies on
-	// — what must be true BEFORE step 1 to make the procedure
-	// applicable. e.g. "git working tree is clean", "the failing
-	// CI run id is known". Cap at 5.
-	Preconditions []string `json:"preconditions"`
-
-	// SuccessChecks are observable signals that confirm the
-	// procedure worked. e.g. "kubectl rollout status returns
-	// rollout complete", "the failing test now passes locally".
-	// Cap at 5.
-	SuccessChecks []string `json:"success_checks"`
-
-	// Evidence is the session(s) that grounded this workflow.
-	// Same shape as ProposalEvidence — verbatim quote, ≤160
-	// chars, drawn from the session's text. For online induction
-	// this is always one entry (the session being induced).
-	Evidence []WorkflowEvidence `json:"evidence"`
-
-	// Rationale is a short (≤200 char) explanation of the verdict.
-	// On Found=false: "session was a one-off bug fix; no
-	// reusable procedure". On Found=true: "extracted the deploy
-	// recipe — same git-tag/kubectl-rollout sequence the user
-	// repeated three times this session".
-	Rationale string `json:"rationale"`
-}
-
-// WorkflowStep is one entry in WorkflowResult.Procedure.
+// WorkflowStep is one entry in InducedWorkflow.Procedure. NL action,
+// not a shell line — the abstraction is the AWM property.
 type WorkflowStep struct {
-	// Action is the abstract step description. Should read as a
+	// Action is the abstract step description. Reads as a
 	// natural-language imperative ("Tag the release commit with
-	// {version}", "Run the staging integration suite"). NOT a
-	// shell line — the abstraction is the point.
+	// {version}", "Run the staging integration suite").
 	Action string `json:"action"`
 
-	// Placeholders, when non-empty, lists the {token} placeholders
-	// that appear in Action with one-line descriptions and an
-	// example value drawn from the cited session.
+	// Placeholders documents the {brace-tokens} that appear in
+	// Action — one-line description plus an example value drawn
+	// from the cited session.
 	Placeholders []WorkflowPlaceholder `json:"placeholders,omitempty"`
 }
 
 // WorkflowPlaceholder documents one {brace-token} from the action
-// text. Same convention as ProposedScriptPlaceholder for
+// text. Same kebab-case convention as ProposedScriptPlaceholder for
 // consistency across the two surfaces.
 type WorkflowPlaceholder struct {
 	Token       string `json:"token"`
@@ -1150,125 +1219,6 @@ type WorkflowEvidence struct {
 	SessionID    string `json:"session_id"`
 	Quote        string `json:"quote"`
 	WhatHappened string `json:"what_happened"`
-}
-
-// WorkflowFromSessionInputs carries everything BuildWorkflow needs.
-// Mirrors InduceFromSessionInputs deliberately — keeping the
-// shapes parallel makes the CLI plumbing straightforward.
-type WorkflowFromSessionInputs struct {
-	Digest SessionDigest
-}
-
-const workflowMaxTokens = 4096
-
-const workflowSystem = `You inspect ONE coding session and decide whether it contained a reusable WORKFLOW worth saving in the user's procedural memory. You MUST call the record_workflow tool exactly once.
-
-This is AWM (Agent Workflow Memory) — the artefact you produce is a deliberately ABSTRACT procedure, not a script and not a skill. The point is reusability across DIFFERENT future tasks of the same shape. Do not save concrete URLs, ticket IDs, file paths, or branch names; replace them with {placeholder} tokens.
-
-Hard rules:
-
-1. Default to found=false. Sessions where the user just answered a question or fixed one specific bug are NOT workflows. A workflow exists when the session ran a recognisable PROCEDURE — a sequence of steps the same user, or a different user with a similar goal, would benefit from following next time.
-
-2. task_shape MUST be abstracted. "Deploy a Go service to staging" — yes. "Deploy aichronicles to staging" — no, names the project. The test: would a different user with a different project recognise their task in your task_shape?
-
-3. Procedure steps are NL actions, not shell lines. "Tag the release commit with {version}", "Run the staging integration suite". Replace varying values with {kebab-case} tokens and document each in the action's placeholders[].
-
-4. Preconditions and success_checks are observable: "the failing test passes locally", "the kubectl rollout completes". Avoid vague preconditions ("you have time", "you're focused") — those don't ground the workflow.
-
-5. Evidence: ONE entry, drawn from this session, ≤160 char verbatim quote that anchors the procedure in real text the user can grep for.
-
-6. Rationale ≤200 chars. On found=false explain why ("one-off bug fix; no recurring procedure"). On found=true name the procedure ("git-tag → kubectl-rollout → smoke-test sequence the user ran three times").
-
-Skill vs workflow: skills are HIGH-CONFIDENCE reusable capabilities the user keeps as SKILL.md on disk. Workflows are LOOSER procedural exemplars stored in the database for retrieval at task-planning time. If a session warrants a SKILL, prefer that. If the procedure is real but doesn't yet justify a skill (single-session evidence, lower-confidence pattern), a workflow is the right artefact.`
-
-const workflowToolSchema = `{
-  "type": "object",
-  "required": ["found", "rationale"],
-  "additionalProperties": false,
-  "properties": {
-    "found":      {"type": "boolean"},
-    "task_shape": {"type": "string", "maxLength": 120},
-    "procedure": {
-      "type": "array",
-      "minItems": 0,
-      "maxItems": 12,
-      "items": {
-        "type": "object",
-        "required": ["action"],
-        "additionalProperties": false,
-        "properties": {
-          "action": {"type": "string", "minLength": 1, "maxLength": 240},
-          "placeholders": {
-            "type": "array",
-            "minItems": 0,
-            "maxItems": 6,
-            "items": {
-              "type": "object",
-              "required": ["token", "description"],
-              "additionalProperties": false,
-              "properties": {
-                "token":       {"type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 32},
-                "description": {"type": "string", "minLength": 1, "maxLength": 160},
-                "example":     {"type": "string", "maxLength": 160}
-              }
-            }
-          }
-        }
-      }
-    },
-    "preconditions":  {"type": "array", "minItems": 0, "maxItems": 5, "items": {"type": "string", "minLength": 1, "maxLength": 200}},
-    "success_checks": {"type": "array", "minItems": 0, "maxItems": 5, "items": {"type": "string", "minLength": 1, "maxLength": 200}},
-    "evidence": {
-      "type": "array",
-      "minItems": 0,
-      "maxItems": 1,
-      "items": {
-        "type": "object",
-        "required": ["session_id", "quote", "what_happened"],
-        "additionalProperties": false,
-        "properties": {
-          "session_id":    {"type": "string", "minLength": 1},
-          "quote":         {"type": "string", "minLength": 1, "maxLength": 160},
-          "what_happened": {"type": "string", "minLength": 1, "maxLength": 240}
-        }
-      }
-    },
-    "rationale": {"type": "string", "minLength": 1, "maxLength": 200}
-  }
-}`
-
-const workflowTemplate = `One session. Decide whether it contained a reusable WORKFLOW (abstract procedure), not a one-off fix.
-
-Session follows.
-
----
-%s
----
-`
-
-// BuildWorkflow composes the single-session workflow-induction
-// prompt. Same single-session shape as BuildInduce, but the system
-// prompt and tool schema target ABSTRACT procedural recipes (AWM)
-// rather than skill-shaped artefacts.
-func BuildWorkflow(in WorkflowFromSessionInputs) (Built, error) {
-	if in.Digest.ID == "" {
-		return Built{}, fmt.Errorf("BuildWorkflow: digest.ID required")
-	}
-	pats := patternSet{}
-	body := renderDigests([]SessionDigest{in.Digest}, pats)
-	userMsg := fmt.Sprintf(workflowTemplate, body)
-	req := llm.Request{
-		System:    workflowSystem,
-		Messages:  []llm.Message{{Role: llm.RoleUser, Content: userMsg}},
-		MaxTokens: workflowMaxTokens,
-		Tools: []llm.Tool{{
-			Name:        ToolNameWorkflow,
-			Description: "Record an abstract procedural workflow induced from one session (AWM-style).",
-			InputSchema: json.RawMessage(workflowToolSchema),
-		}},
-		ForceTool: ToolNameWorkflow,
-	}
-	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
 }
 
 // --- single-session SEMANTIC fact induction ---

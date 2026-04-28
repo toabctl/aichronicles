@@ -99,41 +99,57 @@ func TestRegisterAichroniclesTools_InstallsAllFive(t *testing.T) {
 	}
 }
 
-// seedWorkflowOutput inserts one llm_outputs row with kind=workflow
-// carrying the supplied parsed body. Returns the row id.
+// seedWorkflowOutput inserts one llm_outputs row of kind=induction
+// carrying the supplied workflow shape inside body.workflow. Round 8
+// merged workflow extraction into the unified record_induction call,
+// so workflows now ride along inside induction rows; tests that
+// previously seeded kind=workflow rows seed kind=induction with a
+// non-null workflow field.
+//
+// `found` is the legacy-named flag preserved for test readability;
+// when true the induction body carries body.workflow; when false it
+// carries body.workflow=null and body.rationale=<rationale>.
 func seedWorkflowOutput(t *testing.T, st *store.Store, sessionID, taskShape, rationale string, found bool) int64 {
 	t.Helper()
-	body, err := json.Marshal(map[string]any{
-		"found":      found,
-		"task_shape": taskShape,
-		"procedure": []any{
-			map[string]any{"action": "Do step one with {arg}"},
-			map[string]any{"action": "Do step two"},
-		},
-		"preconditions":  []string{"git working tree clean"},
-		"success_checks": []string{"all tests pass"},
-		"evidence":       []any{},
-		"rationale":      rationale,
-	})
+	bodyMap := map[string]any{
+		"rationale": rationale,
+	}
+	if found {
+		bodyMap["workflow"] = map[string]any{
+			"task_shape": taskShape,
+			"procedure": []any{
+				map[string]any{"action": "Do step one with {arg}"},
+				map[string]any{"action": "Do step two"},
+			},
+			"preconditions":  []string{"git working tree clean"},
+			"success_checks": []string{"all tests pass"},
+			"evidence": []any{
+				map[string]any{
+					"session_id":    sessionID,
+					"quote":         "x",
+					"what_happened": "y",
+				},
+			},
+		}
+	}
+	body, err := json.Marshal(bodyMap)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	res, err := st.DB().Exec(
+	if _, err := st.DB().Exec(
 		`INSERT INTO sessions(id, source_agent, source_session_id) VALUES (?, 'claude-code', ?)
 		 ON CONFLICT(id) DO NOTHING`,
 		sessionID, "src-"+sessionID,
-	)
-	if err != nil {
+	); err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
-	_ = res
 	r, err := st.DB().Exec(
 		`INSERT INTO llm_outputs(session_id, kind, model, prompt_hash, body, created_at_ms)
-		 VALUES (?, 'workflow', 'fake-model', ?, ?, ?)`,
+		 VALUES (?, 'induction', 'fake-model', ?, ?, ?)`,
 		sessionID, "h-"+t.Name()+"-"+sessionID, string(body), time.Now().UnixMilli(),
 	)
 	if err != nil {
-		t.Fatalf("insert workflow: %v", err)
+		t.Fatalf("insert induction: %v", err)
 	}
 	id, err := r.LastInsertId()
 	if err != nil {

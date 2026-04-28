@@ -61,31 +61,31 @@ func newInductionCmd() *cobra.Command {
 
 func newInductionSweepCmd() *cobra.Command {
 	var (
-		idle         time.Duration
-		minEvents    int
-		limit        int
-		model        string
-		dbPath       string
-		skipFacts    bool
-		skipWorkflow bool
+		idle      time.Duration
+		minEvents int
+		limit     int
+		model     string
+		dbPath    string
+		skipFacts bool
 	)
 	cmd := &cobra.Command{
 		Use:   "sweep",
 		Short: "Walk recently-ended sessions and induce on each",
 		Long: "Selects sessions that (a) have an ended_at_ms older than\n" +
 			"--idle, (b) have at least --min-events recorded events,\n" +
-			"and (c) haven't been induced before, then runs three\n" +
-			"single-session induction passes on each: skill induction,\n" +
-			"semantic-fact induction, and workflow induction.\n" +
-			"Idempotent at all three layers — re-running the sweep\n" +
-			"skips sessions whose LLM rows already exist.\n\n" +
+			"and (c) haven't been induced before, then runs two\n" +
+			"single-session induction passes on each: the unified\n" +
+			"induction call (extracts skill AND/OR abstract workflow\n" +
+			"from one prompt) and a separate semantic-fact induction.\n" +
+			"Idempotent — re-running skips sessions whose LLM rows\n" +
+			"already exist.\n\n" +
 			"Designed to be triggered from a systemd timer / cron job\n" +
 			"or by the daemon's resident sweeper. The CLI prints a\n" +
 			"per-session line so the operator can tell which session\n" +
-			"hit a real skill vs no_skill_found vs error.\n\n" +
-			"Pass --skip-facts / --skip-workflow to suppress those\n" +
-			"layers and run only skill induction (the original\n" +
-			"behaviour). Useful for cost-bounded cron schedules.\n\n" +
+			"yielded a skill, a workflow, both, or nothing.\n\n" +
+			"Pass --skip-facts to suppress the facts induction call,\n" +
+			"halving per-candidate spend (useful for cost-bounded\n" +
+			"cron schedules).\n\n" +
 			"Requires " + llm.APIKeyEnv + ".",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			s, err := openStore(dbPath)
@@ -106,12 +106,11 @@ func newInductionSweepCmd() *cobra.Command {
 			return RunInductionSweep(ctx, s,
 				func() (llm.Client, error) { return llm.FromConfig(ctx, llmCfg) },
 				InductionSweepOptions{
-					Idle:         idle,
-					MinEvents:    minEvents,
-					Limit:        limit,
-					Model:        model,
-					SkipFacts:    skipFacts,
-					SkipWorkflow: skipWorkflow,
+					Idle:      idle,
+					MinEvents: minEvents,
+					Limit:     limit,
+					Model:     model,
+					SkipFacts: skipFacts,
 				}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -125,8 +124,6 @@ func newInductionSweepCmd() *cobra.Command {
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	cmd.Flags().BoolVar(&skipFacts, "skip-facts", false,
 		"skip the per-candidate semantic-facts induction (saves one LLM call per candidate)")
-	cmd.Flags().BoolVar(&skipWorkflow, "skip-workflow", false,
-		"skip the per-candidate workflow induction (saves one LLM call per candidate)")
 	return cmd
 }
 
@@ -232,15 +229,12 @@ type InductionSweepOptions struct {
 
 	// SkipFacts, when true, suppresses the per-candidate
 	// facts-induction LLM call that the sweep otherwise fires
-	// alongside the skill-induction call. Default behaviour
-	// (SkipFacts=false) is "auto-extract everything from a settled
-	// session" — induction + facts + workflow — so the corpus
-	// grows without manual `aichronicles facts induce` runs.
+	// alongside the (skill+workflow merged) induction call.
+	// Default (SkipFacts=false) is "auto-extract every memory
+	// type from a settled session" — 2 LLM calls per candidate.
+	// Set true to halve the per-tick spend at the cost of an
+	// empty semantic-facts table.
 	SkipFacts bool
-
-	// SkipWorkflow, when true, suppresses the per-candidate
-	// workflow-induction LLM call. Same shape as SkipFacts.
-	SkipWorkflow bool
 }
 
 // RunInductionSweep walks idle sessions and runs RunInductionForSession
@@ -302,11 +296,11 @@ func RunInductionSweep(
 				"  ✗ %s: %v\n", c.ID[:8], err)
 		}
 
-		// Auto-extract the other two memory types from the same
-		// candidate when not opted out. Each call is cache-
-		// idempotent on (session_id, prompt-hash), so re-runs are
-		// free at the LLM layer. Errors are logged but don't abort
-		// the candidate loop — the next tick retries.
+		// Auto-extract semantic facts from the same candidate when
+		// not opted out. Workflow extraction happens INLINE inside
+		// RunInductionForSession (Round 8: skill + workflow share
+		// one LLM call), so there's no separate workflow path here.
+		// Facts is the one auxiliary call that remains.
 		if !opts.SkipFacts {
 			if _, ferr := RunFactsForSession(ctx, s, newClient, FactsRunOptions{
 				SessionID: c.ID,
@@ -316,17 +310,6 @@ func RunInductionSweep(
 					"session_id", c.ID, "err", ferr)
 				_, _ = fmt.Fprintf(errOut,
 					"  ✗ facts %s: %v\n", c.ID[:8], ferr)
-			}
-		}
-		if !opts.SkipWorkflow {
-			if _, werr := RunWorkflowForSession(ctx, s, newClient, WorkflowRunOptions{
-				SessionID: c.ID,
-				Model:     opts.Model,
-			}, io.Discard); werr != nil {
-				slog.Warn("induction sweep: workflow failed",
-					"session_id", c.ID, "err", werr)
-				_, _ = fmt.Fprintf(errOut,
-					"  ✗ workflow %s: %v\n", c.ID[:8], werr)
 			}
 		}
 	}
@@ -493,26 +476,40 @@ func RunInductionForSession(
 }
 
 // renderInductionResult writes a one-screen summary of the
-// induction outcome — distinct paths for "no skill found" vs a
-// proposed skill (where we surface name + when_to_use + an apply
-// hint pointing at `propose apply`).
+// induction outcome. Three branches: nothing emitted (most
+// common), a skill emitted, a workflow emitted, or both. The
+// skill / workflow paths are independent — both can fire on the
+// same session when the LLM judges both artefacts grounded.
 func renderInductionResult(out io.Writer, sessionID string, r *prompts.InductionResult) {
-	if r.NoSkillFound || r.Skill == nil {
-		_, _ = fmt.Fprintf(out, "induction: ✓ %s — no skill\n", sessionID[:8])
+	short := sessionID
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	if r.Skill == nil && r.Workflow == nil {
+		_, _ = fmt.Fprintf(out, "induction: ✓ %s — nothing reusable\n", short)
 		if r.Rationale != "" {
 			_, _ = fmt.Fprintf(out, "  rationale: %s\n", r.Rationale)
 		}
 		return
 	}
-	sk := r.Skill
-	_, _ = fmt.Fprintf(out, "induction: ✓ %s — proposed skill %q\n", sessionID[:8], sk.Name)
-	if sk.WhenToUse != "" {
-		_, _ = fmt.Fprintf(out, "  when_to_use: %s\n", sk.WhenToUse)
+	if r.Skill != nil {
+		sk := r.Skill
+		_, _ = fmt.Fprintf(out, "induction: ✓ %s — skill %q\n", short, sk.Name)
+		if sk.WhenToUse != "" {
+			_, _ = fmt.Fprintf(out, "  when_to_use: %s\n", sk.WhenToUse)
+		}
+		_, _ = fmt.Fprintf(out, "  apply: aichronicles propose apply --skill %s --output-id <id>\n", sk.Name)
+	}
+	if r.Workflow != nil {
+		wf := r.Workflow
+		_, _ = fmt.Fprintf(out, "induction: ✓ %s — workflow %q\n", short, wf.TaskShape)
+		for i, step := range wf.Procedure {
+			_, _ = fmt.Fprintf(out, "    %d. %s\n", i+1, step.Action)
+		}
 	}
 	if r.Rationale != "" {
 		_, _ = fmt.Fprintf(out, "  rationale: %s\n", r.Rationale)
 	}
-	_, _ = fmt.Fprintf(out, "  apply: aichronicles propose apply --skill %s --output <id>\n", sk.Name)
 }
 
 // renderInductionList renders the induction history — one row per
@@ -521,7 +518,7 @@ func renderInductionResult(out io.Writer, sessionID string, r *prompts.Induction
 func renderInductionList(out io.Writer, rows []store.LLMOutput, format OutputFormat) error {
 	if format == FormatJSON {
 		// Round-trip the raw rows so a JSON consumer gets the full
-		// body and can branch on no_skill_found themselves.
+		// body and can branch on the skill/workflow fields themselves.
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
 		return enc.Encode(rows)
@@ -537,14 +534,7 @@ func renderInductionList(out io.Writer, rows []store.LLMOutput, format OutputFor
 		var result prompts.InductionResult
 		outcome := "(unparseable body)"
 		if jerr := json.Unmarshal([]byte(r.Body), &result); jerr == nil {
-			if result.NoSkillFound || result.Skill == nil {
-				outcome = "no skill — " + result.Rationale
-			} else {
-				outcome = "skill: " + result.Skill.Name
-				if result.Skill.WhenToUse != "" {
-					outcome += " — " + truncateForList(result.Skill.WhenToUse, 60)
-				}
-			}
+			outcome = formatInductionOutcome(&result)
 		}
 		sessShort := "(none)"
 		if r.SessionID.Valid && len(r.SessionID.String) >= 8 {
@@ -555,6 +545,28 @@ func renderInductionList(out io.Writer, rows []store.LLMOutput, format OutputFor
 	}
 	_, err := io.WriteString(out, b.String())
 	return err
+}
+
+// formatInductionOutcome renders one cell for the induction-list
+// table. Three independent shapes (skill / workflow / both / neither)
+// each get their own short string.
+func formatInductionOutcome(r *prompts.InductionResult) string {
+	if r.Skill == nil && r.Workflow == nil {
+		return "nothing — " + r.Rationale
+	}
+	parts := []string{}
+	if r.Skill != nil {
+		s := "skill: " + r.Skill.Name
+		if r.Skill.WhenToUse != "" {
+			s += " — " + truncateForList(r.Skill.WhenToUse, 50)
+		}
+		parts = append(parts, s)
+	}
+	if r.Workflow != nil {
+		w := "workflow: " + truncateForList(r.Workflow.TaskShape, 50)
+		parts = append(parts, w)
+	}
+	return strings.Join(parts, "; ")
 }
 
 // truncateForList trims `s` to fit a list cell. Suffix with `…`

@@ -50,18 +50,6 @@ const (
 	// distinguishes "skills surfaced from past patterns" from
 	// "challenges I should tackle next".
 	LLMKindChallenge LLMOutputKind = "challenge"
-	// LLMKindWorkflow is the cached output of single-session
-	// workflow induction (AWM — Agent Workflow Memory; Wang et al.
-	// 2024, arXiv:2409.07429). Distinguished from LLMKindInduction
-	// (which produces SKILL-shaped artefacts that the user may apply
-	// to disk via `propose apply`): a workflow is a deliberately
-	// ABSTRACT procedural recipe — drop concrete URLs/IDs/file paths,
-	// keep the procedure shape — that lives in the database for
-	// retrieval at task-planning time, not on disk as a skill.
-	//
-	// One row per (session_id, prompt-hash) so re-running on the
-	// same session is free.
-	LLMKindWorkflow LLMOutputKind = "workflow"
 	// LLMKindFacts is the cached output of single-session SEMANTIC
 	// fact induction. The LLM extracts typed (subject, predicate,
 	// object) triples from the session — project-level facts like

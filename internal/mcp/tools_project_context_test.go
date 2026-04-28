@@ -106,7 +106,7 @@ func TestGetProjectContext_EmptyProjectShowsAllSectionsWithEmptyStateMessages(t 
 		"first session in this cwd",
 		"wrapped up cleanly",
 		"facts induce --session",
-		"workflow induce --session",
+		"induction sweep", // workflow + skill share this hint after the Round 8 merge
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing empty-state hint %q\n--- body ---\n%s", want, body)
@@ -160,25 +160,27 @@ func TestGetProjectContext_PopulatedProjectRendersEverySection(t *testing.T) {
 	}
 
 	// Seed a found workflow (project-agnostic — surfaced regardless
-	// of cwd).
+	// of cwd). After Round 8 workflows live inside kind=induction
+	// rows in body.workflow, not in their own kind.
 	wfBody, _ := json.Marshal(map[string]any{
-		"found":      true,
-		"task_shape": "deploy a backend service to staging",
-		"procedure": []map[string]any{
-			{"action": "Tag the release commit with {version}"},
-			{"action": "Run kubectl rollout for {service-name}"},
+		"workflow": map[string]any{
+			"task_shape": "deploy a backend service to staging",
+			"procedure": []map[string]any{
+				{"action": "Tag the release commit with {version}"},
+				{"action": "Run kubectl rollout for {service-name}"},
+			},
+			"preconditions":  []string{},
+			"success_checks": []string{},
+			"evidence":       []any{},
 		},
-		"preconditions":  []string{},
-		"success_checks": []string{},
-		"evidence":       []any{},
-		"rationale":      "x",
+		"rationale": "extracted abstract deploy procedure",
 	})
 	if _, err := st.DB().Exec(
 		`INSERT INTO llm_outputs(kind, model, prompt_hash, body, created_at_ms)
-		 VALUES ('workflow', 'fake-model', ?, ?, ?)`,
-		"h-wf-"+t.Name(), string(wfBody), time.Now().UnixMilli(),
+		 VALUES ('induction', 'fake-model', ?, ?, ?)`,
+		"h-ind-"+t.Name(), string(wfBody), time.Now().UnixMilli(),
 	); err != nil {
-		t.Fatalf("seed workflow: %v", err)
+		t.Fatalf("seed induction-with-workflow: %v", err)
 	}
 
 	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
@@ -247,32 +249,40 @@ func TestGetProjectContext_FiltersWorkflowsToFoundOnly(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 
-	// Two workflow rows: one found, one not. Only the found one
-	// should render in the workflows section.
-	for _, w := range []struct {
-		name      string
-		found     bool
-		shape     string
-		rationale string
-	}{
-		{"yes", true, "ship a feature", "x"},
-		{"no", false, "", "session was a one-off"},
-	} {
+	// Two induction rows: one carries a workflow inline, one
+	// emits no workflow (Round 8: workflows live inside kind=induction
+	// rows in body.workflow). Only the with-workflow row should
+	// render in the workflows section; the no-workflow row's
+	// rationale must NOT leak.
+	{
 		body, _ := json.Marshal(map[string]any{
-			"found":          w.found,
-			"task_shape":     w.shape,
-			"procedure":      []any{},
-			"preconditions":  []string{},
-			"success_checks": []string{},
-			"evidence":       []any{},
-			"rationale":      w.rationale,
+			"workflow": map[string]any{
+				"task_shape":     "ship a feature",
+				"procedure":      []any{map[string]any{"action": "do it"}},
+				"preconditions":  []string{},
+				"success_checks": []string{},
+				"evidence":       []any{},
+			},
+			"rationale": "extracted",
 		})
 		if _, err := st.DB().Exec(
 			`INSERT INTO llm_outputs(kind, model, prompt_hash, body, created_at_ms)
-			 VALUES ('workflow', 'fake-model', ?, ?, ?)`,
-			"h-wf-"+w.name, string(body), time.Now().UnixMilli(),
+			 VALUES ('induction', 'fake-model', ?, ?, ?)`,
+			"h-ind-yes-"+t.Name(), string(body), time.Now().UnixMilli(),
 		); err != nil {
-			t.Fatalf("seed %s: %v", w.name, err)
+			t.Fatalf("seed yes: %v", err)
+		}
+	}
+	{
+		body, _ := json.Marshal(map[string]any{
+			"rationale": "session was a one-off",
+		})
+		if _, err := st.DB().Exec(
+			`INSERT INTO llm_outputs(kind, model, prompt_hash, body, created_at_ms)
+			 VALUES ('induction', 'fake-model', ?, ?, ?)`,
+			"h-ind-no-"+t.Name(), string(body), time.Now().UnixMilli(),
+		); err != nil {
+			t.Fatalf("seed no: %v", err)
 		}
 	}
 
@@ -281,9 +291,9 @@ func TestGetProjectContext_FiltersWorkflowsToFoundOnly(t *testing.T) {
 	res := callTool(t, srv, "get_project_context", `{"cwd":"/some/cwd"}`)
 	out := res.Content[0].Text
 	if !strings.Contains(out, "ship a feature") {
-		t.Errorf("found workflow missing:\n%s", out)
+		t.Errorf("workflow-bearing induction row missing:\n%s", out)
 	}
 	if strings.Contains(out, "session was a one-off") {
-		t.Errorf("found=false workflow rationale leaked into context:\n%s", out)
+		t.Errorf("no-workflow induction row's rationale leaked into context:\n%s", out)
 	}
 }

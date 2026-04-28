@@ -139,8 +139,9 @@ func RegisterAichroniclesTools(s *Server, st *store.Store) {
 			"Distinct from skills (which are SKILL.md artefacts on disk applied via the Skill " +
 			"tool); workflows live only in the database as retrievable exemplars. " +
 			"Pass `task_shape_contains` to narrow by substring (case-insensitive). Empty result " +
-			"means no workflow has been induced yet — try `aichronicles workflow induce --session " +
-			"<id>` on a relevant past session first.",
+			"means no workflow has been induced yet — workflows are emitted by the unified " +
+			"`aichronicles induction sweep` (or its daemon-resident equivalent) alongside " +
+			"skill induction.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -579,9 +580,12 @@ func getProjectContextHandler(st *store.Store) ToolHandler {
 		// Section 4: Recent workflows. Workflows are project-
 		// agnostic by design (the abstraction is the point) — show
 		// the most recent N as task-shape candidates the agent can
-		// scan for relevance to its current task.
+		// scan for relevance to its current task. Round 8: workflows
+		// live inside kind=induction rows (in body.workflow), not in
+		// their own kind — pull induction rows and let
+		// renderWorkflowsSection filter for those with a workflow.
 		wfs, err := store.LoadLLMOutputs(ctx, st.DB(), store.LLMOutputFilter{
-			Kind:  store.LLMKindWorkflow,
+			Kind:  store.LLMKindInduction,
 			Limit: req.MaxPerSection * 3,
 		})
 		if err != nil {
@@ -671,9 +675,11 @@ func renderFactsSection(b *strings.Builder, facts []store.SemanticFact) {
 	}
 }
 
-// renderWorkflowsSection writes recent found-workflow rows up to
-// limit. Filters out found=false rows (no-workflow verdicts) so the
-// section stays focused on actionable recipes.
+// renderWorkflowsSection writes the workflows-extracted-so-far list,
+// drawn from kind=induction llm_outputs rows whose body has a
+// non-null `workflow` field. (After Round 8, workflows are emitted
+// inline by the unified record_induction tool — there is no
+// separate kind=workflow row anymore.)
 func renderWorkflowsSection(b *strings.Builder, rows []store.LLMOutput, limit int) {
 	fmt.Fprintf(b, "\n## Recent workflows (project-agnostic — scan task_shape for relevance)\n")
 	rendered := 0
@@ -681,13 +687,14 @@ func renderWorkflowsSection(b *strings.Builder, rows []store.LLMOutput, limit in
 		if rendered >= limit {
 			break
 		}
-		var w prompts.WorkflowResult
-		if err := json.Unmarshal([]byte(r.Body), &w); err != nil {
+		var ind prompts.InductionResult
+		if err := json.Unmarshal([]byte(r.Body), &ind); err != nil {
 			continue
 		}
-		if !w.Found || w.TaskShape == "" {
+		if ind.Workflow == nil || ind.Workflow.TaskShape == "" {
 			continue
 		}
+		w := ind.Workflow
 		fmt.Fprintf(b, "- %s\n", w.TaskShape)
 		// One-line procedure preview so the agent can decide
 		// without fetching the full workflow.
@@ -707,7 +714,7 @@ func renderWorkflowsSection(b *strings.Builder, rows []store.LLMOutput, limit in
 		rendered++
 	}
 	if rendered == 0 {
-		fmt.Fprintln(b, "(none — try `aichronicles workflow induce --session <id>` on a past session)")
+		fmt.Fprintln(b, "(none — try `aichronicles induction sweep` to populate the workflow corpus)")
 	}
 }
 
@@ -826,13 +833,15 @@ func listWorkflowsHandler(st *store.Store) ToolHandler {
 			req.Limit = 10
 		}
 
-		// Pull more rows than the cap to leave room for the
-		// post-load Found / task_shape_contains filter — without
-		// over-fetching, a strict filter could empty the result
-		// even when matching rows exist further back. 5x leaves
-		// margin without unbounded scan.
+		// After Round 8 workflows are emitted by the unified
+		// record_induction call alongside any skill — they live
+		// inside kind=induction llm_outputs rows in body.workflow,
+		// not in their own kind=workflow rows. Pull more rows than
+		// the cap because most induction rows have no workflow
+		// (sessions that yielded nothing or only a skill); 5x
+		// gives the post-load filter room.
 		rows, err := store.LoadLLMOutputs(ctx, st.DB(), store.LLMOutputFilter{
-			Kind:  store.LLMKindWorkflow,
+			Kind:  store.LLMKindInduction,
 			Limit: req.Limit * 5,
 		})
 		if err != nil {
@@ -841,28 +850,39 @@ func listWorkflowsHandler(st *store.Store) ToolHandler {
 
 		needle := strings.ToLower(strings.TrimSpace(req.TaskShapeContains))
 		type entry struct {
-			row   store.LLMOutput
-			parse prompts.WorkflowResult
+			row store.LLMOutput
+			ind prompts.InductionResult
 		}
 		var keep []entry
 		for _, r := range rows {
-			var w prompts.WorkflowResult
-			if jerr := json.Unmarshal([]byte(r.Body), &w); jerr != nil {
+			var ind prompts.InductionResult
+			if jerr := json.Unmarshal([]byte(r.Body), &ind); jerr != nil {
 				continue
 			}
-			if !w.Found && !req.IncludeNotFound {
+			// IncludeNotFound surfaces the "no workflow" verdicts —
+			// induction rows where the model emitted no workflow.
+			// Default omits them since the typical caller wants
+			// actionable workflow recipes.
+			if ind.Workflow == nil {
+				if !req.IncludeNotFound {
+					continue
+				}
+				keep = append(keep, entry{row: r, ind: ind})
+				if len(keep) >= req.Limit {
+					break
+				}
 				continue
 			}
-			if needle != "" && !strings.Contains(strings.ToLower(w.TaskShape), needle) {
+			if needle != "" && !strings.Contains(strings.ToLower(ind.Workflow.TaskShape), needle) {
 				continue
 			}
-			keep = append(keep, entry{row: r, parse: w})
+			keep = append(keep, entry{row: r, ind: ind})
 			if len(keep) >= req.Limit {
 				break
 			}
 		}
 		if len(keep) == 0 {
-			return TextResult("(no workflows yet — try `aichronicles workflow induce --session <id>` on a relevant past session)"), nil
+			return TextResult("(no workflows yet — try `aichronicles induction sweep` to populate the workflow corpus)"), nil
 		}
 
 		var b strings.Builder
@@ -872,19 +892,20 @@ func listWorkflowsHandler(st *store.Store) ToolHandler {
 				sessShort = e.row.SessionID.String[:8]
 			}
 			when := formatTS(e.row.CreatedAtMs)
-			if !e.parse.Found {
+			if e.ind.Workflow == nil {
 				fmt.Fprintf(&b, "%s\t%s\t(no workflow — %s)\n",
-					sessShort, when, e.parse.Rationale)
+					sessShort, when, e.ind.Rationale)
 				continue
 			}
+			w := e.ind.Workflow
 			fmt.Fprintf(&b, "%s\t%s\t%s\n",
-				sessShort, when, e.parse.TaskShape)
-			for i, step := range e.parse.Procedure {
+				sessShort, when, w.TaskShape)
+			for i, step := range w.Procedure {
 				fmt.Fprintf(&b, "  %d. %s\n", i+1, step.Action)
 			}
-			if len(e.parse.Preconditions) > 0 {
+			if len(w.Preconditions) > 0 {
 				fmt.Fprintln(&b, "  preconditions:")
-				for _, p := range e.parse.Preconditions {
+				for _, p := range w.Preconditions {
 					fmt.Fprintf(&b, "    - %s\n", p)
 				}
 			}

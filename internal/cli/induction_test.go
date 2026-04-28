@@ -74,8 +74,7 @@ func TestRunInductionForSession_PersistsSkillProposal(t *testing.T) {
 			Effort:               "small",
 			AlternativesRejected: "none",
 		},
-		NoSkillFound: false,
-		Rationale:    "extracted the concrete deploy recipe",
+		Rationale: "extracted the concrete deploy recipe",
 	}
 	toolInput, _ := json.Marshal(indResult)
 	f := &fakeLLM{toolInput: toolInput}
@@ -120,9 +119,9 @@ func TestRunInductionForSession_HandlesNoSkillVerdict(t *testing.T) {
 		"fixed an off-by-one in the date helper across one test")
 
 	indResult := prompts.InductionResult{
-		Skill:        nil,
-		NoSkillFound: true,
-		Rationale:    "single one-off bug fix; not a reusable workflow",
+		Skill:     nil,
+		Workflow:  nil,
+		Rationale: "single one-off bug fix; not a reusable workflow",
 	}
 	toolInput, _ := json.Marshal(indResult)
 	f := &fakeLLM{toolInput: toolInput}
@@ -133,8 +132,8 @@ func TestRunInductionForSession_HandlesNoSkillVerdict(t *testing.T) {
 		InductionRunOptions{SessionID: sessID}, &out); err != nil {
 		t.Fatalf("RunInductionForSession: %v", err)
 	}
-	if !strings.Contains(out.String(), "no skill") {
-		t.Errorf("output should announce no-skill verdict:\n%s", out.String())
+	if !strings.Contains(out.String(), "nothing reusable") {
+		t.Errorf("output should announce nothing-reusable verdict:\n%s", out.String())
 	}
 	if !strings.Contains(out.String(), "single one-off bug fix") {
 		t.Errorf("rationale missing from output:\n%s", out.String())
@@ -157,8 +156,7 @@ func TestRunInductionSweep_ProcessesIdleSessionsAndIsIdempotent(t *testing.T) {
 		"investigated thoroughly across multiple services and components")
 
 	indResult := prompts.InductionResult{
-		NoSkillFound: true,
-		Rationale:    "nothing reusable",
+		Rationale: "nothing reusable",
 	}
 	toolInput, _ := json.Marshal(indResult)
 	f := &fakeLLM{toolInput: toolInput}
@@ -171,7 +169,7 @@ func TestRunInductionSweep_ProcessesIdleSessionsAndIsIdempotent(t *testing.T) {
 		// triple the LLM call count and conflate the assertions.
 		InductionSweepOptions{
 			Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
-			SkipFacts: true, SkipWorkflow: true,
+			SkipFacts: true,
 		},
 		&out, &errOut); err != nil {
 		t.Fatalf("RunInductionSweep: %v", err)
@@ -189,7 +187,7 @@ func TestRunInductionSweep_ProcessesIdleSessionsAndIsIdempotent(t *testing.T) {
 		func() (llm.Client, error) { return f2, nil },
 		InductionSweepOptions{
 			Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
-			SkipFacts: true, SkipWorkflow: true,
+			SkipFacts: true,
 		},
 		&bytes.Buffer{}, &errOut); err != nil {
 		t.Fatalf("re-sweep: %v", err)
@@ -199,13 +197,13 @@ func TestRunInductionSweep_ProcessesIdleSessionsAndIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestRunInductionSweep_DefaultAutoExtractsAllThreeMemoryTypes confirms
-// that with default options (SkipFacts=false, SkipWorkflow=false) one
-// candidate triggers three LLM calls: skill induction + facts +
-// workflow. This is the opt-in-by-virtue-of-cfg.Induction.Enabled
-// contract — a user who turned on the sweeper has accepted the
-// per-candidate spend.
-func TestRunInductionSweep_DefaultAutoExtractsAllThreeMemoryTypes(t *testing.T) {
+// TestRunInductionSweep_DefaultAutoExtractsAllMemoryTypes confirms
+// that with default options (SkipFacts=false) one candidate
+// triggers two LLM calls: the unified induction call (which can
+// emit skill+workflow inline) and a separate facts induction.
+// Round 8 collapsed the previous three-call shape (induction +
+// workflow + facts) by merging skill + workflow into one prompt.
+func TestRunInductionSweep_DefaultAutoExtractsAllMemoryTypes(t *testing.T) {
 	t.Parallel()
 	s, sessID := seedSessionForSummarize(t)
 	oneHourAgo := time.Now().Add(-1 * time.Hour).UnixMilli()
@@ -219,13 +217,12 @@ func TestRunInductionSweep_DefaultAutoExtractsAllThreeMemoryTypes(t *testing.T) 
 		"investigated thoroughly across multiple services and components")
 
 	// fakeLLM returns the same body for every call. The body
-	// happens to be InductionResult-shaped; for facts and workflow
-	// the json.Unmarshal will populate a zero-valued FactsResult /
-	// WorkflowResult. That's fine for this test — we're asserting
-	// CALL COUNT and persistence side-effects, not body content.
+	// happens to be a minimal InductionResult; for the facts call
+	// the json.Unmarshal will populate a zero-valued FactsResult.
+	// That's fine — we're asserting CALL COUNT and persistence
+	// side-effects, not body content.
 	indResult := prompts.InductionResult{
-		NoSkillFound: true,
-		Rationale:    "nothing reusable",
+		Rationale: "nothing reusable",
 	}
 	toolInput, _ := json.Marshal(indResult)
 	f := &fakeLLM{toolInput: toolInput}
@@ -237,15 +234,16 @@ func TestRunInductionSweep_DefaultAutoExtractsAllThreeMemoryTypes(t *testing.T) 
 		&out, &errOut); err != nil {
 		t.Fatalf("RunInductionSweep: %v", err)
 	}
-	if f.called != 3 {
-		t.Errorf("default auto-extract should trigger 3 LLM calls per candidate (induction + facts + workflow), got %d",
+	if f.called != 2 {
+		t.Errorf("default auto-extract should trigger 2 LLM calls per candidate (merged induction + facts), got %d",
 			f.called)
 	}
 
-	// Verify persistence: one row each at induction / facts /
-	// workflow kinds.
+	// Verify persistence: one row each at induction / facts kinds.
+	// (workflow is now embedded inside the induction body, not its
+	// own row.)
 	for _, kind := range []store.LLMOutputKind{
-		store.LLMKindInduction, store.LLMKindFacts, store.LLMKindWorkflow,
+		store.LLMKindInduction, store.LLMKindFacts,
 	} {
 		var n int
 		if err := s.DB().QueryRow(
@@ -275,7 +273,7 @@ func TestRunInductionSweep_SkipFactsSuppressesFactsLayer(t *testing.T) {
 	plantSummary(t, s, sessID, "investigation",
 		"investigated thoroughly across multiple services and components")
 
-	indResult := prompts.InductionResult{NoSkillFound: true, Rationale: "x"}
+	indResult := prompts.InductionResult{Rationale: "x"}
 	toolInput, _ := json.Marshal(indResult)
 	f := &fakeLLM{toolInput: toolInput}
 
@@ -283,13 +281,13 @@ func TestRunInductionSweep_SkipFactsSuppressesFactsLayer(t *testing.T) {
 		func() (llm.Client, error) { return f, nil },
 		InductionSweepOptions{
 			Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
-			SkipFacts: true, // workflow still runs
+			SkipFacts: true,
 		},
 		&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("RunInductionSweep: %v", err)
 	}
-	if f.called != 2 {
-		t.Errorf("expected 2 LLM calls (induction + workflow), got %d", f.called)
+	if f.called != 1 {
+		t.Errorf("expected 1 LLM call (merged induction only — facts skipped, workflow inline), got %d", f.called)
 	}
 	// No facts row should exist.
 	var n int
@@ -300,48 +298,6 @@ func TestRunInductionSweep_SkipFactsSuppressesFactsLayer(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("SkipFacts violated: %d facts rows persisted", n)
-	}
-}
-
-// TestRunInductionSweep_SkipWorkflowSuppressesWorkflowLayer mirrors
-// the SkipFacts test for the workflow opt-out.
-func TestRunInductionSweep_SkipWorkflowSuppressesWorkflowLayer(t *testing.T) {
-	t.Parallel()
-	s, sessID := seedSessionForSummarize(t)
-	oneHourAgo := time.Now().Add(-1 * time.Hour).UnixMilli()
-	if _, err := s.DB().Exec(
-		`UPDATE sessions SET ended_at_ms = ?, event_count = 30 WHERE id = ?`,
-		oneHourAgo, sessID,
-	); err != nil {
-		t.Fatalf("update: %v", err)
-	}
-	plantSummary(t, s, sessID, "investigation",
-		"investigated thoroughly across multiple services and components")
-
-	indResult := prompts.InductionResult{NoSkillFound: true, Rationale: "x"}
-	toolInput, _ := json.Marshal(indResult)
-	f := &fakeLLM{toolInput: toolInput}
-
-	if err := RunInductionSweep(context.Background(), s,
-		func() (llm.Client, error) { return f, nil },
-		InductionSweepOptions{
-			Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
-			SkipWorkflow: true,
-		},
-		&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("RunInductionSweep: %v", err)
-	}
-	if f.called != 2 {
-		t.Errorf("expected 2 LLM calls (induction + facts), got %d", f.called)
-	}
-	var n int
-	if err := s.DB().QueryRow(
-		`SELECT COUNT(*) FROM llm_outputs WHERE session_id = ? AND kind = 'workflow'`, sessID,
-	).Scan(&n); err != nil {
-		t.Fatalf("count workflow: %v", err)
-	}
-	if n != 0 {
-		t.Errorf("SkipWorkflow violated: %d workflow rows persisted", n)
 	}
 }
 
@@ -361,8 +317,8 @@ func TestRunInductionSweep_FactsLayerErrorDoesNotAbortSweep(t *testing.T) {
 	plantSummary(t, s, sessID, "investigation",
 		"investigated thoroughly across multiple services and components")
 
-	// fakeLLM that errors on every call — induction, facts, and
-	// workflow ALL fail. The sweep must complete without panic.
+	// fakeLLM that errors on every call — induction and facts both
+	// fail. The sweep must complete without panic.
 	f := &fakeLLM{err: errors.New("simulated LLM outage")}
 
 	var errOut bytes.Buffer
@@ -374,10 +330,14 @@ func TestRunInductionSweep_FactsLayerErrorDoesNotAbortSweep(t *testing.T) {
 		t.Fatalf("sweep should not return error on per-session failure: %v", err)
 	}
 	body := errOut.String()
-	for _, want := range []string{"facts ", "workflow "} {
-		if !strings.Contains(body, want) {
-			t.Errorf("expected stderr to log %s failure, got:\n%s", want, body)
-		}
+	if !strings.Contains(body, "facts ") {
+		t.Errorf("expected stderr to log facts failure, got:\n%s", body)
+	}
+	// Induction failure should also be logged (the per-session
+	// "✗ <id>: ..." line) — the merged call's failure is the same
+	// path as before.
+	if !strings.Contains(body, "induction: LLM call") {
+		t.Errorf("expected stderr to log induction failure, got:\n%s", body)
 	}
 }
 
