@@ -561,6 +561,57 @@ func TestLoadSessionDigest_UnknownSessionReturnsNilNoError(t *testing.T) {
 	}
 }
 
+// TestLoadSessionStartCwd_AnchorsOnFirstNonNullCwd pins the
+// migration-015 trigger contract: start_cwd is the first non-null
+// cwd seen, never overwritten by later events. Distinguishes from
+// sessions.cwd which the migration-001 trigger keeps as the latest.
+func TestLoadSessionStartCwd_AnchorsOnFirstNonNullCwd(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	base := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+
+	// First event has cwd=/proj/start. A later event sets cwd=/proj/sub
+	// (the user cd'd mid-session). start_cwd must stick to the first.
+	for i, cwd := range []string{"/proj/start", "/proj/sub"} {
+		env := &ingest.Envelope{
+			V:               1,
+			EventID:         uuid.Must(uuid.NewV7()).String(),
+			SourceAgent:     "claude-code",
+			SourceSessionID: "sess-cwd-anchor",
+			Kind:            "user_prompt",
+			Role:            "user",
+			TsSource:        base.Add(time.Duration(i) * time.Minute),
+			Cwd:             cwd,
+			Payload:         map[string]any{"i": i},
+			Redaction:       &ingest.Redaction{Applied: true},
+		}
+		raw := []byte(`{"v":1}`)
+		withTx(t, s, func(tx *sql.Tx) {
+			if _, err := IngestEnvelope(t.Context(), tx, env, raw, env.TsSource.UnixMilli()); err != nil {
+				t.Fatalf("ingest %d: %v", i, err)
+			}
+		})
+	}
+
+	sessionID := ingest.DeriveSessionID("claude-code", "sess-cwd-anchor")
+	got, err := LoadSessionStartCwd(t.Context(), s.DB(), sessionID)
+	if err != nil {
+		t.Fatalf("LoadSessionStartCwd: %v", err)
+	}
+	if !got.Valid || got.String != "/proj/start" {
+		t.Errorf("start_cwd: got %+v, want /proj/start", got)
+	}
+	// And sessions.cwd should be the LATEST cwd — the existing
+	// trigger contract still holds.
+	var lastCwd sql.NullString
+	if err := s.DB().QueryRow(`SELECT cwd FROM sessions WHERE id = ?`, sessionID).Scan(&lastCwd); err != nil {
+		t.Fatalf("read sessions.cwd: %v", err)
+	}
+	if lastCwd.String != "/proj/sub" {
+		t.Errorf("sessions.cwd should track latest: got %q, want /proj/sub", lastCwd.String)
+	}
+}
+
 func TestLoadSessionDigest_FindsSessionRegardlessOfAge(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)

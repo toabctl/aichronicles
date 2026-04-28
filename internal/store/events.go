@@ -705,15 +705,10 @@ func LoadExtractionsForSession(ctx context.Context, db *sql.DB, sessionID, kind 
 	return out, rows.Err()
 }
 
-// LoadEventsForSession returns up to `limit` events for a session,
-// oldest first. An empty slice is returned for an unknown session.
-// A non-positive `limit` uses DefaultEventsPerSessionLimit — callers
-// that truly want "every event" should pass a very large number and
-// own the memory consequences.
-// LoadSessionStartCwd returns the cwd of the earliest event with a
-// non-null cwd in the session. This is the "project root" the session
-// was started in — distinct from sessions.cwd, which the trigger in
-// migration 001 keeps as the *latest* non-null cwd seen on any event.
+// LoadSessionStartCwd returns the session's start cwd — the directory
+// the session was launched in. Distinct from sessions.cwd, which the
+// migration-001 AFTER INSERT trigger keeps as the *latest* non-null
+// cwd seen.
 //
 // Callers care about the start cwd specifically when generating
 // `claude --resume <id>`: Claude indexes transcripts under
@@ -721,15 +716,16 @@ func LoadExtractionsForSession(ctx context.Context, db *sql.DB, sessionID, kind 
 // start, so resuming from any later directory the user cd'd into
 // fails with "No conversation found".
 //
+// Backed by sessions.start_cwd (added in migration 015), populated
+// by a parallel AFTER INSERT trigger that fires only on the first
+// non-null cwd. Pre-015 stores backfill the column on migrate.
+//
 // Returns sql.NullString{} (not an error) when the session has no
 // events with a recorded cwd — the caller decides whether to fall
 // back to sessions.cwd or hide the resume button.
 func LoadSessionStartCwd(ctx context.Context, db *sql.DB, sessionID string) (sql.NullString, error) {
 	row := db.QueryRowContext(ctx,
-		`SELECT cwd FROM events
-		  WHERE session_id = ? AND cwd IS NOT NULL
-		  ORDER BY ts_source_ms ASC, rowid ASC
-		  LIMIT 1`,
+		`SELECT start_cwd FROM sessions WHERE id = ?`,
 		sessionID,
 	)
 	var cwd sql.NullString
