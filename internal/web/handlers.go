@@ -15,6 +15,8 @@ import (
 	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/timefmt"
+	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/ingest/extract"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
@@ -287,9 +289,9 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int, f sess
 		// signal — see pkg/ingest/extract/SkillLoadExtractor.
 		conds = append(conds, `EXISTS (
 			SELECT 1 FROM extractions x
-			 WHERE x.session_id = s.id AND x.kind = 'skill_load' AND x.value = ?
+			 WHERE x.session_id = s.id AND x.kind = ? AND x.value = ?
 		)`)
-		args = append(args, f.Skill)
+		args = append(args, extract.KindSkillLoad, f.Skill)
 	}
 	if f.File != "" {
 		// Substring LIKE so a partial path ("migrate.go",
@@ -297,15 +299,16 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int, f sess
 		// FilePathSubstring filter uses.
 		conds = append(conds, `EXISTS (
 			SELECT 1 FROM extractions x
-			 WHERE x.session_id = s.id AND x.kind = 'file_path' AND x.value LIKE ?
+			 WHERE x.session_id = s.id AND x.kind = ? AND x.value LIKE ?
 		)`)
-		args = append(args, "%"+f.File+"%")
+		args = append(args, extract.KindFilePath, "%"+f.File+"%")
 	}
 	if f.WithFailures {
 		conds = append(conds, `EXISTS (
 			SELECT 1 FROM events e
-			 WHERE e.session_id = s.id AND e.kind = 'tool_failure'
+			 WHERE e.session_id = s.id AND e.kind = ?
 		)`)
+		args = append(args, ingest.KindToolFailure)
 	}
 	if f.NoSummary {
 		// NOT EXISTS over llm_outputs(kind=summary). NOT EXISTS
@@ -314,8 +317,9 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int, f sess
 		// scan stops as soon as one summary row is found.
 		conds = append(conds, `NOT EXISTS (
 			SELECT 1 FROM llm_outputs lo
-			 WHERE lo.session_id = s.id AND lo.kind = 'summary'
+			 WHERE lo.session_id = s.id AND lo.kind = ?
 		)`)
+		args = append(args, string(store.LLMKindSummary))
 	}
 	if len(conds) > 0 {
 		q += " WHERE " + strings.Join(conds, " AND ")

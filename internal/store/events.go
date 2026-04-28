@@ -131,13 +131,13 @@ func LoadSessionsForCompletion(ctx context.Context, db *sql.DB, prefix string, l
 		        COALESCE(s.cwd, '-') AS cwd,
 		        s.first_prompt_text AS first_prompt,
 		        (SELECT body FROM llm_outputs
-		           WHERE session_id = s.id AND kind = 'summary'
+		           WHERE session_id = s.id AND kind = ?
 		           ORDER BY created_at_ms DESC LIMIT 1) AS summary_body
 		   FROM sessions s
 		  WHERE s.id LIKE ? || '%'
 		  ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC
 		  LIMIT ?`,
-		prefix, limit,
+		string(LLMKindSummary), prefix, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query session completions: %w", err)
@@ -516,13 +516,13 @@ func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs int64, li
 		`SELECT s.id, s.started_at_ms, s.ended_at_ms, s.cwd,
 			s.first_prompt_text AS first_prompt,
 			(SELECT body FROM llm_outputs
-				WHERE session_id = s.id AND kind = 'summary'
+				WHERE session_id = s.id AND kind = ?
 				ORDER BY created_at_ms DESC LIMIT 1) AS latest_summary
 		FROM sessions s
 		WHERE COALESCE(s.ended_at_ms, s.started_at_ms, 0) >= ?
 		ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC
 		LIMIT ?`,
-		sinceMs, limit,
+		string(LLMKindSummary), sinceMs, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query session digests: %w", err)
@@ -555,11 +555,11 @@ func LoadSessionDigest(ctx context.Context, db *sql.DB, sessionID string) (*Sess
 		`SELECT s.id, s.started_at_ms, s.ended_at_ms, s.cwd,
 			s.first_prompt_text AS first_prompt,
 			(SELECT body FROM llm_outputs
-				WHERE session_id = s.id AND kind = 'summary'
+				WHERE session_id = s.id AND kind = ?
 				ORDER BY created_at_ms DESC LIMIT 1) AS latest_summary
 		FROM sessions s
 		WHERE s.id = ?`,
-		sessionID,
+		string(LLMKindSummary), sessionID,
 	)
 	var r SessionDigestRow
 	switch err := row.Scan(&r.ID, &r.StartedAtMs, &r.EndedAtMs, &r.Cwd, &r.FirstPrompt, &r.LatestSummary); {
@@ -610,13 +610,14 @@ func LoadSessionsMissingSummary(ctx context.Context, db *sql.DB, sinceMs int64, 
 		conds = append(conds, "s.source_agent = ?")
 		args = append(args, filter.Agent)
 	}
-	// The "missing" predicate: no llm_outputs row of kind='summary'
+	// The "missing" predicate: no llm_outputs row of kind=summary
 	// for this session_id. NOT EXISTS rather than LEFT JOIN so the
 	// optimiser can short-circuit on the first hit.
 	conds = append(conds, `NOT EXISTS (
 		SELECT 1 FROM llm_outputs lo
-		 WHERE lo.session_id = s.id AND lo.kind = 'summary'
+		 WHERE lo.session_id = s.id AND lo.kind = ?
 	)`)
+	args = append(args, string(LLMKindSummary))
 
 	q := `SELECT s.id, s.started_at_ms, s.ended_at_ms, s.cwd,
 			s.first_prompt_text AS first_prompt

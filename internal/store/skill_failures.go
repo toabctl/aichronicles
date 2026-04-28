@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/toabctl/aichronicles/pkg/ingest"
 	"github.com/toabctl/aichronicles/pkg/ingest/extract"
 )
 
@@ -53,7 +54,7 @@ SELECT x.session_id,
   FROM extractions x
   JOIN events e ON e.event_id = x.event_id
   JOIN events f ON f.session_id = x.session_id
-                 AND f.kind = 'tool_failure'
+                 AND f.kind = ?
                  AND f.ts_source_ms >  e.ts_source_ms
                  AND f.ts_source_ms <= e.ts_source_ms + ?
  WHERE x.kind = ? AND x.value = ? AND e.ts_source_ms >= ?
@@ -61,7 +62,8 @@ SELECT x.session_id,
  LIMIT ?`
 
 	rows, err := db.QueryContext(ctx, pairsQuery,
-		windowMs, extract.KindSkillLoad, skill, sinceMs, limit,
+		ingest.KindToolFailure, windowMs,
+		extract.KindSkillLoad, skill, sinceMs, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query skill failures: %w", err)

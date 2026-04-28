@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/toabctl/aichronicles/pkg/ingest"
 	"github.com/toabctl/aichronicles/pkg/ingest/extract"
 )
 
@@ -129,14 +130,15 @@ SELECT DISTINCT x.session_id
    AND EXISTS (
        SELECT 1 FROM events f
         WHERE f.session_id = x.session_id
-          AND f.kind       = 'tool_failure'
+          AND f.kind       = ?
           AND f.ts_source_ms >  e.ts_source_ms
           AND f.ts_source_ms <= e.ts_source_ms + ?
    )
  ORDER BY x.session_id
  LIMIT ?`
 	rows, err := db.QueryContext(ctx, q,
-		extract.KindSkillLoad, skill, sinceMs, windowMs, limit,
+		extract.KindSkillLoad, skill, sinceMs,
+		ingest.KindToolFailure, windowMs, limit,
 	)
 	if err != nil {
 		return nil, err

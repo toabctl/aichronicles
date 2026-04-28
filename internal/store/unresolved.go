@@ -80,18 +80,20 @@ func LoadUnresolvedForCwd(
 		       COALESCE(s.ended_at_ms, 0),
 		       o.body
 		  FROM sessions s
-		  JOIN llm_outputs o ON o.session_id = s.id AND o.kind = 'summary'
+		  JOIN llm_outputs o ON o.session_id = s.id AND o.kind = ?
 		 WHERE s.cwd = ?
 		   AND COALESCE(s.ended_at_ms, s.started_at_ms, 0) >= ?
 		   AND o.id IN (
 		     SELECT MAX(id) FROM llm_outputs
-		      WHERE kind = 'summary' AND session_id = s.id
+		      WHERE kind = ? AND session_id = s.id
 		      GROUP BY session_id
 		   )
 		 ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC
 		 LIMIT ?
 	`
-	rows, err := db.QueryContext(ctx, q, cwd, sinceMs, maxSessions)
+	rows, err := db.QueryContext(ctx, q,
+		string(LLMKindSummary), cwd, sinceMs,
+		string(LLMKindSummary), maxSessions)
 	if err != nil {
 		return nil, fmt.Errorf("query unresolved: %w", err)
 	}

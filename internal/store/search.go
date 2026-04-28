@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/ingest/extract"
 )
 
 // SearchOrder selects how SearchEvents orders its result rows.
@@ -241,9 +244,9 @@ func appendCommonFilters(filter *strings.Builder, args *[]any, opts SearchEventO
 		// named skill loaded. The (kind, value) pair is covered
 		// by idx_extractions_kind_value so this stays cheap.
 		filter.WriteString(` AND e.session_id IN (
-			SELECT session_id FROM extractions WHERE kind = 'skill_load' AND value = ?
+			SELECT session_id FROM extractions WHERE kind = ? AND value = ?
 		)`)
-		*args = append(*args, opts.SkillName)
+		*args = append(*args, extract.KindSkillLoad, opts.SkillName)
 	}
 	if opts.FilePathSubstring != "" {
 		// Session-level + LIKE %substring% so a partial path
@@ -251,14 +254,15 @@ func appendCommonFilters(filter *strings.Builder, args *[]any, opts SearchEventO
 		// extractions are the canonical source — see
 		// pkg/ingest/extract/FilePathExtractor.
 		filter.WriteString(` AND e.session_id IN (
-			SELECT session_id FROM extractions WHERE kind = 'file_path' AND value LIKE ?
+			SELECT session_id FROM extractions WHERE kind = ? AND value LIKE ?
 		)`)
-		*args = append(*args, "%"+opts.FilePathSubstring+"%")
+		*args = append(*args, extract.KindFilePath, "%"+opts.FilePathSubstring+"%")
 	}
 	if opts.WithFailures {
 		filter.WriteString(` AND e.session_id IN (
-			SELECT session_id FROM events WHERE kind = 'tool_failure'
+			SELECT session_id FROM events WHERE kind = ?
 		)`)
+		*args = append(*args, ingest.KindToolFailure)
 	}
 }
 

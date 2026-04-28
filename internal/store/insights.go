@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/toabctl/aichronicles/pkg/ingest"
 	"github.com/toabctl/aichronicles/pkg/ingest/extract"
 )
 
@@ -163,12 +164,15 @@ func loadInsightsOverview(ctx context.Context, db *sql.DB, sinceMs int64) (Insig
 		`SELECT
 		   (SELECT COUNT(*) FROM sessions WHERE COALESCE(ended_at_ms, started_at_ms) >= ?),
 		   (SELECT COUNT(*) FROM events WHERE ts_source_ms >= ?),
-		   (SELECT COUNT(*) FROM events WHERE ts_source_ms >= ? AND kind='tool_use'),
-		   (SELECT COUNT(*) FROM events WHERE ts_source_ms >= ? AND kind='user_prompt'),
-		   (SELECT COUNT(DISTINCT tool_name) FROM events WHERE ts_source_ms >= ? AND kind='tool_use' AND tool_name IS NOT NULL),
+		   (SELECT COUNT(*) FROM events WHERE ts_source_ms >= ? AND kind=?),
+		   (SELECT COUNT(*) FROM events WHERE ts_source_ms >= ? AND kind=?),
+		   (SELECT COUNT(DISTINCT tool_name) FROM events WHERE ts_source_ms >= ? AND kind=? AND tool_name IS NOT NULL),
 		   (SELECT COUNT(DISTINCT value) FROM extractions WHERE kind=?
 		      AND session_id IN (SELECT id FROM sessions WHERE COALESCE(ended_at_ms, started_at_ms) >= ?))`,
-		sinceMs, sinceMs, sinceMs, sinceMs, sinceMs,
+		sinceMs, sinceMs,
+		sinceMs, ingest.KindToolUse,
+		sinceMs, ingest.KindUserPrompt,
+		sinceMs, ingest.KindToolUse,
 		extract.KindSkillLoad, sinceMs,
 	).Scan(&o.Sessions, &o.Events, &o.ToolUses, &o.UserPrompts, &o.DistinctTools, &o.DistinctSkills)
 	if err != nil {
@@ -181,11 +185,11 @@ func loadTopTools(ctx context.Context, db *sql.DB, sinceMs int64, limit int) ([]
 	rows, err := db.QueryContext(ctx,
 		`SELECT tool_name, COUNT(*) AS c
 		   FROM events
-		  WHERE ts_source_ms >= ? AND kind='tool_use' AND tool_name IS NOT NULL
+		  WHERE ts_source_ms >= ? AND kind=? AND tool_name IS NOT NULL
 		  GROUP BY tool_name
 		  ORDER BY c DESC, tool_name ASC
 		  LIMIT ?`,
-		sinceMs, limit,
+		sinceMs, ingest.KindToolUse, limit,
 	)
 	if err != nil {
 		return nil, err

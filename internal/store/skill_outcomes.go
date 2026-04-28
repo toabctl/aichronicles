@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/toabctl/aichronicles/pkg/ingest"
 	"github.com/toabctl/aichronicles/pkg/ingest/extract"
 )
 
@@ -74,7 +75,7 @@ SELECT skill,
            SELECT 1
              FROM events f
             WHERE f.session_id = loads.session_id
-              AND f.kind       = 'tool_failure'
+              AND f.kind       = ?
               AND f.ts_source_ms >  loads.ts
               AND f.ts_source_ms <= loads.ts + ?
        ) THEN 1 ELSE 0 END)                                        AS failed_loads,
@@ -85,7 +86,8 @@ SELECT skill,
  LIMIT ?`
 
 	rows, err := db.QueryContext(ctx, aggQuery,
-		extract.KindSkillLoad, sinceMs, windowMs, lim.MaxSkills,
+		extract.KindSkillLoad, sinceMs,
+		ingest.KindToolFailure, windowMs, lim.MaxSkills,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("aggregate skill impact: %w", err)
