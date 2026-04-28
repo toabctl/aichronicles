@@ -69,9 +69,13 @@ type MetaAnalysisSweepOptions struct {
 	// the per-stale-skill evolve pass runs. SkillsDir overrides
 	// the discovery root (empty → ~/.claude/skills via
 	// resolveSkillsDir). SkillRevisionMinRate filters which
-	// stale-correlated skills are eligible — a skill must have
-	// failed-load rate ≥ this fraction (in [0,1]) to be revised
-	// automatically. Defaults to 0.5 when zero.
+	// stale-correlated skills are eligible — a skill must have its
+	// Wilson-score 95%-CI lower bound on failed-load rate ≥ this
+	// fraction (in [0,1]) to be revised automatically. The lower
+	// bound (rather than the naive rate) keeps low-N noise out: a
+	// 1/1 stale skill has rate=1.0 but lower bound ~0.21, while a
+	// 50/100 skill has rate=0.5 with bound ~0.40. Defaults to 0.5
+	// when zero.
 	SkillRevisionCadence time.Duration
 	SkillRevisionSkip    bool
 	SkillsDir            string
@@ -400,11 +404,12 @@ func runSkillRevisionForSweep(
 		if dispatched >= maxSkills {
 			break
 		}
-		if st.Rate < minRate {
+		if st.RateLowerBound < minRate {
 			continue
 		}
-		_, _ = fmt.Fprintf(errOut, "meta sweep: dispatching skill_revision skill=%s rate=%.0f%%\n",
-			st.Name, st.Rate*100)
+		_, _ = fmt.Fprintf(errOut,
+			"meta sweep: dispatching skill_revision skill=%s rate=%.0f%% lb=%.0f%%\n",
+			st.Name, st.Rate*100, st.RateLowerBound*100)
 		dispatched++
 		if err := RunSkillsEvolve(ctx, s, newClient, SkillsEvolveOptions{
 			SkillName: st.Name,

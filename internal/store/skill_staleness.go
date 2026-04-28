@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -17,15 +18,47 @@ import (
 // a short window — a signal that the skill's instructions led the
 // agent into a dead end.
 //
-// Rate is StaleLoads / TotalLoads as a fraction in [0,1]. Example
-// session ids (max 3) help the user click through to a concrete
-// instance and decide whether to revise the skill.
+// Rate is StaleLoads / TotalLoads as a fraction in [0,1]. RateLowerBound
+// is the Wilson-score 95%-confidence lower bound on Rate, useful as a
+// sample-size-aware filter: a 1/1 skill has Rate=1.0 but a low Wilson
+// bound (~0.21), while a 50/100 skill has Rate=0.5 with a much higher
+// bound (~0.40). Threshold checks ("only revise skills above 50%
+// stale") should prefer RateLowerBound to keep noise from low-N skills
+// out of the work queue. Example session ids (max 3) help the user
+// click through to a concrete instance and decide whether to revise.
 type SkillStaleness struct {
-	Name       string   `json:"name"`
-	TotalLoads int      `json:"total_loads"`
-	StaleLoads int      `json:"stale_loads"`
-	Rate       float64  `json:"rate"`
-	Examples   []string `json:"example_session_ids"`
+	Name           string   `json:"name"`
+	TotalLoads     int      `json:"total_loads"`
+	StaleLoads     int      `json:"stale_loads"`
+	Rate           float64  `json:"rate"`
+	RateLowerBound float64  `json:"rate_lower_bound"`
+	Examples       []string `json:"example_session_ids"`
+}
+
+// wilsonLowerBound returns the Wilson-score 95%-CI lower bound on a
+// success probability estimated from `successes` out of `total`
+// observations. For total=0 it returns 0; for total=1 successes=1 it
+// returns ~0.205, vs the naive rate of 1.0 — exactly the property
+// that makes it the right ranking key for low-N stale skills.
+//
+// Reference: Wilson, E. B. (1927). "Probable inference, the law of
+// succession, and statistical inference." JASA 22 (158): 209–212.
+// We use z=1.96 for a 95% confidence interval, the standard pick.
+func wilsonLowerBound(successes, total int) float64 {
+	if total <= 0 {
+		return 0
+	}
+	const z = 1.96
+	n := float64(total)
+	phat := float64(successes) / n
+	denom := 1 + z*z/n
+	center := phat + z*z/(2*n)
+	half := z * math.Sqrt(phat*(1-phat)/n+z*z/(4*n*n))
+	lb := (center - half) / denom
+	if lb < 0 {
+		return 0
+	}
+	return lb
 }
 
 // SkillStalenessLimits caps how many skills the report holds and
@@ -85,6 +118,7 @@ func LoadSkillStaleness(ctx context.Context, db *sql.DB, sinceMs int64, windowMs
 			StaleLoads: s.FailedLoads,
 		}
 		row.Rate = float64(s.FailedLoads) / float64(s.TotalLoads)
+		row.RateLowerBound = wilsonLowerBound(s.FailedLoads, s.TotalLoads)
 		out = append(out, row)
 	}
 

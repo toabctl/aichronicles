@@ -194,6 +194,52 @@ func TestLoadSkillStaleness_HonoursMaxExamples(t *testing.T) {
 	}
 }
 
+// TestWilsonLowerBound covers the sample-size-aware confidence floor.
+// The rate alone over-rates 1/1 (==1.0) — Wilson lower bound puts it
+// well below 50/100 even though the naive rates are 1.0 and 0.5. That
+// inversion is exactly what the SkillRevisionMinRate=0.5 default needs
+// to keep noisy 1-sample skills out of the auto-revision queue.
+func TestWilsonLowerBound(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		successes, total int
+		minOK, maxOK     float64 // expected range; computed values from a reference impl
+	}{
+		{0, 0, 0, 0},          // total=0 → 0
+		{0, 10, 0, 0.05},      // 0/10 → ~0
+		{1, 1, 0.15, 0.25},    // 1/1 → ~0.205
+		{50, 100, 0.39, 0.41}, // 50/100 → ~0.401
+		{99, 100, 0.94, 0.96}, // 99/100 → ~0.948
+		{1, 1000, 0.0, 0.01},  // 1/1000 → ~0.0001
+	}
+	for _, tc := range cases {
+		got := wilsonLowerBound(tc.successes, tc.total)
+		if got < tc.minOK || got > tc.maxOK {
+			t.Errorf("wilsonLowerBound(%d, %d) = %f, want [%f, %f]",
+				tc.successes, tc.total, got, tc.minOK, tc.maxOK)
+		}
+	}
+}
+
+// TestWilsonLowerBound_RanksHighNAboveLowN encodes the property that
+// drives the change: 50/100 (high N, mid rate) must rank above 1/1
+// (low N, max rate) when sorting by the Wilson lower bound.
+func TestWilsonLowerBound_RanksHighNAboveLowN(t *testing.T) {
+	t.Parallel()
+	highN := wilsonLowerBound(50, 100)
+	lowN := wilsonLowerBound(1, 1)
+	if !(highN > lowN) {
+		t.Errorf("expected lowerBound(50,100)=%f > lowerBound(1,1)=%f", highN, lowN)
+	}
+	// And the naive rate would have put the 1/1 skill on top —
+	// keep that invariant pinned so the regression is obvious.
+	naiveHigh := 50.0 / 100
+	naiveLow := 1.0 / 1
+	if !(naiveLow > naiveHigh) {
+		t.Errorf("naive rates: %f, %f — assumption invalid", naiveLow, naiveHigh)
+	}
+}
+
 func TestFormatStaleSummary_TruncatesAndFormats(t *testing.T) {
 	t.Parallel()
 	s := SkillStaleness{
