@@ -76,6 +76,7 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newReflectCmd())
 	cmd.AddCommand(newProposeCmd())
 	cmd.AddCommand(newInductionCmd())
+	cmd.AddCommand(newUnresolvedCmd())
 	cmd.AddCommand(newMCPServeCmd())
 	cmd.AddCommand(newSummariesCmd())
 	cmd.AddCommand(newInsightsCmd())
