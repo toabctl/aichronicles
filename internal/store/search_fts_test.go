@@ -181,8 +181,8 @@ func TestFTSTokenizer_ReopenIsClean(t *testing.T) {
 	if err := s2.DB().QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil {
 		t.Fatalf("read version: %v", err)
 	}
-	if v != "16" {
-		t.Errorf("schema_version after reopen: %q want 16", v)
+	if v != "17" {
+		t.Errorf("schema_version after reopen: %q want 17", v)
 	}
 	if got := matchCount(t, s2, "migrate"); got != 1 {
 		t.Errorf("MATCH migrate after reopen: got %d, want 1", got)
