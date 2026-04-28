@@ -304,6 +304,55 @@ func TestIngestEnvelope_HappyPath(t *testing.T) {
 	}
 }
 
+func TestIngestEnvelope_PersistsTransportColumn(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	env, raw := newValidEnvelope(t)
+	env.Transport = "hook"
+	withTx(t, s, func(tx *sql.Tx) {
+		if _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
+			t.Fatalf("ingest: %v", err)
+		}
+	})
+
+	var got string
+	if err := s.DB().QueryRow(
+		`SELECT transport FROM events WHERE event_id = ?`, env.EventID,
+	).Scan(&got); err != nil {
+		t.Fatalf("read transport: %v", err)
+	}
+	if got != "hook" {
+		t.Errorf("transport column: got %q, want hook", got)
+	}
+}
+
+func TestIngestEnvelope_EmptyTransportPersistsAsEmpty(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	env, raw := newValidEnvelope(t)
+	env.Transport = "" // legacy / third-party-bridge envelope
+	rawZero, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	_ = raw
+	withTx(t, s, func(tx *sql.Tx) {
+		if _, err := IngestEnvelope(t.Context(), tx, env, rawZero, 1); err != nil {
+			t.Fatalf("ingest: %v", err)
+		}
+	})
+
+	var got string
+	if err := s.DB().QueryRow(
+		`SELECT transport FROM events WHERE event_id = ?`, env.EventID,
+	).Scan(&got); err != nil {
+		t.Fatalf("read transport: %v", err)
+	}
+	if got != "" {
+		t.Errorf("transport column for empty transport: got %q, want empty", got)
+	}
+}
+
 func TestIngestEnvelope_DuplicateIsDedupedWithoutTouching(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)

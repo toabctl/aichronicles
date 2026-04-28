@@ -109,11 +109,11 @@ func IngestEnvelope(ctx context.Context, tx *sql.Tx, env *ingest.Envelope, envel
 		`INSERT INTO events(
 			event_id, session_id, source_agent, kind, role,
 			ts_source_ms, cwd, tool_name, tool_call_id, content_text,
-			subagent_id, subagent_type
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			subagent_id, subagent_type, transport
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		env.EventID, sessionID, env.SourceAgent, env.Kind, nullString(env.Role),
 		env.TsSource.UnixMilli(), nullString(env.Cwd), toolName, toolCallID, nullString(env.ContentText),
-		subagentID, subagentType,
+		subagentID, subagentType, env.Transport,
 	); err != nil {
 		return false, fmt.Errorf("insert event: %w", err)
 	}

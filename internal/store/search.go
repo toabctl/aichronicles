@@ -328,15 +328,11 @@ func buildSearchSQL(opts SearchEventOpts, index string) (string, []any) {
 	sqlText := `WITH matched AS (
 			SELECT e.rowid, e.session_id, e.role, e.kind, e.cwd,
 				e.ts_source_ms, e.content_text, e.source_agent,
-				(CASE
-					WHEN json_extract(r.envelope_json, '$.transport') = 'hook'
-					THEN 0 ELSE 1
-				END) AS transport_rank,
+				(CASE WHEN e.transport = 'hook' THEN 0 ELSE 1 END) AS transport_rank,
 				f.rank AS fts_rank,
 				` + snippetExpr + ` AS snip
 			FROM ` + index + ` f
-			JOIN events e         ON e.rowid = f.rowid
-			JOIN raw_envelopes r  ON r.event_id = e.event_id
+			JOIN events e ON e.rowid = f.rowid
 			WHERE ` + index + ` MATCH ?` + filter.String() + `
 		),
 		ranked AS (
