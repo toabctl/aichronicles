@@ -356,6 +356,34 @@ func TestWithMaxEnvelopeBytes_NonPositiveIgnored(t *testing.T) {
 	}
 }
 
+// TestNewHTTPServer_TimeoutsWired guards against the "bare http.Server
+// with only ReadHeaderTimeout" regression — slow-read / slow-write
+// attacks can otherwise hold a connection indefinitely. Both code
+// paths (ListenAndServe and the systemd-activated Serve) build the
+// server through newHTTPServer, so one assertion covers both.
+func TestNewHTTPServer_TimeoutsWired(t *testing.T) {
+	t.Parallel()
+	srv := newHTTPServer(http.NotFoundHandler())
+	if srv.ReadHeaderTimeout <= 0 {
+		t.Errorf("ReadHeaderTimeout must be > 0, got %v", srv.ReadHeaderTimeout)
+	}
+	if srv.ReadTimeout <= 0 {
+		t.Errorf("ReadTimeout must be > 0, got %v", srv.ReadTimeout)
+	}
+	if srv.WriteTimeout <= 0 {
+		t.Errorf("WriteTimeout must be > 0, got %v", srv.WriteTimeout)
+	}
+	if srv.IdleTimeout <= 0 {
+		t.Errorf("IdleTimeout must be > 0, got %v", srv.IdleTimeout)
+	}
+	// ReadHeaderTimeout must not exceed ReadTimeout — a header that
+	// outlasts the whole-request budget would never fire.
+	if srv.ReadHeaderTimeout > srv.ReadTimeout {
+		t.Errorf("ReadHeaderTimeout (%v) must be <= ReadTimeout (%v)",
+			srv.ReadHeaderTimeout, srv.ReadTimeout)
+	}
+}
+
 func TestHealthz(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)

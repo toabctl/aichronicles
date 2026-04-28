@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"time"
 )
 
 // sdListenFDsStart is the first file descriptor systemd passes via
@@ -74,7 +73,7 @@ func ListenFromSystemd() (net.Listener, error) {
 // the context fires, whichever comes first. A nil ctx skips drain
 // and hard-closes immediately.
 func Serve(l net.Listener, handler http.Handler) func(context.Context) error {
-	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+	srv := newHTTPServer(handler)
 	go func() { _ = srv.Serve(l) }()
 	return func(ctx context.Context) error {
 		return gracefulShutdown(srv, ctx)

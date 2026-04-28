@@ -29,6 +29,32 @@ import (
 // daemon main wires it through to NewServer).
 const DefaultMaxEnvelopeBytes = 128 << 20
 
+// HTTP timeout defaults for the ingest server. Conservative bounds
+// against slow-read / slow-write attacks; 60s ReadTimeout is
+// generous for a 128 MiB envelope over UDS (which is near-instant
+// locally) and equally generous if the listener is ever exposed
+// over a real network. WriteTimeout covers ack rendering, which is
+// always a small JSON body. IdleTimeout bounds keep-alive holding.
+const (
+	httpReadHeaderTimeout = 5 * time.Second
+	httpReadTimeout       = 60 * time.Second
+	httpWriteTimeout      = 30 * time.Second
+	httpIdleTimeout       = 120 * time.Second
+)
+
+// newHTTPServer builds an *http.Server with the timeouts every
+// daemon listener should set. Centralised so ListenAndServe and the
+// systemd-activated Serve path can't drift on the values.
+func newHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: httpReadHeaderTimeout,
+		ReadTimeout:       httpReadTimeout,
+		WriteTimeout:      httpWriteTimeout,
+		IdleTimeout:       httpIdleTimeout,
+	}
+}
+
 // Server implements the aichronicles ingest HTTP surface backed by
 // the SQLite store. Transport-agnostic — wire it to a net.Listener
 // of any kind (UDS locally, HTTPS later).
@@ -95,10 +121,7 @@ func ListenAndServe(sockPath string, handler http.Handler) (func(context.Context
 		return nil, fmt.Errorf("chmod socket: %w", err)
 	}
 
-	srv := &http.Server{
-		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	srv := newHTTPServer(handler)
 
 	go func() {
 		_ = srv.Serve(l)
