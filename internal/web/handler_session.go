@@ -29,18 +29,43 @@ var errSessionNotFound = errors.New("session not found")
 
 // sessionDetailHandler renders /sessions/{id}: header fields, a
 // cached LLM summary if one exists, and the event timeline.
-// Accepts the full session UUID; the sessions list page already
-// links with the full id, so prefix resolution stays a CLI/MCP
-// concern for now.
+//
+// Accepts either the full session UUID or any unique prefix —
+// matching the resolution rule used by `aichronicles sessions`
+// and the MCP get_summary tool, so a short id pasted from
+// either surface lands on the right page. When a prefix
+// resolves to one full id, redirect to the canonical URL so
+// links/bookmarks normalise.
 func (s *Server) sessionDetailHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	detail, err := loadSessionDetail(r.Context(), s.store, id)
+	resolved, err := store.ResolveSessionIDPrefix(r.Context(), s.store.DB(), id)
+	switch {
+	case errors.Is(err, store.ErrNoSuchSession):
+		http.NotFound(w, r)
+		return
+	case errors.Is(err, store.ErrAmbiguousSessionPrefix):
+		// Surface the candidate list the store error embeds so
+		// the user can pick. 400 (not 404): the resource is
+		// reachable, the request was just under-specified.
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	case err != nil:
+		s.log.Error("sessionDetailHandler: resolve prefix", "id", id, "err", err)
+		http.Error(w, "could not resolve session", http.StatusInternalServerError)
+		return
+	}
+	if resolved != id {
+		http.Redirect(w, r, "/sessions/"+resolved, http.StatusFound)
+		return
+	}
+
+	detail, err := loadSessionDetail(r.Context(), s.store, resolved)
 	if err != nil {
 		if errors.Is(err, errSessionNotFound) {
 			http.NotFound(w, r)
 			return
 		}
-		s.log.Error("sessionDetailHandler: load", "id", id, "err", err)
+		s.log.Error("sessionDetailHandler: load", "id", resolved, "err", err)
 		http.Error(w, "could not load session", http.StatusInternalServerError)
 		return
 	}
