@@ -557,6 +557,39 @@ func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs int64, li
 	return out, rows.Err()
 }
 
+// LoadSessionDigest returns the SessionDigestRow for a single
+// session_id, or (nil, nil) if no such session exists. Same row
+// shape as LoadRecentSessionDigests — including the latest_summary
+// subquery — so the result is interchangeable.
+//
+// Exists to fix a class of bugs where callers loaded the recent
+// list, then walked it Go-side to find one id: that misses any
+// session older than the recent-list LIMIT. Single-row lookup is
+// indexed (sessions.id is the primary key) and always finds the
+// row when it exists.
+func LoadSessionDigest(ctx context.Context, db *sql.DB, sessionID string) (*SessionDigestRow, error) {
+	row := db.QueryRowContext(ctx,
+		`SELECT s.id, s.started_at_ms, s.ended_at_ms, s.cwd,
+			(SELECT content_text FROM events
+				WHERE session_id = s.id AND kind = 'user_prompt'
+				ORDER BY ts_source_ms ASC LIMIT 1) AS first_prompt,
+			(SELECT body FROM llm_outputs
+				WHERE session_id = s.id AND kind = 'summary'
+				ORDER BY created_at_ms DESC LIMIT 1) AS latest_summary
+		FROM sessions s
+		WHERE s.id = ?`,
+		sessionID,
+	)
+	var r SessionDigestRow
+	switch err := row.Scan(&r.ID, &r.StartedAtMs, &r.EndedAtMs, &r.Cwd, &r.FirstPrompt, &r.LatestSummary); {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("scan session digest: %w", err)
+	}
+	return &r, nil
+}
+
 // SessionFilter narrows session-level queries by cwd / agent. Empty
 // strings disable each filter independently; both empty == every
 // session in the window. Used by LoadSessionsMissingSummary to keep

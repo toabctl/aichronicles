@@ -547,3 +547,44 @@ func TestLoadSessionsMissingSummary_LimitClamps(t *testing.T) {
 		t.Errorf("explicit limit: got %d rows, want 2", len(got))
 	}
 }
+
+func TestLoadSessionDigest_UnknownSessionReturnsNilNoError(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	got, err := LoadSessionDigest(t.Context(), s.DB(), ingest.DeriveSessionID("claude-code", "nope"))
+	if err != nil {
+		t.Fatalf("LoadSessionDigest: %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil row for unknown session, got %+v", got)
+	}
+}
+
+func TestLoadSessionDigest_FindsSessionRegardlessOfAge(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	// Seed many sessions newer than the target so a "load recent N
+	// then filter Go-side" pattern would skip the target. Anchor far
+	// in the past so any reasonable LIMIT in the recent path
+	// excludes it. The single-row helper must still find it.
+	target := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedEvents(t, s, "ancient", 1, target)
+	for i := range 50 {
+		seedEvents(t, s, "newer-"+string(rune('a'+i%26))+string(rune('a'+i/26)), 1,
+			time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(i)*time.Hour))
+	}
+
+	wantID := ingest.DeriveSessionID("claude-code", "ancient")
+	got, err := LoadSessionDigest(t.Context(), s.DB(), wantID)
+	if err != nil {
+		t.Fatalf("LoadSessionDigest: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected row, got nil")
+	}
+	if got.ID != wantID {
+		t.Errorf("ID: got %s, want %s", got.ID, wantID)
+	}
+}

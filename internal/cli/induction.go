@@ -322,19 +322,12 @@ func RunInductionForSession(
 		return 0, fmt.Errorf("induction: %w", err)
 	}
 
-	rows, err := store.LoadRecentSessionDigests(ctx, s.DB(), 0, 1000)
+	digestRow, err := store.LoadSessionDigest(ctx, s.DB(), sessionID)
 	if err != nil {
-		return 0, fmt.Errorf("induction: load digest rows: %w", err)
-	}
-	var digestRow *store.SessionDigestRow
-	for i := range rows {
-		if rows[i].ID == sessionID {
-			digestRow = &rows[i]
-			break
-		}
+		return 0, fmt.Errorf("induction: load digest: %w", err)
 	}
 	if digestRow == nil {
-		return 0, fmt.Errorf("induction: session %s not found in recent digests", sessionID)
+		return 0, fmt.Errorf("induction: session %s not found", sessionID)
 	}
 	if !digestRow.LatestSummary.Valid || strings.TrimSpace(digestRow.LatestSummary.String) == "" {
 		return 0, fmt.Errorf("induction: session %s has no summary — run `aichronicles summarize %s` first",
