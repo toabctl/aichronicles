@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/store"
@@ -126,7 +127,18 @@ func ListenAndServe(sockPath string, handler http.Handler) (func(context.Context
 	// have failed the MkdirAll already if there was a permissions issue.
 	_ = os.Remove(sockPath)
 
+	// Force the socket to be created at 0600 directly. The parent
+	// dir is already 0700 so external users can't reach the file,
+	// but we still close the brief window between net.Listen
+	// creating the inode at the process umask (typically 0022 →
+	// 0644) and our Chmod tightening it. Belt and braces.
+	//
+	// Umask is process-wide, but Go's runtime never spawns concurrent
+	// listener creates internally, and ListenAndServe is a startup-
+	// path call (no other goroutines mutating umask in parallel).
+	oldMask := syscall.Umask(0o177)
 	l, err := net.Listen("unix", sockPath)
+	syscall.Umask(oldMask)
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", sockPath, err)
 	}

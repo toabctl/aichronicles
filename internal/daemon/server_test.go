@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -353,6 +354,36 @@ func TestWithMaxEnvelopeBytes_NonPositiveIgnored(t *testing.T) {
 	srv.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200 after no-op overrides, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestListenAndServe_SocketIs0600 asserts the UDS file is created
+// (and stays) at 0600. The pre-fix code created the inode at the
+// process umask (typically 0644) before chmod tightened it; this
+// test would catch a regression where the umask guard is dropped
+// and the brief default-perms window returns.
+func TestListenAndServe_SocketIs0600(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "sock")
+
+	shutdown, err := ListenAndServe(sock, http.NotFoundHandler())
+	if err != nil {
+		t.Fatalf("ListenAndServe: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = shutdown(ctx)
+	})
+
+	st, err := os.Stat(sock)
+	if err != nil {
+		t.Fatalf("stat socket: %v", err)
+	}
+	mode := st.Mode().Perm()
+	if mode != 0o600 {
+		t.Fatalf("socket perm: got %o, want 0600", mode)
 	}
 }
 
