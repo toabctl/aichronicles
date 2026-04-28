@@ -20,12 +20,18 @@ const DefaultInductionIdle = 30 * time.Minute
 // idle long enough that we believe it's ended (no new events for
 // >= idleThresholdMs), substantial enough to be worth a model
 // call (>= minEvents), and not yet processed (no llm_outputs row
-// of kind='induction').
+// of kind=induction).
+//
+// Nullable timestamps and cwd use sql.Null* so the shape matches
+// SessionDigestRow / TopSession; callers see "not set" instead of
+// a fabricated zero. Only ID and EventCount are guaranteed non-null
+// by the WHERE clause (sessions.ended_at_ms IS NOT NULL +
+// event_count >= minEvents > 0).
 type InductionCandidate struct {
 	ID          string
-	StartedAtMs int64
-	EndedAtMs   int64
-	Cwd         string
+	StartedAtMs sql.NullInt64
+	EndedAtMs   sql.NullInt64
+	Cwd         sql.NullString
 	EventCount  int
 }
 
@@ -76,9 +82,9 @@ func LoadInductionCandidates(ctx context.Context, db *sql.DB, nowMs, idleThresho
 
 	q := `
 		SELECT s.id,
-		       COALESCE(s.started_at_ms, 0),
-		       COALESCE(s.ended_at_ms, 0),
-		       COALESCE(s.cwd, ''),
+		       s.started_at_ms,
+		       s.ended_at_ms,
+		       s.cwd,
 		       s.event_count
 		  FROM sessions s
 		 WHERE s.ended_at_ms IS NOT NULL
