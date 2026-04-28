@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/toabctl/aichronicles/pkg/ingest/extract"
@@ -58,56 +59,47 @@ func LoadSkillStaleness(ctx context.Context, db *sql.DB, sinceMs int64, windowMs
 		lim.MaxExamples = defaultMaxStaleExamples
 	}
 
-	// Per-skill (total, stale) counts. The correlated subquery is
-	// run by SQLite's optimiser using idx_events_session_ts —
-	// indexed lookup of "events in session X with ts in [a,b] and
-	// kind=tool_failure", which is the key workload here.
-	const aggQuery = `
-WITH loads AS (
-    SELECT x.value          AS skill,
-           x.session_id      AS session_id,
-           e.ts_source_ms    AS ts
-      FROM extractions x
-      JOIN events e ON e.event_id = x.event_id
-     WHERE x.kind = ? AND e.ts_source_ms >= ?
-)
-SELECT skill,
-       COUNT(*)                                                   AS total_loads,
-       SUM(CASE WHEN EXISTS (
-           SELECT 1
-             FROM events f
-            WHERE f.session_id = loads.session_id
-              AND f.kind       = 'tool_failure'
-              AND f.ts_source_ms >  loads.ts
-              AND f.ts_source_ms <= loads.ts + ?
-       ) THEN 1 ELSE 0 END)                                        AS stale_loads
-  FROM loads
- GROUP BY skill
-HAVING stale_loads > 0
- ORDER BY stale_loads DESC, total_loads DESC, skill ASC
- LIMIT ?`
-
-	rows, err := db.QueryContext(ctx, aggQuery,
-		extract.KindSkillLoad, sinceMs, windowMs, lim.MaxSkills,
-	)
+	// Reuse the impact aggregator (same correlated-subquery shape)
+	// rather than duplicating the SQL. We call it with the package
+	// default cap (defaultMaxImpactSkills = 100) so the staleness
+	// view sees the full distribution before HAVING-filtering down
+	// to "skills with at least one failed load." For a personal-use
+	// store with at most a few dozen distinct skills, the extra
+	// rows are free.
+	impact, err := LoadSkillImpact(ctx, db, sinceMs, windowMs, SkillImpactLimits{})
 	if err != nil {
 		return nil, fmt.Errorf("aggregate: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 
-	var out []SkillStaleness
-	for rows.Next() {
-		var s SkillStaleness
-		if err := rows.Scan(&s.Name, &s.TotalLoads, &s.StaleLoads); err != nil {
-			return nil, fmt.Errorf("scan: %w", err)
+	// Filter to "stale-correlated" rows + recompute the inverse
+	// rate (stale / total instead of success / total).
+	out := make([]SkillStaleness, 0, len(impact))
+	for _, s := range impact {
+		if s.FailedLoads == 0 {
+			continue
 		}
-		if s.TotalLoads > 0 {
-			s.Rate = float64(s.StaleLoads) / float64(s.TotalLoads)
+		row := SkillStaleness{
+			Name:       s.Name,
+			TotalLoads: s.TotalLoads,
+			StaleLoads: s.FailedLoads,
 		}
-		out = append(out, s)
+		row.Rate = float64(s.FailedLoads) / float64(s.TotalLoads)
+		out = append(out, row)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+
+	// Order most-likely-broken first: stale_loads DESC, total_loads
+	// DESC, skill ASC. Stable; matches the previous SQL ORDER BY.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].StaleLoads != out[j].StaleLoads {
+			return out[i].StaleLoads > out[j].StaleLoads
+		}
+		if out[i].TotalLoads != out[j].TotalLoads {
+			return out[i].TotalLoads > out[j].TotalLoads
+		}
+		return out[i].Name < out[j].Name
+	})
+	if len(out) > lim.MaxSkills {
+		out = out[:lim.MaxSkills]
 	}
 
 	// Per-skill examples: one cheap query per row, capped at
