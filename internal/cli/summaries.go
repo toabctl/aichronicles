@@ -192,11 +192,13 @@ func newSummariesFillCmd() *cobra.Command {
 // emits. status is "summarized" | "failed" | "skipped" so callers
 // piping to jq can branch on a stable string.
 type fillStatus struct {
-	SessionID  string `json:"session_id"`
-	Status     string `json:"status"`
-	Topic      string `json:"topic,omitempty"`
-	Error      string `json:"error,omitempty"`
-	DurationMs int64  `json:"duration_ms"`
+	SessionID    string `json:"session_id"`
+	Status       string `json:"status"`
+	Topic        string `json:"topic,omitempty"`
+	Error        string `json:"error,omitempty"`
+	DurationMs   int64  `json:"duration_ms"`
+	InputTokens  int64  `json:"input_tokens,omitempty"`
+	OutputTokens int64  `json:"output_tokens,omitempty"`
 }
 
 // runSummariesFill drives the per-session loop. Streams a one-line
@@ -229,8 +231,17 @@ func runSummariesFill(
 			_ = writeJSONFillResults(out, results)
 			return
 		}
-		_, _ = fmt.Fprintf(out, "\nfilled: %d  failed: %d  skipped: %d  total: %d\n",
+		var totalIn, totalOut int64
+		for _, r := range results {
+			totalIn += r.InputTokens
+			totalOut += r.OutputTokens
+		}
+		_, _ = fmt.Fprintf(out, "\nfilled: %d  failed: %d  skipped: %d  total: %d",
 			filled, failed, skipped, len(results))
+		if totalIn > 0 || totalOut > 0 {
+			_, _ = fmt.Fprintf(out, "  tokens: %din / %dout", totalIn, totalOut)
+		}
+		_, _ = fmt.Fprintln(out)
 	}()
 
 	// Use a Flusher when the writer is one (os.Stdout buffered to
@@ -276,7 +287,17 @@ func runSummariesFill(
 			failed++
 		} else {
 			st.Status = "summarized"
-			st.Topic = topicForSession(ctx, s, row.ID)
+			// One DB hit covers both topic + token lookup so we
+			// don't double-query on the just-written row.
+			if r := latestSummaryRow(ctx, s, row.ID); r != nil {
+				st.Topic = extractTopic(store.LLMKindSummary, r.Body)
+				if r.InputTokens.Valid {
+					st.InputTokens = r.InputTokens.Int64
+				}
+				if r.OutputTokens.Valid {
+					st.OutputTokens = r.OutputTokens.Int64
+				}
+			}
 			filled++
 		}
 		results = append(results, st)
@@ -292,13 +313,16 @@ func runSummariesFill(
 // in the batch they are without having to count their own output;
 // the status glyph (✓ / ✗ / ⚠) is constant-width so the topic /
 // error column lines up even when the batch hits triple digits.
+// On success the tokens consumed by the LLM call land at the end
+// of the line ("12345in/678out") so the user sees per-session cost
+// shape without having to query the store afterwards.
 func emitFillStatusLine(w io.Writer, s fillStatus, idx, total int) {
 	short := shortSessionID(s.SessionID)
 	prefix := fmt.Sprintf("[%d/%d]", idx, total)
 	switch s.Status {
 	case "summarized":
-		_, _ = fmt.Fprintf(w, "%s %s ✓ summarized   %q  (%dms)\n",
-			prefix, short, s.Topic, s.DurationMs)
+		_, _ = fmt.Fprintf(w, "%s %s ✓ summarized   %q  (%dms%s)\n",
+			prefix, short, s.Topic, s.DurationMs, formatTokenSuffix(s.InputTokens, s.OutputTokens))
 	case "failed":
 		_, _ = fmt.Fprintf(w, "%s %s ✗ failed       %s\n",
 			prefix, short, s.Error)
@@ -306,6 +330,19 @@ func emitFillStatusLine(w io.Writer, s fillStatus, idx, total int) {
 		_, _ = fmt.Fprintf(w, "%s %s ⚠ skipped      (%s)\n",
 			prefix, short, s.Error)
 	}
+}
+
+// formatTokenSuffix renders ", N_in/N_out" (e.g. "12k in / 700 out"
+// shape, with literal counts) when either token count is non-zero.
+// Empty when neither side reported usage — some providers omit it
+// on cached / partial responses, and we don't fake numbers we don't
+// have. Returned with the leading separator so the caller can
+// splice it into the line cleanly.
+func formatTokenSuffix(in, out int64) string {
+	if in == 0 && out == 0 {
+		return ""
+	}
+	return fmt.Sprintf(", %din/%dout", in, out)
 }
 
 // writeJSONFillResults emits the accumulated fillStatus slice as
@@ -318,21 +355,22 @@ func writeJSONFillResults(w io.Writer, results []fillStatus) error {
 	return enc.Encode(results)
 }
 
-// topicForSession looks up the just-written summary's topic for the
-// per-row status line. Best-effort: a parse failure or a missing
-// row (race window between RunSummarize commit and our query)
-// returns "" so the line still emits.
-func topicForSession(ctx context.Context, s *store.Store, sessionID string) string {
+// latestSummaryRow returns the most recent kind=summary llm_outputs
+// row for a session, or nil when none exists / on a query error.
+// Shared between topic + token lookups so each per-session reporter
+// only hits the DB once after a successful summarise.
+func latestSummaryRow(ctx context.Context, s *store.Store, sessionID string) *store.LLMOutput {
 	outs, err := store.LoadLLMOutputsForSession(ctx, s.DB(), sessionID)
 	if err != nil {
-		return ""
+		return nil
 	}
 	for _, o := range outs {
 		if o.Kind == store.LLMKindSummary {
-			return extractTopic(store.LLMKindSummary, o.Body)
+			row := o
+			return &row
 		}
 	}
-	return ""
+	return nil
 }
 
 // writeMissingSummaries renders the LoadSessionsMissingSummary

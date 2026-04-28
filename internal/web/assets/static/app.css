@@ -568,6 +568,27 @@ header > nav > ul li:has(> .navsearch) {
   background: var(--pico-secondary-background);
   border-radius: 0 0.25rem 0.25rem 0;
 }
+/* The livebanner uses --pico-secondary-background (a dark grey-blue
+   in both themes), so the default page text colour ends up unreadably
+   dim against it. Force every text bit inside the banner onto the
+   matching --pico-secondary-inverse (white in both themes); the cwd
+   gets a slightly transparent white so it stays subordinate to the
+   snippet without dropping below readable contrast. */
+.livebanner,
+.livebanner .livefeed-row .ts,
+.livebanner .livefeed-row .sid,
+.livebanner .livefeed-row .snippet {
+  color: var(--pico-secondary-inverse);
+}
+.livebanner .livefeed-row .cwd {
+  color: rgba(255, 255, 255, 0.75);
+  font-style: italic;
+}
+.livebanner-empty,
+.livebanner .livefeed-empty {
+  color: rgba(255, 255, 255, 0.6);
+  font-style: italic;
+}
 .livebanner-list {
   list-style: none;
   margin: 0;
