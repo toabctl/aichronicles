@@ -33,6 +33,15 @@ const (
 	// so re-running on the same SKILL contents is free; a hand-
 	// edit to the SKILL.md invalidates the cache automatically.
 	LLMKindSkillRevision LLMOutputKind = "skill_revision"
+	// LLMKindInduction is the cached output of online induction
+	// — single-session propose triggered the moment a session
+	// idles out. One row per (session_id, prompt-hash) so
+	// re-running on the same session contents hits the cache.
+	// Distinguished from LLMKindPropose so the CLI listing can
+	// segregate "skills surfaced from one session by the auto
+	// trigger" from "skills surfaced from a multi-session window
+	// by the user".
+	LLMKindInduction LLMOutputKind = "induction"
 )
 
 // LLMOutput mirrors one row of the llm_outputs table. Callers

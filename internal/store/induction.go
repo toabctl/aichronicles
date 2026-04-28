@@ -1,0 +1,136 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+)
+
+// InductionCandidate is one session ripe for online induction:
+// idle long enough that we believe it's ended (no new events for
+// >= idleThresholdMs), substantial enough to be worth a model
+// call (>= minEvents), and not yet processed (no llm_outputs row
+// of kind='induction').
+type InductionCandidate struct {
+	ID          string
+	StartedAtMs int64
+	EndedAtMs   int64
+	Cwd         string
+	EventCount  int
+}
+
+// LoadInductionCandidates returns up to `limit` sessions that
+// satisfy all three predicates:
+//
+//  1. Idle: ended_at_ms <= nowMs - idleThresholdMs (so we don't
+//     induce a session that's still actively receiving events).
+//
+//  2. Substantial: event_count >= minEvents (drops the trivial
+//     "user typed `q`" sessions that won't ground a useful skill).
+//
+//  3. Not already processed: no llm_outputs row exists with
+//     kind='induction' AND session_id = s.id. Re-running the
+//     sweeper is then idempotent at the per-session level —
+//     once we've induced (or decided no_skill_found), we don't
+//     pay the LLM call again.
+//
+// Newest-ended first, so an interactive sweep surfaces the most
+// recently completed work before catching up on backlog.
+//
+// idleThresholdMs <= 0 falls back to 30 minutes — the same
+// "session is ended" definition the model uses elsewhere.
+// minEvents <= 0 falls back to 5 (a one-prompt session almost
+// never grounds a workflow). limit <= 0 falls back to 50.
+func LoadInductionCandidates(ctx context.Context, db *sql.DB, nowMs, idleThresholdMs int64, minEvents, limit int) ([]InductionCandidate, error) {
+	if idleThresholdMs <= 0 {
+		idleThresholdMs = 30 * 60 * 1000
+	}
+	if minEvents <= 0 {
+		minEvents = 5
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	cutoff := nowMs - idleThresholdMs
+
+	q := `
+		SELECT s.id,
+		       COALESCE(s.started_at_ms, 0),
+		       COALESCE(s.ended_at_ms, 0),
+		       COALESCE(s.cwd, ''),
+		       s.event_count
+		  FROM sessions s
+		 WHERE s.ended_at_ms IS NOT NULL
+		   AND s.ended_at_ms <= ?
+		   AND s.event_count >= ?
+		   AND NOT EXISTS (
+		     SELECT 1 FROM llm_outputs lo
+		      WHERE lo.session_id = s.id AND lo.kind = 'induction'
+		   )
+		 ORDER BY s.ended_at_ms DESC
+		 LIMIT ?
+	`
+	rows, err := db.QueryContext(ctx, q, cutoff, minEvents, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query induction candidates: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []InductionCandidate
+	for rows.Next() {
+		var c InductionCandidate
+		if err := rows.Scan(&c.ID, &c.StartedAtMs, &c.EndedAtMs, &c.Cwd, &c.EventCount); err != nil {
+			return nil, fmt.Errorf("scan induction candidate: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// HasInductionRun returns true when an llm_outputs row of
+// kind='induction' exists for sessionID. Cheap idempotency
+// guard for callers that want to skip a candidate without
+// running the full LoadInductionCandidates query.
+func HasInductionRun(ctx context.Context, db *sql.DB, sessionID string) (bool, error) {
+	var exists int
+	err := db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM llm_outputs WHERE session_id = ? AND kind = 'induction')`,
+		sessionID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check induction: %w", err)
+	}
+	return exists == 1, nil
+}
+
+// LoadInductionRow returns the most recent llm_outputs row of
+// kind='induction' for sessionID, or nil if none exists. Used by
+// the CLI to render "what did induction decide for this session?"
+// without a separate body parse step.
+func LoadInductionRow(ctx context.Context, db *sql.DB, sessionID string) (*LLMOutput, error) {
+	q := `SELECT id, session_id, kind, model, prompt_hash,
+	             COALESCE(input_tokens, 0), COALESCE(output_tokens, 0),
+	             body, created_at_ms
+	        FROM llm_outputs
+	       WHERE session_id = ? AND kind = 'induction'
+	       ORDER BY created_at_ms DESC
+	       LIMIT 1`
+	var (
+		out     LLMOutput
+		inToks  sql.NullInt64
+		outToks sql.NullInt64
+	)
+	err := db.QueryRowContext(ctx, q, sessionID).Scan(
+		&out.ID, &out.SessionID, &out.Kind, &out.Model, &out.PromptHash,
+		&inToks, &outToks, &out.Body, &out.CreatedAtMs,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load induction row: %w", err)
+	}
+	out.InputTokens = inToks
+	out.OutputTokens = outToks
+	return &out, nil
+}
