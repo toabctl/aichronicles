@@ -272,7 +272,7 @@ func loadTopSessions(ctx context.Context, db *sql.DB, sinceMs int64, limit int) 
 		`SELECT s.id, s.event_count, s.started_at_ms, s.ended_at_ms, s.cwd,
 		        COALESCE(s.first_prompt_text, '') AS first_prompt
 		   FROM sessions s
-		  WHERE COALESCE(s.ended_at_ms, s.started_at_ms) >= ?
+		  WHERE `+EffectiveTsExpr+` >= ?
 		  ORDER BY s.event_count DESC, s.id ASC
 		  LIMIT ?`,
 		sinceMs, limit,

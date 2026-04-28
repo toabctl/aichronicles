@@ -205,7 +205,7 @@ func buildSessionsSQL(opts SessionsOptions) (string, []any) {
 			s.first_prompt_text AS first_prompt
 		FROM sessions s
 		WHERE 1=1` + filter.String() + `
-		ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC
+		ORDER BY ` + store.EffectiveTsExpr + ` DESC
 		LIMIT ?`, args
 }
 

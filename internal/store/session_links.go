@@ -110,8 +110,8 @@ func LoadCandidatePriorSessions(ctx context.Context, db *sql.DB, forSession stri
 		FROM sessions s
 		WHERE s.cwd = ?
 		  AND s.id != ?
-		  AND COALESCE(s.ended_at_ms, s.started_at_ms, 0) < ?
-		ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC
+		  AND `+EffectiveTsExpr+` < ?
+		ORDER BY `+EffectiveTsExpr+` DESC
 		LIMIT ?
 	`, cwd.String, forSession, startedAt.Int64, limit)
 	if err != nil {

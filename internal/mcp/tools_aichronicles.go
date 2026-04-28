@@ -244,7 +244,7 @@ func listSessionsHandler(st *store.Store) ToolHandler {
 		q := `SELECT s.id, s.started_at_ms, s.ended_at_ms, s.event_count, s.cwd,
 			s.first_prompt_text AS first_prompt
 			FROM sessions s WHERE 1=1` + filter.String() + `
-			ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC
+			ORDER BY ` + store.EffectiveTsExpr + ` DESC
 			LIMIT ?`
 
 		rows, err := st.DB().QueryContext(ctx, q, sqlArgs...)

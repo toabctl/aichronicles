@@ -26,6 +26,21 @@ var migrationsFS embed.FS
 // re-embedding them or shelling out to the filesystem. Read-only.
 func MigrationsFS() embed.FS { return migrationsFS }
 
+// EffectiveTsExpr is the canonical SQL expression for "the session's
+// effective timestamp" — ended_at_ms when set, otherwise started_at_ms,
+// otherwise 0. Used in ORDER BY / WHERE clauses across CLI, MCP, web,
+// and the store package itself; pinning the expression here keeps
+// the 15-ish call sites in lockstep and matches the expression
+// idx_sessions_effective_ts indexes (migration 003).
+//
+// Splice into raw-string SQL via concatenation:
+//
+//	q := `SELECT s.id FROM sessions s ORDER BY ` + EffectiveTsExpr + ` DESC`
+//
+// The column-prefix is included so the expression is unambiguous in
+// joined contexts (every consumer aliases the sessions table as `s`).
+const EffectiveTsExpr = "COALESCE(s.ended_at_ms, s.started_at_ms, 0)"
+
 // Store is the aichronicles persistence handle. Construct with Open;
 // call Close on shutdown. Safe for concurrent use (*sql.DB is; triggers
 // and transactions handle write ordering).

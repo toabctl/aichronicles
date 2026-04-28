@@ -31,14 +31,14 @@ type ProjectAggregate struct {
 // the previous implementation re-derived it via a 9-line CTE on
 // every call, which is the same value the trigger now maintains.
 func LoadProjectAggregates(ctx context.Context, db *sql.DB, sinceMs int64) ([]ProjectAggregate, error) {
-	const q = `
+	q := `
 SELECT s.start_cwd                                          AS cwd,
        COUNT(*)                                             AS sessions,
        COALESCE(SUM(s.event_count), 0)                      AS events,
-       MAX(COALESCE(s.ended_at_ms, s.started_at_ms, 0))     AS last_activity_ms
+       MAX(` + EffectiveTsExpr + `)                         AS last_activity_ms
   FROM sessions s
  WHERE s.start_cwd IS NOT NULL
-   AND COALESCE(s.ended_at_ms, s.started_at_ms, 0) >= ?
+   AND ` + EffectiveTsExpr + ` >= ?
  GROUP BY s.start_cwd
  ORDER BY last_activity_ms DESC`
 	rows, err := db.QueryContext(ctx, q, sinceMs)

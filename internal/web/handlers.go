@@ -324,7 +324,7 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int, f sess
 	if len(conds) > 0 {
 		q += " WHERE " + strings.Join(conds, " AND ")
 	}
-	q += " ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC LIMIT ?"
+	q += " ORDER BY " + store.EffectiveTsExpr + " DESC LIMIT ?"
 	args = append(args, limit)
 
 	rows, err := st.DB().QueryContext(ctx, q, args...)

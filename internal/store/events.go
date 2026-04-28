@@ -135,7 +135,7 @@ func LoadSessionsForCompletion(ctx context.Context, db *sql.DB, prefix string, l
 		           ORDER BY created_at_ms DESC LIMIT 1) AS summary_body
 		   FROM sessions s
 		  WHERE s.id LIKE ? || '%'
-		  ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC
+		  ORDER BY `+EffectiveTsExpr+` DESC
 		  LIMIT ?`,
 		string(LLMKindSummary), prefix, limit,
 	)
@@ -519,8 +519,8 @@ func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs int64, li
 				WHERE session_id = s.id AND kind = ?
 				ORDER BY created_at_ms DESC LIMIT 1) AS latest_summary
 		FROM sessions s
-		WHERE COALESCE(s.ended_at_ms, s.started_at_ms, 0) >= ?
-		ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC
+		WHERE `+EffectiveTsExpr+` >= ?
+		ORDER BY `+EffectiveTsExpr+` DESC
 		LIMIT ?`,
 		string(LLMKindSummary), sinceMs, limit,
 	)
@@ -600,7 +600,7 @@ func LoadSessionsMissingSummary(ctx context.Context, db *sql.DB, sinceMs int64, 
 		limit = 200
 	}
 
-	conds := []string{"COALESCE(s.ended_at_ms, s.started_at_ms, 0) >= ?"}
+	conds := []string{EffectiveTsExpr + " >= ?"}
 	args := []any{sinceMs}
 	if filter.Cwd != "" {
 		conds = append(conds, "s.cwd = ?")
@@ -623,7 +623,7 @@ func LoadSessionsMissingSummary(ctx context.Context, db *sql.DB, sinceMs int64, 
 			s.first_prompt_text AS first_prompt
 		FROM sessions s
 		WHERE ` + strings.Join(conds, " AND ") + `
-		ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC
+		ORDER BY ` + EffectiveTsExpr + ` DESC
 		LIMIT ?`
 	args = append(args, limit)
 
