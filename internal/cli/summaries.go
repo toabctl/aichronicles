@@ -159,6 +159,22 @@ func newSummariesFillCmd() *cobra.Command {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no sessions missing a summary in the window")
 				return nil
 			}
+			// Header so the user sees what's happening before the
+			// first LLM call's network round-trip lands. Includes
+			// the resolved model + window so an unexpected default
+			// doesn't take a whole batch's worth of API calls to
+			// notice. JSON mode skips it: pipelines want a clean
+			// JSON array, not prose preamble.
+			if format != FormatJSON {
+				modelLabel := model
+				if modelLabel == "" {
+					modelLabel = "(provider default)"
+				}
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+					"filling %d sessions  window=%s  model=%s  provider=%s\n",
+					len(rows), humanDuration(since), modelLabel,
+					providerLabel(llmCfg))
+			}
 			return runSummariesFill(cmd.Context(), s, newClient,
 				rows, model, cfg.Limits.SummarizeTimeout.Or(defaultSummarizeTimeout),
 				format, cmd.OutOrStdout())
@@ -187,8 +203,10 @@ type fillStatus struct {
 }
 
 // runSummariesFill drives the per-session loop. Streams a one-line
-// status to out as each summarize completes (table mode) or
-// accumulates and emits one JSON array at the end (json mode).
+// "[i/N] <id> starting…" before each LLM call AND a result line
+// after, so the user sees progress immediately even when the first
+// summarize takes 10s. JSON mode accumulates and emits one array
+// at the end.
 //
 // Per-session timeouts come from the same config knob `summarize`
 // uses; ctx cancellation propagates so Ctrl-C stops between
@@ -205,6 +223,7 @@ func runSummariesFill(
 ) error {
 	results := make([]fillStatus, 0, len(rows))
 	var filled, failed, skipped int
+	total := len(rows)
 
 	defer func() {
 		// Always emit json if requested, even on early-exit so the
@@ -217,11 +236,27 @@ func runSummariesFill(
 			filled, failed, skipped, len(results))
 	}()
 
-	for _, row := range rows {
+	// Use a Flusher when the writer is one (os.Stdout buffered to
+	// stderr, etc.) so the "starting" line surfaces *before* the
+	// LLM call rather than batching with the result line. The
+	// type assertion is cheap; missing Flush just means the writer
+	// already flushes per-Write, which is the os.Stdout default.
+	flusher, _ := out.(interface{ Flush() error })
+
+	for i, row := range rows {
 		// Honor ctx cancellation between sessions so Ctrl-C
 		// doesn't kill an in-flight summarize mid-write.
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+
+		idx := i + 1
+		if format != FormatJSON {
+			_, _ = fmt.Fprintf(out, "[%d/%d] %s starting...\n",
+				idx, total, shortSessionID(row.ID))
+			if flusher != nil {
+				_ = flusher.Flush()
+			}
 		}
 
 		callCtx, cancel := context.WithTimeout(ctx, perCallTimeout)
@@ -249,27 +284,30 @@ func runSummariesFill(
 		}
 		results = append(results, st)
 		if format != FormatJSON {
-			emitFillStatusLine(out, st)
+			emitFillStatusLine(out, st, idx, total)
 		}
 	}
 	return nil
 }
 
 // emitFillStatusLine prints one human-readable line per session
-// as the fill progresses. The status glyph (✓ / ✗) is constant-width
-// so columns align even when topics are long.
-func emitFillStatusLine(w io.Writer, s fillStatus) {
+// as the fill progresses. The "[i/N]" prefix tells the user where
+// in the batch they are without having to count their own output;
+// the status glyph (✓ / ✗ / ⚠) is constant-width so the topic /
+// error column lines up even when the batch hits triple digits.
+func emitFillStatusLine(w io.Writer, s fillStatus, idx, total int) {
 	short := shortSessionID(s.SessionID)
+	prefix := fmt.Sprintf("[%d/%d]", idx, total)
 	switch s.Status {
 	case "summarized":
-		_, _ = fmt.Fprintf(w, "%s ✓ summarized   %q  (%dms)\n",
-			short, s.Topic, s.DurationMs)
+		_, _ = fmt.Fprintf(w, "%s %s ✓ summarized   %q  (%dms)\n",
+			prefix, short, s.Topic, s.DurationMs)
 	case "failed":
-		_, _ = fmt.Fprintf(w, "%s ✗ failed       %s\n",
-			short, s.Error)
+		_, _ = fmt.Fprintf(w, "%s %s ✗ failed       %s\n",
+			prefix, short, s.Error)
 	case "skipped":
-		_, _ = fmt.Fprintf(w, "%s ⚠ skipped      (%s)\n",
-			short, s.Error)
+		_, _ = fmt.Fprintf(w, "%s %s ⚠ skipped      (%s)\n",
+			prefix, short, s.Error)
 	}
 }
 

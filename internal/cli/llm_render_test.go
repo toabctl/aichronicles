@@ -8,6 +8,25 @@ import (
 	"github.com/toabctl/aichronicles/pkg/llm"
 )
 
+// TestProviderLabel pins the strings the cli surfaces in command
+// headers ("provider=anthropic", "provider=openai") so a future
+// rename in pkg/llm doesn't silently change what users see.
+func TestProviderLabel(t *testing.T) {
+	t.Parallel()
+	cases := map[llm.Provider]string{
+		"":                    "anthropic",
+		llm.ProviderAnthropic: "anthropic",
+		llm.ProviderOpenAI:    "openai",
+		"weird-future":        "weird-future",
+	}
+	for in, want := range cases {
+		got := providerLabel(llm.Config{Provider: in})
+		if got != want {
+			t.Errorf("providerLabel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // TestParseToolResult_RejectsMultipleToolUses pins the exact-1
 // contract: forced tool use means one call, period. Silently
 // using ToolUses[0] would discard the rest and the user couldn't

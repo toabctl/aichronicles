@@ -452,6 +452,15 @@ func TestRunSummariesFill_StreamsAndTallies(t *testing.T) {
 		idA[:8],
 		idB[:8],
 		"filled: 2",
+		// Per-row [i/N] prefix so the user sees progress instead
+		// of a silent terminal during long batches. "[1/2]" must
+		// appear on the first line (starting AND result), "[2/2]"
+		// on the second.
+		"[1/2]",
+		"[2/2]",
+		// "starting..." line must precede each LLM call so even a
+		// 10s round-trip doesn't look like the command is frozen.
+		"starting...",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("output missing %q:\n%s", want, body)

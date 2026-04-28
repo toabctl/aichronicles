@@ -12,6 +12,22 @@ import (
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
+// providerLabel returns a short human-readable name for the
+// configured LLM provider — used in command headers so the user
+// sees which provider their batch is hitting before the first API
+// call. Empty / unrecognised values fall back to "anthropic" since
+// that's the documented default in llm.FromConfig.
+func providerLabel(cfg llm.Config) string {
+	switch cfg.Provider {
+	case "", llm.ProviderAnthropic:
+		return "anthropic"
+	case llm.ProviderOpenAI:
+		return "openai"
+	default:
+		return string(cfg.Provider)
+	}
+}
+
 // llmConfigFromFile translates the file-shaped config.LLM into the
 // runtime-shaped llm.Config that the llm package's FromConfig expects.
 // Lives in the cli package so the llm package never imports config —
