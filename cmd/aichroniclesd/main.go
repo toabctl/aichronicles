@@ -20,6 +20,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/notify"
 	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/llm"
 )
 
 // defaultShutdownDrainTimeout caps how long the daemon will wait for
@@ -140,6 +141,15 @@ func run(sockFlag, dbFlag string) error {
 		logger.Warn("start watchdog", "err", err)
 	}
 
+	// Online induction sweeper — disabled-by-default. When enabled,
+	// the goroutine periodically asks the LLM whether each newly-
+	// idle session contained a reusable workflow worth saving as a
+	// skill. See config.Induction; cli.RunInductionSweep is the
+	// callback. No-op when cfg.Induction.Enabled is false.
+	if cfg.Induction.Enabled {
+		startInductionSweeper(sigCtx, st, cfg, logger)
+	}
+
 	<-sigCtx.Done()
 	drainTimeout := cfg.Limits.ShutdownDrainTimeout.Or(defaultShutdownDrainTimeout)
 	logger.Info("aichroniclesd shutting down", "drain_timeout", drainTimeout)
@@ -153,4 +163,64 @@ func run(sockFlag, dbFlag string) error {
 	drainCtx, cancel := context.WithTimeout(context.Background(), drainTimeout)
 	defer cancel()
 	return shutdown(drainCtx)
+}
+
+// defaultInductionSweepInterval — the daemon-resident sweeper's
+// cadence when the user hasn't configured one. 15 minutes is a
+// sweet spot: short enough that a finished session gets induced
+// while it's still cognitively warm, long enough that the LLM
+// spend amortises (with the per-session cache, re-running on the
+// same body is free).
+const defaultInductionSweepInterval = 15 * time.Minute
+
+// defaultInductionSweepMaxPerTick caps the per-sweep blast
+// radius. With ~50¢/induction typical, 5 per tick keeps the
+// worst case at ~$10/hour even with a pathological backlog of
+// idle sessions. The next tick drains the rest.
+const defaultInductionSweepMaxPerTick = 5
+
+// startInductionSweeper spawns the daemon-resident induction
+// goroutine. Pulled out of run() to keep the main path focused;
+// the actual sweep work happens in cli.RunInductionSweep, which
+// the goroutine wraps in the Sweep callback.
+//
+// LLM client construction is deferred per-tick (`llm.FromConfig`
+// is called inside the callback, not closed over here) so a
+// transient credentials issue at daemon start doesn't permanently
+// disable the sweeper — the next tick retries with fresh config.
+func startInductionSweeper(ctx context.Context, st *store.Store, cfg *config.Config, log *slog.Logger) {
+	interval := cfg.Induction.SweepInterval.Or(defaultInductionSweepInterval)
+	idle := cfg.Induction.Idle.Or(30 * time.Minute)
+	minEvents := cfg.Induction.MinEvents
+	if minEvents <= 0 {
+		minEvents = 5
+	}
+	maxPerSweep := cfg.Induction.MaxPerSweep
+	if maxPerSweep <= 0 {
+		maxPerSweep = defaultInductionSweepMaxPerTick
+	}
+	llmCfg := cli.LLMConfigFromFile(cfg.LLM)
+
+	sw := &daemon.InductionSweeper{
+		Interval: interval,
+		Log:      log,
+		Sweep: func(sctx context.Context) error {
+			return cli.RunInductionSweep(sctx, st,
+				func() (llm.Client, error) {
+					return llm.FromConfig(sctx, llmCfg)
+				},
+				cli.InductionSweepOptions{
+					Idle:      idle,
+					MinEvents: minEvents,
+					Limit:     maxPerSweep,
+				},
+				daemon.DiscardWriter, // stdout has no audience here
+				daemon.DiscardWriter, // stderr telemetry duplicates slog calls inside the sweep
+			)
+		},
+	}
+	go sw.Run(ctx)
+	log.Info("induction sweeper enabled",
+		"interval", interval, "idle", idle,
+		"min_events", minEvents, "max_per_sweep", maxPerSweep)
 }

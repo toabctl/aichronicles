@@ -72,7 +72,7 @@ func newSummarizeCmd() *cobra.Command {
 			if cfgErr != nil {
 				return cfgErr
 			}
-			llmCfg := llmConfigFromFile(cfg.LLM)
+			llmCfg := LLMConfigFromFile(cfg.LLM)
 			newClient := func() (llm.Client, error) {
 				return llm.FromConfig(cmd.Context(), llmCfg)
 			}

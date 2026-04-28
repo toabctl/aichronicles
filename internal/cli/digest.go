@@ -82,7 +82,7 @@ func newDigestWeeklyCmd() *cobra.Command {
 			if cfgErr != nil {
 				return cfgErr
 			}
-			llmCfg := llmConfigFromFile(cfg.LLM)
+			llmCfg := LLMConfigFromFile(cfg.LLM)
 
 			start, end, err := resolveWeekBounds(weekOf, time.Now().UTC())
 			if err != nil {

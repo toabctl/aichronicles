@@ -100,7 +100,7 @@ func newProposeApplyCmd() *cobra.Command {
 			if cfgErr != nil {
 				return cfgErr
 			}
-			llmCfg := llmConfigFromFile(cfg.LLM)
+			llmCfg := LLMConfigFromFile(cfg.LLM)
 			ctx, cancel := context.WithTimeout(cmd.Context(),
 				cfg.Limits.ReflectTimeout.Or(defaultMetaLLMTimeout))
 			defer cancel()

@@ -95,7 +95,7 @@ func newInductionSweepCmd() *cobra.Command {
 			if cfgErr != nil {
 				return cfgErr
 			}
-			llmCfg := llmConfigFromFile(cfg.LLM)
+			llmCfg := LLMConfigFromFile(cfg.LLM)
 			ctx, cancel := context.WithTimeout(cmd.Context(),
 				cfg.Limits.ReflectTimeout.Or(defaultMetaLLMTimeout))
 			defer cancel()
@@ -158,7 +158,7 @@ func newInductionRunCmd() *cobra.Command {
 			if cfgErr != nil {
 				return cfgErr
 			}
-			llmCfg := llmConfigFromFile(cfg.LLM)
+			llmCfg := LLMConfigFromFile(cfg.LLM)
 			ctx, cancel := context.WithTimeout(cmd.Context(),
 				cfg.Limits.SummarizeTimeout.Or(defaultSummarizeTimeout))
 			defer cancel()

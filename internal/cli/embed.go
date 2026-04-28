@@ -83,7 +83,7 @@ func newEmbedCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			llmCfg := llmConfigFromFile(cfg.LLM)
+			llmCfg := LLMConfigFromFile(cfg.LLM)
 
 			model := modelID
 			if model == "" {

@@ -25,6 +25,37 @@ type Config struct {
 	Capture       Capture       `toml:"capture"`
 	LLM           LLM           `toml:"llm"`
 	Limits        Limits        `toml:"limits"`
+	Induction     Induction     `toml:"induction"`
+}
+
+// Induction controls the daemon-resident online-induction sweeper.
+// Disabled by default — enabling it means the daemon will, on each
+// SweepInterval tick, automatically run single-session induction
+// against every idle un-induced session. That's a non-trivial amount
+// of LLM spend, so we make the user opt in explicitly.
+//
+// Tuning rules:
+//
+//   - SweepInterval: how often the goroutine wakes. Default 15
+//     minutes. Smaller intervals make induction "more online" but
+//     don't help if the per-sweep work cap has nothing to do.
+//
+//   - Idle: how long a session must be quiet before it counts as
+//     ended. Default 30 minutes — same definition the manual sweep
+//     uses, kept in sync so behaviour doesn't drift between paths.
+//
+//   - MinEvents: skip sessions smaller than this. Default 5 (one
+//     prompt + reply + tool round-trip).
+//
+//   - MaxPerSweep: bound LLM spend per tick. Default 5 — even a
+//     pathological backlog of 100 idle sessions costs only ~5
+//     calls per interval until it drains.
+type Induction struct {
+	Enabled       bool     `toml:"enabled"`
+	SweepInterval Duration `toml:"sweep_interval"`
+	Idle          Duration `toml:"idle"`
+	MinEvents     int      `toml:"min_events"`
+	MaxPerSweep   int      `toml:"max_per_sweep"`
 }
 
 // Limits exposes operationally-tunable defaults that previously lived

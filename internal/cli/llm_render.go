@@ -52,12 +52,16 @@ func resolveModelLabel(cfg llm.Config, flagModel string) string {
 	}
 }
 
-// llmConfigFromFile translates the file-shaped config.LLM into the
+// LLMConfigFromFile translates the file-shaped config.LLM into the
 // runtime-shaped llm.Config that the llm package's FromConfig expects.
 // Lives in the cli package so the llm package never imports config —
 // keeps the layering one-way and the llm package independently
 // testable without touching TOML.
-func llmConfigFromFile(in config.LLM) llm.Config {
+//
+// Exported so cmd/aichroniclesd can build an llm.Config the same
+// way the cli subcommands do, without duplicating the translation
+// in two places.
+func LLMConfigFromFile(in config.LLM) llm.Config {
 	return llm.Config{
 		Provider: llm.Provider(strings.ToLower(strings.TrimSpace(in.Provider))),
 		Anthropic: llm.ProviderConfig{

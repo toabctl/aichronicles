@@ -72,7 +72,7 @@ func newMCPServeCmd() *cobra.Command {
 			// see it advertised and call it expecting it to work.
 			cfg, cfgErr := config.Load()
 			if cfgErr == nil {
-				llmCfg := llmConfigFromFile(cfg.LLM)
+				llmCfg := LLMConfigFromFile(cfg.LLM)
 				mcp.RegisterAichroniclesLLMTools(srv, s,
 					func() (llm.Client, error) { return llm.FromConfig(cmd.Context(), llmCfg) })
 			} else {
