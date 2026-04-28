@@ -615,6 +615,35 @@ func TestLoadAddedSkillCandidate(t *testing.T) {
 	})
 }
 
+// TestBumpPatch covers the version-bumping rule the merge path
+// uses on the existing skill's frontmatter version. The fallback
+// to InitialSkillVersion on garbage input is the load-bearing
+// invariant — a corrupted version string must not strand merges.
+func TestBumpPatch(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"v0.1.0", "v0.1.1"},
+		{"v0.1.42", "v0.1.43"},
+		{"0.1.0", "0.1.1"},
+		{"v1.2.3", "v1.2.4"},
+		{"V0.1.0", "v0.1.1"}, // case-insensitive prefix
+		{"", InitialSkillVersion},
+		{"v0.1", InitialSkillVersion},   // missing patch
+		{"v0.1.x", InitialSkillVersion}, // non-integer
+		{"vabc.def.ghi", InitialSkillVersion},
+		{"garbage", InitialSkillVersion},
+	}
+	for _, tc := range cases {
+		got := BumpPatch(tc.in)
+		if got != tc.want {
+			t.Errorf("BumpPatch(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 // TestSkillCandidatesMigration_Backfills asserts migration 021's
 // backfill rule: any pre-migration row with applied_at_ms set
 // (now decision_at_ms) inherits decision='add' so old data fits

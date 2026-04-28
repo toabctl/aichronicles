@@ -9,6 +9,69 @@ import (
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
+// TestReadVersion_ParsesQuotedAndUnquoted mirrors
+// TestReadSkillDescription_ParsesQuotedAndUnquoted: covers the bare /
+// double-quoted / single-quoted forms, plus the missing-key and
+// missing-fence cases.
+func TestReadVersion_ParsesQuotedAndUnquoted(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		contents string
+		want     string
+		wantErr  bool
+	}{
+		{
+			name:     "bare",
+			contents: "---\nname: x\nversion: v0.1.0\n---\n",
+			want:     "v0.1.0",
+		},
+		{
+			name:     "double-quoted",
+			contents: "---\nname: x\nversion: \"v0.1.42\"\n---\n",
+			want:     "v0.1.42",
+		},
+		{
+			name:     "single-quoted",
+			contents: "---\nname: x\nversion: 'v1.2.3'\n---\n",
+			want:     "v1.2.3",
+		},
+		{
+			name:     "missing key returns empty",
+			contents: "---\nname: x\ndescription: foo\n---\n",
+			want:     "",
+		},
+		{
+			name:     "no fence is an error",
+			contents: "no frontmatter here\n",
+			wantErr:  true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			p := filepath.Join(dir, "SKILL.md")
+			if err := os.WriteFile(p, []byte(tc.contents), 0o644); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			got, err := ReadVersion(p)
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("expected error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ReadVersion: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func writeSkill(t *testing.T, dir, name, frontmatter string) {
 	t.Helper()
 	skillDir := filepath.Join(dir, name)

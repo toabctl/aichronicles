@@ -350,7 +350,10 @@ func findProposedSkill(r *prompts.ProposalResult, name string) (*prompts.Propose
 
 // skillFrontmatter is what we yaml.Marshal at the top of SKILL.md.
 // Field names + omitempty match Claude Code's documented schema at
-// https://code.claude.com/docs/en/skills#frontmatter-reference:
+// https://code.claude.com/docs/en/skills#frontmatter-reference, with
+// AutoSkill (Yang et al., 2026 — arXiv:2603.01145) skill-tuple
+// metadata added as additional keys (YAML readers ignore unknown
+// keys by spec; Claude Code's parser inherits that behaviour).
 //
 //   - name:         lowercase letters / numbers / hyphens only,
 //     ≤64 chars. Maps directly to the proposal's
@@ -358,14 +361,36 @@ func findProposedSkill(r *prompts.ProposalResult, name string) (*prompts.Propose
 //   - description:  what the skill does and when. Front-loaded.
 //   - when_to_use:  optional trigger phrases / example requests,
 //     appended to description in the listing.
+//   - version:      AutoSkill v — semver-ish identifier; v0.1.0 on
+//     fresh add, patch-bumped by every merge.
+//   - tags:         AutoSkill γ — categorical labels for browsing.
+//   - triggers:     AutoSkill τ — short query-shaped phrases that
+//     activate retrieval. Distinct from when_to_use:
+//     when_to_use is descriptive prose, triggers are
+//     the lookup terms.
+//   - examples:     AutoSkill ξ — (input → output) demonstrations
+//     of the skill's intended use, parsed from the
+//     LLM's proposal verbatim.
 //
 // Combined description + when_to_use are capped at 1536 chars in
 // the skill listing per the docs; we trim aggressively below that
 // to stay safe.
 type skillFrontmatter struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
-	WhenToUse   string `yaml:"when_to_use,omitempty"`
+	Name        string                    `yaml:"name"`
+	Description string                    `yaml:"description"`
+	WhenToUse   string                    `yaml:"when_to_use,omitempty"`
+	Version     string                    `yaml:"version,omitempty"`
+	Tags        []string                  `yaml:"tags,omitempty"`
+	Triggers    []string                  `yaml:"triggers,omitempty"`
+	Examples    []skillFrontmatterExample `yaml:"examples,omitempty"`
+}
+
+// skillFrontmatterExample is one (input, output) demonstration in
+// the AutoSkill ξ set, rendered as a YAML object inside the
+// frontmatter array.
+type skillFrontmatterExample struct {
+	Input  string `yaml:"input"`
+	Output string `yaml:"output"`
 }
 
 // skillFrontmatterCharCap is the 1536-char ceiling Claude Code
@@ -391,10 +416,21 @@ const skillFrontmatterCharCap = 700
 // files from your SKILL.md so Claude knows what they contain"
 // convention.
 func renderSkillScaffold(sk *prompts.ProposedSkill, outputID int64) string {
+	examples := make([]skillFrontmatterExample, 0, len(sk.Examples))
+	for _, e := range sk.Examples {
+		examples = append(examples, skillFrontmatterExample{
+			Input:  e.Input,
+			Output: e.Output,
+		})
+	}
 	frontmatter, err := yaml.Marshal(skillFrontmatter{
 		Name:        sk.Name, // kebab-case verbatim from the proposal
 		Description: clipToRunes(buildSkillDescription(sk), skillFrontmatterCharCap),
 		WhenToUse:   clipToRunes(strings.TrimSpace(sk.WhenToUse), skillFrontmatterCharCap),
+		Version:     store.InitialSkillVersion, // fresh add — merge bumps
+		Tags:        append([]string(nil), sk.Tags...),
+		Triggers:    append([]string(nil), sk.Triggers...),
+		Examples:    examples,
 	})
 	if err != nil {
 		// yaml.Marshal of a plain struct doesn't fail in practice;

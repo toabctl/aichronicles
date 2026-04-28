@@ -158,15 +158,27 @@ func ScanDir(root, source string) []prompts.InstalledSkill {
 	return out
 }
 
-// ReadDescription extracts the `description:` field from a
-// SKILL.md file's YAML frontmatter. The frontmatter format is
-// constrained enough that a line-by-line scan is robust; we
-// avoid a YAML parser to keep the dep surface small.
+// ReadVersion extracts the `version:` field from a SKILL.md file's
+// YAML frontmatter. The AutoSkill (Yang et al., 2026 —
+// arXiv:2603.01145) v slot — semver-ish, e.g. "v0.1.0" — is the
+// merge path's load-bearing input: the existing version gets
+// patch-bumped when a candidate is merged in. Returns ("", nil)
+// when the frontmatter exists but has no version key (the file was
+// authored before the AutoSkill metadata shipped); callers fall
+// back to InitialSkillVersion in that case.
 //
-// Accepts: `description: foo`, `description: "foo"`, `description: 'foo'`.
-// Multi-line / folded descriptions are not parsed (returned empty),
-// which biases toward "no entry" over "wrong entry."
-func ReadDescription(path string) (string, error) {
+// Format-tolerance is the same as ReadDescription: line-by-line,
+// supports bare, "double-quoted", and 'single-quoted' values; does
+// not handle multi-line / folded scalars.
+func ReadVersion(path string) (string, error) {
+	return readScalarFrontmatter(path, "version")
+}
+
+// readScalarFrontmatter is the shared body for ReadDescription and
+// ReadVersion — extract one named scalar from the YAML frontmatter
+// fence. Centralising it keeps the parser quirks (quote-stripping,
+// fence detection) in one place.
+func readScalarFrontmatter(path, key string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -188,7 +200,7 @@ func ReadDescription(path string) (string, error) {
 			return "", nil
 		}
 		k, v, ok := strings.Cut(line, ":")
-		if !ok || strings.TrimSpace(k) != "description" {
+		if !ok || strings.TrimSpace(k) != key {
 			continue
 		}
 		v = strings.TrimSpace(v)
@@ -201,6 +213,18 @@ func ReadDescription(path string) (string, error) {
 		return v, nil
 	}
 	return "", sc.Err()
+}
+
+// ReadDescription extracts the `description:` field from a
+// SKILL.md file's YAML frontmatter. The frontmatter format is
+// constrained enough that a line-by-line scan is robust; we
+// avoid a YAML parser to keep the dep surface small.
+//
+// Accepts: `description: foo`, `description: "foo"`, `description: 'foo'`.
+// Multi-line / folded descriptions are not parsed (returned empty),
+// which biases toward "no entry" over "wrong entry."
+func ReadDescription(path string) (string, error) {
+	return readScalarFrontmatter(path, "description")
 }
 
 // LoadDistinctSessionStartCwds returns the start cwd of every

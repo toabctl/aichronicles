@@ -19,6 +19,81 @@ import (
 // that gets refined over time.
 const InitialSkillVersion = "v0.1.0"
 
+// BumpPatch returns the supplied version with its patch component
+// incremented by one. Accepts "vMAJOR.MINOR.PATCH" or
+// "MAJOR.MINOR.PATCH" (the leading 'v' is preserved on output if
+// it was present on input). Any malformed input — missing
+// components, non-integer parts, empty string — returns
+// InitialSkillVersion as a safe fallback so a corrupted
+// frontmatter can't strand the merge path.
+//
+// Examples:
+//
+//	BumpPatch("v0.1.0")  → "v0.1.1"
+//	BumpPatch("v0.1.42") → "v0.1.43"
+//	BumpPatch("0.1.0")   → "0.1.1"
+//	BumpPatch("v1.2.3")  → "v1.2.4"
+//	BumpPatch("")        → "v0.1.0"
+//	BumpPatch("garbage") → "v0.1.0"
+func BumpPatch(version string) string {
+	v := version
+	hasV := false
+	if len(v) > 0 && (v[0] == 'v' || v[0] == 'V') {
+		hasV = true
+		v = v[1:]
+	}
+	parts := splitVersion(v)
+	if len(parts) != 3 {
+		return InitialSkillVersion
+	}
+	major, ok1 := parseUint(parts[0])
+	minor, ok2 := parseUint(parts[1])
+	patch, ok3 := parseUint(parts[2])
+	if !ok1 || !ok2 || !ok3 {
+		return InitialSkillVersion
+	}
+	out := fmt.Sprintf("%d.%d.%d", major, minor, patch+1)
+	if hasV {
+		out = "v" + out
+	}
+	return out
+}
+
+// splitVersion splits "MAJOR.MINOR.PATCH" into three pieces. Stays
+// in this file (rather than reaching for strings.Split) so the
+// dependency footprint of the version helpers is just stdlib fmt.
+func splitVersion(s string) []string {
+	out := make([]string, 0, 3)
+	last := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '.' {
+			out = append(out, s[last:i])
+			last = i + 1
+		}
+	}
+	out = append(out, s[last:])
+	return out
+}
+
+// parseUint accepts a non-empty digit-only string and returns its
+// integer value. Empty / non-digit input returns (0, false). Used
+// only by BumpPatch — accept-only-ASCII-digits is the right shape
+// for semver-ish version components.
+func parseUint(s string) (int, bool) {
+	if s == "" {
+		return 0, false
+	}
+	n := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n, true
+}
+
 // SkillExample is one (input, output) demonstration in the
 // AutoSkill ξ set — a representative user query paired with a short
 // summary of what the skill does for it. Stored as a JSON array of
