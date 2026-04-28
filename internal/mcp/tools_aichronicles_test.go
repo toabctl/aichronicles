@@ -91,6 +91,7 @@ func TestRegisterAichroniclesTools_InstallsAllFive(t *testing.T) {
 		"search_events", "list_sessions", "get_summary",
 		"list_subagents", "get_unresolved_for_cwd", "list_workflows",
 		"get_facts_for_subject", "find_fact_subjects",
+		"get_project_context",
 	} {
 		if _, ok := s.tools[want]; !ok {
 			t.Errorf("tool %q not registered", want)
@@ -951,8 +952,8 @@ func TestToolsList_IncludesInputSchema(t *testing.T) {
 	}
 	result := resp["result"].(map[string]any)
 	tools := result["tools"].([]any)
-	if len(tools) != 8 {
-		t.Errorf("expected 8 tools, got %d", len(tools))
+	if len(tools) != 9 {
+		t.Errorf("expected 9 tools, got %d", len(tools))
 	}
 	for _, t0 := range tools {
 		tool := t0.(map[string]any)

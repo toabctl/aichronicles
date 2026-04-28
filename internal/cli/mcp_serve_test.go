@@ -90,10 +90,10 @@ func TestMCPServe_EndToEnd(t *testing.T) {
 	if initResp["result"].(map[string]any)["serverInfo"].(map[string]any)["name"] != mcpServerName {
 		t.Errorf("serverInfo.name: got %+v", initResp["result"])
 	}
-	// Sanity: tools/list returns the aichronicles set (currently 8).
+	// Sanity: tools/list returns the aichronicles set (currently 9).
 	tools := listResp["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 8 {
-		t.Errorf("tools/list returned %d tools, want 8", len(tools))
+	if len(tools) != 9 {
+		t.Errorf("tools/list returned %d tools, want 9", len(tools))
 	}
 	// Sanity: tools/call search_events finds our seeded event.
 	content := callResp["result"].(map[string]any)["content"].([]any)
