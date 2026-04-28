@@ -81,13 +81,16 @@ func callTool(t *testing.T, s *Server, name string, args string) *ToolResult {
 	return res
 }
 
-func TestRegisterAichroniclesTools_InstallsAllFour(t *testing.T) {
+func TestRegisterAichroniclesTools_InstallsAllFive(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
 	RegisterAichroniclesTools(s, st)
 
-	for _, want := range []string{"search_events", "list_sessions", "get_summary", "list_subagents"} {
+	for _, want := range []string{
+		"search_events", "list_sessions", "get_summary",
+		"list_subagents", "get_unresolved_for_cwd",
+	} {
 		if _, ok := s.tools[want]; !ok {
 			t.Errorf("tool %q not registered", want)
 		}
@@ -569,6 +572,75 @@ func TestSearchEvents_SubagentIDFilterNarrows(t *testing.T) {
 	}
 }
 
+func TestGetUnresolvedForCwd_RequiresCwd(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "get_unresolved_for_cwd", `{}`)
+	if !res.IsError {
+		t.Errorf("expected IsError=true when cwd is missing")
+	}
+}
+
+func TestGetUnresolvedForCwd_EmptyCwdReturnsFriendlyMessage(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "get_unresolved_for_cwd", `{"cwd":"/no/such/dir"}`)
+	if res.IsError {
+		t.Errorf("unknown-cwd should be a clean empty result, got error: %+v", res)
+	}
+	if !strings.Contains(res.Content[0].Text, "no unresolved items") {
+		t.Errorf("expected friendly empty message: %s", res.Content[0].Text)
+	}
+}
+
+func TestGetUnresolvedForCwd_ReturnsItems(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	// The seeded "sess-foo" has cwd /work/sess-foo. Plant a
+	// summary with two unresolved items.
+	sessID := ingest.DeriveSessionID("claude-code", "sess-foo")
+	body := `{"topic":"jsonl parsing","what_was_done":["x"],"unresolved":["land the migration","verify the redaction passthrough"],"key_files":[],"links":[]}`
+	tx, _ := st.DB().Begin()
+	_, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
+		SessionID:   sql.NullString{String: sessID, Valid: true},
+		Kind:        store.LLMKindSummary,
+		Model:       "fake-model",
+		PromptHash:  "h-unresolved",
+		Body:        body,
+		CreatedAtMs: time.Now().UnixMilli(),
+	})
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("seed summary: %v", err)
+	}
+	_ = tx.Commit()
+
+	res := callTool(t, s, "get_unresolved_for_cwd", `{"cwd":"/work/sess-foo"}`)
+	if res.IsError {
+		t.Fatalf("expected success: %+v", res)
+	}
+	text := res.Content[0].Text
+	for _, want := range []string{
+		"jsonl parsing",
+		"land the migration",
+		"verify the redaction passthrough",
+		"/work/sess-foo",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("output missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestToolsList_IncludesInputSchema(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
@@ -591,8 +663,8 @@ func TestToolsList_IncludesInputSchema(t *testing.T) {
 	}
 	result := resp["result"].(map[string]any)
 	tools := result["tools"].([]any)
-	if len(tools) != 4 {
-		t.Errorf("expected 4 tools, got %d", len(tools))
+	if len(tools) != 5 {
+		t.Errorf("expected 5 tools, got %d", len(tools))
 	}
 	for _, t0 := range tools {
 		tool := t0.(map[string]any)

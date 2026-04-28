@@ -96,6 +96,30 @@ func RegisterAichroniclesTools(s *Server, st *store.Store) {
 		}`),
 		Handler: listSubagentsHandler(st),
 	})
+
+	s.RegisterTool(Tool{
+		Name: "get_unresolved_for_cwd",
+		Description: "List unresolved items that prior sessions left open in the given working " +
+			"directory (`cwd`). Reads each prior same-cwd session's latest summary and surfaces " +
+			"the entries from its `unresolved` list — the things the previous agent flagged as " +
+			"open questions, deferred work, or follow-up TODOs. " +
+			"Use when the user opens a session in a project they've worked on before and you " +
+			"want to pick up where things were left off, OR when the user explicitly asks " +
+			"'what's still open here', 'what was unfinished from last time'. " +
+			"Returns one row per item with the source session id, its topic for context, and " +
+			"a relative timestamp. Empty result is normal — many sessions wrap up cleanly.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"cwd":           {"type": "string",  "description": "absolute path; exact match (no prefix)"},
+				"since_days":    {"type": "integer", "minimum": 1, "default": 30, "description": "only consider sessions whose ended_at is within this many days"},
+				"max_sessions":  {"type": "integer", "minimum": 1, "maximum": 50, "default": 5, "description": "cap on prior sessions to draw items from"},
+				"max_per_session":{"type":"integer", "minimum": 1, "maximum": 20, "default": 5, "description": "cap on items pulled from one session"}
+			},
+			"required": ["cwd"]
+		}`),
+		Handler: getUnresolvedForCwdHandler(st),
+	})
 }
 
 // --- search_events ---
@@ -337,6 +361,90 @@ func getSummaryHandler(st *store.Store) ToolHandler {
 			}
 		}
 		return TextError("no %s output for session %s", kind, sessionID), nil
+	}
+}
+
+// --- get_unresolved_for_cwd ---
+
+func getUnresolvedForCwdHandler(st *store.Store) ToolHandler {
+	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
+		var req struct {
+			Cwd           string `json:"cwd"`
+			SinceDays     int    `json:"since_days"`
+			MaxSessions   int    `json:"max_sessions"`
+			MaxPerSession int    `json:"max_per_session"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, &Error{Code: InvalidParams, Message: "get_unresolved_for_cwd: bad args: " + err.Error()}
+		}
+		if strings.TrimSpace(req.Cwd) == "" {
+			return TextError("get_unresolved_for_cwd: cwd is required"), nil
+		}
+		// Defaults match the CLI / store defaults so behaviour
+		// stays consistent across surfaces.
+		days := req.SinceDays
+		if days <= 0 {
+			days = 30
+		}
+		maxSessions := req.MaxSessions
+		if maxSessions <= 0 {
+			maxSessions = 5
+		}
+		maxPerSession := req.MaxPerSession
+		if maxPerSession <= 0 {
+			maxPerSession = 5
+		}
+		sinceMs := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
+
+		items, err := store.LoadUnresolvedForCwd(ctx, st.DB(), req.Cwd, sinceMs,
+			maxSessions, maxPerSession)
+		if err != nil {
+			return nil, &Error{Code: InternalError, Message: "get_unresolved_for_cwd: load: " + err.Error()}
+		}
+		if len(items) == 0 {
+			return TextResult(fmt.Sprintf("no unresolved items from prior sessions in %s", req.Cwd)), nil
+		}
+		// One line per item, same shape as the CLI's text rendering
+		// — keeps the agent's reading model consistent across the
+		// CLI and MCP surfaces.
+		var b strings.Builder
+		fmt.Fprintf(&b, "%d unresolved item(s) from prior sessions in %s:\n", len(items), req.Cwd)
+		now := time.Now()
+		for _, it := range items {
+			when := relativeAgo(it.EndedAtMs, now)
+			topic := it.Topic
+			if topic == "" {
+				topic = "(no summary topic)"
+			}
+			fmt.Fprintf(&b, "  • [%s, %s] %s — %s\n",
+				it.SessionShort, when, topic, it.Item)
+		}
+		return TextResult(b.String()), nil
+	}
+}
+
+// relativeAgo formats epoch-millis as a short relative time. Local
+// to this package so the MCP tools don't reach into internal/cli
+// for its formatter — the layering is one-way (cli → mcp would
+// induce a cycle, and the formatter is small enough to duplicate).
+func relativeAgo(ms int64, now time.Time) string {
+	if ms <= 0 {
+		return "active"
+	}
+	d := now.Sub(time.UnixMilli(ms))
+	switch {
+	case d < 0:
+		return "future?"
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	case d < 30*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	default:
+		return time.UnixMilli(ms).UTC().Format("2006-01-02")
 	}
 }
 
