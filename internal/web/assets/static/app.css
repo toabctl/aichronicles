@@ -472,26 +472,30 @@ table.sessions td.latest .ts {
   padding: 0.25rem 0;
 }
 
-/* Persistent nav-bar search: a wide input with a popover that
-   sits below it, populated by htmx swaps from /search/hits?compact=1.
-   Position: relative on the form so the popover can be absolutely
-   positioned below it without escaping the nav.
-   The form takes flex-grow:1 inside its <li> so it uses all the
-   horizontal space the nav can spare; min-width keeps it usable
-   on narrow viewports. align-self: center vertically aligns the
-   input against the nav links beside it (Pico's <nav> is flex
-   but the search <form> wrapper otherwise drifted up by ~3px
-   because the input is shorter than an <a> link). */
-header > nav > ul li:has(> .navsearch) {
-  flex: 1 1 auto;
+/* The header nav is one left-aligned row of items: brand, search,
+   then page links. Pico's default is flex-row without wrap, but
+   we have ~12 nav links plus a search box — without wrap they
+   overflow horizontally on viewports narrower than ~1400px. The
+   wrap moves overflow to a second row, which Pico aligns
+   left-naturally. row-gap keeps the wrapped row from kissing the
+   one above. */
+header > nav > ul {
+  flex-wrap: wrap;
+  row-gap: 0.25rem;
 }
+
+/* Persistent nav-bar search: a fixed-width input with an
+   absolutely-positioned popover that can grow wider than the
+   input itself (the htmx-swapped hit rows need room).
+   align-self: center vertically aligns the input against the nav
+   links beside it (Pico's <nav> is flex but the search <form>
+   wrapper otherwise drifts up by ~3px because the input is
+   shorter than an <a> link). */
 .navsearch {
   position: relative;
   margin: 0;
   align-self: center;
-  width: 100%;
-  min-width: 48rem;
-  max-width: 120rem;
+  width: 18rem;
 }
 .navsearch input[type="search"] {
   margin: 0;
@@ -503,7 +507,11 @@ header > nav > ul li:has(> .navsearch) {
   position: absolute;
   top: 100%;
   left: 0;
-  right: 0;
+  /* Popover is independently sized — it overlays the page below
+     the input and can be wider than the input itself so the
+     hit-rows table has room without forcing the input to be huge. */
+  min-width: 48rem;
+  max-width: 90vw;
   z-index: 50;
   margin-top: 0.25rem;
   padding: 0.5rem;
