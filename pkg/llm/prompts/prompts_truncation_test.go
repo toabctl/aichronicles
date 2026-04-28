@@ -160,3 +160,113 @@ func TestTruncateTextRunes(t *testing.T) {
 		}
 	}
 }
+
+// TestTruncateMiddleRunes covers the head/tail-preserving path. The
+// invariant is that both the first and last runes of the input
+// survive whenever truncation fires; that's the property head-only
+// truncation lacks for tool output where the exit code lives at the
+// tail.
+func TestTruncateMiddleRunes(t *testing.T) {
+	t.Parallel()
+	t.Run("under cap passes through", func(t *testing.T) {
+		got, trunc := truncateMiddleRunes("hello", 10)
+		if got != "hello" || trunc {
+			t.Errorf("got (%q, %v), want (%q, false)", got, trunc, "hello")
+		}
+	})
+	t.Run("zero cap returns empty truncated", func(t *testing.T) {
+		got, trunc := truncateMiddleRunes("hello", 0)
+		if got != "" || !trunc {
+			t.Errorf("got (%q, %v), want (\"\", true)", got, trunc)
+		}
+	})
+	t.Run("preserves head and tail", func(t *testing.T) {
+		// 1000 runes: "AAA…BBB…CCC". The first 'A' and last 'C'
+		// must both appear in the output; middle 'B' must not.
+		head := strings.Repeat("A", 100)
+		mid := strings.Repeat("B", 800)
+		tail := strings.Repeat("C", 100)
+		input := head + mid + tail
+		got, trunc := truncateMiddleRunes(input, 80)
+		if !trunc {
+			t.Fatalf("expected truncation, got %q", got)
+		}
+		if !strings.HasPrefix(got, "A") {
+			t.Errorf("head 'A' missing: %q", got)
+		}
+		if !strings.HasSuffix(got, "C") {
+			t.Errorf("tail 'C' missing: %q", got)
+		}
+		if strings.Contains(got, "B") {
+			t.Errorf("middle 'B' should be elided, got %q", got)
+		}
+		// Output length stays within ±20% of the requested cap;
+		// the elision marker adds a few runes but the budget is
+		// 80 so we should be in [60, 100].
+		runes := len([]rune(got))
+		if runes < 60 || runes > 100 {
+			t.Errorf("output length %d out of expected range [60,100]", runes)
+		}
+	})
+	t.Run("multibyte stays intact", func(t *testing.T) {
+		// Mix multibyte runes head and tail to check splitting.
+		input := "αβγδεζηθικλμνξοπρστυφχψω"
+		got, trunc := truncateMiddleRunes(input, 10)
+		if !trunc {
+			t.Fatalf("expected truncation, got %q", got)
+		}
+		// Must still parse as valid UTF-8 (Go strings always do,
+		// but assert we didn't panic on the rune slice indexing).
+		if len(got) == 0 {
+			t.Errorf("non-empty truncation expected, got empty")
+		}
+	})
+	t.Run("tiny cap falls back to head-only", func(t *testing.T) {
+		// With n=4 the marker ("\n…\n", 3 runes) plus head/tail
+		// can't fit; we expect head-truncate behaviour.
+		got, trunc := truncateMiddleRunes("abcdefghij", 4)
+		if !trunc {
+			t.Fatalf("expected truncation")
+		}
+		if got != "abcd" {
+			t.Errorf("tiny-cap fallback: got %q, want %q", got, "abcd")
+		}
+	})
+}
+
+// TestTruncateForKind ensures tool_result and tool_failure go
+// through middle-elision while everything else stays head-only.
+// Without this routing the per-kind decision drifts whenever a
+// new kind is added to capForKind.
+func TestTruncateForKind(t *testing.T) {
+	t.Parallel()
+	head := strings.Repeat("A", 50)
+	tail := strings.Repeat("Z", 50)
+	body := head + strings.Repeat("M", 400) + tail
+	cases := []struct {
+		kind         string
+		expectMiddle bool
+	}{
+		{"tool_result", true},
+		{"tool_failure", true},
+		{"user_prompt", false},
+		{"assistant_message", false},
+		{"tool_use", false},
+		{"weird_unknown_kind", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.kind, func(t *testing.T) {
+			got, trunc := truncateForKind(tc.kind, body, 80)
+			if !trunc {
+				t.Fatalf("expected truncation for %s", tc.kind)
+			}
+			hasTail := strings.HasSuffix(got, "Z")
+			if tc.expectMiddle && !hasTail {
+				t.Errorf("%s: middle-elision expected, tail 'Z' missing: %q", tc.kind, got)
+			}
+			if !tc.expectMiddle && hasTail {
+				t.Errorf("%s: head-only expected, tail 'Z' should be cut: %q", tc.kind, got)
+			}
+		})
+	}
+}

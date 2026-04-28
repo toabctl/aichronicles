@@ -2269,7 +2269,7 @@ func renderOneEvent(e store.EventView, pats patternSet) string {
 	if e.ContentText.Valid && e.ContentText.String != "" {
 		clean, names := redact.Outbound(e.ContentText.String)
 		pats.addAll(names)
-		content, truncated := truncateTextRunes(clean, capForKind(e.Kind))
+		content, truncated := truncateForKind(e.Kind, clean, capForKind(e.Kind))
 		b.WriteString(content)
 		if truncated {
 			fmt.Fprintf(&b, "\n(… %s body truncated)", e.Kind)
@@ -2278,6 +2278,24 @@ func renderOneEvent(e store.EventView, pats patternSet) string {
 	}
 	b.WriteByte('\n')
 	return b.String()
+}
+
+// truncateForKind picks a kind-appropriate truncation strategy:
+//
+//   - tool_result and tool_failure use middle-elision so the tail
+//     (exit code, last lines of stderr, end-of-stack-trace) survives
+//     alongside the head (command echo, opening lines). Head-only
+//     would silently drop the most decision-critical bytes for any
+//     output longer than the cap.
+//   - everything else stays head-truncated: user/assistant text and
+//     tool_use args lose less by losing their tail.
+func truncateForKind(kind, s string, n int) (string, bool) {
+	switch kind {
+	case ingest.KindToolResult, ingest.KindToolFailure:
+		return truncateMiddleRunes(s, n)
+	default:
+		return truncateTextRunes(s, n)
+	}
 }
 
 // truncateTextRunes returns s capped at n runes; the bool is true
@@ -2292,6 +2310,38 @@ func truncateTextRunes(s string, n int) (string, bool) {
 		return s, false
 	}
 	return string(r[:n]), true
+}
+
+// truncateMiddleRunes returns s with its middle elided when it
+// exceeds n runes. ~60% of the rune budget goes to the head and
+// ~40% to the tail; an inline ellipsis marker between them keeps
+// the total length close to n. Used for content where signal lives
+// at both ends — tool output where the head shows the command echo
+// and the tail shows the exit code, error stacks where the panic
+// site is at the bottom, etc.
+//
+// Returns (elided, true) when truncation fired; (s, false) when s
+// fits in n runes. Rune-aware so multibyte UTF-8 stays intact.
+func truncateMiddleRunes(s string, n int) (string, bool) {
+	if n <= 0 {
+		return "", true
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return s, false
+	}
+	const marker = "\n…\n"
+	markerRunes := len([]rune(marker))
+	// If the marker alone is bigger than the budget, fall back to
+	// head-truncate — middle elision would emit more runes than
+	// the cap allows.
+	if n <= markerRunes+2 {
+		return string(r[:n]), true
+	}
+	budget := n - markerRunes
+	headLen := budget * 6 / 10
+	tailLen := budget - headLen
+	return string(r[:headLen]) + marker + string(r[len(r)-tailLen:]), true
 }
 
 // renderDigests flattens session digests for reflect/propose.
