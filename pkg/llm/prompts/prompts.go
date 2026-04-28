@@ -203,10 +203,41 @@ type ProposedSkill struct {
 // the purpose and (when it can ground it from the evidence) a
 // starter shell body. The apply command falls back to a TODO stub
 // when Body is empty.
+//
+// Steps, when populated, are the AWM-style parameterised action
+// template — a sequence of (cmd, purpose) pairs where cmd may
+// contain {placeholder} tokens that vary per invocation. apply
+// materialises Steps as a runnable script with placeholder hints
+// listed at the top, so the user gets a real bash file rather
+// than a prose recipe. Steps and Body are mutually exclusive at
+// the schema level; either populates the apply scaffold.
 type ProposedSkillScript struct {
-	Name    string `json:"name"`           // bare filename, e.g. "build-test.sh"
-	Purpose string `json:"purpose"`        // one-line description for the script header
-	Body    string `json:"body,omitempty"` // optional starter body the LLM can ground from evidence
+	Name         string                      `json:"name"`    // bare filename, e.g. "build-test.sh"
+	Purpose      string                      `json:"purpose"` // one-line description for the script header
+	Body         string                      `json:"body,omitempty"`
+	Steps        []ProposedScriptStep        `json:"steps,omitempty"`
+	Placeholders []ProposedScriptPlaceholder `json:"placeholders,omitempty"`
+}
+
+// ProposedScriptStep is one line of a parameterised script. cmd
+// is the shell line as it would appear in the file; placeholders
+// are written in {brace-token} form. purpose is the inline
+// comment apply prepends so a reader knows what the line is for.
+type ProposedScriptStep struct {
+	Cmd     string `json:"cmd"`
+	Purpose string `json:"purpose"`
+}
+
+// ProposedScriptPlaceholder documents one {brace-token} that
+// appears across the steps. example is a real value the LLM saw
+// in the cited evidence sessions; description is one line on what
+// the user should substitute when running. apply renders these as
+// a leading comment block so the first thing the reader sees is
+// "to run this you need to fill in X, Y, Z".
+type ProposedScriptPlaceholder struct {
+	Token       string `json:"token"`       // e.g. "branch-name" (the literal between the braces)
+	Description string `json:"description"` // one-line explanation
+	Example     string `json:"example,omitempty"`
 }
 
 // --- summary ---
@@ -376,6 +407,14 @@ type SessionDigest struct {
 	FirstPrompt string   // usually the first user_prompt in the session
 	Summary     string   // optional: existing llm_outputs summary for this session
 	Links       []string // optional: distinct URLs observed in the session
+	// ShellCommands, when non-empty, lists the distinct shell
+	// command lines extracted from this session (kind=shell_command
+	// extractions). Surfaced to propose so the model has concrete
+	// observed actions to ground action_template steps in — that's
+	// the substrate for the AWM-style parameterised template
+	// pattern (extract repeated subsequences, replace varying
+	// values with placeholders).
+	ShellCommands []string
 }
 
 const reflectSystem = `You reflect on recent coding sessions to spot recurring patterns of work and recurring pain points. You MUST call the record_reflection tool exactly once.
@@ -500,7 +539,9 @@ Hard rules:
 2. Each proposal carries 2–5 evidence entries. Each quote is a verbatim excerpt (≤160 chars) copied from a session's summary text. If a session has no summary, you may quote from its first_prompt ONLY when the first_prompt is itself substantive (≥30 chars and concrete — "compare libvirt against openSUSE Tumbleweed" qualifies; "do plan", "go ahead", "/loop", "what's next?" do NOT). Sessions whose only available text is a short prompt are not usable evidence — skip them. Do NOT paraphrase, but feel free to truncate inside a sentence.
 3. Skill names: ≤4 words, kebab-case (matches a directory name under ~/.claude/skills/).
 4. when_to_use is the trigger — lead with the condition that fires the skill ("When CI fails on a Go service…", "When deploying to staging…"). This is what would otherwise have been a separate CLAUDE.md rule; folding it in here is the canonical home.
-5. scripts[] is optional. Use it when the recurring pattern includes specific commands the user types repeatedly. Each script gets a bare filename (e.g. "build-test.sh"), a one-line purpose, and optionally a starter body. Don't list scripts[] entries that are just "run this one bash command" — those belong inline in the skill's steps. Reserve scripts[] for multi-step shell logic that benefits from being its own file.
+5. scripts[] is optional. Use it when the recurring pattern includes specific commands the user types repeatedly. Each script gets a bare filename (e.g. "build-test.sh"), a one-line purpose, and optionally either a starter body OR a parameterised steps[] template. Don't list scripts[] entries that are just "run this one bash command" — those belong inline in the skill's steps. Reserve scripts[] for multi-step shell logic that benefits from being its own file.
+
+5a. PARAMETERISED STEPS (preferred when the cited evidence sessions list "Shell commands observed"): instead of (or in addition to) a body, emit a steps[] array. Each step is a single shell line plus a one-line purpose. Replace concrete values that VARY across the cited sessions with {placeholder} tokens, kebab-case (e.g. "git checkout -b wt-{topic-slug}", "go build ./{package-path}"). Then list each token in the placeholders[] array with a description and an example value drawn from the actual sessions. This is the AWM (Agent Workflow Memory) pattern: the user can re-fill the template per task instead of editing prose. Skip steps[] entirely when the pattern is genuinely free-form (e.g. "open the file and edit it") — only use it when the underlying actions are observable shell commands you can extract from the cited sessions.
 6. frequency = the count of distinct session_ids in your evidence array.
 7. effort: "small" = an afternoon. "medium" = a few days, well-scoped. "large" = a project-shaped effort that probably wants its own design doc.
 
@@ -562,7 +603,38 @@ const proposalToolSchema = `{
             "properties": {
               "name":    {"type":"string","pattern":"^[A-Za-z0-9_.-]+$","maxLength":64},
               "purpose": {"type":"string","minLength":1,"maxLength":200},
-              "body":    {"type":"string","maxLength":4000}
+              "body":    {"type":"string","maxLength":4000},
+              "steps": {
+                "type":"array",
+                "description":"Parameterised action template (AWM-style). Each step is one shell line that may contain {placeholder} tokens; populate from observed shell_command extractions across the cited sessions.",
+                "minItems":0,
+                "maxItems":12,
+                "items": {
+                  "type":"object",
+                  "required":["cmd","purpose"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "cmd":     {"type":"string","minLength":1,"maxLength":400},
+                    "purpose": {"type":"string","minLength":1,"maxLength":160}
+                  }
+                }
+              },
+              "placeholders": {
+                "type":"array",
+                "description":"One entry per {brace-token} that appears in the steps. Populate the example field with a real value the user actually used in the cited sessions.",
+                "minItems":0,
+                "maxItems":10,
+                "items": {
+                  "type":"object",
+                  "required":["token","description"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "token":       {"type":"string","pattern":"^[a-z][a-z0-9-]*$","maxLength":32},
+                    "description": {"type":"string","minLength":1,"maxLength":160},
+                    "example":     {"type":"string","maxLength":160}
+                  }
+                }
+              }
             }
           }
         },
@@ -1085,6 +1157,30 @@ func renderDigests(digests []SessionDigest, pats patternSet) string {
 				b.WriteString("- ")
 				b.WriteString(clean)
 				b.WriteByte('\n')
+			}
+		}
+		if len(d.ShellCommands) > 0 {
+			// Cap the rendered list per session so a session that
+			// ran 500 tiny `git status` calls doesn't dominate the
+			// prompt. The first ~20 distinct commands carry the
+			// pattern signal; the rest are usually duplicates the
+			// extractor's GROUP BY value already collapsed.
+			const maxCmdsPerSession = 20
+			b.WriteString("Shell commands observed (extracted from tool_use events):\n")
+			n := len(d.ShellCommands)
+			if n > maxCmdsPerSession {
+				n = maxCmdsPerSession
+			}
+			for i := 0; i < n; i++ {
+				clean, names := redact.Outbound(d.ShellCommands[i])
+				pats.addAll(names)
+				b.WriteString("- ")
+				b.WriteString(clean)
+				b.WriteByte('\n')
+			}
+			if n < len(d.ShellCommands) {
+				_, _ = fmt.Fprintf(&b, "- (… %d more commands omitted)\n",
+					len(d.ShellCommands)-n)
 			}
 		}
 		b.WriteByte('\n')

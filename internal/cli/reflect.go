@@ -203,6 +203,20 @@ func digestsFromRowsWithLinks(
 				d.Links[i] = u.Value
 			}
 		}
+		// Shell commands per session: substrate for the propose
+		// prompt's action_template option (AWM pattern). One query
+		// per session — same batching tradeoff as urls; bounded
+		// by --limit (typically ≤25 sessions).
+		shells, err := store.LoadExtractionsForSession(ctx, s.DB(), r.ID, "shell_command")
+		if err != nil {
+			return nil, fmt.Errorf("shell commands for %s: %w", r.ID, err)
+		}
+		if len(shells) > 0 {
+			d.ShellCommands = make([]string, len(shells))
+			for i, sc := range shells {
+				d.ShellCommands[i] = sc.Value
+			}
+		}
 		out = append(out, d)
 	}
 	if len(skipped) > 0 {

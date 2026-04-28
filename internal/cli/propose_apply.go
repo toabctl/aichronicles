@@ -489,11 +489,21 @@ func lowerFirst(s string) string {
 }
 
 // renderSkillScriptScaffold returns the body for one helper
-// script under <skill>/scripts/<name>. Uses the LLM-provided
-// body when present (subject to its 4000-char schema cap), or
-// falls back to a TODO stub. The header always cites the
-// originating skill and the proposal's llm_outputs id so the
-// provenance is greppable.
+// script under <skill>/scripts/<name>. Three populating paths,
+// checked in priority order:
+//
+//  1. Steps[] (AWM-style parameterised template) — render each
+//     step as a commented bash line, with a leading
+//     "Placeholders:" doc-block listing each {token} the steps
+//     reference along with its description and an example value
+//     drawn from the cited evidence sessions.
+//  2. Body (free-form starter the LLM grounded from evidence).
+//     Dropped in verbatim under the header.
+//  3. Neither — emit a TODO stub directing the user to fill in
+//     by walking the cited sessions.
+//
+// The header always cites the originating skill and the
+// proposal's llm_outputs id so provenance is greppable.
 func renderSkillScriptScaffold(sc *prompts.ProposedSkillScript, sk *prompts.ProposedSkill, outputID int64) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, "#!/usr/bin/env bash")
@@ -501,19 +511,54 @@ func renderSkillScriptScaffold(sc *prompts.ProposedSkillScript, sk *prompts.Prop
 	fmt.Fprintln(&b, "#")
 	fmt.Fprintf(&b, "# Skill: %s\n", sk.Name)
 	fmt.Fprintf(&b, "# Scaffolded by `aichronicles propose apply` from llm_outputs id=%d.\n", outputID)
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "set -euo pipefail")
-	fmt.Fprintln(&b)
-	if strings.TrimSpace(sc.Body) != "" {
-		// LLM-grounded body. Drop verbatim; the user will iterate.
+
+	switch {
+	case len(sc.Steps) > 0:
+		writePlaceholderBlock(&b, sc.Placeholders)
+		fmt.Fprintln(&b)
+		fmt.Fprintln(&b, "set -euo pipefail")
+		fmt.Fprintln(&b)
+		for _, step := range sc.Steps {
+			if p := strings.TrimSpace(step.Purpose); p != "" {
+				fmt.Fprintln(&b, "# "+p)
+			}
+			fmt.Fprintln(&b, step.Cmd)
+			fmt.Fprintln(&b)
+		}
+	case strings.TrimSpace(sc.Body) != "":
+		fmt.Fprintln(&b)
+		fmt.Fprintln(&b, "set -euo pipefail")
+		fmt.Fprintln(&b)
 		fmt.Fprintln(&b, sc.Body)
-	} else {
+	default:
+		fmt.Fprintln(&b)
+		fmt.Fprintln(&b, "set -euo pipefail")
+		fmt.Fprintln(&b)
 		fmt.Fprintln(&b, "# TODO — replace this body with the actual implementation")
 		fmt.Fprintln(&b, "# the evidence sessions repeat by hand.")
 		fmt.Fprintln(&b, "echo 'TODO: implement' >&2")
 		fmt.Fprintln(&b, "exit 1")
 	}
 	return b.String()
+}
+
+// writePlaceholderBlock renders a leading comment block that
+// documents each {token} the script's steps reference. Skipped
+// entirely when no placeholders are present so a fully-concrete
+// script doesn't get a confusing empty block.
+func writePlaceholderBlock(b *strings.Builder, placeholders []prompts.ProposedScriptPlaceholder) {
+	if len(placeholders) == 0 {
+		return
+	}
+	fmt.Fprintln(b, "#")
+	fmt.Fprintln(b, "# Placeholders (substitute before running):")
+	for _, p := range placeholders {
+		example := ""
+		if strings.TrimSpace(p.Example) != "" {
+			example = "  e.g. " + strings.TrimSpace(p.Example)
+		}
+		fmt.Fprintf(b, "#   {%s} — %s%s\n", p.Token, strings.TrimSpace(p.Description), example)
+	}
 }
 
 // resolveSkillsDir centralises the user-home default so tests can
