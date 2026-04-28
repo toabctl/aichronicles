@@ -130,6 +130,15 @@ func (e *Envelope) Validate() error {
 	}
 	if e.Kind == "" {
 		issues = append(issues, "kind is required")
+	} else if !IsValidKind(e.Kind) {
+		issues = append(issues, fmt.Sprintf("kind %q is not a known canonical kind", e.Kind))
+	}
+	// role is optional on the wire (assemble fills it from kind), but
+	// when set it must be one of the closed values. A bridge sending
+	// role="USER" instead of "user" would silently end up in cross-
+	// source role queries with no match — refuse explicitly.
+	if e.Role != "" && !IsValidRole(e.Role) {
+		issues = append(issues, fmt.Sprintf("role %q is not a known canonical role", e.Role))
 	}
 	if e.TsSource.IsZero() {
 		issues = append(issues, "ts_source is required")

@@ -43,6 +43,9 @@ func TestValidate_InvalidCases(t *testing.T) {
 		{"agent starts with digit", func(e *Envelope) { e.SourceAgent = "1claude" }, "source_agent"},
 		{"missing source_session_id", func(e *Envelope) { e.SourceSessionID = "" }, "source_session_id"},
 		{"missing kind", func(e *Envelope) { e.Kind = "" }, "kind is required"},
+		{"unknown kind", func(e *Envelope) { e.Kind = "tool_us" }, `kind "tool_us" is not a known canonical kind`},
+		{"uppercase kind", func(e *Envelope) { e.Kind = "USER_PROMPT" }, "not a known canonical kind"},
+		{"unknown role", func(e *Envelope) { e.Role = "USER" }, `role "USER" is not a known canonical role`},
 		{"zero ts_source", func(e *Envelope) { e.TsSource = time.Time{} }, "ts_source is required"},
 		{"nil payload", func(e *Envelope) { e.Payload = nil }, "payload is required"},
 	}
