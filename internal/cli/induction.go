@@ -105,19 +105,24 @@ func newInductionSweepCmd() *cobra.Command {
 				return cfgErr
 			}
 			llmCfg := LLMConfigFromFile(cfg.LLM)
-			ctx, cancel := context.WithTimeout(cmd.Context(),
-				cfg.Limits.ReflectTimeout.Or(defaultMetaLLMTimeout))
-			defer cancel()
-
+			// No outer WithTimeout: each per-phase LLM call inside
+			// RunInductionSweep gets its own bounded context. A
+			// single sweep-level timeout would strangle every call
+			// after the budget elapses, regardless of which session
+			// is in flight — the bug session 9ec75b11 tripped.
+			ctx := cmd.Context()
 			return RunInductionSweep(ctx, s,
 				func() (llm.Client, error) { return llm.FromConfig(ctx, llmCfg) },
 				InductionSweepOptions{
-					Idle:          idle,
-					MinEvents:     minEvents,
-					Limit:         limit,
-					Model:         model,
-					SkipSummarize: skipSummarize,
-					SkipFacts:     skipFacts,
+					Idle:             idle,
+					MinEvents:        minEvents,
+					Limit:            limit,
+					Model:            model,
+					SkipSummarize:    skipSummarize,
+					SkipFacts:        skipFacts,
+					SummarizeTimeout: cfg.Limits.SummarizeTimeout.Or(defaultSummarizeTimeout),
+					InductionTimeout: cfg.Limits.ReflectTimeout.Or(defaultMetaLLMTimeout),
+					FactsTimeout:     cfg.Limits.SummarizeTimeout.Or(defaultSummarizeTimeout),
 				}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -253,6 +258,21 @@ type InductionSweepOptions struct {
 	// type from a settled session". Set true at the cost of an
 	// empty semantic-facts table.
 	SkipFacts bool
+
+	// SummarizeTimeout caps a single summarize LLM round-trip
+	// inside the sweep. Per-call (not per-sweep) so one slow
+	// session can't strangle the next 399. Zero falls back to
+	// defaultSummarizeTimeout (3m). Same semantics for FactsTimeout.
+	SummarizeTimeout time.Duration
+
+	// InductionTimeout caps a single induction LLM round-trip.
+	// Zero falls back to defaultMetaLLMTimeout (5m).
+	InductionTimeout time.Duration
+
+	// FactsTimeout caps a single facts LLM round-trip. Zero falls
+	// back to defaultSummarizeTimeout (3m); facts prompts are the
+	// same shape as summarize so the same budget applies.
+	FactsTimeout time.Duration
 }
 
 // RunInductionSweep walks idle sessions and runs RunInductionForSession
@@ -296,6 +316,27 @@ func RunInductionSweep(
 		return nil
 	}
 
+	// Per-phase timeout budgets. Each LLM call inside the loop
+	// gets its own bounded context derived from the parent ctx
+	// — so the parent ctx stays the cancellation channel (Ctrl-C
+	// or daemon shutdown), while each call gets a clean per-call
+	// budget. Without this, a multi-session sweep that inherits
+	// a single parent timeout would strangle every call after
+	// the first slow one with "context deadline exceeded" — the
+	// exact bug session 9ec75b11's facts phase tripped.
+	summarizeTO := opts.SummarizeTimeout
+	if summarizeTO <= 0 {
+		summarizeTO = defaultSummarizeTimeout
+	}
+	inductionTO := opts.InductionTimeout
+	if inductionTO <= 0 {
+		inductionTO = defaultMetaLLMTimeout
+	}
+	factsTO := opts.FactsTimeout
+	if factsTO <= 0 {
+		factsTO = defaultSummarizeTimeout
+	}
+
 	for _, c := range candidates {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -321,10 +362,13 @@ func RunInductionSweep(
 				// their own "no summary" branch and will bail with
 				// a clear error if needed.
 			} else if !has {
-				if _, serr := RunSummarize(ctx, s, newClient, SummarizeOptions{
+				phaseCtx, cancel := context.WithTimeout(ctx, summarizeTO)
+				_, serr := RunSummarize(phaseCtx, s, newClient, SummarizeOptions{
 					SessionID: c.ID,
 					Model:     opts.Model,
-				}, io.Discard); serr != nil {
+				}, io.Discard)
+				cancel()
+				if serr != nil {
 					slog.Warn("induction sweep: summarize failed",
 						"session_id", c.ID, "err", serr)
 					_, _ = fmt.Fprintf(errOut,
@@ -339,10 +383,12 @@ func RunInductionSweep(
 		}
 
 		// Phase 2: induction (skill+workflow merged after Round 8).
-		_, err := RunInductionForSession(ctx, s, newClient, InductionRunOptions{
+		phaseCtx, cancel := context.WithTimeout(ctx, inductionTO)
+		_, err := RunInductionForSession(phaseCtx, s, newClient, InductionRunOptions{
 			SessionID: c.ID,
 			Model:     opts.Model,
 		}, out)
+		cancel()
 		if err != nil {
 			// One session's failure shouldn't kill the sweep — log
 			// it and continue. The next sweep retries this session
@@ -358,10 +404,13 @@ func RunInductionSweep(
 		// success — facts only requires a summary, not an
 		// induction row, so it runs even if induction failed.
 		if !opts.SkipFacts {
-			if _, ferr := RunFactsForSession(ctx, s, newClient, FactsRunOptions{
+			phaseCtx, cancel := context.WithTimeout(ctx, factsTO)
+			_, ferr := RunFactsForSession(phaseCtx, s, newClient, FactsRunOptions{
 				SessionID: c.ID,
 				Model:     opts.Model,
-			}, io.Discard); ferr != nil {
+			}, io.Discard)
+			cancel()
+			if ferr != nil {
 				slog.Warn("induction sweep: facts failed",
 					"session_id", c.ID, "err", ferr)
 				_, _ = fmt.Fprintf(errOut,

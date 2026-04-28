@@ -531,6 +531,115 @@ func TestRunInductionSweep_FactsLayerErrorDoesNotAbortSweep(t *testing.T) {
 	}
 }
 
+// TestRunInductionSweep_PerPhaseTimeoutsAreIndependent confirms the
+// fix for the session-9ec75b11 bug: a per-call timeout no longer
+// depletes the budget for subsequent calls, because each phase gets
+// its OWN bounded context derived from the parent. Pre-fix, all
+// calls shared one parent ctx with a single deadline, so a slow
+// summarize on candidate 1 would strangle every call on candidates
+// 2..N with "context deadline exceeded".
+//
+// We verify the fix by capturing each call's ctx deadline; before
+// the fix every deadline equalled the same wall-clock instant
+// (parent's). After the fix each deadline reflects a fresh per-
+// phase budget.
+func TestRunInductionSweep_PerPhaseTimeoutsAreIndependent(t *testing.T) {
+	t.Parallel()
+	s, sessID := seedSessionForSummarize(t)
+	// Make the session look idle and substantial.
+	oneHourAgo := time.Now().Add(-1 * time.Hour).UnixMilli()
+	if _, err := s.DB().Exec(
+		`UPDATE sessions SET ended_at_ms = ?, event_count = 30 WHERE id = ?`,
+		oneHourAgo, sessID,
+	); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	plantSummary(t, s, sessID, "x", "did stuff across services and components")
+
+	f := &deadlineCapturingLLM{
+		// Provide a schema-valid induction reply so phase 2 doesn't
+		// fail on decode (we want every phase to land an LLM call,
+		// not bail on a parse error).
+		toolInput: json.RawMessage(mustJSON(t, prompts.InductionResult{Rationale: "noop"})),
+	}
+
+	const summarizeTO = 100 * time.Millisecond
+	const inductionTO = 200 * time.Millisecond
+	const factsTO = 50 * time.Millisecond
+
+	if err := RunInductionSweep(context.Background(), s,
+		func() (llm.Client, error) { return f, nil },
+		InductionSweepOptions{
+			Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
+			SummarizeTimeout: summarizeTO,
+			InductionTimeout: inductionTO,
+			FactsTimeout:     factsTO,
+		},
+		&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("RunInductionSweep: %v", err)
+	}
+
+	// The session has a planted summary, so phase 1 is skipped via
+	// the HasLLMOutputForSession cache check. Phases 2 and 3 each
+	// land one LLM call.
+	if got := len(f.deadlines); got != 2 {
+		t.Fatalf("expected 2 LLM calls (induction + facts), got %d", got)
+	}
+
+	// Each captured deadline should reflect ITS phase's budget —
+	// roughly time.Now() + per-phase timeout. We allow generous
+	// slack since wall clocks aren't perfect; the assertion that
+	// matters is that the deadlines are NEAR the expected per-call
+	// budget (proves per-call WithTimeout) and NOT something like
+	// "300ms in the past" (which is what shared-budget mode would
+	// produce after the first call burns the parent budget).
+	for i, d := range f.deadlines {
+		remaining := time.Until(d)
+		if remaining <= 0 {
+			t.Errorf("call %d: deadline already past (%s) — looks like a shared parent budget", i, d)
+		}
+		// Each call should see a deadline roughly within the
+		// per-phase timeout we configured. The widest budget
+		// here is inductionTO=200ms; double it for slack.
+		if remaining > 2*inductionTO {
+			t.Errorf("call %d: deadline %s is suspiciously far in the future — expected per-phase budget", i, remaining)
+		}
+	}
+}
+
+// deadlineCapturingLLM records the context deadline of each
+// Complete() call. Used to assert that per-phase WithTimeout
+// budgets are applied independently, not inherited from a
+// shared parent context.
+type deadlineCapturingLLM struct {
+	toolInput json.RawMessage
+	deadlines []time.Time
+}
+
+func (d *deadlineCapturingLLM) Complete(ctx context.Context, req llm.Request) (*llm.Response, error) {
+	if dl, ok := ctx.Deadline(); ok {
+		d.deadlines = append(d.deadlines, dl)
+	}
+	resp := &llm.Response{
+		Model: "claude-sonnet-4-6",
+		Usage: llm.Usage{InputTokens: 1, OutputTokens: 1},
+	}
+	if req.ForceTool == "" {
+		resp.Text = "ok"
+		return resp, nil
+	}
+	input := d.toolInput
+	if input == nil {
+		input = synthMinimalToolInput(req.ForceTool, "ok")
+	}
+	resp.ToolUses = []llm.ToolUse{{
+		ID:    "toolu_dl",
+		Name:  req.ForceTool,
+		Input: input,
+	}}
+	return resp, nil
+}
+
 func TestRunInductionSweep_NoCandidatesReturnsCleanly(t *testing.T) {
 	t.Parallel()
 	s, _ := seedSessionForSummarize(t)

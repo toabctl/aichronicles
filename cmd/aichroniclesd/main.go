@@ -219,11 +219,14 @@ func startInductionSweeper(ctx context.Context, st *store.Store, cfg *config.Con
 					return llm.FromConfig(sctx, llmCfg)
 				},
 				cli.InductionSweepOptions{
-					Idle:          idle,
-					MinEvents:     minEvents,
-					Limit:         maxPerSweep,
-					SkipSummarize: cfg.Induction.SkipSummarize,
-					SkipFacts:     cfg.Induction.SkipFacts,
+					Idle:             idle,
+					MinEvents:        minEvents,
+					Limit:            maxPerSweep,
+					SkipSummarize:    cfg.Induction.SkipSummarize,
+					SkipFacts:        cfg.Induction.SkipFacts,
+					SummarizeTimeout: cfg.Limits.SummarizeTimeout.Or(3 * time.Minute),
+					InductionTimeout: cfg.Limits.ReflectTimeout.Or(5 * time.Minute),
+					FactsTimeout:     cfg.Limits.SummarizeTimeout.Or(3 * time.Minute),
 				},
 				daemon.DiscardWriter, // stdout has no audience here
 				daemon.DiscardWriter, // stderr telemetry duplicates slog calls inside the sweep
