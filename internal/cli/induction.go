@@ -61,24 +61,31 @@ func newInductionCmd() *cobra.Command {
 
 func newInductionSweepCmd() *cobra.Command {
 	var (
-		idle      time.Duration
-		minEvents int
-		limit     int
-		model     string
-		dbPath    string
+		idle         time.Duration
+		minEvents    int
+		limit        int
+		model        string
+		dbPath       string
+		skipFacts    bool
+		skipWorkflow bool
 	)
 	cmd := &cobra.Command{
 		Use:   "sweep",
 		Short: "Walk recently-ended sessions and induce on each",
 		Long: "Selects sessions that (a) have an ended_at_ms older than\n" +
 			"--idle, (b) have at least --min-events recorded events,\n" +
-			"and (c) haven't been induced before, then runs single-\n" +
-			"session induction on each. Idempotent — re-running the\n" +
-			"sweep skips sessions that already have an induction row.\n\n" +
+			"and (c) haven't been induced before, then runs three\n" +
+			"single-session induction passes on each: skill induction,\n" +
+			"semantic-fact induction, and workflow induction.\n" +
+			"Idempotent at all three layers — re-running the sweep\n" +
+			"skips sessions whose LLM rows already exist.\n\n" +
 			"Designed to be triggered from a systemd timer / cron job\n" +
-			"until the daemon-resident sweeper lands. The CLI prints a\n" +
+			"or by the daemon's resident sweeper. The CLI prints a\n" +
 			"per-session line so the operator can tell which session\n" +
 			"hit a real skill vs no_skill_found vs error.\n\n" +
+			"Pass --skip-facts / --skip-workflow to suppress those\n" +
+			"layers and run only skill induction (the original\n" +
+			"behaviour). Useful for cost-bounded cron schedules.\n\n" +
 			"Requires " + llm.APIKeyEnv + ".",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			s, err := openStore(dbPath)
@@ -99,10 +106,12 @@ func newInductionSweepCmd() *cobra.Command {
 			return RunInductionSweep(ctx, s,
 				func() (llm.Client, error) { return llm.FromConfig(ctx, llmCfg) },
 				InductionSweepOptions{
-					Idle:      idle,
-					MinEvents: minEvents,
-					Limit:     limit,
-					Model:     model,
+					Idle:         idle,
+					MinEvents:    minEvents,
+					Limit:        limit,
+					Model:        model,
+					SkipFacts:    skipFacts,
+					SkipWorkflow: skipWorkflow,
 				}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -114,6 +123,10 @@ func newInductionSweepCmd() *cobra.Command {
 		"max sessions to process in one sweep")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().BoolVar(&skipFacts, "skip-facts", false,
+		"skip the per-candidate semantic-facts induction (saves one LLM call per candidate)")
+	cmd.Flags().BoolVar(&skipWorkflow, "skip-workflow", false,
+		"skip the per-candidate workflow induction (saves one LLM call per candidate)")
 	return cmd
 }
 
@@ -216,6 +229,18 @@ type InductionSweepOptions struct {
 	MinEvents int
 	Limit     int
 	Model     string
+
+	// SkipFacts, when true, suppresses the per-candidate
+	// facts-induction LLM call that the sweep otherwise fires
+	// alongside the skill-induction call. Default behaviour
+	// (SkipFacts=false) is "auto-extract everything from a settled
+	// session" — induction + facts + workflow — so the corpus
+	// grows without manual `aichronicles facts induce` runs.
+	SkipFacts bool
+
+	// SkipWorkflow, when true, suppresses the per-candidate
+	// workflow-induction LLM call. Same shape as SkipFacts.
+	SkipWorkflow bool
 }
 
 // RunInductionSweep walks idle sessions and runs RunInductionForSession
@@ -275,6 +300,34 @@ func RunInductionSweep(
 				"session_id", c.ID, "err", err)
 			_, _ = fmt.Fprintf(errOut,
 				"  ✗ %s: %v\n", c.ID[:8], err)
+		}
+
+		// Auto-extract the other two memory types from the same
+		// candidate when not opted out. Each call is cache-
+		// idempotent on (session_id, prompt-hash), so re-runs are
+		// free at the LLM layer. Errors are logged but don't abort
+		// the candidate loop — the next tick retries.
+		if !opts.SkipFacts {
+			if _, ferr := RunFactsForSession(ctx, s, newClient, FactsRunOptions{
+				SessionID: c.ID,
+				Model:     opts.Model,
+			}, io.Discard); ferr != nil {
+				slog.Warn("induction sweep: facts failed",
+					"session_id", c.ID, "err", ferr)
+				_, _ = fmt.Fprintf(errOut,
+					"  ✗ facts %s: %v\n", c.ID[:8], ferr)
+			}
+		}
+		if !opts.SkipWorkflow {
+			if _, werr := RunWorkflowForSession(ctx, s, newClient, WorkflowRunOptions{
+				SessionID: c.ID,
+				Model:     opts.Model,
+			}, io.Discard); werr != nil {
+				slog.Warn("induction sweep: workflow failed",
+					"session_id", c.ID, "err", werr)
+				_, _ = fmt.Fprintf(errOut,
+					"  ✗ workflow %s: %v\n", c.ID[:8], werr)
+			}
 		}
 	}
 	return nil

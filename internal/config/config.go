@@ -56,6 +56,22 @@ type Induction struct {
 	Idle          Duration `toml:"idle"`
 	MinEvents     int      `toml:"min_events"`
 	MaxPerSweep   int      `toml:"max_per_sweep"`
+
+	// SkipFacts, when true, suppresses the per-candidate
+	// facts-induction LLM call that the sweep would otherwise fire
+	// alongside the skill-induction call. Defaults to false: a user
+	// who has opted into [induction].enabled has accepted the
+	// LLM-spend tradeoff for auto-extraction; running facts on the
+	// same candidate triples the per-tick spend but completes the
+	// MIRIX semantic memory layer without manual intervention. Set
+	// to true if facts induction is producing low-value rows for
+	// your workload.
+	SkipFacts bool `toml:"skip_facts"`
+
+	// SkipWorkflow, when true, suppresses the per-candidate
+	// workflow-induction LLM call. Same opt-out shape as SkipFacts.
+	// Defaults to false.
+	SkipWorkflow bool `toml:"skip_workflow"`
 }
 
 // Limits exposes operationally-tunable defaults that previously lived
