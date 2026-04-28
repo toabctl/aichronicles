@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -65,12 +66,12 @@ func LoadInductionCandidates(ctx context.Context, db *sql.DB, nowMs, idleThresho
 		   AND s.event_count >= ?
 		   AND NOT EXISTS (
 		     SELECT 1 FROM llm_outputs lo
-		      WHERE lo.session_id = s.id AND lo.kind = 'induction'
+		      WHERE lo.session_id = s.id AND lo.kind = ?
 		   )
 		 ORDER BY s.ended_at_ms DESC
 		 LIMIT ?
 	`
-	rows, err := db.QueryContext(ctx, q, cutoff, minEvents, limit)
+	rows, err := db.QueryContext(ctx, q, cutoff, minEvents, string(LLMKindInduction), limit)
 	if err != nil {
 		return nil, fmt.Errorf("query induction candidates: %w", err)
 	}
@@ -88,49 +89,44 @@ func LoadInductionCandidates(ctx context.Context, db *sql.DB, nowMs, idleThresho
 }
 
 // HasInductionRun returns true when an llm_outputs row of
-// kind='induction' exists for sessionID. Cheap idempotency
-// guard for callers that want to skip a candidate without
-// running the full LoadInductionCandidates query.
+// kind=induction exists for sessionID. Cheap idempotency guard
+// for callers that want to skip a candidate without running the
+// full LoadInductionCandidates query.
 func HasInductionRun(ctx context.Context, db *sql.DB, sessionID string) (bool, error) {
-	var exists int
+	var n int
 	err := db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM llm_outputs WHERE session_id = ? AND kind = 'induction')`,
-		sessionID,
-	).Scan(&exists)
+		`SELECT 1 FROM llm_outputs WHERE session_id = ? AND kind = ? LIMIT 1`,
+		sessionID, string(LLMKindInduction),
+	).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
 		return false, fmt.Errorf("check induction: %w", err)
 	}
-	return exists == 1, nil
+	return true, nil
 }
 
 // LoadInductionRow returns the most recent llm_outputs row of
-// kind='induction' for sessionID, or nil if none exists. Used by
+// kind=induction for sessionID, or nil if none exists. Used by
 // the CLI to render "what did induction decide for this session?"
 // without a separate body parse step.
 func LoadInductionRow(ctx context.Context, db *sql.DB, sessionID string) (*LLMOutput, error) {
-	q := `SELECT id, session_id, kind, model, prompt_hash,
-	             COALESCE(input_tokens, 0), COALESCE(output_tokens, 0),
-	             body, created_at_ms
-	        FROM llm_outputs
-	       WHERE session_id = ? AND kind = 'induction'
-	       ORDER BY created_at_ms DESC
-	       LIMIT 1`
-	var (
-		out     LLMOutput
-		inToks  sql.NullInt64
-		outToks sql.NullInt64
+	row := db.QueryRowContext(ctx,
+		`SELECT id, session_id, kind, model, prompt_hash,
+		        input_tokens, output_tokens, body, created_at_ms
+		   FROM llm_outputs
+		  WHERE session_id = ? AND kind = ?
+		  ORDER BY created_at_ms DESC
+		  LIMIT 1`,
+		sessionID, string(LLMKindInduction),
 	)
-	err := db.QueryRowContext(ctx, q, sessionID).Scan(
-		&out.ID, &out.SessionID, &out.Kind, &out.Model, &out.PromptHash,
-		&inToks, &outToks, &out.Body, &out.CreatedAtMs,
-	)
-	if err == sql.ErrNoRows {
+	out, err := scanLLMOutput(row)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("load induction row: %w", err)
 	}
-	out.InputTokens = inToks
-	out.OutputTokens = outToks
-	return &out, nil
+	return out, nil
 }
