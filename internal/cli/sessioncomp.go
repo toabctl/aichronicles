@@ -3,7 +3,6 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/store"
 )
 
@@ -24,11 +23,7 @@ const sessionCompletionLimit = 50
 // handle the directive; emitting a Go error string into the
 // shell output would mostly produce noise.
 func completeSessionID(cmd *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	resolved, err := paths.ResolveStorePath("")
-	if err != nil {
-		return nil, cobra.ShellCompDirectiveError | cobra.ShellCompDirectiveNoFileComp
-	}
-	s, err := store.Open(resolved)
+	s, err := openStore("")
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveError | cobra.ShellCompDirectiveNoFileComp
 	}

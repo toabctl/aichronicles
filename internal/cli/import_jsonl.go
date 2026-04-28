@@ -12,7 +12,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/ingest"
 	"github.com/toabctl/aichronicles/pkg/redact"
@@ -36,11 +35,7 @@ func newImportJSONLCmd() *cobra.Command {
 			"with `aichronicles audit` after import.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resolvedDB, err := paths.ResolveStorePath(dbPath)
-			if err != nil {
-				return err
-			}
-			s, err := store.Open(resolvedDB)
+			s, err := openStore(dbPath)
 			if err != nil {
 				return err
 			}

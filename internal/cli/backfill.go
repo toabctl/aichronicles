@@ -12,7 +12,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/ingest"
 	"github.com/toabctl/aichronicles/pkg/ingest/extract"
@@ -44,11 +43,7 @@ func newBackfillExtractionsCmd() *cobra.Command {
 			"Safe to run while the daemon is up — each batch is committed\n" +
 			"in its own transaction.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			resolved, err := paths.ResolveStorePath(dbPath)
-			if err != nil {
-				return err
-			}
-			s, err := store.Open(resolved)
+			s, err := openStore(dbPath)
 			if err != nil {
 				return err
 			}

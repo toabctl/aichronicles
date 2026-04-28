@@ -9,7 +9,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/ingest"
 	"github.com/toabctl/aichronicles/pkg/redact"
@@ -32,11 +31,7 @@ func newScrubCmd() *cobra.Command {
 			"truth layer; once rewritten, the original bytes are gone. Take a\n" +
 			"backup of the DB file first if you care about forensics.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			resolved, err := paths.ResolveStorePath(dbPath)
-			if err != nil {
-				return err
-			}
-			s, err := store.Open(resolved)
+			s, err := openStore(dbPath)
 			if err != nil {
 				return err
 			}

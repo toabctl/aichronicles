@@ -13,7 +13,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/config"
-	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/llm"
@@ -82,11 +81,7 @@ func newInductionSweepCmd() *cobra.Command {
 			"hit a real skill vs no_skill_found vs error.\n\n" +
 			"Requires " + llm.APIKeyEnv + ".",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			resolved, err := paths.ResolveStorePath(dbPath)
-			if err != nil {
-				return err
-			}
-			s, err := store.Open(resolved)
+			s, err := openStore(dbPath)
 			if err != nil {
 				return err
 			}
@@ -145,11 +140,7 @@ func newInductionRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resolved, err := paths.ResolveStorePath(dbPath)
-			if err != nil {
-				return err
-			}
-			s, err := store.Open(resolved)
+			s, err := openStore(dbPath)
 			if err != nil {
 				return err
 			}
@@ -197,11 +188,7 @@ func newInductionListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resolved, err := paths.ResolveStorePath(dbPath)
-			if err != nil {
-				return err
-			}
-			s, err := store.Open(resolved)
+			s, err := openStore(dbPath)
 			if err != nil {
 				return err
 			}

@@ -8,8 +8,6 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/mcp"
-	"github.com/toabctl/aichronicles/internal/paths"
-	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/llm"
 )
 
@@ -46,11 +44,7 @@ func newMCPServeCmd() *cobra.Command {
 			"window surfaces them. Stdin close (client disconnect) ends the\n" +
 			"process cleanly.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			resolved, err := paths.ResolveStorePath(dbPath)
-			if err != nil {
-				return err
-			}
-			s, err := store.Open(resolved)
+			s, resolved, err := openStoreResolved(dbPath)
 			if err != nil {
 				return err
 			}

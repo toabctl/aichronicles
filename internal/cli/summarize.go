@@ -13,7 +13,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/config"
-	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
@@ -56,11 +55,7 @@ func newSummarizeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resolved, err := paths.ResolveStorePath(dbPath)
-			if err != nil {
-				return err
-			}
-			s, err := store.Open(resolved)
+			s, err := openStore(dbPath)
 			if err != nil {
 				return err
 			}

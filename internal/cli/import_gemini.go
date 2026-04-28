@@ -16,7 +16,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
-	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/ingest"
 	"github.com/toabctl/aichronicles/pkg/redact"
@@ -62,11 +61,7 @@ func newImportGeminiCmd() *cobra.Command {
 				target = args[0]
 			}
 
-			resolvedDB, err := paths.ResolveStorePath(dbPath)
-			if err != nil {
-				return err
-			}
-			s, err := store.Open(resolvedDB)
+			s, err := openStore(dbPath)
 			if err != nil {
 				return err
 			}

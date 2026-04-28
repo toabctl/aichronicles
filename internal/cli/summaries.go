@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/config"
-	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/llm"
 )
@@ -82,7 +81,7 @@ func newSummariesMissingCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := openStoreFromFlag(dbPath)
+			s, err := openStore(dbPath)
 			if err != nil {
 				return err
 			}
@@ -134,7 +133,7 @@ func newSummariesFillCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := openStoreFromFlag(dbPath)
+			s, err := openStore(dbPath)
 			if err != nil {
 				return err
 			}
@@ -456,7 +455,7 @@ func newSummariesListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := openStoreFromFlag(dbPath)
+			s, err := openStore(dbPath)
 			if err != nil {
 				return err
 			}
@@ -517,7 +516,7 @@ func newSummariesShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := openStoreFromFlag(dbPath)
+			s, err := openStore(dbPath)
 			if err != nil {
 				return err
 			}
@@ -550,17 +549,6 @@ func newSummariesShowCmd() *cobra.Command {
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
-}
-
-// openStoreFromFlag resolves the store path with paths.ResolveStorePath
-// (CLI flag > $AICHRONICLES_DB > XDG default) and opens the result.
-// Callers defer s.Close().
-func openStoreFromFlag(dbPath string) (*store.Store, error) {
-	resolved, err := paths.ResolveStorePath(dbPath)
-	if err != nil {
-		return nil, err
-	}
-	return store.Open(resolved)
 }
 
 // parseOutputKind normalizes the --kind flag into a store.LLMOutputKind.

@@ -16,7 +16,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/toabctl/aichronicles/internal/config"
-	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
@@ -74,11 +73,7 @@ func newProposeApplyCmd() *cobra.Command {
 			"--force is passed. Use `aichronicles propose list` to see\n" +
 			"what's in the cached proposal.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			resolved, err := paths.ResolveStorePath(dbPath)
-			if err != nil {
-				return err
-			}
-			s, err := store.Open(resolved)
+			s, err := openStore(dbPath)
 			if err != nil {
 				return err
 			}
@@ -140,11 +135,7 @@ func newProposeListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List skills in the latest cached propose output",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			resolved, err := paths.ResolveStorePath(dbPath)
-			if err != nil {
-				return err
-			}
-			s, err := store.Open(resolved)
+			s, err := openStore(dbPath)
 			if err != nil {
 				return err
 			}

@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/store"
 )
 
@@ -38,11 +37,7 @@ func newPruneCmd() *cobra.Command {
 			"Default is dry-run: nothing is written until you pass --yes. Run\n" +
 			"`aichronicles vacuum` afterwards to reclaim freelist pages on disk.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			resolved, err := paths.ResolveStorePath(dbPath)
-			if err != nil {
-				return err
-			}
-			s, err := store.Open(resolved)
+			s, err := openStore(dbPath)
 			if err != nil {
 				return err
 			}
@@ -126,11 +121,7 @@ func newVacuumCmd() *cobra.Command {
 			"  - Pass --yes to actually run; default is a no-op preview that\n" +
 			"    prints the current page count.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			resolved, err := paths.ResolveStorePath(dbPath)
-			if err != nil {
-				return err
-			}
-			s, err := store.Open(resolved)
+			s, err := openStore(dbPath)
 			if err != nil {
 				return err
 			}
