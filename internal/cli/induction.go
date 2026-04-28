@@ -20,12 +20,13 @@ import (
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
-// defaultInductionIdle defines "session has ended" — no new events
-// for this long. 30 minutes is comfortable: long enough that an
-// active conversation pausing for a coffee break doesn't trip the
-// sweeper, short enough that a finished session gets processed
-// while it's still cognitively warm for the user.
-const defaultInductionIdle = 30 * time.Minute
+// defaultInductionIdle re-exports store.DefaultInductionIdle as
+// the local sweep flag's default so cli and store can't drift.
+// 30 minutes is comfortable: long enough that an active conversation
+// pausing for a coffee break doesn't trip the sweeper, short enough
+// that a finished session gets processed while it's still
+// cognitively warm for the user.
+const defaultInductionIdle = store.DefaultInductionIdle
 
 // defaultInductionMinEvents drops trivially-short sessions ("user
 // typed `q` and bailed") from the sweep. 5 events is one

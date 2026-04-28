@@ -5,7 +5,16 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 )
+
+// DefaultInductionIdle is the canonical "session has ended" idle
+// threshold: no new events for this long means we count the
+// session as finished. The CLI's --idle flag, the daemon's
+// Induction.Idle config setting, and LoadInductionCandidates'
+// idleThresholdMs <= 0 fallback all consume this single value so
+// the three paths can't drift.
+const DefaultInductionIdle = 30 * time.Minute
 
 // InductionCandidate is one session ripe for online induction:
 // idle long enough that we believe it's ended (no new events for
@@ -38,13 +47,12 @@ type InductionCandidate struct {
 // Newest-ended first, so an interactive sweep surfaces the most
 // recently completed work before catching up on backlog.
 //
-// idleThresholdMs <= 0 falls back to 30 minutes — the same
-// "session is ended" definition the model uses elsewhere.
+// idleThresholdMs <= 0 falls back to DefaultInductionIdle.
 // minEvents <= 0 falls back to 5 (a one-prompt session almost
 // never grounds a workflow). limit <= 0 falls back to 50.
 func LoadInductionCandidates(ctx context.Context, db *sql.DB, nowMs, idleThresholdMs int64, minEvents, limit int) ([]InductionCandidate, error) {
 	if idleThresholdMs <= 0 {
-		idleThresholdMs = 30 * 60 * 1000
+		idleThresholdMs = DefaultInductionIdle.Milliseconds()
 	}
 	if minEvents <= 0 {
 		minEvents = 5
