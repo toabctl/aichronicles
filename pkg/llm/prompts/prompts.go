@@ -526,6 +526,15 @@ type SessionDigest struct {
 	// pattern (extract repeated subsequences, replace varying
 	// values with placeholders).
 	ShellCommands []string
+	// Outcome, when non-nil, carries the per-session outcome cue
+	// (success_likely / failure_likely / mixed / unknown) plus the
+	// raw counters that derived it. Rendered as a one-line "Outcome:
+	// <label> (n failures, n undos, n repeats)" cue in the digest
+	// body — see renderDigests. The cue is a HEURISTIC over
+	// observable signals (tool failures, git undos, consecutive
+	// prompt repeats) and is not ground truth; downstream prompts
+	// treat it as a prior, not a rule.
+	Outcome *store.SessionOutcome
 }
 
 const reflectSystem = `You reflect on recent coding sessions to spot recurring patterns of work and recurring pain points. You MUST call the record_reflection tool exactly once.
@@ -661,6 +670,8 @@ Skill-awareness rules (the "Skills installed" and "Skills invoked recently" sect
 8. If a recurring pattern overlaps an *installed* skill (same domain or trigger), do NOT propose a new skill with that name or near-duplicate name. Skip the pattern.
 9. If a pattern is a clear *extension* of an installed skill (the skill exists but has a gap), you may propose the skill, but its name must be DIFFERENT and alternatives_rejected MUST cite the existing skill and explain the increment.
 10. Treat "Skills invoked recently" as evidence the user already uses those skills successfully. Patterns whose work is plausibly served by an invoked skill are solved — don't repropose them. The frequency in that section reflects real usage, not aspiration.
+
+11. Outcome cues (Outcome: success_likely / failure_likely / mixed / unknown, with optional counter tail) are HEURISTICS over observable signals — tool_failures, git_undos, consecutive prompt_repeats. Treat them as priors, not facts. A failure_likely session is NOT automatically uninteresting: a recurring failure shape across multiple sessions IS a pattern (the friction is the signal — propose a skill that prevents or short-circuits the failure). But avoid grounding a skill ONLY in failure_likely sessions when no success_likely session shows the same pattern — the user was probably stuck, not exhibiting reusable behaviour. Prefer mixed evidence (some success_likely, some failure_likely) over single-flavour evidence.
 
 For a typical 25-session window, expect 1–4 well-grounded skills total — not 0, not 5. Zero is acceptable only if every recurring pattern you see is already covered by an installed skill or is out of scope per the rules above. Lean toward proposing a clearly-grounded skill even when its time-saving estimate is moderate; the user wants concrete leads, not perfect ones.`
 
@@ -883,6 +894,8 @@ Hard rules:
 5. Skill names: ≤4 words, kebab-case (matches a directory name under ~/.claude/skills/). when_to_use leads with the trigger condition.
 
 6. frequency=1 is correct for induction (one session of evidence). effort: "small" = an afternoon. "medium" = a few days. "large" = a project.
+
+7. Outcome cue (Outcome: success_likely / failure_likely / mixed / unknown) is a HEURISTIC over observable signals. A failure_likely session should bias TOWARD no_skill_found=true UNLESS the session reveals a clear, reusable trigger (e.g. the same root-cause investigation recipe used to recover from the failure — that's a debug skill). A success_likely session is more likely to ground a real workflow but does not automatically warrant one. An unknown session almost always justifies no_skill_found=true (too thin to ground anything).
 
 Rationale is a short (≤200 chars) line explaining the decision either way. On no_skill_found=true: "no concrete reusable workflow — session was a one-off bug fix". On a proposed skill: "extracted the deploy-staging recipe — same shell sequence the user ran twice this session".`
 
@@ -1786,6 +1799,9 @@ func renderDigests(digests []SessionDigest, pats patternSet) string {
 				time.UnixMilli(d.StartedAtMs).UTC().Format(time.RFC3339),
 				time.UnixMilli(d.EndedAtMs).UTC().Format(time.RFC3339))
 		}
+		if line := renderOutcomeCue(d.Outcome); line != "" {
+			b.WriteString(line)
+		}
 		if d.Cwd != "" {
 			clean, names := redact.Outbound(d.Cwd)
 			pats.addAll(names)
@@ -1838,6 +1854,44 @@ func renderDigests(digests []SessionDigest, pats patternSet) string {
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// renderOutcomeCue formats the per-session outcome heuristic as one
+// line: "Outcome: <label> (n failures, n undos, n repeats)". Returns
+// "" when Outcome is nil so callers can splice unconditionally
+// without a guard. The detail tail is suppressed for success_likely
+// (zero by definition there) and unknown (no signal worth showing)
+// to keep the prompt token-lean — only failure_likely / mixed
+// sessions get the detail tail.
+//
+// Outcome is a HEURISTIC. The label is computed by store.deriveOutcomeLabel
+// from observable signals (tool_failure_count, git_undo_count,
+// prompt_repeat_count, last_event_kind). Downstream prompts treat it
+// as a prior, not ground truth.
+func renderOutcomeCue(o *store.SessionOutcome) string {
+	if o == nil {
+		return ""
+	}
+	switch o.Outcome {
+	case store.OutcomeSuccessLikely:
+		return "Outcome: success_likely\n"
+	case store.OutcomeUnknown:
+		// No detail — by definition the session was too thin to
+		// have a useful signal here. Still render the label so the
+		// LLM doesn't conclude "outcome was withheld."
+		return "Outcome: unknown\n"
+	case store.OutcomeFailureLikely, store.OutcomeMixed:
+		return fmt.Sprintf(
+			"Outcome: %s (%d tool_failures, %d git_undos, %d prompt_repeats)\n",
+			o.Outcome, o.ToolFailureCount, o.GitUndoCount, o.PromptRepeatCount,
+		)
+	default:
+		// Defensive: a label outside the closed set means the
+		// store package added a value we don't render here yet.
+		// Fall through to a bare label rather than dropping the
+		// signal entirely.
+		return fmt.Sprintf("Outcome: %s\n", o.Outcome)
+	}
 }
 
 // hashRequest produces the stable cache key for Request. Includes

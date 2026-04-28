@@ -359,6 +359,16 @@ func RunInductionForSession(
 		}
 	}
 
+	// Outcome enrichment: fill the cached row or compute one. Lets
+	// the induction prompt apply its outcome-aware bias (failure_likely
+	// → default to no_skill_found unless the failure itself reveals a
+	// reusable trigger). Best-effort.
+	if outcome, oerr := store.EnsureSessionOutcome(ctx, s.DB(), sessionID); oerr != nil {
+		slog.Warn("induction: skipping outcome cue", "session", sessionID, "err", oerr)
+	} else {
+		digest.Outcome = outcome
+	}
+
 	// Installed-skills enrichment so the induction prompt won't
 	// repropose a skill that already exists. Best-effort: a
 	// failure here downgrades the prompt rather than blocking

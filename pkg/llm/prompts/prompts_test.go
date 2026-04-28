@@ -519,6 +519,69 @@ func TestBuildReflect_RendersAllDigestFields(t *testing.T) {
 	}
 }
 
+func TestBuildReflect_RendersOutcomeCueWhenPresent(t *testing.T) {
+	t.Parallel()
+	digests := []SessionDigest{
+		{
+			ID:      "s-with-outcome",
+			Summary: "Did stuff.",
+			Outcome: &store.SessionOutcome{
+				SessionID:        "s-with-outcome",
+				Outcome:          store.OutcomeFailureLikely,
+				ToolFailureCount: 4,
+				GitUndoCount:     1,
+			},
+		},
+		{ID: "s-no-outcome", Summary: "Other stuff.", Outcome: nil},
+	}
+	built, err := BuildReflect(digests, time.Hour)
+	if err != nil {
+		t.Fatalf("BuildReflect: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+
+	// The session with an outcome cue must render it with its
+	// counter tail; the session without one must NOT carry an
+	// outcome line at all.
+	if !strings.Contains(body, "Outcome: failure_likely (4 tool_failures, 1 git_undos") {
+		t.Errorf("expected failure_likely cue with counter tail in body:\n%s", body)
+	}
+	// Confirm the no-outcome session doesn't get a phantom line.
+	// The no-outcome digest follows the with-outcome one in the
+	// rendered body; finding "Outcome:" only once in the body is
+	// the cleanest assertion here.
+	if got := strings.Count(body, "Outcome:"); got != 1 {
+		t.Errorf("Outcome line count: got %d, want exactly 1 (only s-with-outcome should have it)", got)
+	}
+}
+
+func TestBuildReflect_OutcomeSuccessOmitsCounterTail(t *testing.T) {
+	t.Parallel()
+	digests := []SessionDigest{
+		{
+			ID:      "s-success",
+			Summary: "Got it done.",
+			Outcome: &store.SessionOutcome{
+				SessionID: "s-success",
+				Outcome:   store.OutcomeSuccessLikely,
+			},
+		},
+	}
+	built, err := BuildReflect(digests, time.Hour)
+	if err != nil {
+		t.Fatalf("BuildReflect: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	if !strings.Contains(body, "Outcome: success_likely\n") {
+		t.Errorf("expected bare success_likely cue:\n%s", body)
+	}
+	// success_likely is by-definition zero on the failure counters,
+	// so the tail is suppressed to save tokens.
+	if strings.Contains(body, "tool_failures") {
+		t.Errorf("unexpected counter tail on success_likely cue:\n%s", body)
+	}
+}
+
 func TestBuildReflect_RendersPerSessionLinks(t *testing.T) {
 	t.Parallel()
 	digests := []SessionDigest{

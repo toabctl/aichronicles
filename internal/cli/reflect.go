@@ -212,6 +212,15 @@ func digestsFromRowsWithLinks(
 				d.ShellCommands[i] = sc.Value
 			}
 		}
+		// Outcome enrichment: fill the cached row or compute one,
+		// so the propose / reflect prompt sees the success/failure
+		// heuristic per session. Best-effort: a failure here
+		// downgrades to "no outcome cue" rather than blocking.
+		if outcome, oerr := store.EnsureSessionOutcome(ctx, s.DB(), r.ID); oerr != nil {
+			slog.Warn("digest: skipping outcome cue", "session", r.ID, "err", oerr)
+		} else {
+			d.Outcome = outcome
+		}
 		out = append(out, d)
 	}
 	if len(skipped) > 0 {
