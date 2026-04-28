@@ -311,6 +311,59 @@ type DigestEvidenceRow struct {
 	WhatHappened string
 }
 
+// ProposePage drives /propose: cards of cached `propose` outputs
+// (llm_outputs.kind = propose), newest first. Each card lists the
+// skills the model suggested, each skill with its evidence sessions
+// and a copy-to-clipboard `aichronicles propose apply` command.
+type ProposePage struct {
+	Title     string
+	Limit     int
+	Proposals []ProposeCard
+}
+
+// ProposeCard is one rendered propose row. RawBody is populated
+// when the persisted ProposalResult JSON didn't parse; the rest
+// stays empty in that case so the template knows to fall through
+// to a "show raw" pane rather than render an empty card.
+type ProposeCard struct {
+	ID          int64
+	Model       string
+	Generated   string // relative ("2d ago")
+	GeneratedAt string // absolute UTC for the title attr
+	Skills      []ProposeSkillRow
+	RawBody     string
+}
+
+// ProposeSkillRow mirrors prompts.ProposedSkill with display-ready
+// helpers (ApplyCmd already shaped, evidence pre-shortened, etc.).
+type ProposeSkillRow struct {
+	Name                 string
+	WhenToUse            string
+	Why                  string
+	Frequency            int
+	Effort               string
+	AlternativesRejected string
+	Scripts              []ProposeScriptRow
+	Evidence             []ProposeEvidenceRow
+	// ApplyCmd is the exact `aichronicles propose apply --skill X
+	// --output-id N` line the copy button drops onto the user's
+	// clipboard. --output-id is always set so the copy-paste
+	// survives later propose runs.
+	ApplyCmd string
+}
+
+type ProposeScriptRow struct {
+	Name    string
+	Purpose string
+}
+
+type ProposeEvidenceRow struct {
+	SessionID    string
+	ShortID      string
+	Quote        string
+	WhatHappened string
+}
+
 // SearchPage is the data shape the /search full-page template
 // consumes. Most of the heavy lifting is done by the htmx
 // fragment endpoint at /search/hits, so this struct is mostly

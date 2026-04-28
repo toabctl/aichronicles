@@ -80,11 +80,29 @@ func newProposeCmd() *cobra.Command {
 				cfg.Limits.ReflectTimeout.Or(defaultMetaLLMTimeout))
 			defer cancel()
 
+			// Header + progress lines go to stderr so a JSON
+			// stdout stays clean for piping. Skip progress in
+			// JSON mode entirely (RunPropose also silences via
+			// the JSON flag, but the header is the cobra layer's
+			// concern).
+			progress := cmd.ErrOrStderr()
+			if format != FormatJSON {
+				_, _ = fmt.Fprintf(progress,
+					"propose: window=%s  limit=%d  model=%s  provider=%s\n",
+					humanDuration(since), limit,
+					resolveModelLabel(llmCfg, model),
+					providerLabel(llmCfg))
+			}
+
 			_, err = RunPropose(ctx, s,
 				func() (llm.Client, error) {
 					return llm.FromConfig(ctx, llmCfg)
 				},
-				ProposeOptions{Since: since, Limit: limit, Model: model, Force: force, JSON: format == FormatJSON},
+				ProposeOptions{
+					Since: since, Limit: limit, Model: model,
+					Force: force, JSON: format == FormatJSON,
+					Progress: progress,
+				},
 				cmd.OutOrStdout())
 			return err
 		},
@@ -110,10 +128,19 @@ type ProposeOptions struct {
 	Model string
 	Force bool
 	JSON  bool
+	// Progress, when non-nil, receives one-line status updates as
+	// RunPropose walks its phases (load sessions, enrich, call
+	// LLM). Pass io.Discard or leave nil to silence — JSON mode
+	// also silences automatically so pipelines see clean output.
+	Progress io.Writer
 }
 
 // RunPropose orchestrates the proposal path. Same cache + lazy-client
 // + clean-on-failure discipline as RunReflect (via runCachedLLM).
+//
+// Progress lines are written to opts.Progress (when non-nil and not
+// in JSON mode) so the user sees what's happening before the
+// LLM round-trip lands. Pass io.Discard or leave nil to silence.
 func RunPropose(
 	ctx context.Context,
 	s *store.Store,
@@ -126,6 +153,14 @@ func RunPropose(
 		window = defaultProposeWindow
 	}
 
+	progress := opts.Progress
+	if progress == nil || opts.JSON {
+		progress = io.Discard
+	}
+
+	_, _ = fmt.Fprintf(progress, "loading sessions in window=%s (limit=%d)...\n",
+		humanDuration(window), opts.Limit)
+
 	sinceMs := time.Now().Add(-window).UnixMilli()
 	rows, err := store.LoadRecentSessionDigests(ctx, s.DB(), sinceMs, opts.Limit)
 	if err != nil {
@@ -135,6 +170,7 @@ func RunPropose(
 		return 0, errors.New("propose: no sessions in the requested window")
 	}
 
+	_, _ = fmt.Fprintf(progress, "  loaded %d session(s), enriching with extractions...\n", len(rows))
 	digests, err := digestsFromRowsWithLinks(ctx, s, rows)
 	if err != nil {
 		return 0, fmt.Errorf("propose: enrich digests: %w", err)
@@ -154,6 +190,8 @@ func RunPropose(
 	if err != nil {
 		slog.Warn("propose: skipping invoked-skills enrichment", "err", err)
 	}
+	_, _ = fmt.Fprintf(progress, "  skills enrichment: %d installed, %d invoked\n",
+		len(installed), len(invoked))
 
 	built, err := prompts.BuildPropose(prompts.ProposeInputs{
 		Digests:         digests,
@@ -168,6 +206,7 @@ func RunPropose(
 		return 0, fmt.Errorf("propose: build prompt: %w", err)
 	}
 
+	_, _ = fmt.Fprintf(progress, "calling LLM (this is the long part — typically 10–30s)...\n")
 	return runCachedLLM(ctx, s, newClient, cachedLLMInput{
 		kind:     store.LLMKindPropose,
 		toolName: prompts.ToolNameProposal,

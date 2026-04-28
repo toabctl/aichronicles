@@ -49,24 +49,33 @@
     return !!target.isContentEditable;
   }
 
-  // Resume-button click: copy data-resume-cmd to clipboard, give
-  // visible feedback by flipping the button's class for ~1s.
-  // Listener delegated to document so SSE-driven re-renders of
-  // the session header (none today, but keep it future-proof)
-  // pick up the behaviour automatically.
+  // Click-to-copy buttons: any element with class .resume-btn or
+  // .copy-btn, with the command in data-resume-cmd / data-copy.
+  // Two flavours, one handler — both flash a "✓ copied" label
+  // and a green class for ~1s as visual feedback. The handler
+  // is delegated to document so SSE-driven re-renders pick up
+  // the behaviour automatically.
   document.addEventListener('click', function (e) {
-    var btn = e.target.closest && e.target.closest('.resume-btn');
+    if (!e.target.closest) return;
+    // Probe both classes; the matching attribute decides which.
+    var btn = e.target.closest('.resume-btn, .copy-btn');
     if (!btn) return;
-    var cmd = btn.getAttribute('data-resume-cmd');
+    var cmd = btn.getAttribute('data-copy') || btn.getAttribute('data-resume-cmd');
     if (!cmd) return;
+
+    // The "copied" class differs per button family so existing
+    // .resume-btn-copied CSS keeps working unchanged.
+    var copiedClass = btn.classList.contains('resume-btn')
+      ? 'resume-btn-copied'
+      : 'copy-btn-copied';
 
     var doneLabel = '✓ copied';
     var origLabel = btn.textContent;
     function flash() {
-      btn.classList.add('resume-btn-copied');
+      btn.classList.add(copiedClass);
       btn.textContent = doneLabel;
       setTimeout(function () {
-        btn.classList.remove('resume-btn-copied');
+        btn.classList.remove(copiedClass);
         btn.textContent = origLabel;
       }, 1200);
     }

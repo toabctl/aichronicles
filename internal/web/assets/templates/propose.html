@@ -1,0 +1,106 @@
+{{define "content"}}
+<hgroup>
+  <h1>Proposed skills</h1>
+  <p>Cached <code>propose</code> artefacts. Each card is a model-
+     written suggestion of new <code>SKILL.md</code> files based on
+     recurring patterns in your sessions, persisted in
+     <code>llm_outputs</code> and produced by
+     <code>aichronicles propose</code>. Each skill carries a copy-
+     to-clipboard <em>apply</em> command — paste it in a terminal
+     to materialise the skill on disk.</p>
+  <p><small class="muted">The web UI never writes to
+     <code>~/.claude/skills/</code> on its own — this page only
+     reads cached proposals; you stay in the loop on what gets
+     installed.</small></p>
+</hgroup>
+
+{{if .Proposals}}
+{{range .Proposals}}
+<article class="propose-card" id="propose-{{.ID}}">
+  <header>
+    <h2>Proposal #{{.ID}}</h2>
+    <small class="muted">
+      generated {{.Generated}}
+      <span title="{{.GeneratedAt}}">·</span>
+      model <code>{{.Model}}</code>
+      · <a href="/propose?limit={{$.Limit}}#propose-{{.ID}}" class="muted">link</a>
+    </small>
+  </header>
+
+  {{if .RawBody}}
+  <details>
+    <summary class="muted">unparseable proposal — show raw body</summary>
+    <pre><code>{{.RawBody}}</code></pre>
+  </details>
+  {{else if .Skills}}
+  {{range .Skills}}
+  <section class="propose-skill">
+    <header>
+      <h3><code>{{.Name}}</code>
+        <small class="muted">×{{.Frequency}}{{if .Effort}} · effort: {{.Effort}}{{end}}</small>
+      </h3>
+    </header>
+
+    {{if .WhenToUse}}
+    <p><strong>When to use:</strong> {{.WhenToUse}}</p>
+    {{end}}
+    {{if .Why}}
+    <p><strong>Why:</strong> {{.Why}}</p>
+    {{end}}
+
+    {{if .Scripts}}
+    <details>
+      <summary><strong>Helper scripts</strong> <small class="muted">({{len .Scripts}})</small></summary>
+      <ul>
+        {{range .Scripts}}
+        <li><code>scripts/{{.Name}}</code>{{if .Purpose}} — {{.Purpose}}{{end}}</li>
+        {{end}}
+      </ul>
+    </details>
+    {{end}}
+
+    {{if .Evidence}}
+    <details open>
+      <summary><strong>Evidence</strong> <small class="muted">({{len .Evidence}} sessions)</small></summary>
+      <ul class="propose-evidence">
+        {{range .Evidence}}
+        <li>
+          <a href="/sessions/{{.SessionID}}" class="sid">{{.ShortID}}</a>
+          {{if .WhatHappened}}— {{.WhatHappened}}{{end}}
+          {{if .Quote}}<br><blockquote>{{.Quote}}</blockquote>{{end}}
+        </li>
+        {{end}}
+      </ul>
+    </details>
+    {{end}}
+
+    {{if .AlternativesRejected}}
+    <p><small class="muted"><strong>Rejected alternatives:</strong> {{.AlternativesRejected}}</small></p>
+    {{end}}
+
+    {{/* Copy-to-clipboard button. The keynav.js handler binds to
+         any element with a data-copy attribute, so this works
+         identically to the session-detail "↻ resume" button. */}}
+    <button type="button"
+            class="copy-btn"
+            data-copy="{{.ApplyCmd}}"
+            title="Copy `{{.ApplyCmd}}` to your clipboard so you can paste it in a terminal to materialise this skill">
+      📋 copy apply command
+    </button>
+    <code class="apply-cmd-preview">{{.ApplyCmd}}</code>
+  </section>
+  {{end}}
+  {{else}}
+  <p class="muted">(this proposal has no skills — the model returned an empty list)</p>
+  {{end}}
+</article>
+{{end}}
+{{else}}
+<article>
+  <p class="empty">No cached proposals yet — run
+     <code>aichronicles propose</code> to generate one. It calls
+     the LLM once over your recent summaries (default: last 30
+     days, ≤50 sessions) and persists the result here.</p>
+</article>
+{{end}}
+{{end}}

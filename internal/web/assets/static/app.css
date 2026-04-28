@@ -291,6 +291,67 @@ tr.nav-row:focus-visible {
   color: var(--pico-muted-color);
 }
 
+/* Propose page (/propose) — one <article> per cached propose
+   row; each <section.propose-skill> a single proposed skill.
+   Copy-cmd button mirrors the .resume-btn styling so the
+   click-to-copy affordance reads the same across the UI. */
+.propose-card .propose-skill {
+  border-top: 1px solid var(--pico-muted-border-color);
+  padding-top: 0.75rem;
+  margin-top: 0.75rem;
+}
+.propose-card .propose-skill h3 {
+  margin: 0.25rem 0;
+}
+.propose-card ul.propose-evidence {
+  list-style: none;
+  padding-left: 0;
+  margin: 0.25rem 0;
+}
+.propose-card ul.propose-evidence li {
+  margin: 0.25rem 0;
+}
+.propose-card ul.propose-evidence blockquote {
+  margin: 0.25rem 0 0.25rem 1rem;
+  padding: 0.1rem 0.5rem;
+  border-left: 2px solid var(--pico-muted-border-color);
+  color: var(--pico-muted-color);
+  font-size: 0.9em;
+}
+
+/* Click-to-copy button. Same shape as .resume-btn so the JS
+   handler in keynav.js keys off [data-copy] across the UI
+   without per-page duplication. */
+.copy-btn {
+  display: inline-block;
+  padding: 0.05rem 0.5rem;
+  font-size: 0.7em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--pico-muted-border-color);
+  background: var(--pico-secondary-background);
+  color: var(--pico-secondary-inverse);
+  border-radius: 0.25rem;
+  cursor: pointer;
+  vertical-align: middle;
+  width: auto;
+}
+.copy-btn:hover {
+  background: var(--pico-secondary-hover-background);
+  color: var(--pico-secondary-inverse);
+}
+.copy-btn.copy-btn-copied {
+  background: #16a34a;
+  color: #fff;
+  border-color: #16a34a;
+}
+.apply-cmd-preview {
+  display: inline-block;
+  margin-left: 0.5rem;
+  font-size: 0.85em;
+  color: var(--pico-muted-color);
+}
+
 /* Sessions table — let the prompt cell breathe (it carries the
    first prompt + cwd + topic) and keep the timestamp column tight.
    The cwd is a sub-line of the prompt cell rather than its own
