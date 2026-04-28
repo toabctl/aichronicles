@@ -39,13 +39,25 @@ type InductionCandidate struct {
 //     "user typed `q`" sessions that won't ground a useful skill).
 //
 //  3. Not already processed: no llm_outputs row exists with
-//     kind='induction' AND session_id = s.id. Re-running the
+//     kind=induction AND session_id = s.id. Re-running the
 //     sweeper is then idempotent at the per-session level —
 //     once we've induced (or decided no_skill_found), we don't
 //     pay the LLM call again.
 //
 // Newest-ended first, so an interactive sweep surfaces the most
 // recently completed work before catching up on backlog.
+//
+// Concurrency note: this function does NOT serialise concurrent
+// callers. The daemon's InductionSweeper and a manual
+// `aichronicles induction sweep` can run at the same time; both
+// see the same candidate set, both kick off LLM calls for
+// overlapping sessions. SaveLLMOutput is idempotent on
+// (kind, prompt_hash) so the second write coalesces into the
+// first — no corruption — but the LLM is paid for twice during
+// the overlap. Acceptable: the sweeper is opt-in, the manual
+// command is interactive, and the cost is bounded by limit per
+// run. If this ever bites, hold an advisory lock on the seq
+// table for the duration of one sweep.
 //
 // idleThresholdMs <= 0 falls back to DefaultInductionIdle.
 // minEvents <= 0 falls back to 5 (a one-prompt session almost
