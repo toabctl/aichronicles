@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -53,6 +54,20 @@ func newHTTPServer(handler http.Handler) *http.Server {
 		WriteTimeout:      httpWriteTimeout,
 		IdleTimeout:       httpIdleTimeout,
 	}
+}
+
+// runServer drives srv.Serve in a goroutine, logging any non-shutdown
+// error via slog.Default. http.ErrServerClosed is the expected return
+// from a graceful Shutdown / Close and is silenced; anything else
+// (a listener-level failure, an unexpected I/O error) is surfaced so
+// an operator can act on it instead of staring at a silent socket.
+func runServer(srv *http.Server, l net.Listener) {
+	go func() {
+		err := srv.Serve(l)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Default().Error("http server exited unexpectedly", "err", err)
+		}
+	}()
 }
 
 // Server implements the aichronicles ingest HTTP surface backed by
@@ -122,10 +137,7 @@ func ListenAndServe(sockPath string, handler http.Handler) (func(context.Context
 	}
 
 	srv := newHTTPServer(handler)
-
-	go func() {
-		_ = srv.Serve(l)
-	}()
+	runServer(srv, l)
 
 	shutdown := func(ctx context.Context) error {
 		err := gracefulShutdown(srv, ctx)

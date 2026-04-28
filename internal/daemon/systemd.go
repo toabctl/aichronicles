@@ -74,7 +74,7 @@ func ListenFromSystemd() (net.Listener, error) {
 // and hard-closes immediately.
 func Serve(l net.Listener, handler http.Handler) func(context.Context) error {
 	srv := newHTTPServer(handler)
-	go func() { _ = srv.Serve(l) }()
+	runServer(srv, l)
 	return func(ctx context.Context) error {
 		return gracefulShutdown(srv, ctx)
 	}
