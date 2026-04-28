@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/ingest"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
@@ -1679,15 +1680,15 @@ const (
 // future kind can be added with a one-liner here.
 func capForKind(kind string) int {
 	switch kind {
-	case "user_prompt":
+	case ingest.KindUserPrompt:
 		return maxRunesUserPrompt
-	case "assistant_message":
+	case ingest.KindAssistantMessage:
 		return maxRunesAssistantMessage
-	case "tool_failure":
+	case ingest.KindToolFailure:
 		return maxRunesToolFailure
-	case "tool_use":
+	case ingest.KindToolUse:
 		return maxRunesToolUse
-	case "tool_result":
+	case ingest.KindToolResult:
 		return maxRunesToolResult
 	default:
 		return maxRunesDefault

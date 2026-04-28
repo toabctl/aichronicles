@@ -373,8 +373,8 @@ func geminiMessageToEnvelopes(sess *geminiSession, m *geminiMessage, cwd string)
 				EventID:         m.ID,
 				SourceAgent:     geminiSourceAgent,
 				SourceSessionID: sess.SessionID,
-				Kind:            "user_prompt",
-				Role:            "user",
+				Kind:            ingest.KindUserPrompt,
+				Role:            ingest.RoleUser,
 				TsSource:        ts,
 				Cwd:             cwd,
 				ContentText:     text,
@@ -401,8 +401,8 @@ func geminiMessageToEnvelopes(sess *geminiSession, m *geminiMessage, cwd string)
 				EventID:         m.ID,
 				SourceAgent:     geminiSourceAgent,
 				SourceSessionID: sess.SessionID,
-				Kind:            "assistant_message",
-				Role:            "assistant",
+				Kind:            ingest.KindAssistantMessage,
+				Role:            ingest.RoleAssistant,
 				TsSource:        ts,
 				Cwd:             cwd,
 				ContentText:     text,
@@ -452,8 +452,8 @@ func geminiToolUseEnvelope(sess *geminiSession, parent *geminiMessage, tc *gemin
 		EventID:         eid,
 		SourceAgent:     geminiSourceAgent,
 		SourceSessionID: sess.SessionID,
-		Kind:            "tool_use",
-		Role:            "assistant",
+		Kind:            ingest.KindToolUse,
+		Role:            ingest.RoleAssistant,
 		TsSource:        ts,
 		Cwd:             cwd,
 		Tool:            &ingest.Tool{Name: tc.Name, NameRaw: tc.Name, CallID: tc.ID},
@@ -495,9 +495,9 @@ func geminiToolResultEnvelope(sess *geminiSession, parent *geminiMessage, tc *ge
 			text = out
 		}
 	}
-	kind := "tool_result"
+	kind := ingest.KindToolResult
 	if tc.Status == "error" || tc.Status == "failure" {
-		kind = "tool_failure"
+		kind = ingest.KindToolFailure
 	}
 	return redactedEnvelope(&ingest.Envelope{
 		V:               1,
@@ -505,7 +505,7 @@ func geminiToolResultEnvelope(sess *geminiSession, parent *geminiMessage, tc *ge
 		SourceAgent:     geminiSourceAgent,
 		SourceSessionID: sess.SessionID,
 		Kind:            kind,
-		Role:            "tool",
+		Role:            ingest.RoleTool,
 		TsSource:        ts,
 		Cwd:             cwd,
 		Tool:            &ingest.Tool{Name: tc.Name, NameRaw: tc.Name, CallID: tc.ID},

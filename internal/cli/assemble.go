@@ -15,24 +15,24 @@ import (
 )
 
 // hookKindMap translates Claude Code hook_event_name values to our
-// canonical Envelope.Kind. Anything not listed maps to "unknown" so new
-// hook events surface through observability rather than crashing.
+// canonical Envelope.Kind. Anything not listed maps to ingest.KindUnknown
+// so new hook events surface through observability rather than crashing.
 var hookKindMap = map[string]string{
-	"UserPromptSubmit":    "user_prompt",
-	"UserPromptExpansion": "user_prompt",
-	"Stop":                "assistant_message",
-	"SessionStart":        "session_start",
-	"SessionEnd":          "session_end",
-	"PostToolUse":         "tool_use",
-	"PostToolUseFailure":  "tool_failure",
-	"PostToolBatch":       "tool_use",
-	"SubagentStart":       "subagent_start",
-	"SubagentStop":        "subagent_stop",
-	"PreCompact":          "compact_start",
-	"PostCompact":         "compact_end",
-	"CwdChanged":          "cwd_changed",
-	"InstructionsLoaded":  "instructions_loaded",
-	"Notification":        "system_message",
+	"UserPromptSubmit":    ingest.KindUserPrompt,
+	"UserPromptExpansion": ingest.KindUserPrompt,
+	"Stop":                ingest.KindAssistantMessage,
+	"SessionStart":        ingest.KindSessionStart,
+	"SessionEnd":          ingest.KindSessionEnd,
+	"PostToolUse":         ingest.KindToolUse,
+	"PostToolUseFailure":  ingest.KindToolFailure,
+	"PostToolBatch":       ingest.KindToolUse,
+	"SubagentStart":       ingest.KindSubagentStart,
+	"SubagentStop":        ingest.KindSubagentStop,
+	"PreCompact":          ingest.KindCompactStart,
+	"PostCompact":         ingest.KindCompactEnd,
+	"CwdChanged":          ingest.KindCwdChanged,
+	"InstructionsLoaded":  ingest.KindInstructionsLoaded,
+	"Notification":        ingest.KindSystemMessage,
 }
 
 // roleForKind fills in the Envelope.Role hint from the canonical kind.
@@ -40,18 +40,18 @@ var hookKindMap = map[string]string{
 // directly; role exists so cross-source queries can filter on it.
 func roleForKind(kind string) string {
 	switch kind {
-	case "user_prompt":
-		return "user"
-	case "assistant_message":
-		return "assistant"
-	case "tool_use", "tool_result", "tool_failure":
-		return "tool"
-	case "session_start", "session_end",
-		"compact_start", "compact_end",
-		"subagent_start", "subagent_stop",
-		"cwd_changed", "instructions_loaded",
-		"system_message", "error":
-		return "system"
+	case ingest.KindUserPrompt:
+		return ingest.RoleUser
+	case ingest.KindAssistantMessage:
+		return ingest.RoleAssistant
+	case ingest.KindToolUse, ingest.KindToolResult, ingest.KindToolFailure:
+		return ingest.RoleTool
+	case ingest.KindSessionStart, ingest.KindSessionEnd,
+		ingest.KindCompactStart, ingest.KindCompactEnd,
+		ingest.KindSubagentStart, ingest.KindSubagentStop,
+		ingest.KindCwdChanged, ingest.KindInstructionsLoaded,
+		ingest.KindSystemMessage, ingest.KindError:
+		return ingest.RoleSystem
 	default:
 		return ""
 	}
@@ -88,7 +88,7 @@ func Assemble(raw []byte, now time.Time) (ingest.Envelope, error) {
 	hookEvent, _ := hook["hook_event_name"].(string)
 	kind, ok := hookKindMap[hookEvent]
 	if !ok {
-		kind = "unknown"
+		kind = ingest.KindUnknown
 	}
 
 	env := ingest.Envelope{
@@ -143,16 +143,16 @@ func extractSubagent(hook map[string]any) *ingest.Subagent {
 // (see internal/cli/testdata/hooks/*.json for samples).
 func extractContentText(kind string, hook map[string]any) string {
 	switch kind {
-	case "user_prompt":
+	case ingest.KindUserPrompt:
 		if s, ok := hook["prompt"].(string); ok {
 			return s
 		}
-	case "assistant_message":
+	case ingest.KindAssistantMessage:
 		// Stop hooks carry the full assistant turn text here.
 		if s, ok := hook["last_assistant_message"].(string); ok {
 			return s
 		}
-	case "tool_use", "tool_failure":
+	case ingest.KindToolUse, ingest.KindToolFailure:
 		return renderToolContent(hook)
 	}
 	return ""

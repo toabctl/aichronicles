@@ -23,11 +23,11 @@ import (
 // error (gemini reports failures via tool_response.error rather
 // than via a dedicated event).
 var geminiHookKindMap = map[string]string{
-	"BeforeAgent":  "user_prompt",
-	"AfterModel":   "assistant_message",
-	"AfterTool":    "tool_use",
-	"SessionStart": "session_start",
-	"SessionEnd":   "session_end",
+	"BeforeAgent":  ingest.KindUserPrompt,
+	"AfterModel":   ingest.KindAssistantMessage,
+	"AfterTool":    ingest.KindToolUse,
+	"SessionStart": ingest.KindSessionStart,
+	"SessionEnd":   ingest.KindSessionEnd,
 }
 
 // AssembleGemini parses a Gemini CLI hook payload (JSON on stdin)
@@ -53,14 +53,14 @@ func AssembleGemini(raw []byte, now time.Time) (ingest.Envelope, error) {
 	hookEvent, _ := hook["hook_event_name"].(string)
 	kind, ok := geminiHookKindMap[hookEvent]
 	if !ok {
-		kind = "unknown"
+		kind = ingest.KindUnknown
 	}
 
 	// AfterTool with an error response → tool_failure. Detect
 	// before building the envelope so role/kind stay consistent
 	// (kind=tool_failure → role=tool, same as claude's path).
-	if kind == "tool_use" && hookEvent == "AfterTool" && geminiToolResponseHasError(hook) {
-		kind = "tool_failure"
+	if kind == ingest.KindToolUse && hookEvent == "AfterTool" && geminiToolResponseHasError(hook) {
+		kind = ingest.KindToolFailure
 	}
 
 	env := ingest.Envelope{
@@ -130,11 +130,11 @@ func geminiToolResponseHasError(hook map[string]any) bool {
 //     handle both.
 func extractGeminiContentText(kind, event string, hook map[string]any) string {
 	switch kind {
-	case "user_prompt":
+	case ingest.KindUserPrompt:
 		if s, _ := hook["prompt"].(string); s != "" {
 			return s
 		}
-	case "assistant_message":
+	case ingest.KindAssistantMessage:
 		// Direct string response.
 		if s, _ := hook["response"].(string); s != "" {
 			return s
@@ -145,7 +145,7 @@ func extractGeminiContentText(kind, event string, hook map[string]any) string {
 				return s
 			}
 		}
-	case "tool_use", "tool_failure":
+	case ingest.KindToolUse, ingest.KindToolFailure:
 		return renderToolContent(hook)
 	}
 	_ = event
