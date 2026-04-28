@@ -237,6 +237,76 @@ type StaleExample struct {
 	ShortID   string // 8-char preview
 }
 
+// FactsPage is the data shape /facts consumes. Two modes:
+//   - subject==""  → render the index of distinct subjects, one
+//     chip per subject the user can click
+//   - subject!=""  → render every fact for that one subject
+//
+// Pre-computed AssertedAgo / sorted by predicate so the template
+// stays free of formatting helpers.
+type FactsPage struct {
+	Title    string
+	Subject  string    // when set, page shows facts for this subject only
+	Subjects []string  // index mode: distinct subjects to choose from
+	Facts    []FactRow // detail mode: facts for the selected subject
+}
+
+// FactRow is one row in the facts table for the detail page.
+type FactRow struct {
+	Predicate    string
+	Object       string
+	Confidence   int    // 0–100 percent
+	AssertedAgo  string // "2d ago"
+	Quote        string // evidence_quote, may be empty
+	SessionID    string // evidence session, full id (for /sessions/<id>)
+	SessionShort string // 8-char preview
+}
+
+// WorkflowsPage is the data shape /workflows consumes. One row per
+// induction row whose body.workflow is non-null. Pre-rendered
+// procedure preview keeps the template lean.
+type WorkflowsPage struct {
+	Title     string
+	Workflows []WorkflowRow
+}
+
+// WorkflowRow is one row in the workflows list. ProcedurePreview is
+// the steps joined with " → "; PreconditionsLine is them joined
+// with "; " for inline rendering.
+type WorkflowRow struct {
+	SessionID     string
+	SessionShort  string
+	InducedAgo    string
+	TaskShape     string
+	Procedure     []string // each step's Action, in order
+	Preconditions []string
+	SuccessChecks []string
+}
+
+// ProposalsPage is the data shape /proposals consumes. Lifecycle
+// categories (Applied & working / Applied unused / Applied failing
+// / Not applied) match the system prompt's rule-12 categories,
+// pre-computed so the page tells the user the same story the LLM
+// sees in its prior-proposals stanza.
+type ProposalsPage struct {
+	Title          string
+	AppliedWorking []ProposalRow
+	AppliedUnused  []ProposalRow
+	AppliedFailing []ProposalRow
+	NotApplied     []ProposalRow
+	UnappliedCount int
+}
+
+// ProposalRow is one row in a proposals lifecycle table.
+type ProposalRow struct {
+	SkillName        string
+	ProposedAgo      string
+	AppliedAgo       string // empty when not applied
+	LoadsAfterApply  int
+	FailedLoadsAfter int
+	AppliedPath      string
+}
+
 // InsightsPage is the data shape the /insights template consumes.
 // All formatting (relative times, percentages, bar widths) is
 // pre-computed in buildInsightsPage so the template stays free

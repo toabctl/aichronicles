@@ -1,0 +1,72 @@
+{{define "content"}}
+<hgroup>
+  <h1>Facts {{if .Subject}}<small>· {{.Subject}}</small>{{end}}</h1>
+  <p>Typed semantic facts derived from sessions — what is true about a project
+     right now (build/test/deploy contracts, language version, dependencies).
+     Distinct from skills (capabilities) and workflows (procedures): facts
+     answer <em>"what is true?"</em>.</p>
+</hgroup>
+
+{{if .Subject}}
+<p><a href="/facts">← all subjects</a></p>
+
+{{if .Facts}}
+<article>
+  <header><h2>Facts <small>({{len .Facts}})</small></h2></header>
+  <table>
+    <thead>
+      <tr>
+        <th>Predicate</th>
+        <th>Object</th>
+        <th>Confidence</th>
+        <th>Asserted</th>
+        <th>Evidence</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Facts}}
+      <tr>
+        <td><code>{{.Predicate}}</code></td>
+        <td>{{.Object}}</td>
+        <td>{{.Confidence}}%</td>
+        <td>{{.AssertedAgo}}</td>
+        <td>
+          {{if .SessionID}}
+            <a href="/sessions/{{.SessionID}}" class="sid">{{.SessionShort}}</a>
+          {{end}}
+          {{if .Quote}}
+            <small><em>{{.Quote}}</em></small>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</article>
+{{else}}
+<article>
+  <p class="empty">No facts known for <code>{{.Subject}}</code> yet.
+     Run <code>aichronicles facts induce --session &lt;id&gt;</code> on a
+     session in this project to populate the typed-fact table, or enable the
+     daemon's induction sweeper for automatic extraction.</p>
+</article>
+{{end}}
+
+{{else}}
+<article>
+  <header><h2>Subjects with facts <small>({{len .Subjects}})</small></h2></header>
+  {{if .Subjects}}
+  <ul class="subject-list">
+    {{range .Subjects}}
+    <li><a href="/facts?subject={{. | urlquery}}"><code>{{.}}</code></a></li>
+    {{end}}
+  </ul>
+  {{else}}
+  <p class="empty">No facts have been induced yet. Run
+     <code>aichronicles facts induce --session &lt;id&gt;</code> on a past
+     session to populate the typed-fact table, or enable the daemon's
+     induction sweeper for automatic extraction.</p>
+  {{end}}
+</article>
+{{end}}
+{{end}}

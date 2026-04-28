@@ -1,0 +1,102 @@
+{{define "content"}}
+<hgroup>
+  <h1>Proposals</h1>
+  <p>Lifecycle of every skill aichronicles has proposed via
+     <code>propose</code> or daemon-driven induction. Same four buckets the
+     propose prompt uses to bias future suggestions (rule 12) — what the
+     LLM sees is what you see.</p>
+</hgroup>
+
+{{if .AppliedWorking}}
+<article>
+  <header><h2>Applied · in use, working <small>({{len .AppliedWorking}})</small></h2></header>
+  <p>Loaded ≥1 time after apply, zero post-apply <code>tool_failure</code>
+     correlation. The system knows not to repropose these.</p>
+  <table>
+    <thead><tr><th>Skill</th><th>Loads</th><th>Applied</th><th>Path</th></tr></thead>
+    <tbody>
+      {{range .AppliedWorking}}
+      <tr>
+        <td><code>{{.SkillName}}</code></td>
+        <td>{{.LoadsAfterApply}}</td>
+        <td>{{.AppliedAgo}}</td>
+        <td><small>{{.AppliedPath}}</small></td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</article>
+{{end}}
+
+{{if .AppliedUnused}}
+<article>
+  <header><h2>Applied · unused <small>({{len .AppliedUnused}})</small></h2></header>
+  <p>SKILL.md on disk but never invoked since apply. The
+     <code>when_to_use</code> trigger may not match the user's actual prompt
+     shape — candidates for revision via
+     <code>aichronicles skills evolve</code>.</p>
+  <table>
+    <thead><tr><th>Skill</th><th>Applied</th><th>Path</th></tr></thead>
+    <tbody>
+      {{range .AppliedUnused}}
+      <tr>
+        <td><code>{{.SkillName}}</code></td>
+        <td>{{.AppliedAgo}}</td>
+        <td><small>{{.AppliedPath}}</small></td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</article>
+{{end}}
+
+{{if .AppliedFailing}}
+<article>
+  <header><h2>Applied · failing <small>({{len .AppliedFailing}})</small></h2></header>
+  <p>Loads correlate with <code>tool_failure</code> events within ~10 minutes.
+     The skill's instructions may be wrong / outdated — a revision pass
+     (<code>aichronicles skills evolve --skill &lt;name&gt;</code>) is the
+     natural follow-up.</p>
+  <table>
+    <thead><tr><th>Skill</th><th>Loads</th><th>Failures</th><th>Applied</th></tr></thead>
+    <tbody>
+      {{range .AppliedFailing}}
+      <tr>
+        <td><code>{{.SkillName}}</code></td>
+        <td>{{.LoadsAfterApply}}</td>
+        <td>{{.FailedLoadsAfter}}</td>
+        <td>{{.AppliedAgo}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</article>
+{{end}}
+
+{{if .NotApplied}}
+<article>
+  <header><h2>Not applied <small>({{.UnappliedCount}})</small></h2></header>
+  <p>Proposals the user did not act on. The system biases future propose
+     runs away from near-duplicates — repeated rejection is signal.</p>
+  <table>
+    <thead><tr><th>Skill</th><th>Proposed</th></tr></thead>
+    <tbody>
+      {{range .NotApplied}}
+      <tr>
+        <td><code>{{.SkillName}}</code></td>
+        <td>{{.ProposedAgo}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</article>
+{{end}}
+
+{{if and (not .AppliedWorking) (not .AppliedUnused) (not .AppliedFailing) (not .NotApplied)}}
+<article>
+  <p class="empty">No proposals recorded yet. Run
+     <code>aichronicles propose</code> over a window of summarised sessions,
+     or enable the daemon induction sweeper for per-session skill emission.</p>
+</article>
+{{end}}
+{{end}}

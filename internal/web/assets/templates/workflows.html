@@ -1,0 +1,52 @@
+{{define "content"}}
+<hgroup>
+  <h1>Workflows <small>· {{len .Workflows}}</small></h1>
+  <p>Abstract procedural recipes induced from past sessions. AWM
+     (Agent Workflow Memory) — the procedure stays, the concrete
+     URLs / IDs / file paths drop. Retrieved as guidance at task-
+     planning time, not installed to disk like skills.</p>
+</hgroup>
+
+{{if .Workflows}}
+{{range .Workflows}}
+<article>
+  <header>
+    <h3>{{.TaskShape}}</h3>
+    <small>
+      induced {{.InducedAgo}}
+      {{if .SessionID}}· from <a href="/sessions/{{.SessionID}}" class="sid">{{.SessionShort}}</a>{{end}}
+    </small>
+  </header>
+
+  {{if .Procedure}}
+  <p><strong>Procedure</strong></p>
+  <ol>
+    {{range .Procedure}}<li>{{.}}</li>{{end}}
+  </ol>
+  {{end}}
+
+  {{if .Preconditions}}
+  <p><strong>Preconditions</strong></p>
+  <ul>
+    {{range .Preconditions}}<li>{{.}}</li>{{end}}
+  </ul>
+  {{end}}
+
+  {{if .SuccessChecks}}
+  <p><strong>Success checks</strong></p>
+  <ul>
+    {{range .SuccessChecks}}<li>{{.}}</li>{{end}}
+  </ul>
+  {{end}}
+</article>
+{{end}}
+{{else}}
+<article>
+  <p class="empty">No workflows induced yet. Workflows are emitted by
+     <code>aichronicles induction sweep</code> alongside skills — when the
+     LLM judges a session's procedure abstract enough to be reusable across
+     different projects of the same shape, it lands here. Most sessions
+     don't qualify; that's by design.</p>
+</article>
+{{end}}
+{{end}}
