@@ -36,6 +36,27 @@ const (
 // be tuned without grepping for magic numbers.
 const recencyHalfDays = 30.0
 
+// recencyBoostedRankExpr returns the SQL expression that takes an
+// FTS5 bm25 rank column and a ts_source_ms column and produces a
+// recency-boosted score: rank / (1 + days_old / recencyHalfDays).
+// bm25 is lower-is-better (typically negative), so dividing by a
+// value > 1 pushes older rows toward zero without flipping sign.
+//
+// The MAX(1.0, ...) clamp guards against future-dated events: a
+// clock-skewed ts_source_ms greater than the now bind would push
+// the divisor below 1 and could invert the ranking, ranking bogus
+// rows infinitely high. Caller must bind the now_ms value before
+// LIMIT in the args slice.
+//
+// Centralised so the three sites that build search SQL (NoDedup,
+// dedup, searchExtractions) can't drift on the formula.
+func recencyBoostedRankExpr(rankCol, tsCol string) string {
+	return fmt.Sprintf(
+		`%s / MAX(1.0, 1.0 + ((? - %s) / 86400000.0) / %.1f)`,
+		rankCol, tsCol, recencyHalfDays,
+	)
+}
+
 // SearchEventOpts is the input contract for SearchEvents.
 //
 // Query must already be a syntactically-valid FTS5 MATCH expression;
@@ -277,15 +298,7 @@ func buildSearchSQL(opts SearchEventOpts, index string) (string, []any) {
 		case OrderRecency:
 			order = "e.ts_source_ms DESC"
 		default:
-			// Clamp the denominator at 1.0 so a future-dated
-			// ts_source_ms (clock skew, time-zone glitches)
-			// can't flip the sign or push the divisor below 1
-			// — that would invert ranking and let bogus rows
-			// rank infinitely high.
-			order = fmt.Sprintf(
-				`f.rank / MAX(1.0, 1.0 + ((? - e.ts_source_ms) / 86400000.0) / %.1f)`,
-				recencyHalfDays,
-			)
+			order = recencyBoostedRankExpr("f.rank", "e.ts_source_ms")
 			args = append(args, opts.NowMs)
 		}
 		sqlText := `SELECT e.session_id, e.kind, e.cwd, e.ts_source_ms, e.content_text,
@@ -304,20 +317,13 @@ func buildSearchSQL(opts SearchEventOpts, index string) (string, []any) {
 	// import; FTS rank then rowid break ties.
 	//
 	// Outer ORDER BY uses the recency-boosted bm25 score for
-	// OrderRank, or pure ts_source_ms for OrderRecency. The boosted
-	// formula divides bm25 by (1 + days_old/recencyHalfDays) so old
-	// rows drift toward zero (worse) without sign flip.
+	// OrderRank, or pure ts_source_ms for OrderRecency.
 	var order string
 	switch opts.Order {
 	case OrderRecency:
 		order = "ts_source_ms DESC"
 	default:
-		// Clamp denominator at 1.0 — see the matching note in
-		// the NoDedup branch above.
-		order = fmt.Sprintf(
-			`fts_rank / MAX(1.0, 1.0 + ((? - ts_source_ms) / 86400000.0) / %.1f)`,
-			recencyHalfDays,
-		)
+		order = recencyBoostedRankExpr("fts_rank", "ts_source_ms")
 	}
 	sqlText := `WITH matched AS (
 			SELECT e.rowid, e.session_id, e.role, e.kind, e.cwd,
@@ -380,10 +386,7 @@ func searchExtractions(ctx context.Context, db *sql.DB, opts SearchEventOpts) ([
 	case OrderRecency:
 		order = "e.ts_source_ms DESC"
 	default:
-		order = fmt.Sprintf(
-			`fts_rank / MAX(1.0, 1.0 + ((? - e.ts_source_ms) / 86400000.0) / %.1f)`,
-			recencyHalfDays,
-		)
+		order = recencyBoostedRankExpr("fts_rank", "e.ts_source_ms")
 	}
 
 	sqlText := `WITH ext_matched AS (
