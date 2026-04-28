@@ -555,6 +555,81 @@ func TestBuildReflect_RendersOutcomeCueWhenPresent(t *testing.T) {
 	}
 }
 
+func TestBuildPropose_RendersPriorProposalsStanza(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	digests := []SessionDigest{
+		{ID: "s1", Summary: "x"}, {ID: "s2", Summary: "y"}, // BuildPropose needs ≥1 (no min)
+	}
+	in := ProposeInputs{
+		Digests: digests,
+		PriorProposals: []PriorProposal{
+			{
+				SkillName:       "deploy-staging",
+				ProposedAtMs:    now.Add(-30 * 24 * time.Hour).UnixMilli(),
+				Applied:         true,
+				AppliedAtMs:     now.Add(-29 * 24 * time.Hour).UnixMilli(),
+				LoadsAfterApply: 8,
+			},
+			{
+				SkillName:       "fix-flake",
+				ProposedAtMs:    now.Add(-20 * 24 * time.Hour).UnixMilli(),
+				Applied:         true,
+				AppliedAtMs:     now.Add(-19 * 24 * time.Hour).UnixMilli(),
+				LoadsAfterApply: 0, // applied but unused
+			},
+			{
+				SkillName:        "buggy-skill",
+				ProposedAtMs:     now.Add(-10 * 24 * time.Hour).UnixMilli(),
+				Applied:          true,
+				AppliedAtMs:      now.Add(-9 * 24 * time.Hour).UnixMilli(),
+				LoadsAfterApply:  4,
+				FailedLoadsAfter: 3,
+			},
+			{
+				SkillName:    "rejected-idea",
+				ProposedAtMs: now.Add(-5 * 24 * time.Hour).UnixMilli(),
+				Applied:      false,
+			},
+		},
+	}
+	built, err := BuildPropose(in)
+	if err != nil {
+		t.Fatalf("BuildPropose: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+
+	for _, want := range []string{
+		"Prior proposals",
+		"deploy-staging — proposed 30 days ago, APPLIED 29 days ago, 8 loads, 0 failures",
+		"in use, working — DO NOT repropose",
+		"fix-flake — proposed 20 days ago, APPLIED 19 days ago, 0 loads since",
+		"skill on disk but unused — when_to_use may be wrong",
+		"buggy-skill — proposed 10 days ago, APPLIED 9 days ago, 4 loads with 3 failures",
+		"rejected-idea — proposed 5 days ago, NOT APPLIED",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q\n--- body ---\n%s", want, body)
+		}
+	}
+}
+
+func TestBuildPropose_OmitsPriorProposalsStanzaWhenEmpty(t *testing.T) {
+	t.Parallel()
+	in := ProposeInputs{
+		Digests:        []SessionDigest{{ID: "s1", Summary: "x"}, {ID: "s2", Summary: "y"}},
+		PriorProposals: nil,
+	}
+	built, err := BuildPropose(in)
+	if err != nil {
+		t.Fatalf("BuildPropose: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	if strings.Contains(body, "Prior proposals") {
+		t.Errorf("empty PriorProposals must produce empty stanza:\n%s", body)
+	}
+}
+
 func TestBuildReflect_OutcomeSuccessOmitsCounterTail(t *testing.T) {
 	t.Parallel()
 	digests := []SessionDigest{

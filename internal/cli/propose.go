@@ -217,10 +217,17 @@ func RunPropose(
 		return runChallenge(ctx, s, newClient, opts, digests, installed, invoked, out, progress)
 	}
 
+	priorProposals, perr := loadPriorProposalsForPrompt(ctx, s, sinceMs)
+	if perr != nil {
+		slog.Warn("propose: skipping prior-proposals enrichment", "err", perr)
+	}
+	_, _ = fmt.Fprintf(progress, "  prior-proposals enrichment: %d entries\n", len(priorProposals))
+
 	built, err := prompts.BuildPropose(prompts.ProposeInputs{
 		Digests:         digests,
 		InstalledSkills: installed,
 		InvokedSkills:   invoked,
+		PriorProposals:  priorProposals,
 	})
 	if err == nil && len(built.Patterns) > 0 {
 		slog.Info("propose: egress redaction fired",
@@ -248,6 +255,84 @@ func RunPropose(
 	}
 	recordProposedSkillsFromProposal(ctx, s, id, result)
 	return id, nil
+}
+
+// loadPriorProposalsForPrompt assembles the PriorProposals slice
+// rendered in the propose prompt. Joins LoadProposalEffectiveness
+// (every applied proposal's post-apply usage) with
+// LoadUnappliedProposedSkills (proposals the user did not act on)
+// and dedupes by skill_name (newest entry wins). The historical
+// horizon is intentionally LONGER than the propose digest window —
+// a skill applied 90 days ago is still load-bearing context the
+// LLM should see, even if its loads are outside the
+// 7-day digest window.
+//
+// Cap at 30 entries to keep the prompt tokens bounded; the entries
+// are most-recently-active first via the underlying queries.
+//
+// Returns (nil, nil) when both sources are empty — RunPropose
+// silently proceeds without the stanza (renderPriorProposals
+// returns empty for empty input).
+func loadPriorProposalsForPrompt(ctx context.Context, s *store.Store, sinceMs int64) ([]prompts.PriorProposal, error) {
+	// Look back further than the digest window for prior proposals:
+	// a 90-day horizon catches "you proposed this 60 days ago and
+	// it never got applied / never got loaded" — load-bearing
+	// signal even outside the 7d propose window.
+	const priorHorizonDays = 90
+	priorSinceMs := time.Now().Add(-priorHorizonDays * 24 * time.Hour).UnixMilli()
+	_ = sinceMs // intentionally not used; the propose digest window
+	// is too narrow for the lifecycle stanza.
+
+	const maxEntries = 30
+
+	applied, err := store.LoadProposalEffectiveness(ctx, s.DB(), priorSinceMs, 0, maxEntries)
+	if err != nil {
+		return nil, fmt.Errorf("load proposal effectiveness: %w", err)
+	}
+	unapplied, err := store.LoadUnappliedProposedSkills(ctx, s.DB(), priorSinceMs, maxEntries)
+	if err != nil {
+		return nil, fmt.Errorf("load unapplied proposals: %w", err)
+	}
+
+	// Build one map keyed by skill_name; on a clash, the applied
+	// row wins (the lifecycle moved forward, the unapplied entry
+	// is now stale).
+	out := make([]prompts.PriorProposal, 0, len(applied)+len(unapplied))
+	seen := make(map[string]struct{}, len(applied)+len(unapplied))
+	for _, e := range applied {
+		if _, dup := seen[e.SkillName]; dup {
+			continue
+		}
+		seen[e.SkillName] = struct{}{}
+		var lastLoaded int64
+		if e.LastLoadedMs.Valid {
+			lastLoaded = e.LastLoadedMs.Int64
+		}
+		out = append(out, prompts.PriorProposal{
+			SkillName:        e.SkillName,
+			ProposedAtMs:     e.ProposedAtMs,
+			Applied:          true,
+			AppliedAtMs:      e.AppliedAtMs,
+			LoadsAfterApply:  e.LoadsAfterApply,
+			FailedLoadsAfter: e.FailedLoadsAfter,
+			LastLoadedMs:     lastLoaded,
+		})
+	}
+	for _, u := range unapplied {
+		if _, dup := seen[u.SkillName]; dup {
+			continue
+		}
+		seen[u.SkillName] = struct{}{}
+		out = append(out, prompts.PriorProposal{
+			SkillName:    u.SkillName,
+			ProposedAtMs: u.ProposedAtMs,
+			Applied:      false,
+		})
+		if len(out) >= maxEntries {
+			break
+		}
+	}
+	return out, nil
 }
 
 // recordProposedSkillsFromProposal writes one proposed_skills row

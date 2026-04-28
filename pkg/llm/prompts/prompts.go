@@ -673,6 +673,12 @@ Skill-awareness rules (the "Skills installed" and "Skills invoked recently" sect
 
 11. Outcome cues (Outcome: success_likely / failure_likely / mixed / unknown, with optional counter tail) are HEURISTICS over observable signals — tool_failures, git_undos, consecutive prompt_repeats. Treat them as priors, not facts. A failure_likely session is NOT automatically uninteresting: a recurring failure shape across multiple sessions IS a pattern (the friction is the signal — propose a skill that prevents or short-circuits the failure). But avoid grounding a skill ONLY in failure_likely sessions when no success_likely session shows the same pattern — the user was probably stuck, not exhibiting reusable behaviour. Prefer mixed evidence (some success_likely, some failure_likely) over single-flavour evidence.
 
+12. The "Prior proposals" stanza is the closed-loop signal: previous proposals from this system, with their applied / not-applied / used / failing state. Treat each entry as a STRONG prior:
+    - APPLIED, in use, working — DO NOT repropose. If a current pattern overlaps, skip it (cite the existing skill in alternatives_rejected).
+    - APPLIED but unused — the user kept the SKILL.md but never invoked it. The when_to_use trigger may be wrong. If you see new evidence for the same domain, propose a REVISION (different name, alternatives_rejected explains the increment) — do not propose the same shape again.
+    - APPLIED but failing — the skill exists but trips tool_failures after load. If new evidence reveals the failure mode, you MAY propose a follow-up skill that addresses it; otherwise leave it alone.
+    - NOT APPLIED — the user saw this proposal and did not act on it. Near-duplicate proposals are likely to be rejected the same way; skip the pattern.
+
 For a typical 25-session window, expect 1–4 well-grounded skills total — not 0, not 5. Zero is acceptable only if every recurring pattern you see is already covered by an installed skill or is out of scope per the rules above. Lean toward proposing a clearly-grounded skill even when its time-saving estimate is moderate; the user wants concrete leads, not perfect ones.`
 
 const proposalToolSchema = `{
@@ -801,6 +807,29 @@ type InvokedSkill struct {
 	TotalLoads  int
 }
 
+// PriorProposal is one entry in the propose-prompt stanza that
+// surfaces the lifecycle of past proposals to the LLM. The LLM uses
+// this to (a) avoid re-proposing skills the user already rejected
+// (Applied=false), (b) avoid duplicating skills already on disk and
+// in active use (Applied=true with high loads), and (c) reconsider
+// the trigger conditions of skills that landed but went unused
+// (Applied=true with zero post-apply loads).
+//
+// Closes the AWM (Agent Workflow Memory) loop: without this signal
+// the propose prompt is open-loop — every run is a fresh shot,
+// blind to which prior shots worked. With it, the system can
+// exhibit the "self-improving" property: future proposals are
+// shaped by the observed fate of past ones.
+type PriorProposal struct {
+	SkillName        string
+	ProposedAtMs     int64
+	Applied          bool
+	AppliedAtMs      int64
+	LoadsAfterApply  int
+	FailedLoadsAfter int
+	LastLoadedMs     int64
+}
+
 // ProposeInputs bundles every input BuildPropose consumes. Adding
 // a field here is non-breaking; callers that don't have it pass
 // the zero value. The shape was introduced when propose became
@@ -809,9 +838,15 @@ type ProposeInputs struct {
 	Digests         []SessionDigest
 	InstalledSkills []InstalledSkill
 	InvokedSkills   []InvokedSkill
+	// PriorProposals, when non-empty, surfaces the lifecycle of
+	// every proposal the system has emitted (applied or not, with
+	// post-apply usage stats for applied ones). Drives the "don't
+	// repropose what we already tried" rule; renders as a stanza
+	// before the per-session digest body.
+	PriorProposals []PriorProposal
 }
 
-const proposeTemplate = `Below are %d recent sessions.%s%s
+const proposeTemplate = `Below are %d recent sessions.%s%s%s
 
 ---
 %s
@@ -830,6 +865,7 @@ func BuildPropose(in ProposeInputs) (Built, error) {
 		len(in.Digests),
 		renderInstalledSkills(in.InstalledSkills),
 		renderInvokedSkills(in.InvokedSkills),
+		renderPriorProposals(in.PriorProposals),
 		body,
 	)
 	req := llm.Request{
@@ -1854,6 +1890,73 @@ func renderDigests(digests []SessionDigest, pats patternSet) string {
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// renderPriorProposals formats the prior-proposals stanza for the
+// propose prompt. Empty input → empty string so the template
+// splices cleanly. Each line categorises the proposal so the LLM
+// doesn't have to derive the lifecycle state from raw fields:
+//
+//   - APPLIED, in use     — applied + LoadsAfterApply > 0
+//   - APPLIED, unused     — applied + LoadsAfterApply == 0 (the user
+//     kept it on disk but never invoked it;
+//     weakest "still relevant" signal)
+//   - APPLIED, failing    — applied + FailedLoadsAfter > 0 with
+//     non-trivial load count (skill exists
+//     but trips tool failures)
+//   - NOT APPLIED         — proposed but applied_at_ms is NULL (user
+//     did not act on the suggestion; near-
+//     duplicate proposals are likely to be
+//     rejected too)
+//
+// Hard rule (rule 12) in the system prompt instructs the LLM to
+// treat each category as guidance: don't repropose APPLIED skills,
+// reconsider triggers for APPLIED-unused, address failures for
+// APPLIED-failing, and avoid repeating NOT APPLIED suggestions.
+func renderPriorProposals(props []PriorProposal) string {
+	if len(props) == 0 {
+		return ""
+	}
+	now := time.Now().UTC()
+	var b strings.Builder
+	b.WriteString("\nPrior proposals (the system has emitted these before — DO NOT repropose near-duplicates; reconsider when_to_use for ones that landed but went unused; address the failure for ones with post-apply tool_failures):\n")
+	for _, p := range props {
+		ageDays := daysSince(now, p.ProposedAtMs)
+		switch {
+		case !p.Applied:
+			fmt.Fprintf(&b, "- %s — proposed %d days ago, NOT APPLIED (user did not act on this suggestion)\n",
+				p.SkillName, ageDays)
+		case p.LoadsAfterApply == 0:
+			appliedDays := daysSince(now, p.AppliedAtMs)
+			fmt.Fprintf(&b, "- %s — proposed %d days ago, APPLIED %d days ago, 0 loads since (skill on disk but unused — when_to_use may be wrong)\n",
+				p.SkillName, ageDays, appliedDays)
+		case p.FailedLoadsAfter > 0:
+			appliedDays := daysSince(now, p.AppliedAtMs)
+			fmt.Fprintf(&b, "- %s — proposed %d days ago, APPLIED %d days ago, %d loads with %d failures (skill exists but failing — propose an evolution if the failure pattern is grounded in evidence)\n",
+				p.SkillName, ageDays, appliedDays, p.LoadsAfterApply, p.FailedLoadsAfter)
+		default:
+			appliedDays := daysSince(now, p.AppliedAtMs)
+			fmt.Fprintf(&b, "- %s — proposed %d days ago, APPLIED %d days ago, %d loads, 0 failures (in use, working — DO NOT repropose)\n",
+				p.SkillName, ageDays, appliedDays, p.LoadsAfterApply)
+		}
+	}
+	return b.String()
+}
+
+// daysSince returns the integer-day delta between now and a unix-ms
+// timestamp, clamped to ≥0. Used by renderPriorProposals for "N days
+// ago" rendering. Zero/negative inputs collapse to 0 ("just now") so
+// the rendered line stays sensible even when the timestamp is in the
+// future or unset.
+func daysSince(now time.Time, ms int64) int {
+	if ms <= 0 {
+		return 0
+	}
+	delta := now.Sub(time.UnixMilli(ms))
+	if delta < 0 {
+		return 0
+	}
+	return int(delta / (24 * time.Hour))
 }
 
 // renderOutcomeCue formats the per-session outcome heuristic as one

@@ -222,6 +222,57 @@ SELECT ps.id, ps.llm_output_id, ps.skill_name, ps.proposed_at_ms,
 	return out, rows.Err()
 }
 
+// LoadUnappliedProposedSkills returns proposed_skills rows whose
+// applied_at_ms IS NULL, sorted newest-proposed first. Used by the
+// propose prompt to surface "the LLM has suggested these and the
+// user did not act" — abandonment signal that biases the next
+// proposal away from re-suggesting duplicates the user has already
+// declined.
+//
+// Only one row is returned per skill_name (the newest proposal),
+// even if multiple llm_outputs rows propose the same name. Older
+// duplicates are filtered Go-side after the SQL ORDER BY.
+//
+// limit ≤0 falls back to 50. sinceMs ≤0 disables the time filter.
+func LoadUnappliedProposedSkills(ctx context.Context, db *sql.DB, sinceMs int64, limit int) ([]ProposedSkillRow, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	q := `SELECT id, llm_output_id, skill_name, proposed_at_ms,
+	             applied_at_ms, applied_path, superseded_by_id
+	        FROM proposed_skills
+	       WHERE applied_at_ms IS NULL`
+	args := []any{}
+	if sinceMs > 0 {
+		q += ` AND proposed_at_ms >= ?`
+		args = append(args, sinceMs)
+	}
+	q += ` ORDER BY proposed_at_ms DESC`
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("load unapplied: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	seen := make(map[string]struct{})
+	var out []ProposedSkillRow
+	for rows.Next() {
+		var r ProposedSkillRow
+		if err := rows.Scan(&r.ID, &r.LLMOutputID, &r.SkillName, &r.ProposedAtMs,
+			&r.AppliedAtMs, &r.AppliedPath, &r.SupersededByID); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		if _, dup := seen[r.SkillName]; dup {
+			continue
+		}
+		seen[r.SkillName] = struct{}{}
+		out = append(out, r)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, rows.Err()
+}
+
 // CountUnappliedProposals returns the number of proposed_skills rows
 // whose applied_at_ms IS NULL, optionally filtered by sinceMs (only
 // proposals younger than the cutoff are counted). The

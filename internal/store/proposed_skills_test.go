@@ -284,6 +284,67 @@ func TestLoadProposalEffectiveness_ExcludesUnapplied(t *testing.T) {
 	}
 }
 
+func TestLoadUnappliedProposedSkills_DedupesByName(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+	older := mkProposeRow(t, s, 1_700_000_000_000)
+	newer := mkProposeRow(t, s, 1_700_001_000_000)
+
+	// Same skill name, two outputs — both unapplied. The reader
+	// must dedupe to one entry, keeping the newer (ORDER BY
+	// proposed_at_ms DESC).
+	if err := RecordProposedSkill(ctx, s.DB(), older, "twice-proposed", 1_700_000_000_000); err != nil {
+		t.Fatalf("older: %v", err)
+	}
+	if err := RecordProposedSkill(ctx, s.DB(), newer, "twice-proposed", 1_700_001_000_000); err != nil {
+		t.Fatalf("newer: %v", err)
+	}
+	if err := RecordProposedSkill(ctx, s.DB(), newer, "another", 1_700_001_000_000); err != nil {
+		t.Fatalf("another: %v", err)
+	}
+
+	rows, err := LoadUnappliedProposedSkills(ctx, s.DB(), 0, 0)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("dedup failed: got %d rows want 2 (one per distinct skill_name)", len(rows))
+	}
+	for _, r := range rows {
+		if r.SkillName == "twice-proposed" && r.LLMOutputID != newer {
+			t.Errorf("dedup kept the wrong row: got llm_output_id=%d want %d (newer)", r.LLMOutputID, newer)
+		}
+	}
+}
+
+func TestLoadUnappliedProposedSkills_ExcludesApplied(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+	loID := mkProposeRow(t, s, 1_700_000_000_000)
+	if err := RecordProposedSkill(ctx, s.DB(), loID, "applied", 1_700_000_000_000); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if err := RecordProposedSkill(ctx, s.DB(), loID, "unapplied", 1_700_000_000_000); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if err := MarkProposedSkillApplied(ctx, s.DB(), loID, "applied", "/p", 1_700_000_500_000); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	rows, err := LoadUnappliedProposedSkills(ctx, s.DB(), 0, 0)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows: got %d want 1", len(rows))
+	}
+	if rows[0].SkillName != "unapplied" {
+		t.Errorf("name: got %q want %q", rows[0].SkillName, "unapplied")
+	}
+}
+
 func TestCountUnappliedProposals(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
