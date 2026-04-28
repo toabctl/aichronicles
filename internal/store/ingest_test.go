@@ -353,6 +353,36 @@ func TestIngestEnvelope_EmptyTransportPersistsAsEmpty(t *testing.T) {
 	}
 }
 
+func TestIngestEnvelope_PersistsProvenanceColumns(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	env, _ := newValidEnvelope(t)
+	env.SourceAgentVersion = "2.4.1"
+	env.Host = "dev-laptop.local"
+	raw, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	withTx(t, s, func(tx *sql.Tx) {
+		if _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
+			t.Fatalf("ingest: %v", err)
+		}
+	})
+
+	var gotVersion, gotHost string
+	if err := s.DB().QueryRow(
+		`SELECT source_agent_version, host FROM events WHERE event_id = ?`, env.EventID,
+	).Scan(&gotVersion, &gotHost); err != nil {
+		t.Fatalf("read provenance: %v", err)
+	}
+	if gotVersion != "2.4.1" {
+		t.Errorf("source_agent_version: got %q, want 2.4.1", gotVersion)
+	}
+	if gotHost != "dev-laptop.local" {
+		t.Errorf("host: got %q, want dev-laptop.local", gotHost)
+	}
+}
+
 func TestIngestEnvelope_DuplicateIsDedupedWithoutTouching(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
