@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/toabctl/aichronicles/internal/preview"
 )
 
 // ErrNoSuchSession is returned when a session-id prefix does not match
@@ -193,18 +195,21 @@ func formatCompletionDescription(cwd, firstPrompt, summaryBody string) string {
 }
 
 // pickCompletionPreview implements the same priority order the web
-// sessions list uses (pickRowPreview) — kept text-only here so the
-// store package doesn't depend on the web package. The summary
-// body is JSON; we extract the `topic` field with a minimal
-// scan rather than pulling in the whole prompts package.
+// sessions list uses — keeping the helper local so the store doesn't
+// depend on web, but delegating the choice to internal/preview so
+// the rules can't drift. The summary body is JSON; we extract the
+// `topic` field with a minimal scan rather than pulling in the
+// whole prompts package.
 func pickCompletionPreview(firstPrompt, summaryBody string) string {
-	if topic := extractSummaryTopic(summaryBody); topic != "" {
-		return topic
+	topic := extractSummaryTopic(summaryBody)
+	text, kind := preview.Pick(topic, firstPrompt)
+	if kind == preview.KindMuted {
+		// CLI-completion empty state is shorter than the web
+		// "(no summary yet)" — keep it minimal so the shell row
+		// stays one line.
+		return "(no summary)"
 	}
-	if t := strings.TrimSpace(firstPrompt); isSubstantiveFirstPrompt(t) {
-		return t
-	}
-	return "(no summary)"
+	return text
 }
 
 // extractSummaryTopic pulls the `"topic": "..."` field out of a
@@ -223,24 +228,6 @@ func extractSummaryTopic(body string) string {
 		return ""
 	}
 	return strings.TrimSpace(parsed.Topic)
-}
-
-// substantiveFirstPromptMinRunes mirrors the web's
-// substantiveMinRunes constant — short follow-ups ("yes", "go
-// ahead", "/loop") aren't useful descriptions.
-const substantiveFirstPromptMinRunes = 30
-
-// isSubstantiveFirstPrompt rejects whitespace-only prompts, raw
-// slash commands, and anything below substantiveFirstPromptMinRunes
-// runes. Mirrors the web/handlers.go heuristic of the same name.
-func isSubstantiveFirstPrompt(t string) bool {
-	if t == "" {
-		return false
-	}
-	if strings.HasPrefix(t, "/") && !strings.ContainsAny(t, " \n\t") {
-		return false
-	}
-	return len([]rune(t)) >= substantiveFirstPromptMinRunes
 }
 
 // LiveEvent is the read-only shape returned by LoadEventsSinceSeq.

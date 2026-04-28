@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/nullable"
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/searchquery"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/timefmt"
@@ -457,19 +458,12 @@ func formatTSNullable(n sql.NullInt64) string {
 func nullOrDash(s sql.NullString) string { return nullable.OrDash(s) }
 
 // oneLineSnippet flattens whitespace and caps a content preview so
-// each tool row stays on a single terminal line.
+// each tool row stays on a single terminal line. Wraps
+// internal/preview so the rune cap matches the web's
+// truncatePreview and the CLI snippet renderers.
 func oneLineSnippet(s sql.NullString) string {
 	if !s.Valid || s.String == "" {
 		return "-"
 	}
-	text := s.String
-	for _, r := range "\n\r\t" {
-		text = strings.ReplaceAll(text, string(r), " ")
-	}
-	const maxRunes = 120
-	runes := []rune(text)
-	if len(runes) <= maxRunes {
-		return text
-	}
-	return string(runes[:maxRunes]) + "…"
+	return preview.OneLine(s.String)
 }
