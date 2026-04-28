@@ -42,6 +42,14 @@ const (
 	// trigger" from "skills surfaced from a multi-session window
 	// by the user".
 	LLMKindInduction LLMOutputKind = "induction"
+	// LLMKindChallenge is the cached output of `propose
+	// --challenge`: forward-looking next-problem suggestions
+	// derived from the same digest list propose uses, plus open
+	// threads from prior sessions. Voyager's automatic-curriculum
+	// analog. Separate from LLMKindPropose so the CLI listing
+	// distinguishes "skills surfaced from past patterns" from
+	// "challenges I should tackle next".
+	LLMKindChallenge LLMOutputKind = "challenge"
 )
 
 // LLMOutput mirrors one row of the llm_outputs table. Callers

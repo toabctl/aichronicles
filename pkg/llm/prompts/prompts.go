@@ -63,6 +63,7 @@ const (
 	ToolNameProposalVerify = "record_proposal_verification"
 	ToolNameSkillRevision  = "record_skill_revision"
 	ToolNameInduction      = "record_induction"
+	ToolNameChallenge      = "record_challenge"
 )
 
 // --- result types ---
@@ -1003,6 +1004,225 @@ func BuildInduce(in InduceFromSessionInputs) (Built, error) {
 		ForceTool: ToolNameInduction,
 	}
 	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
+}
+
+// --- self-generated curriculum (Voyager-style challenge mode) ---
+
+// ChallengeResult is the schema-validated payload of a
+// record_challenge tool call. Forward-looking counterpart to
+// ProposalResult: where propose looks back ("what patterns do
+// these sessions reveal?"), challenge looks forward ("what would
+// be a worthwhile next problem given the user's current state?").
+//
+// Voyager (Wang et al., 2023) earns its capability gains via an
+// "automatic curriculum" that picks the agent's next task based
+// on what's been mastered and what's unexplored. aichronicles'
+// analog: given the user's installed skills, recent successes,
+// and open threads, propose the next problem to tackle.
+//
+// Capped at 3 challenges per call so the output stays scannable
+// — one strong suggestion is more useful than five lukewarm ones.
+type ChallengeResult struct {
+	Challenges []Challenge `json:"challenges"`
+}
+
+// Challenge is one proposed next problem. Distinct from
+// ProposedSkill — a skill is something the user has DONE that
+// could be reused; a challenge is something the user HASN'T DONE
+// that would be worth learning. The output shape reflects that:
+// no `evidence` from past sessions (the point is novelty), but a
+// `grounded_in` hook that ties the challenge to observed gaps
+// or open threads so the prompt can't drift into pure invention.
+type Challenge struct {
+	// Title is a kebab-case label (≤4 words). Same convention as
+	// skill names so a challenge that graduates into an attempted
+	// skill keeps its identity across the propose/challenge
+	// boundary.
+	Title string `json:"title"`
+
+	// Problem is a 1–3 sentence concrete description of what
+	// the user would do. Specific enough that the user can read
+	// it and immediately know whether to act on it — not "improve
+	// observability" but "wire structured logs through the daemon
+	// so /v1/ingest emits one slog line per accepted envelope".
+	Problem string `json:"problem"`
+
+	// Why is the rationale: why is this worth tackling NOW given
+	// the user's current state? Grounds the suggestion in either
+	// (a) an observed gap (no installed skill covers a pattern
+	// that keeps recurring) or (b) an open thread (an unresolved
+	// item that would benefit from a focused follow-up).
+	Why string `json:"why"`
+
+	// GroundedIn is a list of session ids and/or installed-skill
+	// names the challenge is anchored to. Anti-fabrication:
+	// the model is instructed to drop a challenge it can't
+	// ground in the canonical lists shown in the prompt, rather
+	// than fabricate a connection.
+	GroundedIn []string `json:"grounded_in"`
+
+	// Effort: "small" = an afternoon. "medium" = a few days,
+	// well-scoped. "large" = a project-shaped effort that probably
+	// wants its own design doc. Same scale as ProposedSkill so the
+	// reader's calibration carries.
+	Effort string `json:"effort"`
+
+	// SuccessLooksLike is the observable outcome that would mark
+	// this challenge as "done". Not a checklist; one short line
+	// that gives the user a clear stopping criterion ("the
+	// daemon's /v1/ingest log line lands in journalctl with the
+	// envelope's content_hash").
+	SuccessLooksLike string `json:"success_looks_like"`
+}
+
+// ChallengeInputs carries the same recent-session / installed-
+// skills / invoked-skills bundle as ProposeInputs, plus the
+// distinct-cwd unresolved-items list (when supplied) so the
+// model can ground a "follow up on X" challenge in actual open
+// threads rather than confabulate.
+type ChallengeInputs struct {
+	Digests         []SessionDigest
+	InstalledSkills []InstalledSkill
+	InvokedSkills   []InvokedSkill
+	// Unresolved, when non-empty, lists open items from prior
+	// sessions in the user's recent cwd. Surfaced to the model
+	// as a "Open threads" stanza — the model is told to prefer
+	// challenges that build on these vs. ones invented from
+	// scratch.
+	Unresolved []UnresolvedItemForChallenge
+}
+
+// UnresolvedItemForChallenge is the prompt-side shape of an
+// open-thread reference. Mirrors store.UnresolvedItem one-to-one
+// (kept local so the prompts package doesn't import store —
+// layering stays one-way: cli + web import prompts and store;
+// prompts imports neither).
+type UnresolvedItemForChallenge struct {
+	SessionID    string
+	SessionShort string
+	Topic        string
+	Item         string
+}
+
+const challengeMaxTokens = 4096
+
+const challengeSystem = `You propose the user's NEXT worthwhile problem. The user has recent sessions, an installed skill set, and a list of open threads. Pick 1–3 problems they should tackle next that would meaningfully expand what they can do, and call the record_challenge tool exactly once.
+
+This is forward-looking: NOT "what patterns do I see in past sessions" (that's record_proposal). NOT "what's broken" (that's record_reflection). It's "given the current state, what's the next worthwhile thing".
+
+Hard rules:
+
+1. Every challenge MUST be grounded in either (a) a specific open thread from the "Open threads" stanza, OR (b) an observed capability gap — a recurring pattern in the digests that no installed skill covers. Drop challenges you can't ground; do NOT invent a problem to fill the slot.
+
+2. grounded_in[] MUST cite the canonical anchor: a session_id from the digests OR an installed-skill name OR a session_id from the open threads. Empty grounded_in = the challenge is fabricated; the schema rejects it (minItems:1).
+
+3. Avoid generic engineering advice ("write more tests", "improve performance", "add monitoring"). Specific challenges only — name the artefact, the change, and the observable outcome. "Wire structured logs through internal/daemon" qualifies; "improve observability" doesn't.
+
+4. Skip challenges already covered by an installed skill. The "Skills installed" stanza is canonical.
+
+5. success_looks_like is ONE short line — a specific observable outcome the user can check against. "The daemon's /v1/ingest log line lands in journalctl with the envelope's content_hash" qualifies; "logging works" doesn't.
+
+6. Effort scale: "small" = an afternoon. "medium" = a few days, well-scoped. "large" = a project, probably wants its own design doc. Lean small/medium — a stack of three small challenges is more useful than one large one.
+
+7. Title is ≤4 words, kebab-case (same convention as skill names — a challenge that gets done turns into a skill candidate, the names should travel).
+
+For a typical input, expect 1–3 challenges. Zero is acceptable when nothing in the input grounds a worthwhile problem — explicit empty array is better than padded fluff.`
+
+const challengeToolSchema = `{
+  "type": "object",
+  "required": ["challenges"],
+  "additionalProperties": false,
+  "properties": {
+    "challenges": {
+      "type":"array",
+      "minItems": 0,
+      "maxItems": 3,
+      "items": {
+        "type":"object",
+        "required":["title","problem","why","grounded_in","effort","success_looks_like"],
+        "additionalProperties": false,
+        "properties": {
+          "title":              {"type":"string","pattern":"^[a-z][a-z0-9-]*$","maxLength":48},
+          "problem":            {"type":"string","minLength":20,"maxLength":600},
+          "why":                {"type":"string","minLength":20,"maxLength":400},
+          "grounded_in":        {"type":"array","minItems":1,"maxItems":5,"items":{"type":"string","minLength":1}},
+          "effort":             {"type":"string","enum":["small","medium","large"]},
+          "success_looks_like": {"type":"string","minLength":10,"maxLength":200}
+        }
+      }
+    }
+  }
+}`
+
+const challengeTemplate = `Recent sessions: %d.%s%s%s
+
+---
+%s
+---
+`
+
+// BuildChallenge composes the curriculum / next-problem prompt.
+// Mirrors BuildPropose's input shape but adds the unresolved-items
+// stanza and uses the challenge-specific system prompt + schema.
+func BuildChallenge(in ChallengeInputs) (Built, error) {
+	if len(in.Digests) == 0 {
+		return Built{}, fmt.Errorf("BuildChallenge: no sessions")
+	}
+	pats := patternSet{}
+	body := renderDigests(in.Digests, pats)
+
+	userMsg := fmt.Sprintf(challengeTemplate,
+		len(in.Digests),
+		renderInstalledSkills(in.InstalledSkills),
+		renderInvokedSkills(in.InvokedSkills),
+		renderUnresolvedStanza(in.Unresolved, pats),
+		body,
+	)
+	req := llm.Request{
+		System:    challengeSystem,
+		Messages:  []llm.Message{{Role: llm.RoleUser, Content: userMsg}},
+		MaxTokens: challengeMaxTokens,
+		Tools: []llm.Tool{{
+			Name:        ToolNameChallenge,
+			Description: "Record 1–3 forward-looking problems the user should tackle next, grounded in their current state.",
+			InputSchema: json.RawMessage(challengeToolSchema),
+		}},
+		ForceTool: ToolNameChallenge,
+	}
+	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
+}
+
+// renderUnresolvedStanza formats the "Open threads" stanza for the
+// challenge prompt, or returns "" when there are no items.
+// Anti-fabrication contract mirrors the Links / Files stanzas in
+// BuildSummary: model is told to ground a "follow up on X"
+// challenge in entries from this stanza rather than invent one.
+func renderUnresolvedStanza(items []UnresolvedItemForChallenge, pats patternSet) string {
+	if len(items) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nOpen threads observed in recent sessions — prefer challenges that BUILD ON these (cite the session_id in grounded_in[]) over challenges invented from scratch:\n")
+	for _, it := range items {
+		clean, names := redact.Outbound(it.Item)
+		pats.addAll(names)
+		short := it.SessionShort
+		if short == "" && len(it.SessionID) >= 8 {
+			short = it.SessionID[:8]
+		}
+		topic := it.Topic
+		if topic == "" {
+			topic = "(no summary topic)"
+		}
+		b.WriteString("- [")
+		b.WriteString(short)
+		b.WriteString("] ")
+		b.WriteString(topic)
+		b.WriteString(" — ")
+		b.WriteString(clean)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // --- propose verification (Voyager-style critic gate) ---

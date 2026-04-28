@@ -138,6 +138,8 @@ func emitLLMBody(w io.Writer, kind store.LLMOutputKind, body string, jsonRaw boo
 		err = renderReflection(w, body)
 	case store.LLMKindPropose:
 		err = renderProposal(w, body)
+	case store.LLMKindChallenge:
+		err = renderChallenge(w, body)
 	default:
 		// Unknown kind — pass through raw so the user still sees
 		// what's stored.
@@ -265,6 +267,39 @@ func writeReflectEvidence(b *strings.Builder, evidence []prompts.ReflectionEvide
 // for high-frequency / low-effort wins first; evidence lines carry
 // a verbatim quote from each cited session so the proposal is
 // grep-verifiable without leaving the terminal.
+// renderChallenge renders a ChallengeResult body — the forward-
+// looking counterpart to renderProposal. Each row shows title,
+// effort, problem, why, what-it-anchors-on, and the success
+// criterion. Distinct layout from renderProposal because there's
+// no evidence list and no scripts; the "anchors" line is the
+// closest analog to evidence (it cites what grounds the suggestion
+// in the user's current state).
+func renderChallenge(w io.Writer, body string) error {
+	var r prompts.ChallengeResult
+	if err := json.Unmarshal([]byte(body), &r); err != nil {
+		return err
+	}
+	var b strings.Builder
+	if len(r.Challenges) == 0 {
+		fmt.Fprintf(&b, "%s\n", sectionHeader(w,
+			"No challenges proposed (nothing in the input grounded a worthwhile next problem)"))
+		_, err := fmt.Fprint(w, b.String())
+		return err
+	}
+	fmt.Fprintf(&b, "%s\n", sectionHeader(w, "Proposed challenges"))
+	for _, c := range r.Challenges {
+		fmt.Fprintf(&b, "  - %s  [effort=%s]\n", c.Title, c.Effort)
+		fmt.Fprintf(&b, "    problem: %s\n", c.Problem)
+		fmt.Fprintf(&b, "    why:     %s\n", c.Why)
+		if len(c.GroundedIn) > 0 {
+			fmt.Fprintf(&b, "    anchors: %s\n", strings.Join(c.GroundedIn, ", "))
+		}
+		fmt.Fprintf(&b, "    success: %s\n", c.SuccessLooksLike)
+	}
+	_, err := fmt.Fprint(w, b.String())
+	return err
+}
+
 func renderProposal(w io.Writer, body string) error {
 	var r prompts.ProposalResult
 	if err := json.Unmarshal([]byte(body), &r); err != nil {

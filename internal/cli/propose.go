@@ -37,12 +37,13 @@ const (
 
 func newProposeCmd() *cobra.Command {
 	var (
-		since    time.Duration
-		limit    int
-		model    string
-		force    bool
-		dbPath   string
-		formatIn string
+		since     time.Duration
+		limit     int
+		model     string
+		force     bool
+		dbPath    string
+		formatIn  string
+		challenge bool
 	)
 	cmd := &cobra.Command{
 		Use:   "propose",
@@ -54,6 +55,12 @@ func newProposeCmd() *cobra.Command {
 			"every suggestion must cite at least one session as evidence.\n\n" +
 			"Cached on prompt_hash in llm_outputs with kind=propose. Use\n" +
 			"--force to re-call. Use --format=json to emit the raw JSON body.\n\n" +
+			"Pass --challenge to swap the prompt for forward-looking next-\n" +
+			"problem mode (Voyager-style automatic curriculum). The same\n" +
+			"digests are fed to a different system prompt that asks 'what\n" +
+			"should the user tackle NEXT given their current state?' rather\n" +
+			"than 'what patterns recur?'. Output is cached under\n" +
+			"kind=challenge so it doesn't collide with the propose cache.\n\n" +
 			"Requires " + llm.APIKeyEnv + " unless the cache hits.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			format, err := ParseOutputFormat(formatIn)
@@ -101,7 +108,8 @@ func newProposeCmd() *cobra.Command {
 				ProposeOptions{
 					Since: since, Limit: limit, Model: model,
 					Force: force, JSON: format == FormatJSON,
-					Progress: progress,
+					Challenge: challenge,
+					Progress:  progress,
 				},
 				cmd.OutOrStdout())
 			return err
@@ -111,6 +119,8 @@ func newProposeCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", defaultProposeLimit, "max sessions to feed the LLM, newest first")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
+	cmd.Flags().BoolVar(&challenge, "challenge", false,
+		"forward-looking mode: propose what to tackle NEXT (Voyager-style curriculum)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	addFormatFlag(cmd, &formatIn)
 	cmd.AddCommand(newProposeApplyCmd())
@@ -128,6 +138,11 @@ type ProposeOptions struct {
 	Model string
 	Force bool
 	JSON  bool
+	// Challenge, when true, swaps the propose prompt for the
+	// forward-looking BuildChallenge prompt and persists the
+	// result with kind=challenge. Same digest list, different
+	// question — see prompts.BuildChallenge for the contract.
+	Challenge bool
 	// Progress, when non-nil, receives one-line status updates as
 	// RunPropose walks its phases (load sessions, enrich, call
 	// LLM). Pass io.Discard or leave nil to silence — JSON mode
@@ -203,6 +218,10 @@ func RunPropose(
 	_, _ = fmt.Fprintf(progress, "  skills enrichment: %d installed, %d invoked\n",
 		len(installed), len(invoked))
 
+	if opts.Challenge {
+		return runChallenge(ctx, s, newClient, opts, digests, installed, invoked, out, progress)
+	}
+
 	built, err := prompts.BuildPropose(prompts.ProposeInputs{
 		Digests:         digests,
 		InstalledSkills: installed,
@@ -221,6 +240,94 @@ func RunPropose(
 		kind:     store.LLMKindPropose,
 		toolName: prompts.ToolNameProposal,
 		result:   new(prompts.ProposalResult),
+		hash:     built.Hash,
+		req:      built.Request,
+		model:    opts.Model,
+		force:    opts.Force,
+		jsonRaw:  opts.JSON,
+		output:   out,
+	})
+}
+
+// runChallenge is the --challenge path. Branched from RunPropose
+// rather than inlined so the prompt-shape, persistence kind, and
+// open-threads enrichment stay together — RunPropose's main path
+// would otherwise grow a tangled if/else over every phase.
+//
+// Open-threads enrichment: pulls unresolved items from prior
+// sessions across the digest's cwds. Same source as
+// `aichronicles unresolved` and the get_unresolved_for_cwd MCP
+// tool — keeps the three surfaces consistent on what counts as
+// an "open thread".
+func runChallenge(
+	ctx context.Context,
+	s *store.Store,
+	newClient func() (llm.Client, error),
+	opts ProposeOptions,
+	digests []prompts.SessionDigest,
+	installed []prompts.InstalledSkill,
+	invoked []prompts.InvokedSkill,
+	out, progress io.Writer,
+) (int64, error) {
+	// Pull unresolved items for each distinct cwd in the digests.
+	// A small set in practice (the user usually works in 1-3
+	// projects per window); cap at 30 items total to keep the
+	// prompt compact.
+	seenCwd := make(map[string]struct{})
+	var open []prompts.UnresolvedItemForChallenge
+	const maxItems = 30
+	sinceMs := time.Now().Add(-30 * 24 * time.Hour).UnixMilli()
+	for _, d := range digests {
+		if d.Cwd == "" {
+			continue
+		}
+		if _, dup := seenCwd[d.Cwd]; dup {
+			continue
+		}
+		seenCwd[d.Cwd] = struct{}{}
+		items, err := store.LoadUnresolvedForCwd(ctx, s.DB(), d.Cwd, sinceMs, 5, 5)
+		if err != nil {
+			slog.Warn("challenge: skipping unresolved enrichment for cwd",
+				"cwd", d.Cwd, "err", err)
+			continue
+		}
+		for _, it := range items {
+			if len(open) >= maxItems {
+				break
+			}
+			open = append(open, prompts.UnresolvedItemForChallenge{
+				SessionID:    it.SessionID,
+				SessionShort: it.SessionShort,
+				Topic:        it.Topic,
+				Item:         it.Item,
+			})
+		}
+		if len(open) >= maxItems {
+			break
+		}
+	}
+	_, _ = fmt.Fprintf(progress, "  open-threads enrichment: %d items across %d cwd(s)\n",
+		len(open), len(seenCwd))
+
+	built, err := prompts.BuildChallenge(prompts.ChallengeInputs{
+		Digests:         digests,
+		InstalledSkills: installed,
+		InvokedSkills:   invoked,
+		Unresolved:      open,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("challenge: build prompt: %w", err)
+	}
+	if len(built.Patterns) > 0 {
+		slog.Info("challenge: egress redaction fired",
+			"patterns", strings.Join(built.Patterns, ","))
+	}
+
+	_, _ = fmt.Fprintf(progress, "calling LLM (challenge mode)...\n")
+	return runCachedLLM(ctx, s, newClient, cachedLLMInput{
+		kind:     store.LLMKindChallenge,
+		toolName: prompts.ToolNameChallenge,
+		result:   new(prompts.ChallengeResult),
 		hash:     built.Hash,
 		req:      built.Request,
 		model:    opts.Model,

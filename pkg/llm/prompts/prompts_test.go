@@ -906,6 +906,106 @@ func TestBuildInduce_RendersInstalledSkillsStanza(t *testing.T) {
 	}
 }
 
+// --- BuildChallenge ---
+
+func TestBuildChallenge_RequiresSessions(t *testing.T) {
+	t.Parallel()
+	if _, err := BuildChallenge(ChallengeInputs{}); err == nil {
+		t.Error("empty digests: expected error")
+	}
+}
+
+func TestBuildChallenge_SetsForcedToolAndValidSchema(t *testing.T) {
+	t.Parallel()
+	built, err := BuildChallenge(ChallengeInputs{
+		Digests: []SessionDigest{{ID: "s1", FirstPrompt: "what to do next?", Summary: "explored auth"}},
+	})
+	if err != nil {
+		t.Fatalf("BuildChallenge: %v", err)
+	}
+	if built.Request.ForceTool != ToolNameChallenge {
+		t.Errorf("ForceTool: got %q, want %q", built.Request.ForceTool, ToolNameChallenge)
+	}
+	if !json.Valid(built.Request.Tools[0].InputSchema) {
+		t.Error("challenge schema is not valid JSON")
+	}
+}
+
+func TestBuildChallenge_SchemaEnforcesGroundedAndShape(t *testing.T) {
+	t.Parallel()
+	built, _ := BuildChallenge(ChallengeInputs{
+		Digests: []SessionDigest{{ID: "s1", Summary: "x"}},
+	})
+	schema := string(built.Request.Tools[0].InputSchema)
+	for _, want := range []string{
+		`"grounded_in"`,
+		`"minItems":1`, // grounded_in must have at least one anchor
+		`"success_looks_like"`,
+		`"effort"`,
+		`"small"`,
+		`"medium"`,
+		`"large"`,
+		`"maxItems": 3`,
+	} {
+		if !strings.Contains(schema, want) {
+			t.Errorf("schema missing %q:\n%s", want, schema)
+		}
+	}
+}
+
+func TestBuildChallenge_RendersUnresolvedStanzaWhenPresent(t *testing.T) {
+	t.Parallel()
+	built, _ := BuildChallenge(ChallengeInputs{
+		Digests: []SessionDigest{{ID: "s1", Summary: "x"}},
+		Unresolved: []UnresolvedItemForChallenge{
+			{
+				SessionID:    "11111111-1111-1111-1111-111111111111",
+				SessionShort: "11111111",
+				Topic:        "auth middleware refactor",
+				Item:         "document the new fallback flow",
+			},
+		},
+	})
+	body := built.Request.Messages[0].Content
+	for _, want := range []string{
+		"Open threads observed",
+		"11111111",
+		"auth middleware refactor",
+		"document the new fallback flow",
+		"BUILD ON",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestBuildChallenge_OmitsUnresolvedStanzaWhenEmpty(t *testing.T) {
+	t.Parallel()
+	built, _ := BuildChallenge(ChallengeInputs{
+		Digests: []SessionDigest{{ID: "s1", Summary: "x"}},
+	})
+	if strings.Contains(built.Request.Messages[0].Content, "Open threads observed") {
+		t.Errorf("empty unresolved should omit stanza:\n%s",
+			built.Request.Messages[0].Content)
+	}
+}
+
+func TestBuildChallenge_HashChangesWhenUnresolvedChanges(t *testing.T) {
+	t.Parallel()
+	digests := []SessionDigest{{ID: "s1", Summary: "x"}}
+	a, _ := BuildChallenge(ChallengeInputs{Digests: digests})
+	b, _ := BuildChallenge(ChallengeInputs{
+		Digests: digests,
+		Unresolved: []UnresolvedItemForChallenge{
+			{SessionID: "z", SessionShort: "z", Topic: "t", Item: "i"},
+		},
+	})
+	if a.Hash == b.Hash {
+		t.Error("adding open threads should change the hash")
+	}
+}
+
 func TestBuildInduce_HashStableAndContentSensitive(t *testing.T) {
 	t.Parallel()
 	a, _ := BuildInduce(InduceFromSessionInputs{Digest: SessionDigest{ID: "x", FirstPrompt: "p"}})

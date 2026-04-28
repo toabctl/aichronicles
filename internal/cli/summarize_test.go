@@ -114,6 +114,15 @@ func synthMinimalToolInput(toolName, hint string) json.RawMessage {
 			Recommendation: "",
 		})
 		return b
+	case prompts.ToolNameChallenge:
+		// Default fake challenge result: empty list so tests
+		// that don't care about the contents pass without
+		// having to satisfy the schema's grounded_in:minItems:1
+		// rule.
+		b, _ := json.Marshal(prompts.ChallengeResult{
+			Challenges: []prompts.Challenge{},
+		})
+		return b
 	}
 	return json.RawMessage(`{}`)
 }
