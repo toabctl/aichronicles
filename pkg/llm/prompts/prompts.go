@@ -62,6 +62,7 @@ const (
 	ToolNameProposal       = "record_proposal"
 	ToolNameProposalVerify = "record_proposal_verification"
 	ToolNameSkillRevision  = "record_skill_revision"
+	ToolNameInduction      = "record_induction"
 )
 
 // --- result types ---
@@ -828,6 +829,178 @@ func BuildPropose(in ProposeInputs) (Built, error) {
 			InputSchema: json.RawMessage(proposalToolSchema),
 		}},
 		ForceTool: ToolNameProposal,
+	}
+	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
+}
+
+// --- single-session induction (online AWM trigger) ---
+
+// InductionResult is the schema-validated payload of a
+// record_induction tool call. Same shape as ProposalResult so the
+// existing apply path (`propose apply --output=<llm_outputs.id>`)
+// can consume it without translation, but capped at one skill —
+// online induction is "did THIS session contain a single concrete
+// workflow worth saving?" rather than "what patterns recur across
+// many?".
+//
+// NoSkillFound is the explicit "this session was not worth a
+// skill" verdict — separate from a zero-length Skill array so the
+// CLI can distinguish "model declined" from "model emitted
+// malformed output and we coerced it to empty".
+type InductionResult struct {
+	Skill        *ProposedSkill `json:"skill,omitempty"`
+	NoSkillFound bool           `json:"no_skill_found"`
+	Rationale    string         `json:"rationale"`
+}
+
+// InduceFromSessionInputs carries everything BuildInduce needs:
+// the single session digest (the seed of the induction) and the
+// user's installed-skill set (so the model doesn't propose a
+// near-duplicate of a skill that already exists).
+type InduceFromSessionInputs struct {
+	Digest          SessionDigest
+	InstalledSkills []InstalledSkill
+}
+
+const inductionMaxTokens = 4096
+
+const inductionSystem = `You inspect ONE coding session that just ended and decide whether it contained a single concrete, reusable workflow worth saving as a Claude Code skill. You MUST call the record_induction tool exactly once.
+
+This is online induction — the trigger fires the moment a session ends, so the bar is HIGH. A casual "fixed a bug" session is NOT a skill. A session where the user demonstrably ran a specific multi-step workflow (sequence of shell commands, a recurring file-fixing recipe, a deploy procedure) IS a candidate.
+
+Hard rules:
+
+1. Default to no_skill_found=true. Saving a skill that won't fire again is worse than saving nothing — false positives clutter ~/.claude/skills/ and erode trust in the system. Only set no_skill_found=false when you can name a SPECIFIC trigger condition the user is likely to hit again.
+
+2. Evidence comes from this ONE session. Single-session induction is the explicit point — the multi-session minimum the offline propose path enforces does NOT apply here. But the evidence quote MUST be substantive: at least 30 chars, concrete, drawn from the session's summary text or first_prompt. Filler ("go ahead", "/loop", "ok", "next") never grounds an induction; emit no_skill_found=true.
+
+3. The skill, when proposed, MUST be a parameterised template (steps[] + placeholders[]) when the underlying actions are observable shell commands. AWM (Agent Workflow Memory) — the abstract pattern is what survives, not the literal commands. Replace the values that vary per task with {placeholder} tokens, kebab-case, and document each in placeholders[] with a real example pulled from this session.
+
+4. Skip if an installed skill already covers the same trigger condition. The "Skills installed" stanza is canonical; refuse to repropose a near-duplicate. Same name OR same trigger condition both qualify as duplicates.
+
+5. Skill names: ≤4 words, kebab-case (matches a directory name under ~/.claude/skills/). when_to_use leads with the trigger condition.
+
+6. frequency=1 is correct for induction (one session of evidence). effort: "small" = an afternoon. "medium" = a few days. "large" = a project.
+
+Rationale is a short (≤200 chars) line explaining the decision either way. On no_skill_found=true: "no concrete reusable workflow — session was a one-off bug fix". On a proposed skill: "extracted the deploy-staging recipe — same shell sequence the user ran twice this session".`
+
+const inductionToolSchema = `{
+  "type": "object",
+  "required": ["no_skill_found","rationale"],
+  "additionalProperties": false,
+  "properties": {
+    "skill": {
+      "type":"object",
+      "required":["name","when_to_use","why","evidence","frequency","effort","alternatives_rejected"],
+      "additionalProperties": false,
+      "properties": {
+        "name":                  {"type":"string","pattern":"^[a-z][a-z0-9-]*$"},
+        "when_to_use":           {"type":"string","minLength":1},
+        "why":                   {"type":"string","minLength":1},
+        "scripts": {
+          "type":"array",
+          "minItems": 0,
+          "maxItems": 3,
+          "items": {
+            "type":"object",
+            "required":["name","purpose"],
+            "additionalProperties": false,
+            "properties": {
+              "name":    {"type":"string","pattern":"^[A-Za-z0-9_.-]+$","maxLength":64},
+              "purpose": {"type":"string","minLength":1,"maxLength":200},
+              "body":    {"type":"string","maxLength":4000},
+              "steps": {
+                "type":"array",
+                "minItems":0,
+                "maxItems":12,
+                "items": {
+                  "type":"object",
+                  "required":["cmd","purpose"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "cmd":     {"type":"string","minLength":1,"maxLength":400},
+                    "purpose": {"type":"string","minLength":1,"maxLength":160}
+                  }
+                }
+              },
+              "placeholders": {
+                "type":"array",
+                "minItems":0,
+                "maxItems":10,
+                "items": {
+                  "type":"object",
+                  "required":["token","description"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "token":       {"type":"string","pattern":"^[a-z][a-z0-9-]*$","maxLength":32},
+                    "description": {"type":"string","minLength":1,"maxLength":160},
+                    "example":     {"type":"string","maxLength":160}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "evidence": {
+          "type":"array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": {
+            "type":"object",
+            "required":["session_id","quote","what_happened"],
+            "additionalProperties": false,
+            "properties": {
+              "session_id":    {"type":"string","minLength":1},
+              "quote":         {"type":"string","minLength":30,"maxLength":160},
+              "what_happened": {"type":"string","minLength":1}
+            }
+          }
+        },
+        "frequency":             {"type":"integer","minimum":1,"maximum":1},
+        "effort":                {"type":"string","enum":["small","medium","large"]},
+        "alternatives_rejected": {"type":"string"}
+      }
+    },
+    "no_skill_found": {"type":"boolean"},
+    "rationale":      {"type":"string","minLength":1,"maxLength":200}
+  }
+}`
+
+const inductionTemplate = `One session that just ended. Decide whether it contained a reusable workflow.
+
+%sSession follows.
+
+---
+%s
+---
+`
+
+// BuildInduce composes the single-session induction prompt. The
+// digest is the just-ended session — typically the output of
+// store.LoadRecentSessionDigests with limit=1 filtered to one id,
+// already enriched with summary and shell_command extractions
+// (the substrate the steps[]/placeholders[] template fields draw
+// from).
+func BuildInduce(in InduceFromSessionInputs) (Built, error) {
+	if in.Digest.ID == "" {
+		return Built{}, fmt.Errorf("BuildInduce: digest.ID required")
+	}
+	pats := patternSet{}
+	body := renderDigests([]SessionDigest{in.Digest}, pats)
+	userMsg := fmt.Sprintf(inductionTemplate,
+		renderInstalledSkills(in.InstalledSkills),
+		body,
+	)
+	req := llm.Request{
+		System:    inductionSystem,
+		Messages:  []llm.Message{{Role: llm.RoleUser, Content: userMsg}},
+		MaxTokens: inductionMaxTokens,
+		Tools: []llm.Tool{{
+			Name:        ToolNameInduction,
+			Description: "Record the result of online induction over one just-ended session.",
+			InputSchema: json.RawMessage(inductionToolSchema),
+		}},
+		ForceTool: ToolNameInduction,
 	}
 	return Built{Request: req, Hash: hashRequest(req), Patterns: pats.sortedSlice()}, nil
 }

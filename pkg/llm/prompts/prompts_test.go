@@ -838,3 +838,83 @@ func TestHashRequest_DifferentToolsChangeHash(t *testing.T) {
 		t.Error("schema change must invalidate the hash")
 	}
 }
+
+// --- BuildInduce ---
+
+func TestBuildInduce_RequiresDigestID(t *testing.T) {
+	t.Parallel()
+	if _, err := BuildInduce(InduceFromSessionInputs{}); err == nil {
+		t.Error("missing digest ID: expected error")
+	}
+}
+
+func TestBuildInduce_SetsForcedToolAndValidSchema(t *testing.T) {
+	t.Parallel()
+	built, err := BuildInduce(InduceFromSessionInputs{
+		Digest: SessionDigest{ID: "sess-i", FirstPrompt: "build a thing"},
+	})
+	if err != nil {
+		t.Fatalf("BuildInduce: %v", err)
+	}
+	if built.Request.ForceTool != ToolNameInduction {
+		t.Errorf("ForceTool: got %q, want %q", built.Request.ForceTool, ToolNameInduction)
+	}
+	if len(built.Request.Tools) != 1 || built.Request.Tools[0].Name != ToolNameInduction {
+		t.Errorf("tools: got %+v", built.Request.Tools)
+	}
+	if !json.Valid(built.Request.Tools[0].InputSchema) {
+		t.Error("induction schema is not valid JSON")
+	}
+}
+
+func TestBuildInduce_SchemaAllowsSingleEvidenceAndNoSkillFound(t *testing.T) {
+	t.Parallel()
+	built, _ := BuildInduce(InduceFromSessionInputs{
+		Digest: SessionDigest{ID: "sess-i"},
+	})
+	schema := string(built.Request.Tools[0].InputSchema)
+	for _, want := range []string{
+		`"no_skill_found"`,
+		`"rationale"`,
+		`"minItems": 1`, // evidence allowed with one entry
+		`"minimum":1,"maximum":1`,
+	} {
+		if !strings.Contains(schema, want) {
+			t.Errorf("schema missing %q:\n%s", want, schema)
+		}
+	}
+	// CRITICAL: evidence must NOT be required at minItems:2 — that
+	// was the whole point of a separate induction prompt. Spot-
+	// checking the exact substring rather than parsing the schema
+	// because parsing $defs is a chore and the substring is unique.
+	if strings.Contains(schema, `"minItems": 2`) {
+		t.Errorf("induction schema should not enforce ≥2 evidence; got:\n%s", schema)
+	}
+}
+
+func TestBuildInduce_RendersInstalledSkillsStanza(t *testing.T) {
+	t.Parallel()
+	built, _ := BuildInduce(InduceFromSessionInputs{
+		Digest: SessionDigest{ID: "sess-i", FirstPrompt: "x"},
+		InstalledSkills: []InstalledSkill{
+			{Name: "deploy-staging", Description: "deploy to staging", Source: "global"},
+		},
+	})
+	body := built.Request.Messages[0].Content
+	if !strings.Contains(body, "deploy-staging") {
+		t.Errorf("installed-skill name missing from prompt:\n%s", body)
+	}
+}
+
+func TestBuildInduce_HashStableAndContentSensitive(t *testing.T) {
+	t.Parallel()
+	a, _ := BuildInduce(InduceFromSessionInputs{Digest: SessionDigest{ID: "x", FirstPrompt: "p"}})
+	b, _ := BuildInduce(InduceFromSessionInputs{Digest: SessionDigest{ID: "x", FirstPrompt: "p"}})
+	if a.Hash != b.Hash {
+		t.Errorf("identical inputs produced different hashes: %q vs %q", a.Hash, b.Hash)
+	}
+	c, _ := BuildInduce(InduceFromSessionInputs{Digest: SessionDigest{ID: "x", FirstPrompt: "different"}})
+	if a.Hash == c.Hash {
+		t.Errorf("different first_prompt should change hash")
+	}
+}
