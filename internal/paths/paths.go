@@ -73,6 +73,22 @@ func ConfigFile() (string, error) {
 	return filepath.Join(home, ".config", "aichronicles", "config.toml"), nil
 }
 
+// PricesFile returns the TOML pricing-table path under
+// XDG_CONFIG_HOME (fallback ~/.config). Used by `aichronicles usage`
+// and the /usage web page to convert raw token counts into rough
+// USD estimates. Same XDG layout as ConfigFile so a single config
+// directory holds both files. Loading is the caller's concern.
+func PricesFile() (string, error) {
+	if c := os.Getenv("XDG_CONFIG_HOME"); c != "" {
+		return filepath.Join(c, "aichronicles", "prices.toml"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "aichronicles", "prices.toml"), nil
+}
+
 // EnvStore is the environment variable that overrides the SQLite
 // store path when --db isn't given on the command line. Used by every
 // subcommand and by [paths.ResolveStorePath].
