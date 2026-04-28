@@ -168,3 +168,151 @@ func searchWithSummaryHandler(st *store.Store, newClient func() (llm.Client, err
 var nowMs = func() int64 {
 	return time.Now().UTC().UnixMilli()
 }
+
+// semanticSearchDefaultLimit / semanticSearchMaxLimit cap the result
+// set for the MCP semantic_search_events tool. Same shape as
+// search_events for predictability across the keyword and semantic
+// surfaces.
+const (
+	semanticSearchDefaultLimit = 20
+	semanticSearchMaxLimit     = 50
+)
+
+// RegisterAichroniclesEmbeddingTools wires up tools that need an
+// llm.Embedder. Kept separate from RegisterAichroniclesLLMTools so
+// chat-only callers (no embedding model configured) don't see the
+// semantic surface advertised when it can't actually work.
+//
+// newEmbedder is called per request, lazily — same pattern as the
+// chat-LLM constructor. Construction failure surfaces as a tool-use
+// error rather than a startup error so the rest of the MCP server
+// stays available.
+func RegisterAichroniclesEmbeddingTools(s *Server, st *store.Store, newEmbedder func() (llm.Embedder, error)) {
+	s.RegisterTool(Tool{
+		Name: "semantic_search_events",
+		Description: "Search the user's PAST sessions by SEMANTIC similarity, not keyword. " +
+			"The query is embedded by the configured provider; stored event embeddings are " +
+			"reranked by cosine similarity. Returns hits with session id, kind, timestamp, " +
+			"and a snippet of content_text. " +
+			"Use when the user asks about a CONCEPT or topic without naming the exact word " +
+			"that would appear in the source — e.g. 'find sessions about authentication issues' " +
+			"when the actual transcripts say 'login bug', 'session token rejected', etc. " +
+			"Plain keyword search (search_events) is faster and cheaper; reach for semantic " +
+			"search when keyword recall is failing. " +
+			"Requires events to have been embedded already via `aichronicles embed`. " +
+			"Returns (no hits) if no embeddings exist or none match the filters.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"query":        {"type": "string", "description": "Free-text query embedded into the same vector space as stored events."},
+				"session_id":   {"type": "string", "description": "Narrow to one session (full UUID or unique prefix)."},
+				"kind":         {"type": "string", "description": "Optional event-kind filter (user_prompt, tool_use, …)."},
+				"since_hours":  {"type": "integer", "minimum": 1, "description": "Optional time window: only events within this many hours."},
+				"limit":        {"type": "integer", "minimum": 1, "maximum": 50, "default": 20}
+			},
+			"required": ["query"]
+		}`),
+		Handler: semanticSearchHandler(st, newEmbedder),
+	})
+}
+
+func semanticSearchHandler(st *store.Store, newEmbedder func() (llm.Embedder, error)) ToolHandler {
+	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
+		var req struct {
+			Query      string `json:"query"`
+			SessionID  string `json:"session_id"`
+			Kind       string `json:"kind"`
+			SinceHours int    `json:"since_hours"`
+			Limit      int    `json:"limit"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, &Error{Code: InvalidParams, Message: "semantic_search_events: bad args: " + err.Error()}
+		}
+		if strings.TrimSpace(req.Query) == "" {
+			return TextError("semantic_search_events: query is required"), nil
+		}
+		if req.Limit <= 0 {
+			req.Limit = semanticSearchDefaultLimit
+		}
+		if req.Limit > semanticSearchMaxLimit {
+			req.Limit = semanticSearchMaxLimit
+		}
+
+		// Resolve session prefix to its full UUID before passing to
+		// SemanticSearch — match the search_events surface, which
+		// also accepts prefixes (via the agent's typical 8-char
+		// short-id workflow).
+		if req.SessionID != "" {
+			full, err := store.ResolveSessionIDPrefix(ctx, st.DB(), req.SessionID)
+			if err != nil {
+				return TextError("semantic_search_events: %v", err), nil
+			}
+			req.SessionID = full
+		}
+
+		embedder, err := newEmbedder()
+		if err != nil {
+			return TextError("semantic_search_events: embedder unavailable: %v", err), nil
+		}
+		model := llm.DefaultEmbeddingModel
+		resp, err := embedder.Embed(ctx, llm.EmbedRequest{
+			Model:  model,
+			Inputs: []string{req.Query},
+		})
+		if err != nil {
+			return nil, &Error{Code: InternalError, Message: "semantic_search_events: embed query: " + err.Error()}
+		}
+		if len(resp.Vectors) != 1 {
+			return nil, &Error{Code: InternalError, Message: fmt.Sprintf(
+				"semantic_search_events: expected 1 query vector, got %d", len(resp.Vectors))}
+		}
+		queryVec := resp.Vectors[0]
+
+		opts := store.SemanticSearchOpts{
+			QueryVec:  queryVec,
+			Model:     model,
+			Dim:       len(queryVec),
+			SessionID: req.SessionID,
+			Kind:      req.Kind,
+			TopK:      req.Limit,
+		}
+		if req.SinceHours > 0 {
+			opts.SinceMs = nowMs() - int64(req.SinceHours)*60*60*1000
+		}
+		hits, err := store.SemanticSearch(ctx, st.DB(), opts)
+		if err != nil {
+			return nil, &Error{Code: InternalError, Message: "semantic_search_events: search: " + err.Error()}
+		}
+		if len(hits) == 0 {
+			return TextResult("(no hits — try `aichronicles embed` if embeddings haven't been backfilled, or relax filters)"), nil
+		}
+
+		var b strings.Builder
+		for _, h := range hits {
+			snip := ""
+			if h.Content.Valid {
+				snip = previewSemanticSnippet(h.Content.String)
+			}
+			fmt.Fprintf(&b, "%s\t%s\t%.3f\t%s\t%s\n",
+				first8(h.SessionID),
+				time.UnixMilli(h.TsSourceMs).UTC().Format(time.RFC3339),
+				h.Score,
+				h.Kind,
+				snip,
+			)
+		}
+		return TextResult(strings.TrimRight(b.String(), "\n")), nil
+	}
+}
+
+// previewSemanticSnippet collapses whitespace and rune-truncates the
+// content for the tabular result row so a long event body doesn't
+// overflow the agent's display.
+func previewSemanticSnippet(s string) string {
+	const maxRunes = 160
+	r := []rune(strings.Join(strings.Fields(s), " "))
+	if len(r) > maxRunes {
+		return string(r[:maxRunes]) + "…"
+	}
+	return string(r)
+}

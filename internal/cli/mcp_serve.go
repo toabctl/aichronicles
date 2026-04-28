@@ -60,15 +60,18 @@ func newMCPServeCmd() *cobra.Command {
 			mcp.RegisterAichroniclesTools(srv, s)
 			mcp.RegisterAichroniclesAnalyticsTools(srv, s)
 
-			// Register LLM-backed tools (search_with_summary) only when
-			// the user has an API key configured — otherwise the tool
-			// is omitted from the catalog entirely so an agent doesn't
-			// see it advertised and call it expecting it to work.
+			// Register LLM-backed tools (search_with_summary,
+			// semantic_search_events) only when the user has an API
+			// key configured — otherwise the tools are omitted from
+			// the catalog entirely so an agent doesn't see them
+			// advertised and call expecting them to work.
 			cfg, cfgErr := config.Load()
 			if cfgErr == nil {
 				llmCfg := LLMConfigFromFile(cfg.LLM)
 				mcp.RegisterAichroniclesLLMTools(srv, s,
 					func() (llm.Client, error) { return llm.FromConfig(cmd.Context(), llmCfg) })
+				mcp.RegisterAichroniclesEmbeddingTools(srv, s,
+					func() (llm.Embedder, error) { return llm.EmbedderFromConfig(cmd.Context(), llmCfg) })
 			} else {
 				log.Warn("mcp: skipping LLM-backed tools (no config)", "err", cfgErr)
 			}
