@@ -63,12 +63,69 @@ func TestProposePage_RendersHeaderAndEmptyState(t *testing.T) {
 		t.Fatalf("status: got %d, want 200", status)
 	}
 	for _, want := range []string{
-		"Proposed skills",
+		// Page heading after the lifecycle merge.
+		"<h1>Propose</h1>",
+		// Lifecycle section heading is always present even when
+		// empty (it has its own empty-state branch).
+		"Lifecycle of past proposals",
+		// Recent runs section heading.
+		"Recent propose runs",
+		// Empty-state hint for the runs section.
 		"No cached proposals yet",
 		"aichronicles propose",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/propose missing %q\n--- body ---\n%s", want, body)
+		}
+	}
+}
+
+// TestProposePage_RendersLifecycleBuckets covers the merged
+// lifecycle view: when proposed_skills rows exist, /propose now
+// renders the four-bucket table that previously lived on
+// /proposals.
+func TestProposePage_RendersLifecycleBuckets(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	now := time.Now()
+	proposedAt := now.Add(-7 * 24 * time.Hour).UnixMilli()
+	appliedAt := now.Add(-6 * 24 * time.Hour).UnixMilli()
+
+	loRes, err := st.DB().Exec(
+		`INSERT INTO llm_outputs(kind, model, prompt_hash, body, created_at_ms)
+		 VALUES ('propose', 'fake-model', ?, '{}', ?)`,
+		"h-"+t.Name(), proposedAt,
+	)
+	if err != nil {
+		t.Fatalf("seed llm_output: %v", err)
+	}
+	loID, _ := loRes.LastInsertId()
+
+	if err := store.RecordProposedSkill(t.Context(), st.DB(),
+		loID, "applied-unused", proposedAt); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if err := store.MarkProposedSkillApplied(t.Context(), st.DB(),
+		loID, "applied-unused", "/p/x/SKILL.md", appliedAt); err != nil {
+		t.Fatalf("mark applied: %v", err)
+	}
+	if err := store.RecordProposedSkill(t.Context(), st.DB(),
+		loID, "rejected-idea", proposedAt); err != nil {
+		t.Fatalf("record rejected: %v", err)
+	}
+
+	_, body := fetch(t, base+"/propose")
+	for _, want := range []string{
+		"Applied · unused",
+		"applied-unused",
+		"Not applied",
+		"rejected-idea",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/propose lifecycle missing %q\n--- body ---\n%s", want, body)
 		}
 	}
 }

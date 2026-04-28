@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -48,12 +49,65 @@ func (s *Server) proposeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	now := time.Now()
 	page := ProposePage{
 		Title:     "Propose",
 		Limit:     limit,
-		Proposals: buildProposeCards(rows, time.Now()),
+		Proposals: buildProposeCards(rows, now),
+	}
+	if err := loadProposalLifecycle(r.Context(), s, &page, now); err != nil {
+		s.log.Error("proposeHandler: lifecycle", "err", err)
+		// Best-effort: render the page with empty lifecycle
+		// sections rather than fail the whole route — the user
+		// still wants the recent-runs view.
 	}
 	s.render(w, r, "propose", page)
+}
+
+// loadProposalLifecycle fills the four lifecycle buckets on a
+// ProposePage from the proposed_skills table. Same horizon (90d)
+// the propose system prompt's "Prior proposals" stanza uses, so
+// the human's view aligns with the LLM's prior view.
+func loadProposalLifecycle(ctx context.Context, s *Server, page *ProposePage, now time.Time) error {
+	priorSinceMs := now.Add(-90 * 24 * time.Hour).UnixMilli()
+
+	applied, err := store.LoadProposalEffectiveness(ctx, s.store.DB(),
+		priorSinceMs, 0, 100)
+	if err != nil {
+		return fmt.Errorf("applied: %w", err)
+	}
+	for _, e := range applied {
+		row := ProposalRow{
+			SkillName:        e.SkillName,
+			ProposedAgo:      relativeTime(e.ProposedAtMs, now),
+			AppliedAgo:       relativeTime(e.AppliedAtMs, now),
+			LoadsAfterApply:  e.LoadsAfterApply,
+			FailedLoadsAfter: e.FailedLoadsAfter,
+			AppliedPath:      e.AppliedPath,
+		}
+		switch {
+		case e.FailedLoadsAfter > 0:
+			page.AppliedFailing = append(page.AppliedFailing, row)
+		case e.LoadsAfterApply == 0:
+			page.AppliedUnused = append(page.AppliedUnused, row)
+		default:
+			page.AppliedWorking = append(page.AppliedWorking, row)
+		}
+	}
+
+	unapplied, err := store.LoadUnappliedProposedSkills(ctx, s.store.DB(),
+		priorSinceMs, 100)
+	if err != nil {
+		return fmt.Errorf("unapplied: %w", err)
+	}
+	for _, u := range unapplied {
+		page.NotApplied = append(page.NotApplied, ProposalRow{
+			SkillName:   u.SkillName,
+			ProposedAgo: relativeTime(u.ProposedAtMs, now),
+		})
+	}
+	page.UnappliedCount = len(page.NotApplied)
+	return nil
 }
 
 // buildProposeCards lifts each kind=propose row into a render-ready

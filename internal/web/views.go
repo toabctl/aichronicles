@@ -283,21 +283,9 @@ type WorkflowRow struct {
 	SuccessChecks []string
 }
 
-// ProposalsPage is the data shape /proposals consumes. Lifecycle
-// categories (Applied & working / Applied unused / Applied failing
-// / Not applied) match the system prompt's rule-12 categories,
-// pre-computed so the page tells the user the same story the LLM
-// sees in its prior-proposals stanza.
-type ProposalsPage struct {
-	Title          string
-	AppliedWorking []ProposalRow
-	AppliedUnused  []ProposalRow
-	AppliedFailing []ProposalRow
-	NotApplied     []ProposalRow
-	UnappliedCount int
-}
-
 // ProposalRow is one row in a proposals lifecycle table.
+// Embedded into ProposePage; the lifecycle view lives on /propose
+// alongside the recent-runs view.
 type ProposalRow struct {
 	SkillName        string
 	ProposedAgo      string
@@ -408,14 +396,36 @@ type DigestEvidenceRow struct {
 	WhatHappened string
 }
 
-// ProposePage drives /propose: cards of cached `propose` outputs
-// (llm_outputs.kind = propose), newest first. Each card lists the
-// skills the model suggested, each skill with its evidence sessions
-// and a copy-to-clipboard `aichronicles propose apply` command.
+// ProposePage drives /propose. The page renders TWO views in
+// sections:
+//
+//  1. Lifecycle (top section) — every skill aichronicles has
+//     proposed, bucketed by what happened next. Same four-bucket
+//     categorisation the propose system prompt uses (rule 12) so
+//     the human's view mirrors the LLM's prior-proposals stanza.
+//
+//  2. Recent runs (bottom section) — cards of cached propose
+//     LLM-outputs (kind=propose), newest first. Each card lists
+//     the skills the model suggested with evidence + a
+//     copy-to-clipboard `aichronicles propose apply` command.
+//
+// One page rather than two routes (the previous /propose +
+// /proposals split) because both views answer questions in the
+// same mental model — "the propose pipeline" — and a user landing
+// on one half always wanted a peek at the other.
 type ProposePage struct {
 	Title     string
 	Limit     int
 	Proposals []ProposeCard
+
+	// Lifecycle of past proposed_skills. Empty slices when the
+	// store has nothing in that bucket — the template hides the
+	// section in that case.
+	AppliedWorking []ProposalRow
+	AppliedUnused  []ProposalRow
+	AppliedFailing []ProposalRow
+	NotApplied     []ProposalRow
+	UnappliedCount int
 }
 
 // ProposeCard is one rendered propose row. RawBody is populated

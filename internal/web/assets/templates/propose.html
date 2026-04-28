@@ -1,18 +1,112 @@
 {{define "content"}}
 <hgroup>
-  <h1>Proposed skills</h1>
-  <p>Cached <code>propose</code> artefacts. Each card is a model-
-     written suggestion of new <code>SKILL.md</code> files based on
-     recurring patterns in your sessions, persisted in
-     <code>llm_outputs</code> and produced by
-     <code>aichronicles propose</code>. Each skill carries a copy-
-     to-clipboard <em>apply</em> command — paste it in a terminal
-     to materialise the skill on disk.</p>
+  <h1>Propose</h1>
+  <p>Two views in one page: above is the <em>lifecycle</em> of every
+     skill the system has proposed (what stuck, what didn't); below
+     is the list of <em>recent runs</em> with the model's current
+     suggestions ready to apply.</p>
   <p><small class="muted">The web UI never writes to
      <code>~/.claude/skills/</code> on its own — this page only
-     reads cached proposals; you stay in the loop on what gets
-     installed.</small></p>
+     reads cached proposals; the action surface
+     (<code>aichronicles propose apply</code>) stays CLI-only so
+     you're always in the loop on what gets installed.</small></p>
 </hgroup>
+
+<section>
+  <h2>Lifecycle of past proposals</h2>
+  <p>Same four-bucket categorisation the propose system prompt uses
+     to bias future suggestions (<em>rule 12</em>). What you see here
+     is what the LLM sees in its prior-proposals stanza.</p>
+
+  {{if .AppliedWorking}}
+  <article>
+    <header><h3>Applied · in use, working <small>({{len .AppliedWorking}})</small></h3></header>
+    <p><small>Loaded ≥1 time after apply, no <code>tool_failure</code> correlation. The system knows not to repropose these.</small></p>
+    <table>
+      <thead><tr><th>Skill</th><th>Loads</th><th>Applied</th><th>Path</th></tr></thead>
+      <tbody>
+        {{range .AppliedWorking}}
+        <tr>
+          <td><code>{{.SkillName}}</code></td>
+          <td>{{.LoadsAfterApply}}</td>
+          <td>{{.AppliedAgo}}</td>
+          <td><small>{{.AppliedPath}}</small></td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </article>
+  {{end}}
+
+  {{if .AppliedUnused}}
+  <article>
+    <header><h3>Applied · unused <small>({{len .AppliedUnused}})</small></h3></header>
+    <p><small>SKILL.md on disk but never invoked since apply. The <code>when_to_use</code> trigger may not match the user's actual prompt shape — candidates for revision via <code>aichronicles skills evolve</code>.</small></p>
+    <table>
+      <thead><tr><th>Skill</th><th>Applied</th><th>Path</th></tr></thead>
+      <tbody>
+        {{range .AppliedUnused}}
+        <tr>
+          <td><code>{{.SkillName}}</code></td>
+          <td>{{.AppliedAgo}}</td>
+          <td><small>{{.AppliedPath}}</small></td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </article>
+  {{end}}
+
+  {{if .AppliedFailing}}
+  <article>
+    <header><h3>Applied · failing <small>({{len .AppliedFailing}})</small></h3></header>
+    <p><small>Loads correlate with <code>tool_failure</code> events within ~10 minutes — the skill's instructions may be wrong / outdated. <code>aichronicles skills evolve --skill &lt;name&gt;</code> is the natural follow-up.</small></p>
+    <table>
+      <thead><tr><th>Skill</th><th>Loads</th><th>Failures</th><th>Applied</th></tr></thead>
+      <tbody>
+        {{range .AppliedFailing}}
+        <tr>
+          <td><code>{{.SkillName}}</code></td>
+          <td>{{.LoadsAfterApply}}</td>
+          <td>{{.FailedLoadsAfter}}</td>
+          <td>{{.AppliedAgo}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </article>
+  {{end}}
+
+  {{if .NotApplied}}
+  <article>
+    <header><h3>Not applied <small>({{.UnappliedCount}})</small></h3></header>
+    <p><small>Proposals the user did not act on. The system biases future propose runs away from near-duplicates — repeated rejection is signal.</small></p>
+    <table>
+      <thead><tr><th>Skill</th><th>Proposed</th></tr></thead>
+      <tbody>
+        {{range .NotApplied}}
+        <tr>
+          <td><code>{{.SkillName}}</code></td>
+          <td>{{.ProposedAgo}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </article>
+  {{end}}
+
+  {{if and (not .AppliedWorking) (not .AppliedUnused) (not .AppliedFailing) (not .NotApplied)}}
+  <article>
+    <p class="empty muted">No proposed-skill lifecycle data yet — run <code>aichronicles propose</code> below, then <code>aichronicles propose apply --skill &lt;name&gt;</code> for any you want on disk. The lifecycle bookkeeping kicks in at apply time.</p>
+  </article>
+  {{end}}
+</section>
+
+<hr>
+
+<section>
+  <h2>Recent propose runs</h2>
+  <p>Cached <code>propose</code> artefacts (<code>llm_outputs.kind = propose</code>), newest first. Each card is one model-written run; each skill carries a copy-to-clipboard <em>apply</em> command — paste it in a terminal to materialise.</p>
 
 {{if .Proposals}}
 {{range .Proposals}}
@@ -103,4 +197,5 @@
      days, ≤50 sessions) and persists the result here.</p>
 </article>
 {{end}}
+</section>
 {{end}}
