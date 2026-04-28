@@ -20,7 +20,7 @@
     
     
       
-        <title>Aichronicles skills - aichronicles</title>
+        <title>Aichronicles skills evolve - aichronicles</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#aichronicles-skills" class="md-skip">
+        <a href="#aichronicles-skills-evolve" class="md-skip">
           Skip to content
         </a>
       
@@ -108,7 +108,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Aichronicles skills
+              Aichronicles skills evolve
             
           </span>
         </div>
@@ -600,14 +600,23 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#aichronicles-skills" class="md-nav__link">
+  <a href="#aichronicles-skills-evolve" class="md-nav__link">
     <span class="md-ellipsis">
-      aichronicles skills
+      aichronicles skills evolve
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="aichronicles skills">
+    <nav class="md-nav" aria-label="aichronicles skills evolve">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#synopsis" class="md-nav__link">
+    <span class="md-ellipsis">
+      Synopsis
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#options" class="md-nav__link">
@@ -647,7 +656,7 @@
                   
 
   
-    <a href="https://github.com/toabctl/aichronicles/edit/main/docs/reference/cli/aichronicles_skills.md" title="Edit this page" class="md-content__button md-icon">
+    <a href="https://github.com/toabctl/aichronicles/edit/main/docs/reference/cli/aichronicles_skills_evolve.md" title="Edit this page" class="md-content__button md-icon">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -655,19 +664,46 @@
   
 
 
-  <h1>Aichronicles skills</h1>
+  <h1>Aichronicles skills evolve</h1>
 
-<h2 id="aichronicles-skills">aichronicles skills<a class="headerlink" href="#aichronicles-skills" title="Permanent link">&para;</a></h2>
-<p>Inspect captured skill activity (frequency, staleness, ...)</p>
+<h2 id="aichronicles-skills-evolve">aichronicles skills evolve<a class="headerlink" href="#aichronicles-skills-evolve" title="Permanent link">&para;</a></h2>
+<p>Draft a revised SKILL.md for a stale-correlated skill, grounded in captured failures</p>
+<h3 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h3>
+<p>Reads ~/.claude/skills/<name>/SKILL.md and the failure events
+the staleness detector found correlated with this skill, then
+asks the LLM to revise the SKILL: tighten the trigger, add
+pitfalls, fix concrete instruction errors. The frontmatter is
+preserved verbatim — the SKILL keeps its identity.</p>
+<p>Output lands at ~/.claude/skills/<name>/SKILL.md.v2 — the
+original is left alone. Diff the two and replace manually if
+the revision looks good. The LLM may also decide no revision
+is warranted (failures look unrelated, evidence too thin) and
+return a no-change verdict instead.</p>
+<p>Implements gap #4 from the research-vs-aichronicles comparison
+memory: the TDS Voyager critique notes that Voyager-style
+systems flag stale skills but rarely act on them — this
+command is the act-on-it side.</p>
+<p>Cached under kind=skill_revision keyed on the SKILL's
+content-hash + name, so re-running on an unchanged SKILL is
+free; hand-editing the SKILL invalidates the cache.</p>
+<p>Requires the LLM provider to be configured (same as
+summarize/reflect/propose).</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>aichronicles skills evolve --skill &lt;name&gt; [flags]
+</span></code></pre></div>
 <h3 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>  -h, --help   help for skills
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>      --db string           SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>      --examples int        how many failure examples to include in the prompt (default 5)
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>      --force               bypass the cache and re-call the LLM even if a revision was already drafted
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>  -h, --help                help for evolve
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>      --model string        LLM model id (default: provider&#39;s default)
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>      --since duration      only consider failures within this window (e.g. 14d, 30d) (default 720h0m0s)
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>      --skill string        name of the SKILL to revise (must exist under --skills-dir)
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>      --skills-dir string   override target directory (default: ~/.claude/skills)
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>      --window duration     how long after a skill load to look for a tool_failure (e.g. 5m, 10m) (default 10m0s)
 </span></code></pre></div>
 <h3 id="see-also">SEE ALSO<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h3>
 <ul>
-<li><a href="../aichronicles/">aichronicles</a>  - Capture AI coding agent session events</li>
-<li><a href="../aichronicles_skills_evolve/">aichronicles skills evolve</a>  - Draft a revised SKILL.md for a stale-correlated skill, grounded in captured failures</li>
-<li><a href="../aichronicles_skills_impact/">aichronicles skills impact</a>  - Per-skill success rate over recent loads (positive view of the staleness signal)</li>
-<li><a href="../aichronicles_skills_stale/">aichronicles skills stale</a>    - Surface skills whose loads correlate with subsequent tool_failures</li>
+<li><a href="../aichronicles_skills/">aichronicles skills</a>    - Inspect captured skill activity (frequency, staleness, ...)</li>
 </ul>
 
 
