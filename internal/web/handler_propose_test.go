@@ -119,9 +119,9 @@ func TestProposePage_RendersLifecycleBuckets(t *testing.T) {
 
 	_, body := fetch(t, base+"/propose")
 	for _, want := range []string{
-		"Applied · unused",
+		"Added · unused",
 		"applied-unused",
-		"Not applied",
+		"Pending",
 		"rejected-idea",
 	} {
 		if !strings.Contains(body, want) {
@@ -130,7 +130,7 @@ func TestProposePage_RendersLifecycleBuckets(t *testing.T) {
 	}
 }
 
-func TestProposePage_RendersStoredCardWithApplyCmd(t *testing.T) {
+func TestProposePage_RendersStoredCardWithAddCmd(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)
 	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
@@ -177,21 +177,21 @@ func TestProposePage_RendersStoredCardWithApplyCmd(t *testing.T) {
 		"Rejected alternatives:",
 		// The copy-cmd button — must include --output-id <id>
 		// so the copy-paste survives newer propose runs.
-		"data-copy=\"aichronicles propose apply --skill test-creation --output-id ",
+		"data-copy=\"aichronicles propose add --skill test-creation --output-id ",
 		"copy-btn",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("propose card missing %q\n%s", want, body)
 		}
 	}
-	// Apply command must reference the ACTUAL row id we just seeded,
+	// Add command must reference the ACTUAL row id we just seeded,
 	// not the latest in the table.
-	wantCmd := "aichronicles propose apply --skill test-creation --output-id "
+	wantCmd := "aichronicles propose add --skill test-creation --output-id "
 	if !strings.Contains(body, wantCmd) {
-		t.Errorf("expected apply command, got body:\n%s", body)
+		t.Errorf("expected add command, got body:\n%s", body)
 	}
 	if !strings.Contains(body, "--output-id "+itoa(id)) {
-		t.Errorf("apply command missing --output-id %d:\n%s", id, body)
+		t.Errorf("add command missing --output-id %d:\n%s", id, body)
 	}
 }
 

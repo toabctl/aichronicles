@@ -285,14 +285,17 @@ type WorkflowRow struct {
 
 // ProposalRow is one row in a proposals lifecycle table.
 // Embedded into ProposePage; the lifecycle view lives on /propose
-// alongside the recent-runs view.
+// alongside the recent-runs view. Field names follow the AutoSkill
+// (Yang et al., 2026 — arXiv:2603.01145) maintenance vocabulary —
+// AddedAgo / LoadsAfterAdd / AddPath — so the rendering layer
+// matches the data model and the LLM-facing prompt strings.
 type ProposalRow struct {
 	SkillName        string
 	ProposedAgo      string
-	AppliedAgo       string // empty when not applied
-	LoadsAfterApply  int
+	AddedAgo         string // empty when the candidate is pending
+	LoadsAfterAdd    int
 	FailedLoadsAfter int
-	AppliedPath      string
+	AddPath          string
 }
 
 // InsightsPage is the data shape the /insights template consumes.
@@ -407,7 +410,7 @@ type DigestEvidenceRow struct {
 //  2. Recent runs (bottom section) — cards of cached propose
 //     LLM-outputs (kind=propose), newest first. Each card lists
 //     the skills the model suggested with evidence + a
-//     copy-to-clipboard `aichronicles propose apply` command.
+//     copy-to-clipboard `aichronicles propose add` command.
 //
 // One page rather than two routes (the previous /propose +
 // /proposals split) because both views answer questions in the
@@ -418,14 +421,15 @@ type ProposePage struct {
 	Limit     int
 	Proposals []ProposeCard
 
-	// Lifecycle of past skill candidates. Empty slices when the
+	// Lifecycle of past skill candidates, bucketed by AutoSkill
+	// (Yang et al., 2026) maintenance state. Empty slices when the
 	// store has nothing in that bucket — the template hides the
 	// section in that case.
-	AppliedWorking []ProposalRow
-	AppliedUnused  []ProposalRow
-	AppliedFailing []ProposalRow
-	NotApplied     []ProposalRow
-	UnappliedCount int
+	AddedWorking []ProposalRow
+	AddedUnused  []ProposalRow
+	AddedFailing []ProposalRow
+	Pending      []ProposalRow
+	PendingCount int
 }
 
 // ProposeCard is one rendered propose row. RawBody is populated
@@ -442,7 +446,7 @@ type ProposeCard struct {
 }
 
 // ProposeSkillRow mirrors prompts.ProposedSkill with display-ready
-// helpers (ApplyCmd already shaped, evidence pre-shortened, etc.).
+// helpers (AddCmd already shaped, evidence pre-shortened, etc.).
 type ProposeSkillRow struct {
 	Name                 string
 	WhenToUse            string
@@ -452,11 +456,11 @@ type ProposeSkillRow struct {
 	AlternativesRejected string
 	Scripts              []ProposeScriptRow
 	Evidence             []ProposeEvidenceRow
-	// ApplyCmd is the exact `aichronicles propose apply --skill X
+	// AddCmd is the exact `aichronicles propose add --skill X
 	// --output-id N` line the copy button drops onto the user's
 	// clipboard. --output-id is always set so the copy-paste
 	// survives later propose runs.
-	ApplyCmd string
+	AddCmd string
 }
 
 type ProposeScriptRow struct {

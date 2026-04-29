@@ -80,18 +80,18 @@ func loadProposalLifecycle(ctx context.Context, s *Server, page *ProposePage, no
 		row := ProposalRow{
 			SkillName:        e.SkillName,
 			ProposedAgo:      relativeTime(e.ProposedAtMs, now),
-			AppliedAgo:       relativeTime(e.AddedAtMs, now),
-			LoadsAfterApply:  e.LoadsAfterAdd,
+			AddedAgo:         relativeTime(e.AddedAtMs, now),
+			LoadsAfterAdd:    e.LoadsAfterAdd,
 			FailedLoadsAfter: e.FailedLoadsAfter,
-			AppliedPath:      e.AddPath,
+			AddPath:          e.AddPath,
 		}
 		switch {
 		case e.FailedLoadsAfter > 0:
-			page.AppliedFailing = append(page.AppliedFailing, row)
+			page.AddedFailing = append(page.AddedFailing, row)
 		case e.LoadsAfterAdd == 0:
-			page.AppliedUnused = append(page.AppliedUnused, row)
+			page.AddedUnused = append(page.AddedUnused, row)
 		default:
-			page.AppliedWorking = append(page.AppliedWorking, row)
+			page.AddedWorking = append(page.AddedWorking, row)
 		}
 	}
 
@@ -101,12 +101,12 @@ func loadProposalLifecycle(ctx context.Context, s *Server, page *ProposePage, no
 		return fmt.Errorf("pending: %w", err)
 	}
 	for _, u := range pending {
-		page.NotApplied = append(page.NotApplied, ProposalRow{
+		page.Pending = append(page.Pending, ProposalRow{
 			SkillName:   u.SkillName,
 			ProposedAgo: relativeTime(u.ProposedAtMs, now),
 		})
 	}
-	page.UnappliedCount = len(page.NotApplied)
+	page.PendingCount = len(page.Pending)
 	return nil
 }
 
@@ -136,9 +136,9 @@ func buildProposeCards(rows []store.LLMOutput, now time.Time) []ProposeCard {
 }
 
 // buildProposeSkills lifts a slice of prompts.ProposedSkill into
-// the per-template render shape. ApplyCmd is the canonical
-// `propose apply` command for this skill — always with
-// --output-id so the copy-paste survives newer propose runs.
+// the per-template render shape. AddCmd is the canonical
+// `propose add` command for this skill — always with --output-id
+// so the copy-paste survives newer propose runs.
 func buildProposeSkills(skills []prompts.ProposedSkill, outputID int64) []ProposeSkillRow {
 	out := make([]ProposeSkillRow, 0, len(skills))
 	for _, s := range skills {
@@ -151,7 +151,7 @@ func buildProposeSkills(skills []prompts.ProposedSkill, outputID int64) []Propos
 			AlternativesRejected: s.AlternativesRejected,
 			Scripts:              buildProposeScripts(s.Scripts),
 			Evidence:             buildProposeEvidence(s.Evidence),
-			ApplyCmd: fmt.Sprintf("aichronicles propose apply --skill %s --output-id %d",
+			AddCmd: fmt.Sprintf("aichronicles propose add --skill %s --output-id %d",
 				s.Name, outputID),
 		})
 	}
