@@ -1897,6 +1897,8 @@ Refuse (go_ahead=false) when ANY of:
 
 6. **SCOPE TIGHTNESS.** Triggers must name a tool, framework, or task shape narrow enough that the skill fires on the SAME problem class — not adjacent problem classes. A skill with triggers like ["deploy", "ci", "test"] will fire on far too much; refuse and recommend tightening to a single tool/framework. The literature finding here is that the 7/49 winning skills were all narrow-and-mechanical (specific formula, specific API pattern); the 3 hurting skills were broad framework guides.
 
+7. **CONTRADICTION with installed skills.** Scan the "INSTALLED SKILLS" stanza below. The candidate may have a different name and a different trigger, but does its prompt body / steps prescribe an action that CONTRADICTS what an installed skill prescribes for an overlapping situation? Example: candidate says "always rebase before pushing" while an installed skill says "never rebase shared branches". When two skills retrieve together for related-but-distinct tasks, the agent receives conflicting instructions and the more recently-loaded one wins arbitrarily. Refuse with severity=medium and recommend either reconciling the two (merge into the installed skill) or tightening triggers so the two cannot co-fire. SSGM (Lam et al., 2026 — arXiv:2603.11768) is explicit that "memory updates should never be committed passively" — every accepted skill must be checked against the existing bank for hard-fact conflicts before it lands.
+
 Approve (go_ahead=true) when:
 
 - Trigger condition is concrete and observable (not "when X is hard" but "when the user runs aichronicles propose and the output is too verbose to scan").
@@ -1910,9 +1912,9 @@ Severity scale (when refusing):
 
 - "low" — proposal is fine but borderline; would benefit from another evidence session or tighter when_to_use.
 - "medium" — meaningful problem (duplicate of installed, weak evidence, scope too broad) — fix before applying.
-- "high" — actively wrong (would mislead the agent, fabricated steps, regression risk on cited evidence) — do not apply.
+- "high" — actively wrong (would mislead the agent, fabricated steps, regression risk on cited evidence, contradicts an installed skill on a hard fact) — do not apply.
 
-Recommendation is one short sentence the user can act on: "tighten the when_to_use to 'X'", "merge with installed skill 'Y'", "drop trigger 'code' — too generic", "drop — would have hurt session abc12345 by anchoring on the wrong API version", etc. Empty when go_ahead=true.`
+Recommendation is one short sentence the user can act on: "tighten the when_to_use to 'X'", "merge with installed skill 'Y'", "drop trigger 'code' — too generic", "drop — would have hurt session abc12345 by anchoring on the wrong API version", "contradicts installed skill 'Z' on rebase-of-shared-branches — reconcile or refuse", etc. Empty when go_ahead=true.`
 
 const verifyProposalToolSchema = `{
   "type": "object",

@@ -1087,25 +1087,26 @@ func TestBuildVerifyProposal_SurfacesScopeFields(t *testing.T) {
 }
 
 // TestVerifyProposalSystem_HasBehaviouralRules pins that the
-// system prompt embeds the SWE-Skills-Bench-derived empirical
-// rationale and the two new refusal categories (regression risk,
-// scope tightness). A regression that drops these rules would
-// silently revert the gate to its weaker pre-2026-04-29 form.
+// system prompt embeds the empirical rationale and every refusal
+// category that was deliberately added against a literature finding.
+// A regression that drops these rules would silently revert the
+// gate to a weaker form.
 func TestVerifyProposalSystem_HasBehaviouralRules(t *testing.T) {
 	t.Parallel()
-	// Empirical motivation surfaces as a quotable phrase so a
-	// future reader knows where the rules came from.
-	if !strings.Contains(verifyProposalSystem, "SWE-Skills-Bench") {
-		t.Errorf("system prompt missing SWE-Skills-Bench citation")
-	}
-	if !strings.Contains(verifyProposalSystem, "REGRESSION RISK") {
-		t.Errorf("system prompt missing REGRESSION RISK rule")
-	}
-	if !strings.Contains(verifyProposalSystem, "SCOPE TIGHTNESS") {
-		t.Errorf("system prompt missing SCOPE TIGHTNESS rule")
-	}
-	if !strings.Contains(verifyProposalSystem, "near-match context pollution") {
-		t.Errorf("system prompt missing the near-match-pollution failure-mode language")
+	// Empirical motivations surface as quotable phrases so a future
+	// reader knows where the rules came from.
+	for _, want := range []string{
+		"SWE-Skills-Bench",
+		"SSGM",
+		"REGRESSION RISK",
+		"SCOPE TIGHTNESS",
+		"CONTRADICTION with installed skills",
+		"near-match context pollution",
+		"memory updates should never be committed passively",
+	} {
+		if !strings.Contains(verifyProposalSystem, want) {
+			t.Errorf("system prompt missing %q", want)
+		}
 	}
 }
 
