@@ -1,13 +1,33 @@
 # Data flow
 
-This page is the dynamic view: what happens, in order, when one
-of two key things occurs — a Claude Code hook fires, or you run
-`aichronicles summarize`. Read this when you're trying to figure
+This page is the dynamic view: what happens, in order, when each
+of the system's flows runs. Read this when you're trying to figure
 out where to add a log line, where to put a new check, or why an
 outage feels the way it does.
 
-For the static view (what packages exist, schema, dependencies),
-see [architecture.md](architecture.md).
+For the static view, two complementary docs:
+
+- The trust-boundary architecture diagram on the
+  [project homepage](../index.md) shows *where* components run
+  (ingest subprocess, daemon, db, mcp-serve, cli, external API).
+- [architecture.md](architecture.md) covers the package map, SQL
+  schema (with ER diagram), migrations, and the LLM provider
+  abstraction.
+
+## What runs when (quick reference)
+
+| Trigger                                                   | What runs                                                                                                  | Cadence                                                |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Claude Code / Gemini CLI hook fires                       | `aichronicles ingest` → daemon → `raw_envelopes` + `events` (+ FTS / extractions / sessions aggregates)    | Every event (prompt, tool call, response, …)           |
+| Daemon ticker fires (when `Induction.Enabled = true`)     | One sweep: phase 0 (segment stale episodes) → 1 (summarize) → 2 (induction) → 3 (facts), per candidate     | Every `Induction.SweepInterval`                        |
+| `aichronicles summarize --session <id>`                   | One summarize LLM call → `llm_outputs(kind=summary)`                                                       | Manual, on demand                                      |
+| `aichronicles reflect` / `propose`                        | Multi-session digest → reflect/propose LLM call → `llm_outputs(kind=reflection / propose)`                 | Manual, on demand                                      |
+| `aichronicles propose add` / `merge` / `discard --skill X` | One `skill_candidates` lifecycle transition; `add`/`merge` also write `<skills>/<name>/SKILL.md` to disk   | Manual, per skill                                      |
+| `aichronicles induction sweep`                            | One-shot of the daemon's periodic work; useful when the daemon is off or you want to see per-session output | Manual, on demand                                      |
+| MCP tool call from Claude Code (`search_events`, `find_episodes`, `get_summary`, …) | Read-only SQL against the store; no writes                                                                 | Per agent tool-use, while a session is active          |
+
+The sections below detail each automatic flow (A, D) and each
+manual flow (B, E), plus the read-only MCP path (C).
 
 ## A. Capturing one hook event
 
@@ -193,6 +213,157 @@ unchanged.
 This is why the README diagram shows the `mcp-serve` arrow as
 *read-only SQL* — there is no insert path through MCP. An
 adversarial MCP client can't pollute the corpus.
+
+## D. The induction sweep (automatic, when enabled)
+
+Section A handles capture; this is the automatic *processing* layer.
+A daemon-resident goroutine
+(`internal/daemon/induction.go:InductionSweeper`) fires the sweep
+on every `Induction.SweepInterval` tick — plus once immediately on
+daemon start so a backlog after downtime drains without waiting a
+full interval. Disabled by default; opt in via config
+(`Induction.Enabled = true` in the daemon config TOML).
+
+```mermaid
+flowchart TB
+    Tick["ticker fires every SweepInterval<br/>(also: one immediate fire on daemon start)"] --> P0
+    P0["Phase 0 (sweep-wide):<br/>LoadSessionsNeedingSegmentation"] --> P0Loop
+    P0Loop["for each stale session:<br/>SegmentSession + SaveEpisodes<br/>(local, no LLM)"] --> CL
+    CL[LoadInductionCandidates<br/>idle + min_events +<br/>NOT EXISTS llm_outputs.kind=induction] --> Loop{any candidates?}
+    Loop -- no --> Done[wait for next tick]
+    Loop -- yes --> P1
+    P1[Phase 1: summarize<br/>LLM · skipped if cached] --> P1OK{summary available?}
+    P1OK -- no --> NextSkip[skip phases 2+3<br/>for this session]
+    NextSkip --> Loop
+    P1OK -- yes --> P2
+    P2[Phase 2: induction<br/>LLM → Skill + Workflow] --> P3
+    P3[Phase 3: facts<br/>LLM → semantic_facts rows] --> Loop
+```
+
+A few non-obvious properties:
+
+- **Phase 0 is sweep-wide, not per-candidate.** It runs over every
+  session whose `episodes` table lags behind its `events` table —
+  either no episodes at all, or `MAX(episodes.ended_at_ms) <` the
+  newest event. Pre-fix it lived inside the per-candidate loop,
+  which meant once a session had an `llm_outputs.kind=induction`
+  row it permanently dropped out — and any late events arriving
+  afterwards were never segmented. See
+  `internal/store/episodes.go:LoadSessionsNeedingSegmentation`.
+- **Each phase has its own per-call timeout** derived from the
+  parent `ctx`. Without that, a single slow LLM call would burn
+  the whole sweep's deadline budget and starve every later
+  session — the bug session 9ec75b11's facts phase originally
+  tripped (see `internal/cli/induction.go:RunInductionSweep`).
+- **Phase 1 failure skips phases 2+3 for *that session only*.**
+  Induction and facts both gate on a summary being present;
+  they'd just log "no summary" errors of their own, so we
+  short-circuit. The next tick retries.
+- **One panic per tick is recovered.** The `tick()` method has a
+  `defer recover()` so a malformed prompt or LLM hiccup doesn't
+  strand the goroutine. The next tick fires regardless.
+- **Manual one-shot:** `aichronicles induction sweep` runs the
+  same `RunInductionSweep` function with `io.Stdout` for
+  rendering — useful when the daemon is off or you want to see
+  the per-session output.
+
+## E. The propose lifecycle (manual)
+
+`aichronicles propose` is the suggestion-generating cousin of
+summarize. Same `runCachedLLM` orchestration, but the digest
+spans many recent sessions and the model emits `record_proposal`
+with up to 5 skill candidates. Per-candidate, the user then picks
+one of three maintenance actions (AutoSkill vocabulary: `add` /
+`merge` / `discard`).
+
+```mermaid
+flowchart LR
+    Run["aichronicles propose"] --> LLM[propose LLM call]
+    LLM --> Cache[(llm_outputs<br/>kind=propose)]
+    Cache --> List["propose list<br/>(read-only review)"]
+    Cache --> Web["/propose<br/>web UI"]
+    Cache --> Add["propose add --skill X"]
+    Cache --> Mrg["propose merge --skill X"]
+    Cache --> Dsc["propose discard --skill X"]
+
+    Add --> AddGuards{name not on disk?<br/>name not previously discarded?}
+    AddGuards -- yes --> AddDo[write SKILL.md + scripts<br/>+ provenance footer<br/>row: decision='add']
+    AddGuards -- no --> AddRefuse[refuse;<br/>--force to override]
+
+    Mrg --> MrgGuards{not self-merge?}
+    MrgGuards -- yes --> MrgDo["merge LLM call<br/>→ rewrite SKILL.md (in place)<br/>→ refresh add_body_sha256<br/>→ refresh kind if flipped<br/>→ row: decision='merge'"]
+    MrgGuards -- no --> MrgRefuse[refuse; pick a different<br/>--output-id]
+
+    Dsc --> DscDo[no file change<br/>row: decision='discard'<br/>NULL-clears add_path /<br/>hash / merged_into_id]
+```
+
+Each decision flips the `skill_candidates` row keyed by
+`(llm_output_id, skill_name)` — the row was inserted at extract
+time and starts in `pending`. The state machine:
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: RecordSkillCandidate
+    pending --> add: MarkAdded
+    pending --> merge: MarkMerged
+    pending --> discard: MarkDiscarded
+
+    add --> merge: MarkMerged<br/>(clears add_body_sha256)
+    add --> discard: MarkDiscarded<br/>(clears add_path, hash)
+    add --> add: re-add<br/>(refresh path+hash,<br/>clears merged_into_id)
+
+    merge --> add: MarkAdded<br/>(clears merged_into_id)
+    merge --> discard: MarkDiscarded<br/>(clears all)
+
+    discard --> add: --force only
+    discard --> merge: MarkMerged
+
+    note right of merge
+        merged_into_id can be NULL
+        ("merged into hand-authored skill")
+    end note
+```
+
+Non-obvious properties:
+
+- **The state machine is per-row, but two guards are cross-row.**
+  `propose add --skill X` consults *every* `skill_candidates`
+  row with `skill_name=X` and refuses if any has
+  `decision='discard'` (unless `--force`) — the discard signal
+  was being undermined by next-output re-adds otherwise. The
+  on-disk dedup check is the other cross-row guard.
+- **Self-merge is refused before the LLM call.** If the user
+  ran `propose add` on this output and is now running
+  `propose merge` against the same `(output_id, skill_name)`,
+  `LoadAddedSkillCandidate` (which filters by skill_name only)
+  would return that very row — the schema's `merged_into_id
+  REFERENCES skill_candidates(id)` doesn't reject self-FKs, so
+  without the guard the row would point at itself. The
+  fast-path refusal lives in
+  `internal/cli/propose_merge.go:mergeProposedSkill`.
+- **Every transition NULL-clears fields that don't apply.**
+  Pre-fix, `add → discard` kept `add_path` populated (a
+  "rejected" row still claiming to own a SKILL.md);
+  `merge → add` kept `merged_into_id` stale; `add → merge`
+  kept the prior body hash. Each `Mark*` helper now writes
+  the right NULLs in its UPDATE list.
+- **After merge, both the source row AND the target row get
+  updated.** The source (`(outputID, skillName)`) flips to
+  `decision='merge'`. The target (`existingCandidate.ID` from
+  `LoadAddedSkillCandidate`) keeps `decision='add'` but its
+  `add_body_sha256` is refreshed via
+  `UpdateSkillCandidateAddBodyHash` and its `kind` via
+  `UpdateSkillCandidateKind` (so a `pattern` skill that
+  absorbed a `pitfall` candidate ends up labelled `pitfall`).
+  Without these refreshes the next `skills verify` would flag
+  every merged skill as drifted.
+- **Hand-authored merges use `merged_into_id = NULL`.** When
+  the user runs `propose merge` against a SKILL.md that
+  predates aichronicles (no candidate row owns it),
+  `MarkSkillCandidateMerged` accepts a sentinel `0` →
+  writes NULL. Without this, the candidate stayed `pending`
+  and future propose runs misread that as "user ignored",
+  biasing away from a useful suggestion.
 
 ## What's NOT shown
 

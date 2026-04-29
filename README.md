@@ -40,6 +40,11 @@ optional / on-demand (only fires for summarize/reflect/propose). The
 `local` box is the trust boundary — everything inside runs as your
 user, on your local disk. Cylinder is persistent state.
 
+The diagram above is the static view (where things run). For the
+*dynamic* view — what fires automatically vs. what you trigger,
+and what happens step-by-step inside each flow — see
+[`docs/explanation/data-flow.md`](docs/explanation/data-flow.md).
+
 ## What you get
 
 - **Searchable corpus.** Every prompt, tool call, and response from
