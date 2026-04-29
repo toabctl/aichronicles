@@ -630,6 +630,62 @@ func TestLoadFailureShapes_RespectsSinceAndLimit(t *testing.T) {
 	}
 }
 
+// TestLoadFailureShapes_ExcludesNullTimestampSessions pins that a
+// session with NEITHER ended_at_ms NOR started_at_ms (both NULL)
+// is excluded from a sinceMs-bounded query, instead of collapsing
+// to a 0 sentinel that always passes >= sinceMs.
+//
+// The COALESCE-to-0 form `COALESCE(ended, started, 0) >= ?` was
+// the bug: NULL-NULL became 0, and any sinceMs <= 0 (which is the
+// "no filter" call form) silently included these orphan rows.
+func TestLoadFailureShapes_ExcludesNullTimestampSessions(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+
+	// One ordinary failure_likely session with timestamps.
+	const haveTS = "00000000-0000-0000-0000-00000000aa01"
+	if _, err := s.DB().Exec(
+		`INSERT INTO sessions(id, source_agent, source_session_id, started_at_ms, ended_at_ms, summary_topic)
+		 VALUES (?, 'claude-code', ?, ?, ?, 'with-ts')`,
+		haveTS, "src-"+haveTS, int64(1_700_000_000_000), int64(1_700_000_001_000),
+	); err != nil {
+		t.Fatalf("seed have-ts: %v", err)
+	}
+	if err := SaveSessionOutcome(ctx, s.DB(), SessionOutcome{
+		SessionID: haveTS, ComputedAtMs: 1_700_000_001_000, Outcome: OutcomeFailureLikely,
+	}); err != nil {
+		t.Fatalf("save have-ts: %v", err)
+	}
+
+	// One failure_likely session with NULL ended/started timestamps.
+	// Pre-fix this row would always appear (COALESCE → 0 >= 0 = true).
+	const nullTS = "00000000-0000-0000-0000-00000000aa02"
+	if _, err := s.DB().Exec(
+		`INSERT INTO sessions(id, source_agent, source_session_id, summary_topic)
+		 VALUES (?, 'claude-code', ?, 'no-ts')`,
+		nullTS, "src-"+nullTS,
+	); err != nil {
+		t.Fatalf("seed null-ts: %v", err)
+	}
+	if err := SaveSessionOutcome(ctx, s.DB(), SessionOutcome{
+		SessionID: nullTS, ComputedAtMs: 1_700_000_001_000, Outcome: OutcomeFailureLikely,
+	}); err != nil {
+		t.Fatalf("save null-ts: %v", err)
+	}
+
+	got, err := LoadFailureShapes(ctx, s.DB(), 0, 0)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d failure-shape rows, want 1 (NULL-ts row should be excluded)", len(got))
+	}
+	if got[0].SessionID != haveTS {
+		t.Errorf("returned %q, want the with-ts session %q", got[0].SessionID, haveTS)
+	}
+}
+
 func TestEnsureSessionOutcome_ComputesAndCaches(t *testing.T) {
 	t.Parallel()
 	f := newOutcomeFixture(t, "00000000-0000-0000-0000-00000000001c")

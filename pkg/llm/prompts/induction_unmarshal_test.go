@@ -168,10 +168,6 @@ func TestInductionResult_UnmarshalMalformedRejected(t *testing.T) {
 			name:  "string of wrong-shape JSON",
 			input: `{"rationale":"r","workflow":"[1,2,3]"}`,
 		},
-		{
-			name:  "object missing required fields",
-			input: `{"rationale":"r","workflow":{"unrelated":"x"}}`,
-		},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -179,17 +175,195 @@ func TestInductionResult_UnmarshalMalformedRejected(t *testing.T) {
 			t.Parallel()
 			var got InductionResult
 			err := json.Unmarshal([]byte(tc.input), &got)
-			// Two of these fail at decode (good); the
-			// "object missing required fields" case
-			// decodes without error because Go's stdlib
-			// json doesn't enforce required:[]. That's
-			// fine — schema enforcement of "required" is
-			// the JSON-schema layer's job, not ours.
-			if tc.name != "object missing required fields" && err == nil {
-				t.Errorf("%s: expected error, got nil", tc.name)
+			if err == nil {
+				t.Errorf("%s: expected error, got nil (got=%+v)", tc.name, got)
 			}
 			if err != nil && !strings.Contains(err.Error(), "workflow") {
 				t.Errorf("%s: error should mention workflow: %v", tc.name, err)
+			}
+		})
+	}
+}
+
+// TestInducedWorkflow_ValidatePlaceholders pins the AWM
+// consistency rule: every {placeholder} appearing in any
+// procedure step's Action must be defined in that step's
+// Placeholders[]. Pre-fix, the rule was enforced only by prose
+// in the system prompt; a model emitting an undeclared {token}
+// would round-trip silently into the DB with a dangling reference.
+func TestInducedWorkflow_ValidatePlaceholders(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		w       InducedWorkflow
+		wantErr string // substring; "" means no error expected
+	}{
+		{
+			name: "no placeholders OK",
+			w: InducedWorkflow{
+				TaskShape: "deploy a service",
+				Procedure: []WorkflowStep{{Action: "ship the build"}},
+			},
+		},
+		{
+			name: "all placeholders defined",
+			w: InducedWorkflow{
+				TaskShape: "deploy {service}",
+				Procedure: []WorkflowStep{
+					{
+						Action: "deploy {service} to {env}",
+						Placeholders: []WorkflowPlaceholder{
+							{Token: "service", Description: "the service name"},
+							{Token: "env", Description: "target environment"},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "undeclared placeholder rejected",
+			w: InducedWorkflow{
+				TaskShape: "x",
+				Procedure: []WorkflowStep{
+					{
+						Action: "deploy {service} to {env}",
+						Placeholders: []WorkflowPlaceholder{
+							{Token: "service", Description: "the service name"},
+						},
+					},
+				},
+			},
+			wantErr: "{env}",
+		},
+		{
+			name: "JSON-shaped braces ignored (not a placeholder)",
+			w: InducedWorkflow{
+				TaskShape: "x",
+				Procedure: []WorkflowStep{
+					{Action: `send { "key": "val" } payload`},
+				},
+			},
+		},
+		{
+			name: "uppercase token ignored (not kebab grammar)",
+			w: InducedWorkflow{
+				TaskShape: "x",
+				Procedure: []WorkflowStep{
+					{Action: "use {SERVICE}"},
+				},
+			},
+		},
+		{
+			name: "second step's missing placeholder caught",
+			w: InducedWorkflow{
+				TaskShape: "x",
+				Procedure: []WorkflowStep{
+					{
+						Action:       "step 1: {a}",
+						Placeholders: []WorkflowPlaceholder{{Token: "a"}},
+					},
+					{Action: "step 2: {b}"},
+				},
+			},
+			wantErr: "step 2",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := tc.w.Validate()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Errorf("expected no error, got %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Errorf("expected error containing %q, got nil", tc.wantErr)
+				return
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error %v does not contain %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestInductionResult_UnmarshalRejectsUndeclaredPlaceholder pins
+// the parse-boundary enforcement: a workflow with a dangling
+// {placeholder} is rejected at decode time, NOT silently stored
+// for downstream consumers to misuse.
+func TestInductionResult_UnmarshalRejectsUndeclaredPlaceholder(t *testing.T) {
+	t.Parallel()
+	body := `{
+		"workflow": {
+			"task_shape": "x",
+			"procedure": [
+				{"action": "use {missing-token}", "placeholders": []}
+			]
+		}
+	}`
+	var r InductionResult
+	err := json.Unmarshal([]byte(body), &r)
+	if err == nil {
+		t.Fatalf("expected error, got nil (workflow=%+v)", r.Workflow)
+	}
+	if !strings.Contains(err.Error(), "missing-token") {
+		t.Errorf("error should mention the offending token: %v", err)
+	}
+}
+
+// TestInductionResult_UnmarshalEmptyObjectIsNil pins the load-bearing
+// validator: an artefact whose anchor field (TaskShape for workflow,
+// Name for skill) is empty after decode is treated as null, not as a
+// real-but-blank record. Stdlib json doesn't enforce JSON-Schema
+// `required`, so without the validator a model that emits
+// `"workflow":{}` or `"workflow":{"unrelated":"x"}` would silently
+// store a zero-valued InducedWorkflow that renders as a real card in
+// the web UI — exactly the "confidently wrong" data shape CLAUDE.md
+// rule #7 warns against.
+func TestInductionResult_UnmarshalEmptyObjectIsNil(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "workflow empty object",
+			input: `{"rationale":"r","workflow":{}}`,
+		},
+		{
+			name:  "workflow object missing task_shape",
+			input: `{"rationale":"r","workflow":{"unrelated":"x"}}`,
+		},
+		{
+			name:  "skill empty object",
+			input: `{"rationale":"r","skill":{}}`,
+		},
+		{
+			name:  "skill object missing name",
+			input: `{"rationale":"r","skill":{"when_to_use":"x"}}`,
+		},
+		{
+			name:  "stringified empty workflow",
+			input: `{"rationale":"r","workflow":"{}"}`,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var got InductionResult
+			if err := json.Unmarshal([]byte(tc.input), &got); err != nil {
+				t.Fatalf("%s: unexpected error: %v", tc.name, err)
+			}
+			if got.Workflow != nil {
+				t.Errorf("%s: workflow should be nil (no load-bearing field), got %+v",
+					tc.name, got.Workflow)
+			}
+			if got.Skill != nil {
+				t.Errorf("%s: skill should be nil (no load-bearing field), got %+v",
+					tc.name, got.Skill)
 			}
 		})
 	}

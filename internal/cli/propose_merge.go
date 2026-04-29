@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -147,6 +148,27 @@ func mergeProposedSkill(
 	}
 	nextVersion := store.BumpPatch(existingVersion)
 
+	// Resolve the merge target up front so we can reject self-merge
+	// BEFORE spending an LLM round-trip. LoadAddedSkillCandidate
+	// filters by skill_name only — its return CAN be the same row
+	// owned by this very `outputID` if the user already ran
+	// `propose add` against this output and is now running merge
+	// against it. The unconditional UPDATE in MarkSkillCandidateMerged
+	// would otherwise satisfy `merged_into_id = id` (the FK doesn't
+	// reject self-references), producing a row pointing at itself.
+	// Loading once here also keeps a single canonical view of the
+	// target row through the whole flow.
+	existingCandidate, err := store.LoadAddedSkillCandidate(ctx, st.DB(), candidate.Name)
+	if err != nil {
+		return fmt.Errorf("merge: load existing candidate: %w", err)
+	}
+	if existingCandidate != nil &&
+		existingCandidate.LLMOutputID == outputID &&
+		existingCandidate.SkillName == candidate.Name {
+		return fmt.Errorf("merge: candidate (output=%d, skill=%q) is already added at %s; merge target must be a different candidate. Run `propose discard` first if you meant to undo, or pick a different --output-id",
+			outputID, candidate.Name, skillMd)
+	}
+
 	if !noVerify {
 		if err := verifyProposalOrAbort(ctx, st, candidate, outputID, newClient, out); err != nil {
 			return err
@@ -157,8 +179,54 @@ func mergeProposedSkill(
 	if err != nil {
 		return err
 	}
-	if err := writeMergedSkill(skillMd, merged, nextVersion); err != nil {
+	bodyHashHex, err := writeMergedSkill(skillMd, merged, nextVersion)
+	if err != nil {
 		return err
+	}
+	// Persist any scripts the merge result claims as the deduped
+	// union. Pre-fix, candidate-side scripts were silently dropped
+	// at merge time even when the LLM recognised them as additive;
+	// the merge schema now carries `scripts` so the LLM emits the
+	// union and the CLI writes it. We mirror propose_add's loop:
+	// scripts/<name> with 0o755 (executable), header carrying the
+	// originating outputID for grep-able provenance.
+	if len(merged.Scripts) > 0 {
+		scriptsDir := filepath.Join(filepath.Dir(skillMd), "scripts")
+		if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
+			return fmt.Errorf("ensure %s: %w", scriptsDir, err)
+		}
+		for _, sc := range merged.Scripts {
+			target := filepath.Join(scriptsDir, sc.Name)
+			scriptBody := renderMergedScriptScaffold(&sc, candidate.Name, outputID)
+			if werr := os.WriteFile(target, []byte(scriptBody), 0o755); werr != nil {
+				return fmt.Errorf("write %s: %w", target, werr)
+			}
+			_, _ = fmt.Fprintf(out, "wrote %s (executable)\n", target)
+		}
+	}
+	// Refresh the surviving (target) candidate's add_body_sha256 to
+	// match the just-written merged file. Without this, the DB
+	// hash points at the pre-merge content while the on-disk file
+	// is the post-merge content, and the next `skills verify`
+	// reports every merged skill as drifted.
+	if existingCandidate != nil {
+		if uerr := store.UpdateSkillCandidateAddBodyHash(ctx, st.DB(), existingCandidate.ID, skillMd, bodyHashHex); uerr != nil {
+			slog.Warn("merge: failed to refresh add_body_sha256 on merge target", "id", existingCandidate.ID, "err", uerr)
+		}
+		// Refresh the target's kind too: the LLM-decided union may
+		// have flipped pattern→pitfall (the prompt rule says any
+		// pitfall input subsumes a pattern target). The frontmatter
+		// got the update via writeMergedSkill; mirror it on the row
+		// so the DB and the file agree on the contrastive label.
+		// We only call when the parsed kind is recognised; an
+		// empty / out-of-enum value leaves the existing row untouched
+		// (no fabrication — see CLAUDE.md rule #7).
+		if mergedKind := store.SkillKind(merged.Kind); mergedKind == store.SkillKindPattern || mergedKind == store.SkillKindPitfall {
+			if uerr := store.UpdateSkillCandidateKind(ctx, st.DB(), existingCandidate.ID, mergedKind); uerr != nil {
+				slog.Warn("merge: failed to refresh kind on merge target",
+					"id", existingCandidate.ID, "kind", mergedKind, "err", uerr)
+			}
+		}
 	}
 	_, _ = fmt.Fprintf(out, "merged %s (%s → %s)\n", skillMd, existingVersion, nextVersion)
 	if merged.Rationale != "" {
@@ -166,29 +234,26 @@ func mergeProposedSkill(
 	}
 
 	now := time.Now().UnixMilli()
-	existingCandidate, err := store.LoadAddedSkillCandidate(ctx, st.DB(), candidate.Name)
-	if err != nil {
-		slog.Warn("merge: failed to load existing candidate row (lifecycle not recorded)", "err", err)
-		return nil
-	}
-	if existingCandidate == nil {
-		// The on-disk SKILL.md is hand-authored — there is no
-		// candidate row to point merged_into_id at. Lifecycle
-		// tracking still records the merge: we mark this candidate
-		// as 'merge' with merged_into_id NULL via a discard-shaped
-		// path? No — that conflates with discard. Instead, leave
-		// the candidate as 'pending' so it surfaces as
-		// "the user merged it into a hand-authored skill"; this is
-		// rare enough that the simpler representation is fine.
-		_, _ = fmt.Fprintln(out, "  (existing skill is hand-authored — no candidate row to record merge target)")
-		return nil
+
+	// Pick the merge target id: a real candidate row (existing add)
+	// or 0 (sentinel for "hand-authored skill — no candidate row to
+	// FK to"). Recording the merge in either case is what closes
+	// the rejection-signal feedback loop: a candidate left in
+	// `pending` is read by future propose runs as "user ignored
+	// the suggestion", which is the wrong inference when the user
+	// actually folded it into a hand-authored skill.
+	var mergedIntoID int64
+	if existingCandidate != nil {
+		mergedIntoID = existingCandidate.ID
+	} else {
+		_, _ = fmt.Fprintln(out, "  (existing skill is hand-authored — recording merge with NULL target)")
 	}
 	if merr := store.MarkSkillCandidateMerged(ctx, st.DB(), outputID, candidate.Name,
-		existingCandidate.ID, skillMd, now); merr != nil {
+		mergedIntoID, skillMd, now); merr != nil {
 		if errors.Is(merr, store.ErrSkillCandidateNotFound) {
 			if rerr := store.RecordSkillCandidate(ctx, st.DB(), outputID, candidate.Name, now); rerr == nil {
 				_ = store.MarkSkillCandidateMerged(ctx, st.DB(), outputID, candidate.Name,
-					existingCandidate.ID, skillMd, now)
+					mergedIntoID, skillMd, now)
 			}
 		} else {
 			slog.Warn("merge: failed to record skill_candidates merge", "err", merr)
@@ -282,13 +347,58 @@ func proposeMergeHash(outputID int64, skillName, currentSkillMd, nextVersion str
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// renderMergedScriptScaffold mirrors renderSkillScriptScaffold for
+// the merge path. Same body shape (steps / placeholders / fallback
+// TODO) but the header notes "merged" provenance so a future
+// reader can tell merge-written scripts from add-written ones.
+func renderMergedScriptScaffold(sc *prompts.ProposedSkillScript, skillName string, outputID int64) string {
+	var b strings.Builder
+	fmt.Fprintln(&b, "#!/usr/bin/env bash")
+	fmt.Fprintln(&b, "# "+strings.TrimSpace(sc.Purpose))
+	fmt.Fprintln(&b, "#")
+	fmt.Fprintf(&b, "# Skill: %s\n", skillName)
+	fmt.Fprintf(&b, "# Scaffolded by `aichronicles propose merge` from llm_outputs id=%d.\n", outputID)
+
+	switch {
+	case len(sc.Steps) > 0:
+		writePlaceholderBlock(&b, sc.Placeholders)
+		fmt.Fprintln(&b)
+		fmt.Fprintln(&b, "set -euo pipefail")
+		fmt.Fprintln(&b)
+		for _, step := range sc.Steps {
+			if p := strings.TrimSpace(step.Purpose); p != "" {
+				fmt.Fprintln(&b, "# "+p)
+			}
+			fmt.Fprintln(&b, step.Cmd)
+			fmt.Fprintln(&b)
+		}
+	case strings.TrimSpace(sc.Body) != "":
+		fmt.Fprintln(&b)
+		fmt.Fprintln(&b, "set -euo pipefail")
+		fmt.Fprintln(&b)
+		fmt.Fprintln(&b, sc.Body)
+	default:
+		fmt.Fprintln(&b)
+		fmt.Fprintln(&b, "set -euo pipefail")
+		fmt.Fprintln(&b)
+		fmt.Fprintln(&b, "# TODO — replace this body with the actual implementation")
+		fmt.Fprintln(&b, "# the merged source skills relied on.")
+		fmt.Fprintln(&b, "echo 'TODO: implement' >&2")
+		fmt.Fprintln(&b, "exit 1")
+	}
+	return b.String()
+}
+
 // writeMergedSkill rebuilds the SKILL.md from the merged result:
 // regenerate the YAML frontmatter from the merged scalars + the
 // supplied next_version, then concatenate the body markdown the
 // LLM emitted (without the frontmatter fences — see the merge
-// system prompt). Atomic via a tmp-file + rename so a crash
-// mid-write can't corrupt the existing skill.
-func writeMergedSkill(path string, merged *prompts.MergedSkillResult, nextVersion string) error {
+// system prompt), append the SSGM provenance footer carrying the
+// new body hash, and atomically rename. Returns the body hash so
+// the caller can UPDATE the surviving candidate's add_body_sha256
+// — without that, the on-disk hash drifts from the DB record and
+// the next `skills verify` flags every merged skill as tampered.
+func writeMergedSkill(path string, merged *prompts.MergedSkillResult, nextVersion string) (bodyHashHex string, err error) {
 	examples := make([]skillFrontmatterExample, 0, len(merged.Examples))
 	for _, e := range merged.Examples {
 		examples = append(examples, skillFrontmatterExample{
@@ -301,12 +411,13 @@ func writeMergedSkill(path string, merged *prompts.MergedSkillResult, nextVersio
 		Description: merged.Description,
 		WhenToUse:   merged.WhenToUse,
 		Version:     nextVersion,
+		Kind:        frontmatterKind(merged.Kind),
 		Tags:        append([]string(nil), merged.Tags...),
 		Triggers:    append([]string(nil), merged.Triggers...),
 		Examples:    examples,
 	})
 	if err != nil {
-		return fmt.Errorf("marshal frontmatter: %w", err)
+		return "", fmt.Errorf("marshal frontmatter: %w", err)
 	}
 
 	var buf []byte
@@ -318,13 +429,23 @@ func writeMergedSkill(path string, merged *prompts.MergedSkillResult, nextVersio
 		buf = append(buf, '\n')
 	}
 
+	// Hash the body BEFORE appending the provenance footer (the
+	// footer encodes this hash, so the relationship is
+	// "compute → append → write"; a drift checker reverses it as
+	// "read → strip footer → recompute → compare"). Same shape
+	// propose_add uses (skillProvenanceFooter), kept symmetric so
+	// `skills verify` doesn't need to special-case merge output.
+	sum := sha256.Sum256(buf)
+	bodyHashHex = hex.EncodeToString(sum[:])
+	buf = append(buf, skillProvenanceFooter(bodyHashHex)...)
+
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, buf, 0o644); err != nil {
-		return fmt.Errorf("write tmp: %w", err)
+		return "", fmt.Errorf("write tmp: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("rename: %w", err)
+		return "", fmt.Errorf("rename: %w", err)
 	}
-	return nil
+	return bodyHashHex, nil
 }

@@ -96,6 +96,15 @@ func wilsonLowerBound(successes, total int) float64 {
 	if total <= 0 {
 		return 0
 	}
+	// Defensive clamp: successes outside [0, total] would push
+	// phat*(1-phat) negative, NaN-poisoning the sqrt and bypassing
+	// the `lb < 0` guard below (NaN comparisons are always false).
+	// Currently unreachable from the SQL caller, but the function
+	// is package-exported in spirit and a future caller shouldn't
+	// learn this the hard way via NaN propagating into a sort key.
+	if successes < 0 || successes > total {
+		return 0
+	}
 	const z = 1.96
 	n := float64(total)
 	phat := float64(successes) / n

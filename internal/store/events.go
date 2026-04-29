@@ -737,19 +737,49 @@ func LoadSessionStartCwd(ctx context.Context, db *sql.DB, sessionID string) (sql
 	return cwd, nil
 }
 
+// LoadEventsForSession returns events for one session in chronological
+// order. The `limit` argument follows three-state semantics:
+//
+//   - limit <= 0 → falls back to DefaultEventsPerSessionLimit (the
+//     "I forgot to set a limit" path; rendering and summarize callers
+//     usually take this branch).
+//   - limit > 0  → at most `limit` rows.
+//   - limit == LoadEventsForSessionUnbounded → no LIMIT clause; every
+//     event in the session. Used by callers whose result is wrong if
+//     truncated — the segmenter, primarily, where a missing tail
+//     event would silently fix the final episode's ended_at_ms at
+//     the wrong wall clock.
 func LoadEventsForSession(ctx context.Context, db *sql.DB, sessionID string, limit int) ([]EventView, error) {
-	if limit <= 0 {
+	switch {
+	case limit == LoadEventsForSessionUnbounded:
+		// no LIMIT clause
+	case limit <= 0:
 		limit = DefaultEventsPerSessionLimit
 	}
-	rows, err := db.QueryContext(ctx,
-		`SELECT event_id, kind, role, content_text, ts_source_ms, tool_name,
-		        subagent_id, subagent_type, cwd
-		 FROM events
-		 WHERE session_id = ?
-		 ORDER BY ts_source_ms ASC, rowid ASC
-		 LIMIT ?`,
-		sessionID, limit,
+	const projection = `event_id, kind, role, content_text, ts_source_ms, tool_name,
+		        subagent_id, subagent_type, cwd`
+	var (
+		rows *sql.Rows
+		err  error
 	)
+	if limit == LoadEventsForSessionUnbounded {
+		rows, err = db.QueryContext(ctx,
+			`SELECT `+projection+`
+			   FROM events
+			  WHERE session_id = ?
+			  ORDER BY ts_source_ms ASC, rowid ASC`,
+			sessionID,
+		)
+	} else {
+		rows, err = db.QueryContext(ctx,
+			`SELECT `+projection+`
+			   FROM events
+			  WHERE session_id = ?
+			  ORDER BY ts_source_ms ASC, rowid ASC
+			  LIMIT ?`,
+			sessionID, limit,
+		)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("query events: %w", err)
 	}
@@ -766,3 +796,13 @@ func LoadEventsForSession(ctx context.Context, db *sql.DB, sessionID string, lim
 	}
 	return out, rows.Err()
 }
+
+// LoadEventsForSessionUnbounded is the sentinel that tells
+// LoadEventsForSession to skip the LIMIT clause and stream every
+// event. Callers whose output is wrong under truncation (the episode
+// segmenter is the canonical example: a truncated tail produces a
+// final episode with the wrong ended_at_ms) pass this. The constant
+// is a negative value so it's distinguishable from both "use the
+// default" (limit <= 0 with the existing behaviour) and "this many
+// rows please" (limit > 0).
+const LoadEventsForSessionUnbounded = -1

@@ -221,6 +221,32 @@ func TestWilsonLowerBound(t *testing.T) {
 	}
 }
 
+// TestWilsonLowerBound_OutOfRange pins the defensive clamp: if a
+// caller passes successes < 0 or successes > total the function
+// returns 0 instead of NaN. NaN-poisoning is the worst failure mode
+// because the `if lb < 0` guard inside the function does NOT catch
+// it (NaN comparisons are always false), so the bad value would
+// silently propagate into ranking and sort keys.
+func TestWilsonLowerBound_OutOfRange(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name             string
+		successes, total int
+	}{
+		{"successes>total", 2, 1},
+		{"successes>total big gap", 1000, 1},
+		{"negative successes", -1, 10},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := wilsonLowerBound(tc.successes, tc.total)
+			if got != 0 {
+				t.Errorf("wilsonLowerBound(%d,%d) = %v, want 0", tc.successes, tc.total, got)
+			}
+		})
+	}
+}
+
 // TestWilsonLowerBound_RanksHighNAboveLowN encodes the property that
 // drives the change: 50/100 (high N, mid rate) must rank above 1/1
 // (low N, max rate) when sorting by the Wilson lower bound.

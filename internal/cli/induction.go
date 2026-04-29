@@ -318,6 +318,46 @@ func RunInductionSweep(
 		limit = defaultInductionLimit
 	}
 
+	// Phase 0 (sweep-wide): segment any session whose episodes
+	// table is stale relative to its events table. This pass runs
+	// independently of induction state — once a session is
+	// inducted it permanently drops out of the candidate set, so
+	// late-arriving events would never get re-segmented if phase 0
+	// stayed inside the per-candidate loop. The sweep-wide pass
+	// keys on episode staleness directly: missing episodes OR an
+	// event newer than the latest episode's ended_at_ms.
+	//
+	// Pure local work (no LLM); idempotent via DELETE-then-INSERT
+	// in SaveEpisodes, so a session that got picked up here AND is
+	// also an induction candidate below produces the same episodes
+	// either way. We use a generous limit (4× induction's) so
+	// segmentation isn't the bottleneck — the operation is cheap
+	// and segmentation lag is the foundation everything downstream
+	// relies on.
+	if !opts.SkipEpisodes {
+		segLimit := limit * 4
+		if segLimit < 50 {
+			segLimit = 50
+		}
+		needSeg, serr := store.LoadSessionsNeedingSegmentation(ctx, s.DB(),
+			time.Now().UnixMilli(), idle.Milliseconds(), minEvents, segLimit)
+		if serr != nil {
+			slog.Warn("induction sweep: failed to load sessions needing segmentation", "err", serr)
+		} else if len(needSeg) > 0 {
+			_, _ = fmt.Fprintf(errOut, "induction sweep: segmenting %d session(s)\n", len(needSeg))
+			for _, sid := range needSeg {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				if eerr := segmentAndSaveEpisodes(ctx, s, sid); eerr != nil {
+					slog.Warn("induction sweep: episode segmentation failed",
+						"session_id", sid, "err", eerr)
+					_, _ = fmt.Fprintf(errOut, "  ✗ episodes %s: %v\n", sid[:8], eerr)
+				}
+			}
+		}
+	}
+
 	candidates, err := store.LoadInductionCandidates(ctx, s.DB(),
 		time.Now().UnixMilli(), idle.Milliseconds(), minEvents, limit)
 	if err != nil {
@@ -357,23 +397,9 @@ func RunInductionSweep(
 			return ctx.Err()
 		}
 
-		// Phase 0: segment the session into episodes. Pure local
-		// work (no LLM); idempotent via DELETE-then-INSERT. Runs
-		// before the LLM phases so retrieval has the episode
-		// index even when downstream phases fail. Pink et al.
-		// (2026 — arXiv:2502.06975) frame episodes as the
-		// substrate for instance-specific recall; segmentation is
-		// the cheap precondition.
-		if !opts.SkipEpisodes {
-			if eerr := segmentAndSaveEpisodes(ctx, s, c.ID); eerr != nil {
-				slog.Warn("induction sweep: episode segmentation failed",
-					"session_id", c.ID, "err", eerr)
-				_, _ = fmt.Fprintf(errOut,
-					"  ✗ episodes %s: %v\n", c.ID[:8], eerr)
-				// Non-fatal: downstream phases don't depend on
-				// episodes (yet). Continue to phases 1+.
-			}
-		}
+		// (Phase 0 — episode segmentation — moved out of this loop
+		// so it also covers already-inducted sessions. See the
+		// sweep-wide pass at the top of RunInductionSweep.)
 
 		// Phase 1: auto-summarize when no kind=summary row exists
 		// for this session yet. Closes the manual gate that used
@@ -462,7 +488,14 @@ func RunInductionSweep(
 // shouldn't reach the candidate query, but the guard keeps the
 // DB write trivial in the degenerate case).
 func segmentAndSaveEpisodes(ctx context.Context, s *store.Store, sessionID string) error {
-	events, err := store.LoadEventsForSession(ctx, s.DB(), sessionID, 0)
+	// Unbounded load on purpose: episode segmentation is meaningless
+	// over a truncated event list — the final episode's ended_at_ms
+	// would be the cap-th event's timestamp, not the actual session
+	// tail. Sessions over DefaultEventsPerSessionLimit (10k events)
+	// happen during long autonomous runs and are exactly the case
+	// where wrong stored data is worse than slow extraction (project
+	// rule #7).
+	events, err := store.LoadEventsForSession(ctx, s.DB(), sessionID, store.LoadEventsForSessionUnbounded)
 	if err != nil {
 		return fmt.Errorf("load events: %w", err)
 	}

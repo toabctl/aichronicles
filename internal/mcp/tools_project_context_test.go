@@ -166,8 +166,20 @@ func TestGetProjectContext_PopulatedProjectRendersEverySection(t *testing.T) {
 		"workflow": map[string]any{
 			"task_shape": "deploy a backend service to staging",
 			"procedure": []map[string]any{
-				{"action": "Tag the release commit with {version}"},
-				{"action": "Run kubectl rollout for {service-name}"},
+				// Each {placeholder} is declared on its step so the
+				// unmarshal-time AWM consistency check accepts the fixture.
+				{
+					"action": "Tag the release commit with {version}",
+					"placeholders": []map[string]any{
+						{"token": "version", "description": "release version", "example": "v1.2.3"},
+					},
+				},
+				{
+					"action": "Run kubectl rollout for {service-name}",
+					"placeholders": []map[string]any{
+						{"token": "service-name", "description": "k8s service", "example": "api"},
+					},
+				},
 			},
 			"preconditions":  []string{},
 			"success_checks": []string{},

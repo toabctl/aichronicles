@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -160,12 +161,59 @@ func TestMarkSkillCandidateMerged_UpdatesRow(t *testing.T) {
 	}
 }
 
-func TestMarkSkillCandidateMerged_RequiresTarget(t *testing.T) {
+// TestMarkSkillCandidateMerged_NegativeTargetRejected pins the
+// remaining input check on merged_into_id: negative ids are
+// nonsense (no row will ever have id < 1), so refuse them. Zero
+// is the deliberate sentinel for "merged into a hand-authored
+// skill" and is exercised by TestMarkSkillCandidateMerged_HandAuthored.
+func TestMarkSkillCandidateMerged_NegativeTargetRejected(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
-	if err := MarkSkillCandidateMerged(context.Background(), s.DB(),
-		1, "x", 0, "/p", 1_700_000_000_000); err == nil {
-		t.Errorf("expected error when merged_into_id is zero")
+	err := MarkSkillCandidateMerged(context.Background(), s.DB(),
+		1, "x", -1, "/p", 1_700_000_000_000)
+	if err == nil {
+		t.Errorf("expected error when merged_into_id is negative")
+	}
+	if err != nil && !strings.Contains(err.Error(), "merged_into_id") {
+		t.Errorf("error should mention merged_into_id: %v", err)
+	}
+}
+
+// TestMarkSkillCandidateMerged_HandAuthored pins the sentinel for
+// "merged into a hand-authored skill that has no candidate row":
+// mergedIntoID=0 writes merged_into_id NULL while still recording
+// decision='merge'. Without this path, a merge against a
+// pre-aichronicles SKILL.md leaves the candidate stuck in pending,
+// which future propose runs misread as ignored.
+func TestMarkSkillCandidateMerged_HandAuthored(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+	loID := mkProposeRow(t, s, 1_700_000_000_000)
+	if err := RecordSkillCandidate(ctx, s.DB(), loID, "fold-into-handcrafted", 1_700_000_000_000); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	if err := MarkSkillCandidateMerged(ctx, s.DB(), loID, "fold-into-handcrafted",
+		0, "/home/u/.claude/skills/fold-into-handcrafted/SKILL.md", 1_700_000_500_000); err != nil {
+		t.Fatalf("merge with id=0: %v", err)
+	}
+	rows, err := LoadSkillCandidatesByName(ctx, s.DB(), "fold-into-handcrafted", 0)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows: got %d, want 1", len(rows))
+	}
+	r := rows[0]
+	if r.Decision != MaintenanceMerge {
+		t.Errorf("decision: got %q, want %q", r.Decision, MaintenanceMerge)
+	}
+	if r.MergedIntoID.Valid {
+		t.Errorf("merged_into_id should be NULL for hand-authored, got %d", r.MergedIntoID.Int64)
+	}
+	if !r.AddPath.Valid || r.AddPath.String == "" {
+		t.Errorf("add_path should still be recorded: got %v", r.AddPath)
 	}
 }
 
@@ -614,6 +662,332 @@ func TestLoadAddedSkillCandidate(t *testing.T) {
 			t.Errorf("add_path: got %v", got.AddPath)
 		}
 	})
+}
+
+// TestSkillCandidate_LifecycleTransitionsClearStaleFields pins the
+// state-machine integrity rule: each `Mark*` lifecycle write clears
+// fields that don't apply to the new state. Pre-fix, transitions
+// like `add → discard` kept `add_path` populated (a "rejected"
+// candidate that still claimed to own a SKILL.md file), and
+// `merge → add` left `merged_into_id` pointing at a stale row.
+//
+// The matrix below covers every transition that overwrites a prior
+// non-zero state. Each subtest seeds the prior state, fires the
+// transition, and asserts the now-irrelevant fields are NULL.
+func TestSkillCandidate_LifecycleTransitionsClearStaleFields(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// Helper: insert a fresh candidate, run a sequence of Mark*
+	// calls, and return the final SkillCandidate row.
+	type step struct {
+		op string // "add" | "merge" | "discard"
+	}
+	type want struct {
+		decision        MaintenanceAction
+		addPathValid    bool
+		bodyHashValid   bool
+		mergedIntoValid bool
+	}
+
+	cases := []struct {
+		name  string
+		path  []step
+		final want
+	}{
+		{
+			name: "add then discard clears add_path/add_body_sha256",
+			path: []step{{"add"}, {"discard"}},
+			final: want{
+				decision:        MaintenanceDiscard,
+				addPathValid:    false,
+				bodyHashValid:   false,
+				mergedIntoValid: false,
+			},
+		},
+		{
+			name: "merge then discard clears merged_into_id/add_path",
+			path: []step{{"add"}, {"merge"}, {"discard"}},
+			final: want{
+				decision:        MaintenanceDiscard,
+				addPathValid:    false,
+				bodyHashValid:   false,
+				mergedIntoValid: false,
+			},
+		},
+		{
+			name: "add then merge clears add_body_sha256",
+			path: []step{{"add"}, {"merge"}},
+			final: want{
+				decision:        MaintenanceMerge,
+				addPathValid:    true, // merge sets add_path
+				bodyHashValid:   false,
+				mergedIntoValid: true,
+			},
+		},
+		{
+			name: "merge then add clears merged_into_id",
+			path: []step{{"add"}, {"merge"}, {"add"}},
+			final: want{
+				decision:        MaintenanceAdd,
+				addPathValid:    true,
+				bodyHashValid:   true,
+				mergedIntoValid: false,
+			},
+		},
+		{
+			name: "discard then add clears nothing prior was set",
+			path: []step{{"discard"}, {"add"}},
+			final: want{
+				decision:        MaintenanceAdd,
+				addPathValid:    true,
+				bodyHashValid:   true,
+				mergedIntoValid: false,
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := openTemp(t)
+			loSelf := mkProposeRow(t, s, 1_700_000_000_000)
+			loTarget := mkProposeRow(t, s, 1_700_000_000_000)
+
+			// Seed the row whose lifecycle we walk.
+			if err := RecordSkillCandidate(ctx, s.DB(), loSelf, "subject", 1_700_000_000_000); err != nil {
+				t.Fatalf("seed self: %v", err)
+			}
+			// And a separate target row for the merge step (with its
+			// own decision='add') so merged_into_id has a real referent.
+			if err := RecordSkillCandidate(ctx, s.DB(), loTarget, "subject-target", 1_700_000_000_000); err != nil {
+				t.Fatalf("seed target: %v", err)
+			}
+			if err := MarkSkillCandidateAdded(ctx, s.DB(), loTarget, "subject-target", "/p/target.md", 1_700_000_001_000); err != nil {
+				t.Fatalf("seed target add: %v", err)
+			}
+			target, err := LoadAddedSkillCandidate(ctx, s.DB(), "subject-target")
+			if err != nil || target == nil {
+				t.Fatalf("load target: %v / %v", target, err)
+			}
+
+			// Walk the path.
+			now := int64(1_700_000_002_000)
+			for i, st := range tc.path {
+				switch st.op {
+				case "add":
+					if err := MarkSkillCandidateAdded(ctx, s.DB(), loSelf, "subject",
+						"/p/self.md", now+int64(i*1000)); err != nil {
+						// Use the body-hash variant via direct write for the bodyHashValid test.
+						t.Fatalf("step %d add: %v", i, err)
+					}
+					// Plant a non-empty body hash so we can observe it being
+					// cleared by the next transition.
+					if _, err := s.DB().ExecContext(ctx,
+						`UPDATE skill_candidates SET add_body_sha256='deadbeef' WHERE llm_output_id=? AND skill_name=?`,
+						loSelf, "subject"); err != nil {
+						t.Fatalf("plant hash: %v", err)
+					}
+				case "merge":
+					if err := MarkSkillCandidateMerged(ctx, s.DB(), loSelf, "subject",
+						target.ID, "/p/merged.md", now+int64(i*1000)); err != nil {
+						t.Fatalf("step %d merge: %v", i, err)
+					}
+				case "discard":
+					if err := MarkSkillCandidateDiscarded(ctx, s.DB(), loSelf, "subject",
+						now+int64(i*1000)); err != nil {
+						t.Fatalf("step %d discard: %v", i, err)
+					}
+				default:
+					t.Fatalf("bad op %q", st.op)
+				}
+			}
+
+			rows, err := LoadSkillCandidatesByName(ctx, s.DB(), "subject", 0)
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			if len(rows) != 1 {
+				t.Fatalf("rows: got %d, want 1", len(rows))
+			}
+			r := rows[0]
+			if r.Decision != tc.final.decision {
+				t.Errorf("decision: got %q, want %q", r.Decision, tc.final.decision)
+			}
+			if r.AddPath.Valid != tc.final.addPathValid {
+				t.Errorf("add_path.Valid: got %v (=%q), want %v",
+					r.AddPath.Valid, r.AddPath.String, tc.final.addPathValid)
+			}
+			if r.AddBodySHA256.Valid != tc.final.bodyHashValid {
+				t.Errorf("add_body_sha256.Valid: got %v (=%q), want %v",
+					r.AddBodySHA256.Valid, r.AddBodySHA256.String, tc.final.bodyHashValid)
+			}
+			if r.MergedIntoID.Valid != tc.final.mergedIntoValid {
+				t.Errorf("merged_into_id.Valid: got %v (=%d), want %v",
+					r.MergedIntoID.Valid, r.MergedIntoID.Int64, tc.final.mergedIntoValid)
+			}
+		})
+	}
+}
+
+// TestUpdateSkillCandidateKind pins the merge-target kind refresh:
+// when the LLM-decided union flips pattern→pitfall (or the inverse),
+// the surviving candidate row's kind must follow the merged content.
+// Without this, the DB and the on-disk SKILL.md frontmatter disagree
+// on the contrastive label and any kind-branched downstream surface
+// silently misroutes the merged skill.
+func TestUpdateSkillCandidateKind(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+
+	loID := mkProposeRow(t, s, 1_700_000_000_000)
+	if err := RecordSkillCandidate(ctx, s.DB(), loID, "label-flips", 1_700_000_000_000); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := MarkSkillCandidateAdded(ctx, s.DB(), loID, "label-flips", "/p/x.md", 1_700_000_500_000); err != nil {
+		t.Fatalf("mark add: %v", err)
+	}
+	cand, err := LoadAddedSkillCandidate(ctx, s.DB(), "label-flips")
+	if err != nil || cand == nil {
+		t.Fatalf("load: %v / %v", cand, err)
+	}
+	// Default kind from migration 024 is "pattern".
+	if cand.Kind != SkillKindPattern {
+		t.Fatalf("seeded kind: got %q, want %q", cand.Kind, SkillKindPattern)
+	}
+
+	// Flip to pitfall.
+	if err := UpdateSkillCandidateKind(ctx, s.DB(), cand.ID, SkillKindPitfall); err != nil {
+		t.Fatalf("update kind: %v", err)
+	}
+	got, err := LoadAddedSkillCandidate(ctx, s.DB(), "label-flips")
+	if err != nil || got == nil {
+		t.Fatalf("reload: %v / %v", got, err)
+	}
+	if got.Kind != SkillKindPitfall {
+		t.Errorf("kind not updated: got %q, want %q", got.Kind, SkillKindPitfall)
+	}
+
+	t.Run("rejects out-of-enum", func(t *testing.T) {
+		err := UpdateSkillCandidateKind(ctx, s.DB(), cand.ID, SkillKind("garbage"))
+		if err == nil {
+			t.Errorf("expected error for out-of-enum kind, got nil")
+		}
+		if err != nil && !strings.Contains(err.Error(), "kind") {
+			t.Errorf("error should mention kind: %v", err)
+		}
+	})
+
+	t.Run("rejects empty kind", func(t *testing.T) {
+		err := UpdateSkillCandidateKind(ctx, s.DB(), cand.ID, SkillKind(""))
+		if err == nil {
+			t.Errorf("expected error for empty kind, got nil")
+		}
+	})
+
+	t.Run("missing id returns ErrSkillCandidateNotFound", func(t *testing.T) {
+		err := UpdateSkillCandidateKind(ctx, s.DB(), 9_999_999, SkillKindPattern)
+		if !errors.Is(err, ErrSkillCandidateNotFound) {
+			t.Errorf("expected ErrSkillCandidateNotFound, got %v", err)
+		}
+	})
+}
+
+// TestUpdateSkillCandidateAddBodyHash pins the merge-target hash
+// refresh: after `propose merge` rewrites SKILL.md the surviving
+// added candidate must have its add_body_sha256 + add_path updated
+// to point at the new content. Without this, drift checks would
+// flag every merged file as tampered.
+func TestUpdateSkillCandidateAddBodyHash(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+
+	loID := mkProposeRow(t, s, 1_700_000_000_000)
+	if err := RecordSkillCandidate(ctx, s.DB(), loID, "to-merge", 1_700_000_000_000); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := MarkSkillCandidateAdded(ctx, s.DB(), loID, "to-merge", "/p/old.md", 1_700_000_500_000); err != nil {
+		t.Fatalf("mark add: %v", err)
+	}
+	cand, err := LoadAddedSkillCandidate(ctx, s.DB(), "to-merge")
+	if err != nil || cand == nil {
+		t.Fatalf("load: %v / %v", cand, err)
+	}
+
+	const newHash = "deadbeef000000000000000000000000000000000000000000000000deadbeef"
+	if err := UpdateSkillCandidateAddBodyHash(ctx, s.DB(), cand.ID, "/p/new.md", newHash); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	got, err := LoadAddedSkillCandidate(ctx, s.DB(), "to-merge")
+	if err != nil || got == nil {
+		t.Fatalf("reload: %v / %v", got, err)
+	}
+	if !got.AddPath.Valid || got.AddPath.String != "/p/new.md" {
+		t.Errorf("add_path: got %v, want /p/new.md", got.AddPath)
+	}
+	if !got.AddBodySHA256.Valid || got.AddBodySHA256.String != newHash {
+		t.Errorf("add_body_sha256: got %v, want %s", got.AddBodySHA256, newHash)
+	}
+
+	// Decision and decision_at_ms are untouched — the row remains
+	// the active "added" target. (Callers don't intend to flip the
+	// state, only to refresh the body fingerprint.)
+	if got.Decision != MaintenanceAdd {
+		t.Errorf("decision drifted: got %q, want %q", got.Decision, MaintenanceAdd)
+	}
+
+	t.Run("missing id returns ErrSkillCandidateNotFound", func(t *testing.T) {
+		err := UpdateSkillCandidateAddBodyHash(ctx, s.DB(), 9_999_999, "/p/x.md", newHash)
+		if !errors.Is(err, ErrSkillCandidateNotFound) {
+			t.Errorf("expected ErrSkillCandidateNotFound, got %v", err)
+		}
+	})
+}
+
+// TestLoadAddedSkillCandidate_TiebreakerOnDecisionTime pins the
+// deterministic merge-target rule when two adds for the same skill
+// name share a decision_at_ms (same millisecond). Without the `, id
+// DESC` tiebreaker the returned row would be engine-defined; the
+// merge path needs a stable answer so the SKILL.md path the merge
+// rewrites is deterministic.
+func TestLoadAddedSkillCandidate_TiebreakerOnDecisionTime(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+
+	const sameMs = int64(1_700_000_000_000)
+	loA := mkProposeRow(t, s, sameMs)
+	loB := mkProposeRow(t, s, sameMs)
+
+	if err := RecordSkillCandidate(ctx, s.DB(), loA, "tied", sameMs); err != nil {
+		t.Fatalf("record A: %v", err)
+	}
+	if err := RecordSkillCandidate(ctx, s.DB(), loB, "tied", sameMs); err != nil {
+		t.Fatalf("record B: %v", err)
+	}
+	// Both rows decisioned at the same ms — only the higher-id
+	// (later-inserted) row should win, repeatedly.
+	if err := MarkSkillCandidateAdded(ctx, s.DB(), loA, "tied", "/p/A.md", sameMs); err != nil {
+		t.Fatalf("mark A: %v", err)
+	}
+	if err := MarkSkillCandidateAdded(ctx, s.DB(), loB, "tied", "/p/B.md", sameMs); err != nil {
+		t.Fatalf("mark B: %v", err)
+	}
+
+	for i := range 5 {
+		got, err := LoadAddedSkillCandidate(ctx, s.DB(), "tied")
+		if err != nil {
+			t.Fatalf("load (iter %d): %v", i, err)
+		}
+		if got == nil {
+			t.Fatalf("expected a candidate (iter %d)", i)
+		}
+		if got.LLMOutputID != loB {
+			t.Errorf("iter %d: got llm_output_id=%d, want %d (later-inserted row)", i, got.LLMOutputID, loB)
+		}
+	}
 }
 
 // TestBumpPatch covers the version-bumping rule the merge path

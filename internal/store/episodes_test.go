@@ -297,6 +297,70 @@ func TestFindEpisodes_Filters(t *testing.T) {
 	}
 }
 
+// TestEpisodesIndex_Migration026Applied pins migration 026's
+// outcome: the started-anchored partial index is gone and the
+// ended-anchored one is in place. Without this, a future revert of
+// 026 would silently re-introduce the materialise-and-sort hot path
+// the migration removes.
+func TestEpisodesIndex_Migration026Applied(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	rows, err := s.DB().Query(
+		`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='episodes'`,
+	)
+	if err != nil {
+		t.Fatalf("list indexes: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	have := map[string]bool{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		have[n] = true
+	}
+	if have["idx_episodes_cwd_started"] {
+		t.Errorf("migration 026 should have dropped idx_episodes_cwd_started")
+	}
+	if !have["idx_episodes_cwd_ended"] {
+		t.Errorf("migration 026 should have created idx_episodes_cwd_ended (have=%v)", have)
+	}
+}
+
+// TestFindEpisodes_TiebreakerOnEndedAt pins the deterministic order
+// when two episodes share an ended_at_ms (typical for
+// single-event-bracket episodes pinned to the same wall clock, or
+// fixtures with hardcoded ts). Without `, id DESC` the engine is
+// free to return either order, which surfaces as flaky LIMIT'd
+// recall and intermittent CI in tests that assume newest-first.
+func TestFindEpisodes_TiebreakerOnEndedAt(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+
+	// Two episodes with identical ended_at_ms in two different
+	// sessions. The newer-inserted row (higher autoincrement id)
+	// must come first.
+	const tied = int64(5_000)
+	seedEpisodeRow(t, s, "00000000-0000-0000-0000-00000000ee01", 1, 1_000, tied, "/repo/x", "earlier insert")
+	seedEpisodeRow(t, s, "00000000-0000-0000-0000-00000000ee02", 1, 2_000, tied, "/repo/x", "later insert")
+
+	for i := range 10 {
+		hits, err := FindEpisodes(ctx, s.DB(), FindEpisodesOpts{})
+		if err != nil {
+			t.Fatalf("iter %d: %v", i, err)
+		}
+		if len(hits) != 2 {
+			t.Fatalf("iter %d: got %d hits, want 2", i, len(hits))
+		}
+		if hits[0].IntentSummary != "later insert" {
+			t.Errorf("iter %d: tiebreaker violated; first.intent=%q (want %q)",
+				i, hits[0].IntentSummary, "later insert")
+		}
+	}
+}
+
 // TestFindEpisodes_QueryContainsTrimsWhitespace pins the
 // trim-then-empty behaviour: a query that's pure whitespace must NOT
 // generate a SQL filter (otherwise '%   %' would match every row,
@@ -315,6 +379,128 @@ func TestFindEpisodes_QueryContainsTrimsWhitespace(t *testing.T) {
 	}
 	if len(hits) != 1 {
 		t.Errorf("whitespace-only query should be a no-op filter, got %d", len(hits))
+	}
+}
+
+// TestLoadSessionsNeedingSegmentation pins the staleness rule the
+// daemon uses to decide which sessions to (re-)segment. Pre-fix,
+// segmentation lived inside the per-candidate induction loop, so
+// once a session was inducted it dropped out forever — late
+// events arriving after induction created silent episode/event
+// drift. The new pass keys on episode lag directly.
+func TestLoadSessionsNeedingSegmentation(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+
+	const (
+		now      = int64(2_000_000)
+		idleMs   = int64(60_000)
+		minEvent = 3
+	)
+	idleCutoff := now // sessions ending at or before "now-idleMs" qualify
+
+	// Session A: 5 events, no episodes yet → MUST segment.
+	const sessA = "00000000-0000-0000-0000-00000000aa01"
+	seedSessionWithEvents(t, s, sessA, 5, now-2*idleMs)
+
+	// Session B: 5 events, fully covered by one episode → MUST NOT segment.
+	const sessB = "00000000-0000-0000-0000-00000000bb02"
+	seedSessionWithEvents(t, s, sessB, 5, now-2*idleMs)
+	if _, err := s.DB().Exec(
+		`INSERT INTO episodes(session_id, ordinal, started_at_ms, ended_at_ms,
+			cwd, intent_summary, event_count, first_event_id)
+		 VALUES (?, 1, ?, ?, NULL, '', 5, (SELECT event_id FROM events WHERE session_id=? ORDER BY ts_source_ms LIMIT 1))`,
+		sessB, now-2*idleMs, now-2*idleMs+1000, sessB,
+	); err != nil {
+		t.Fatalf("seed sessB episode: %v", err)
+	}
+
+	// Session C: 5 events; episodes ended at ts=A; an event exists with
+	// ts > episode.ended_at → MUST segment (new events past the last
+	// episode).
+	const sessC = "00000000-0000-0000-0000-00000000cc03"
+	seedSessionWithEvents(t, s, sessC, 5, now-2*idleMs)
+	if _, err := s.DB().Exec(
+		`INSERT INTO episodes(session_id, ordinal, started_at_ms, ended_at_ms,
+			cwd, intent_summary, event_count, first_event_id)
+		 VALUES (?, 1, ?, ?, NULL, '', 1, (SELECT event_id FROM events WHERE session_id=? ORDER BY ts_source_ms LIMIT 1))`,
+		// the episode covers only the first event; events 2..5 are
+		// "newer than max(episodes.ended_at_ms)" → re-segmentation needed.
+		sessC, now-2*idleMs, now-2*idleMs, sessC,
+	); err != nil {
+		t.Fatalf("seed sessC episode: %v", err)
+	}
+
+	// Session D: too few events (below minEvents) → MUST NOT segment.
+	const sessD = "00000000-0000-0000-0000-00000000dd04"
+	seedSessionWithEvents(t, s, sessD, 2, now-2*idleMs)
+
+	// Session E: not idle yet (ended too recently) → MUST NOT segment.
+	const sessE = "00000000-0000-0000-0000-00000000ee05"
+	seedSessionWithEvents(t, s, sessE, 5, now-1) // ended 1ms ago
+
+	got, err := LoadSessionsNeedingSegmentation(ctx, s.DB(), idleCutoff, idleMs, minEvent, 50)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	gotSet := map[string]bool{}
+	for _, id := range got {
+		gotSet[id] = true
+	}
+	if !gotSet[sessA] {
+		t.Errorf("sessA (no episodes) should be returned; got %v", got)
+	}
+	if !gotSet[sessC] {
+		t.Errorf("sessC (events past last episode) should be returned; got %v", got)
+	}
+	if gotSet[sessB] {
+		t.Errorf("sessB (fully covered) should NOT be returned; got %v", got)
+	}
+	if gotSet[sessD] {
+		t.Errorf("sessD (below min events) should NOT be returned; got %v", got)
+	}
+	if gotSet[sessE] {
+		t.Errorf("sessE (not idle) should NOT be returned; got %v", got)
+	}
+}
+
+// seedSessionWithEvents inserts a sessions row, raw_envelopes, and
+// `count` events with ts_source_ms starting at startMs and stepping
+// 1ms apart. Used by TestLoadSessionsNeedingSegmentation to build
+// the corpus.
+//
+// The sessions row leaves event_count at the schema default (0)
+// and lets the AFTER INSERT events trigger increment it once per
+// event — that way the final event_count exactly matches `count`
+// without having to anticipate the trigger.
+func seedSessionWithEvents(t *testing.T, s *Store, sessionID string, count int, startMs int64) {
+	t.Helper()
+	if _, err := s.DB().Exec(
+		`INSERT OR IGNORE INTO sessions(id, source_agent, source_session_id,
+		      started_at_ms, ended_at_ms)
+		 VALUES (?, 'claude-code', ?, ?, ?)`,
+		sessionID, "src-"+sessionID, startMs, startMs+int64(count),
+	); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	for i := range count {
+		eid := mkUUIDLikeID(t, "evt-"+sessionID, i)
+		if _, err := s.DB().Exec(
+			`INSERT INTO raw_envelopes(event_id, ingest_seq, source_agent, source_session_id,
+			      ts_source_ms, ts_server_ms, envelope_json)
+			 VALUES (?, ?, ?, ?, ?, ?, '{}')`,
+			eid, time.Now().UnixNano()+int64(i), "claude-code", "src-"+sessionID, startMs+int64(i), startMs+int64(i),
+		); err != nil {
+			t.Fatalf("envelope: %v", err)
+		}
+		if _, err := s.DB().Exec(
+			`INSERT INTO events(event_id, session_id, source_agent, kind, ts_source_ms)
+			 VALUES (?, ?, 'claude-code', 'user_prompt', ?)`,
+			eid, sessionID, startMs+int64(i),
+		); err != nil {
+			t.Fatalf("event: %v", err)
+		}
 	}
 }
 

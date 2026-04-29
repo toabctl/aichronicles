@@ -118,7 +118,14 @@ func seedWorkflowOutput(t *testing.T, st *store.Store, sessionID, taskShape, rat
 		bodyMap["workflow"] = map[string]any{
 			"task_shape": taskShape,
 			"procedure": []any{
-				map[string]any{"action": "Do step one with {arg}"},
+				// `{arg}` is declared so the unmarshal-time AWM
+				// consistency check accepts the fixture.
+				map[string]any{
+					"action": "Do step one with {arg}",
+					"placeholders": []any{
+						map[string]any{"token": "arg", "description": "step argument", "example": "value"},
+					},
+				},
 				map[string]any{"action": "Do step two"},
 			},
 			"preconditions":  []string{"git working tree clean"},
@@ -1030,6 +1037,30 @@ func TestFindEpisodesTool_FiltersAndRendersRows(t *testing.T) {
 	if !strings.Contains(cwd.Content[0].Text, "explore the new module") ||
 		strings.Contains(cwd.Content[0].Text, "fix the failing build") {
 		t.Errorf("cwd filter wrong rows:\n%s", cwd.Content[0].Text)
+	}
+}
+
+// TestFindEpisodesTool_AcceptsSessionIDPrefix pins the symmetry with
+// list_subagents: a model that copies the 8-char id this same tool
+// emits back in as session_id must hit the right row, not silently
+// get (no episodes) because of a UUID-vs-prefix mismatch.
+func TestFindEpisodesTool_AcceptsSessionIDPrefix(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	const sessID = "00000000-0000-0000-0000-00000000aabb"
+	now := time.Now().UnixMilli()
+	seedEpisodeForTool(t, st, sessID, 1, now-3600_000, now-3000_000, "/repo/x", "prefix-resolved hit")
+
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	// Pass the 8-char prefix the tool itself emits.
+	res := callTool(t, s, "find_episodes", `{"session_id":"00000000"}`)
+	if res.IsError {
+		t.Fatalf("prefix call: %+v", res)
+	}
+	if !strings.Contains(res.Content[0].Text, "prefix-resolved hit") {
+		t.Errorf("prefix should resolve to the seeded session, got:\n%s", res.Content[0].Text)
 	}
 }
 

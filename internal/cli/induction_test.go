@@ -775,6 +775,108 @@ func TestRunInductionSweep_EpisodeSegmentationIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestRunInductionSweep_ReSegmentsAfterLateEvents pins the fix
+// for the "late events invisible to episodes" risk: once a session
+// has been inducted it permanently drops out of the per-candidate
+// loop, so any event arriving afterwards used to be invisible to
+// segmentation forever. The sweep now runs a sweep-wide phase 0
+// keyed on episode lag (not induction state), so a new event past
+// the latest episode triggers a fresh segmentation pass.
+func TestRunInductionSweep_ReSegmentsAfterLateEvents(t *testing.T) {
+	t.Parallel()
+	s, sessID := seedSessionForSummarize(t)
+	oneHourAgo := time.Now().Add(-1 * time.Hour).UnixMilli()
+	if _, err := s.DB().Exec(
+		`UPDATE sessions SET ended_at_ms = ?, event_count = 30 WHERE id = ?`,
+		oneHourAgo, sessID,
+	); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	plantSummary(t, s, sessID, "x", "did a thing across multiple services and components")
+
+	indResult := prompts.InductionResult{Rationale: "x"}
+	toolInput, _ := json.Marshal(indResult)
+	f1 := &fakeLLM{toolInput: toolInput}
+	if err := RunInductionSweep(context.Background(), s,
+		func() (llm.Client, error) { return f1, nil },
+		InductionSweepOptions{
+			Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
+			SkipFacts: true,
+		},
+		&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("first sweep: %v", err)
+	}
+	if got := countEpisodes(t, s, sessID); got != 1 {
+		t.Fatalf("first sweep: expected 1 episode, got %d", got)
+	}
+
+	// Read the latest episode end so we can assert the second sweep
+	// extends it.
+	var firstEnd int64
+	if err := s.DB().QueryRow(
+		`SELECT MAX(ended_at_ms) FROM episodes WHERE session_id = ?`, sessID,
+	).Scan(&firstEnd); err != nil {
+		t.Fatalf("read first end: %v", err)
+	}
+
+	// Inject a new event past firstEnd, AFTER induction has already
+	// landed for this session. Pre-fix this event would never get
+	// segmented (the per-candidate phase 0 wouldn't see this session
+	// again because induction is done).
+	lateTs := firstEnd + 1_000_000 // way past the idle gap so a new episode is forced
+	const lateEvtID = "00000000-0000-0000-0000-0000face0001"
+	if _, err := s.DB().Exec(
+		`INSERT INTO raw_envelopes(event_id, ingest_seq, source_agent, source_session_id,
+		      ts_source_ms, ts_server_ms, envelope_json)
+		 VALUES (?, ?, 'claude-code', 'src', ?, ?, '{}')`,
+		lateEvtID, time.Now().UnixNano(), lateTs, lateTs,
+	); err != nil {
+		t.Fatalf("late envelope: %v", err)
+	}
+	if _, err := s.DB().Exec(
+		`INSERT INTO events(event_id, session_id, source_agent, kind, ts_source_ms, content_text, cwd)
+		 VALUES (?, ?, 'claude-code', 'user_prompt', ?, 'late prompt', '/work/systemd')`,
+		lateEvtID, sessID, lateTs,
+	); err != nil {
+		t.Fatalf("late event: %v", err)
+	}
+	// Bump ended_at on the session so the segmentation gate (idle)
+	// still passes — without this the new event makes ended_at
+	// "current" and the session falls out of the idle window.
+	if _, err := s.DB().Exec(
+		`UPDATE sessions SET ended_at_ms = ? WHERE id = ?`, oneHourAgo, sessID,
+	); err != nil {
+		t.Fatalf("rebound ended_at: %v", err)
+	}
+
+	// Second sweep — note we do NOT delete the induction row this
+	// time. Pre-fix this would skip phase 0 entirely; post-fix the
+	// sweep-wide pass picks up the lag.
+	f2 := &fakeLLM{toolInput: toolInput}
+	if err := RunInductionSweep(context.Background(), s,
+		func() (llm.Client, error) { return f2, nil },
+		InductionSweepOptions{
+			Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
+			SkipFacts: true,
+		},
+		&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+
+	// Episodes should now reflect the late event — either an
+	// extended last episode or a new boundary episode. Either way,
+	// MAX(ended_at_ms) must reach the late event's timestamp.
+	var secondEnd int64
+	if err := s.DB().QueryRow(
+		`SELECT MAX(ended_at_ms) FROM episodes WHERE session_id = ?`, sessID,
+	).Scan(&secondEnd); err != nil {
+		t.Fatalf("read second end: %v", err)
+	}
+	if secondEnd < lateTs {
+		t.Errorf("late event not segmented: max episode end=%d, late event ts=%d", secondEnd, lateTs)
+	}
+}
+
 func TestRunInductionSweep_NoCandidatesReturnsCleanly(t *testing.T) {
 	t.Parallel()
 	s, _ := seedSessionForSummarize(t)

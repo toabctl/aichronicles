@@ -211,6 +211,79 @@ type ProposalResult struct {
 	Skills []ProposedSkill `json:"skills"`
 }
 
+// FilterGroundedTriggers returns the subset of `triggers` that
+// appear (case-insensitively, as substrings) inside any of the
+// supplied evidence Quote fields. Triggers the LLM invented
+// without quote-anchoring are dropped.
+//
+// Mirrors the project's "Links observed / Files observed" anti-
+// fabrication grounding pattern, applied to AutoSkill triggers.
+// Without this filter, free-form triggers retrieve adjacent-but-
+// wrong skills (the SWE-Skills-Bench failure mode the verify
+// prompt cites): the cost of a wrong trigger is high (silent
+// mis-routing), the cost of a missing trigger is low (the user
+// types one extra word).
+//
+// Returns nil when the filter would drop every trigger AND the
+// input had triggers — caller treats nil as "no usable triggers"
+// rather than "you didn't ask for any". If `triggers` itself was
+// empty/nil, returns nil unchanged.
+//
+// Whitespace-only triggers and entries that are pure punctuation
+// are dropped pre-grounding; the substring check uses lowercased
+// quote text for case insensitivity.
+func FilterGroundedTriggers(triggers []string, evidence []ProposalEvidence) []string {
+	if len(triggers) == 0 {
+		return nil
+	}
+	// Lowercase quotes once.
+	corpus := make([]string, 0, len(evidence))
+	for _, e := range evidence {
+		if q := strings.TrimSpace(e.Quote); q != "" {
+			corpus = append(corpus, strings.ToLower(q))
+		}
+	}
+	if len(corpus) == 0 {
+		// No quote substrate to ground against — drop all triggers
+		// rather than silently keep ungrounded ones. Per CLAUDE.md
+		// rule #7 ("returning nothing is valid"), no triggers is
+		// preferable to fabricated triggers.
+		return nil
+	}
+	out := make([]string, 0, len(triggers))
+	for _, t := range triggers {
+		needle := strings.ToLower(strings.TrimSpace(t))
+		if needle == "" {
+			continue
+		}
+		for _, q := range corpus {
+			if strings.Contains(q, needle) {
+				out = append(out, t)
+				break
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// GroundTriggers walks every skill in r and replaces its Triggers
+// slice with the grounded subset (see FilterGroundedTriggers).
+// Run once after parsing a propose / induction body so downstream
+// consumers — `propose add` writing the SKILL.md frontmatter,
+// `propose merge` feeding the merge LLM, the verify prompt
+// renderer — all see the same grounded set.
+func (r *ProposalResult) GroundTriggers() {
+	if r == nil {
+		return
+	}
+	for i := range r.Skills {
+		r.Skills[i].Triggers = FilterGroundedTriggers(r.Skills[i].Triggers, r.Skills[i].Evidence)
+	}
+}
+
 // ProposalEvidence grounds one proposal in actual session text.
 // quote is a verbatim excerpt (≤160 chars) from the session, not a
 // paraphrase — paraphrase loses the property that the user can grep
@@ -1108,15 +1181,25 @@ func (r *InductionResult) UnmarshalJSON(data []byte) error {
 	}
 	r.Rationale = raw.Rationale
 
-	skill, err := decodeMaybeStringified[ProposedSkill](raw.Skill, "skill")
+	skill, err := decodeMaybeStringified[ProposedSkill](raw.Skill, "skill",
+		func(s *ProposedSkill) bool { return strings.TrimSpace(s.Name) != "" })
 	if err != nil {
 		return err
 	}
 	r.Skill = skill
 
-	wf, err := decodeMaybeStringified[InducedWorkflow](raw.Workflow, "workflow")
+	wf, err := decodeMaybeStringified[InducedWorkflow](raw.Workflow, "workflow",
+		func(w *InducedWorkflow) bool { return strings.TrimSpace(w.TaskShape) != "" })
 	if err != nil {
 		return err
+	}
+	if wf != nil {
+		// Enforce AWM placeholder consistency at the parse boundary
+		// so downstream consumers can trust every {placeholder}
+		// they read is documented. See InducedWorkflow.Validate.
+		if verr := wf.Validate(); verr != nil {
+			return fmt.Errorf("workflow: %w", verr)
+		}
 	}
 	r.Workflow = wf
 	return nil
@@ -1138,7 +1221,14 @@ func (r *InductionResult) UnmarshalJSON(data []byte) error {
 // Generic over the artefact type (ProposedSkill / InducedWorkflow)
 // because both InductionResult fields exhibit identical structure
 // and identical failure-mode susceptibility.
-func decodeMaybeStringified[T any](raw json.RawMessage, fieldName string) (*T, error) {
+//
+// `loadBearing` reports whether the decoded artefact carries enough
+// signal to be persisted. A model that emits `"workflow":{}` (or any
+// object missing the artefact's anchor field) decodes successfully
+// into a zero-valued T; that's a "confidently wrong" data shape per
+// CLAUDE.md rule #7 — the row would render in the UI as a real
+// workflow even though it has no task_shape. We treat it as null.
+func decodeMaybeStringified[T any](raw json.RawMessage, fieldName string, loadBearing func(*T) bool) (*T, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
@@ -1151,6 +1241,9 @@ func decodeMaybeStringified[T any](raw json.RawMessage, fieldName string) (*T, e
 	var direct T
 	directErr := json.Unmarshal(raw, &direct)
 	if directErr == nil {
+		if !loadBearing(&direct) {
+			return nil, nil
+		}
 		return &direct, nil
 	}
 
@@ -1184,6 +1277,9 @@ func decodeMaybeStringified[T any](raw json.RawMessage, fieldName string) (*T, e
 		var inner T
 		innerErr := dec.Decode(&inner)
 		if innerErr == nil {
+			if !loadBearing(&inner) {
+				return nil, nil
+			}
 			return &inner, nil
 		}
 		innerCtx = "inner string decode: " + innerErr.Error()
@@ -1517,6 +1613,100 @@ type WorkflowPlaceholder struct {
 	Token       string `json:"token"`
 	Description string `json:"description"`
 	Example     string `json:"example,omitempty"`
+}
+
+// Validate enforces structural consistency on a decoded workflow:
+// every `{placeholder}` token appearing in any step's Action MUST
+// be documented in that step's Placeholders[]. Returns nil for a
+// well-formed workflow, an error citing the offending step / token
+// otherwise.
+//
+// Pre-fix, the AWM placeholder rule was enforced only by prose in
+// the system prompt — a model that emitted `procedure[].action =
+// "deploy {service} to {env}"` with `placeholders: [{token:
+// "service"}]` would round-trip into the database with `{env}`
+// silently undefined. The user reading the workflow back hits a
+// dangling reference; the agent re-running the workflow
+// substitutes the wrong literal.
+//
+// Token grammar matches the kebab-case rule the propose schema
+// already enforces for ProposedScriptPlaceholder.token: lowercase
+// letters, digits, hyphen. This deliberately rejects URL-shaped
+// curly-brace forms like `{ "key": "val" }` (which contain a
+// space) — those aren't placeholders, just incidental braces.
+func (w *InducedWorkflow) Validate() error {
+	if w == nil {
+		return nil
+	}
+	for i, step := range w.Procedure {
+		tokens := extractPlaceholderTokens(step.Action)
+		if len(tokens) == 0 {
+			continue
+		}
+		defined := make(map[string]bool, len(step.Placeholders))
+		for _, ph := range step.Placeholders {
+			defined[ph.Token] = true
+		}
+		for _, tok := range tokens {
+			if !defined[tok] {
+				return fmt.Errorf("workflow step %d references {%s} but step.placeholders[] does not declare it; either define the placeholder or rewrite the action without it",
+					i+1, tok)
+			}
+		}
+	}
+	return nil
+}
+
+// extractPlaceholderTokens returns the unique kebab-case tokens
+// appearing inside `{…}` braces within s. Tokens that don't match
+// the kebab grammar (e.g. spaces, uppercase, JSON-shaped braces)
+// are ignored — those aren't placeholders.
+func extractPlaceholderTokens(s string) []string {
+	var (
+		out  []string
+		seen = map[string]bool{}
+	)
+	for i := 0; i < len(s); i++ {
+		if s[i] != '{' {
+			continue
+		}
+		// Find closing '}'.
+		j := strings.IndexByte(s[i+1:], '}')
+		if j < 0 {
+			break
+		}
+		end := i + 1 + j
+		tok := s[i+1 : end]
+		i = end // skip past the closing brace
+		if isKebabPlaceholderToken(tok) && !seen[tok] {
+			seen[tok] = true
+			out = append(out, tok)
+		}
+	}
+	return out
+}
+
+// isKebabPlaceholderToken returns true when s is a non-empty
+// lowercase kebab-case identifier (matches the propose schema's
+// placeholder token pattern: ^[a-z][a-z0-9-]*$ ).
+func isKebabPlaceholderToken(s string) bool {
+	if s == "" {
+		return false
+	}
+	if s[0] < 'a' || s[0] > 'z' {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+		case c >= '0' && c <= '9':
+		case c == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // WorkflowEvidence pairs a session_id with a verbatim quote
@@ -2307,8 +2497,22 @@ type MergeSkillInputs struct {
 // MergedSkillResult is the parsed shape of a successful merge call.
 // Every field carries through to the rewritten SKILL.md: the
 // frontmatter scalars (name, description, when_to_use, version),
-// the AutoSkill metadata (triggers, tags, examples), and the
-// markdown body that lives below the frontmatter fence.
+// the AutoSkill metadata (triggers, tags, examples), the markdown
+// body that lives below the frontmatter fence, and — added so the
+// merge is a true semantic union rather than a lossy summary —
+// the deduped scripts set and the contrastive kind label.
+//
+// Scripts: the union (LLM-deduped) of the existing skill's scripts
+// and the candidate's scripts. Without this field, candidate-side
+// scripts were silently dropped at merge time even when the LLM
+// recognised them as additive.
+//
+// Kind: the contrastive-induction label (pattern|pitfall). Without
+// it, a `pitfall` candidate merging into a `pattern` skill (or
+// vice-versa) silently erased the label distinction; downstream
+// surfaces that branch on Kind would misroute the merged skill.
+// Defaults to "pattern" when the LLM omits it, mirroring the
+// add-side default.
 type MergedSkillResult struct {
 	Name         string                 `json:"name"`
 	Description  string                 `json:"description"`
@@ -2316,6 +2520,8 @@ type MergedSkillResult struct {
 	Triggers     []string               `json:"triggers"`
 	Tags         []string               `json:"tags"`
 	Examples     []ProposedSkillExample `json:"examples"`
+	Scripts      []ProposedSkillScript  `json:"scripts,omitempty"`
+	Kind         string                 `json:"kind,omitempty"`
 	BodyMarkdown string                 `json:"body_markdown"`
 	Rationale    string                 `json:"rationale"`
 }
@@ -2347,9 +2553,11 @@ Hard rules:
    - name: the existing skill's kebab-case name, verbatim.
    - description: ≤700 chars, what the merged skill does and when. Lead with the trigger condition.
    - when_to_use: ≤700 chars, the trigger phrase the user would say to themselves.
+   - kind: 'pattern' or 'pitfall'. The contrastive-induction label of the merged skill. Pick 'pitfall' when EITHER side teaches what to avoid (failure-grounded). Otherwise 'pattern'. A pattern + pattern merge stays pattern; a pattern + pitfall merge becomes pitfall (the avoidance signal subsumes the success signal). Do not erase a pitfall label by defaulting silently.
    - triggers: 3–8 short query-shaped phrases (lowercase, NOT prose) — the dedupe-d union of both sides' triggers.
    - tags: 1–5 lowercase kebab-case categorical labels — the dedupe-d union.
    - examples: 1–3 (input → output) demonstrations — pick the most illustrative from both sides; rewrite if needed for coherence.
+   - scripts: 0–5 helper scripts. The dedupe-d union of the existing skill's scripts and the candidate's scripts. Drop a script ONLY when its content is fully subsumed by another (same purpose, same steps). Keep distinct steps[] / placeholders[] from each side. Empty array is fine when neither side ships scripts. Same shape as the propose schema's scripts.
    - body_markdown: the full markdown body BELOW the frontmatter fence (do NOT include the --- fences; do NOT include the YAML frontmatter; the caller wraps your body_markdown in the rebuilt frontmatter). Keep the H1 + intro + ## Steps structure intact; merge content within those sections.
    - rationale: ≤300 chars summarising what you kept, what you dropped, and why.
 
@@ -2359,12 +2567,17 @@ Hard rules:
 
 const mergeSkillToolSchema = `{
   "type": "object",
-  "required": ["name","description","when_to_use","triggers","tags","examples","body_markdown","rationale"],
+  "required": ["name","description","when_to_use","kind","triggers","tags","examples","body_markdown","rationale"],
   "additionalProperties": false,
   "properties": {
     "name":         {"type":"string","pattern":"^[a-z][a-z0-9-]*$"},
     "description":  {"type":"string","minLength":1,"maxLength":700},
     "when_to_use":  {"type":"string","minLength":1,"maxLength":700},
+    "kind": {
+      "type":"string",
+      "enum":["pattern","pitfall"],
+      "description":"Contrastive-induction label. The merged skill's kind, deduped from the existing SKILL.md kind and the candidate's kind. Pick 'pitfall' when EITHER side teaches what to avoid (failure-grounded); 'pattern' when both sides are success-grounded."
+    },
     "triggers": {
       "type":"array",
       "minItems": 3,
@@ -2388,6 +2601,51 @@ const mergeSkillToolSchema = `{
         "properties": {
           "input":  {"type":"string","minLength":1,"maxLength":240},
           "output": {"type":"string","minLength":1,"maxLength":240}
+        }
+      }
+    },
+    "scripts": {
+      "type":"array",
+      "description":"Deduped union of the existing skill's scripts and the candidate's scripts. Omit a script only when its content is fully subsumed by another. Same shape as the propose schema's scripts.",
+      "minItems": 0,
+      "maxItems": 5,
+      "items": {
+        "type":"object",
+        "required":["name","purpose"],
+        "additionalProperties": false,
+        "properties": {
+          "name":    {"type":"string","pattern":"^[A-Za-z0-9_.-]+$","maxLength":64},
+          "purpose": {"type":"string","minLength":1,"maxLength":200},
+          "body":    {"type":"string","maxLength":4000},
+          "steps": {
+            "type":"array",
+            "minItems":0,
+            "maxItems":12,
+            "items": {
+              "type":"object",
+              "required":["cmd","purpose"],
+              "additionalProperties": false,
+              "properties": {
+                "cmd":     {"type":"string","minLength":1,"maxLength":400},
+                "purpose": {"type":"string","minLength":1,"maxLength":160}
+              }
+            }
+          },
+          "placeholders": {
+            "type":"array",
+            "minItems":0,
+            "maxItems":10,
+            "items": {
+              "type":"object",
+              "required":["token","description"],
+              "additionalProperties": false,
+              "properties": {
+                "token":       {"type":"string","pattern":"^[a-z][a-z0-9-]*$","maxLength":32},
+                "description": {"type":"string","minLength":1,"maxLength":160},
+                "example":     {"type":"string","maxLength":160}
+              }
+            }
+          }
         }
       }
     },
@@ -2477,6 +2735,13 @@ func renderCandidateForMerge(c ProposedSkill) (string, []string) {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Name: %s\n", c.Name)
+	if c.Kind != "" {
+		// Surface the contrastive label so the merge LLM can decide
+		// whether the union should retain a `pitfall` framing
+		// (failure-driven, "avoid X") or stay `pattern`. Without this
+		// the merger has no idea which kind of skill it's combining.
+		fmt.Fprintf(&b, "Kind: %s\n", c.Kind)
+	}
 	fmt.Fprintf(&b, "When to use: %s\n", cleanWhen)
 	fmt.Fprintf(&b, "Why: %s\n", cleanWhy)
 	if len(c.Triggers) > 0 {
@@ -2495,12 +2760,55 @@ func renderCandidateForMerge(c ProposedSkill) (string, []string) {
 			fmt.Fprintf(&b, "  %d. input: %s\n     output: %s\n", i+1, cleanIn, cleanOut)
 		}
 	}
+	if len(c.Scripts) > 0 {
+		// Render each script's purpose / steps / placeholders. The
+		// merger needs the AWM substrate (steps[] + placeholders[])
+		// to decide whether two scripts overlap, not just their
+		// names. Bodies are echoed when present (LLM-emitted) but
+		// kept short — the merger's job is union, not copy-edit.
+		b.WriteString("Scripts:\n")
+		for i, sc := range c.Scripts {
+			cleanPurpose, p5 := redact.Outbound(sc.Purpose)
+			pats.addAll(p5)
+			fmt.Fprintf(&b, "  %d. name: %s\n     purpose: %s\n", i+1, sc.Name, cleanPurpose)
+			if sc.Body != "" {
+				cleanBody, p6 := redact.Outbound(sc.Body)
+				pats.addAll(p6)
+				fmt.Fprintf(&b, "     body:\n%s\n", indentBlock(cleanBody, "       "))
+			}
+			for j, st := range sc.Steps {
+				cleanCmd, p7 := redact.Outbound(st.Cmd)
+				pats.addAll(p7)
+				fmt.Fprintf(&b, "     step %d: %s    # %s\n", j+1, cleanCmd, st.Purpose)
+			}
+			for _, ph := range sc.Placeholders {
+				fmt.Fprintf(&b, "     placeholder {%s}: %s", ph.Token, ph.Description)
+				if ph.Example != "" {
+					fmt.Fprintf(&b, " (e.g. %s)", ph.Example)
+				}
+				b.WriteString("\n")
+			}
+		}
+	}
 	if c.AlternativesRejected != "" {
-		cleanAlt, p5 := redact.Outbound(c.AlternativesRejected)
-		pats.addAll(p5)
+		cleanAlt, p8 := redact.Outbound(c.AlternativesRejected)
+		pats.addAll(p8)
 		fmt.Fprintf(&b, "Alternatives rejected: %s\n", cleanAlt)
 	}
 	return b.String(), pats.sortedSlice()
+}
+
+// indentBlock prefixes every line in s with prefix. Returns s
+// unchanged if it's empty so callers can trust "" stays "".
+func indentBlock(s, prefix string) string {
+	if s == "" {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = prefix + l
+	}
+	return strings.Join(lines, "\n")
 }
 
 // SearchHit is one row supplied to BuildSearchSummary. Every field

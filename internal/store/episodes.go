@@ -294,11 +294,16 @@ func FindEpisodes(ctx context.Context, db *sql.DB, opts FindEpisodesOpts) ([]Epi
 	}
 	args = append(args, limit)
 
+	// `, id DESC` is the tiebreaker for ms-collisions. Episodes
+	// with identical ended_at_ms (single-event episodes pinned to
+	// the same wall clock, or seeded fixtures with hardcoded ts)
+	// would otherwise return in engine-defined order — visible as
+	// flaky pagination and non-deterministic LIMIT'd recall.
 	q := `SELECT id, session_id, ordinal, started_at_ms, ended_at_ms,
 	             cwd, intent_summary, event_count, first_event_id
 	        FROM episodes
 	       WHERE 1=1` + filter.String() + `
-	       ORDER BY ended_at_ms DESC
+	       ORDER BY ended_at_ms DESC, id DESC
 	       LIMIT ?`
 
 	rows, err := db.QueryContext(ctx, q, args...)
@@ -315,6 +320,73 @@ func FindEpisodes(ctx context.Context, db *sql.DB, opts FindEpisodesOpts) ([]Epi
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		out = append(out, ep)
+	}
+	return out, rows.Err()
+}
+
+// LoadSessionsNeedingSegmentation returns the IDs of sessions whose
+// episodes table is out-of-date with their events table — either
+// the session was never segmented (no episodes rows) OR new events
+// have arrived since segmentation last ran (events with
+// ts_source_ms > MAX(episodes.ended_at_ms)).
+//
+// Pre-fix, episode segmentation lived inside the induction sweep's
+// per-candidate loop, which was gated on `NOT EXISTS llm_outputs
+// kind=induction`. Once a session was inducted it dropped out of
+// the candidate set and never got re-segmented, so any late event
+// arriving after induction created silent episode/event drift. A
+// dedicated pre-loop pass keyed on episode staleness (not induction
+// state) closes that gap.
+//
+// Eligibility:
+//   - sessions.event_count >= minEvents (skip trivial sessions)
+//   - COALESCE(ended_at_ms, started_at_ms) <= idleCutoff (give the
+//     session time to settle; mid-session segmentation creates
+//     noisy boundaries that the next pass would just rewrite)
+//   - either no episodes rows OR an event newer than the latest
+//     episode's ended_at_ms exists for this session
+//
+// Ordered newest-first so a sweep with a small `limit` catches
+// recently-active sessions before historical backfill.
+func LoadSessionsNeedingSegmentation(ctx context.Context, db *sql.DB, idleCutoffMs, idleMs int64, minEvents, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	const q = `
+WITH ep AS (
+    SELECT session_id, MAX(ended_at_ms) AS max_end
+      FROM episodes
+     GROUP BY session_id
+)
+SELECT s.id
+  FROM sessions s
+  LEFT JOIN ep ON ep.session_id = s.id
+ WHERE s.event_count >= ?
+   AND COALESCE(s.ended_at_ms, s.started_at_ms) IS NOT NULL
+   AND COALESCE(s.ended_at_ms, s.started_at_ms) <= ?
+   AND (
+        ep.session_id IS NULL
+     OR EXISTS (
+            SELECT 1 FROM events ev
+             WHERE ev.session_id = s.id
+               AND ev.ts_source_ms > ep.max_end
+        )
+   )
+ ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms) DESC
+ LIMIT ?`
+	cutoff := idleCutoffMs - idleMs
+	rows, err := db.QueryContext(ctx, q, minEvents, cutoff, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query needing-segmentation: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		out = append(out, id)
 	}
 	return out, rows.Err()
 }

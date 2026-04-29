@@ -336,8 +336,8 @@ SELECT s.id,
   FROM sessions s
   JOIN session_outcomes so ON so.session_id = s.id
  WHERE so.outcome = 'failure_likely'
-   AND COALESCE(s.ended_at_ms, s.started_at_ms, 0) >= ?
- ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms, 0) DESC
+   AND COALESCE(s.ended_at_ms, s.started_at_ms) >= ?
+ ORDER BY COALESCE(s.ended_at_ms, s.started_at_ms) DESC
  LIMIT ?`
 	rows, err := db.QueryContext(ctx, q, sinceMs, limit)
 	if err != nil {

@@ -429,8 +429,22 @@ func findEpisodesHandler(st *store.Store) ToolHandler {
 			sinceMs = time.Now().Add(-time.Duration(req.SinceDays) * 24 * time.Hour).UnixMilli()
 		}
 
+		// Resolve a session-id prefix to its full UUID so callers
+		// can pass the 8-char preview the tool itself emits below.
+		// Mirrors list_subagents — without this, a model that copies
+		// the short id back in as session_id silently gets (no
+		// episodes).
+		sessionID := req.SessionID
+		if sessionID != "" {
+			full, rerr := store.ResolveSessionIDPrefix(ctx, st.DB(), sessionID)
+			if rerr != nil {
+				return TextError("find_episodes: %v", rerr), nil
+			}
+			sessionID = full
+		}
+
 		hits, err := store.FindEpisodes(ctx, st.DB(), store.FindEpisodesOpts{
-			SessionID:     req.SessionID,
+			SessionID:     sessionID,
 			Cwd:           req.Cwd,
 			QueryContains: req.Query,
 			SinceMs:       sinceMs,

@@ -170,8 +170,12 @@ const (
 // discard}) the user took. MaintenancePending (empty) means the
 // candidate is extracted but not yet acted on — the abandonment
 // signal a future propose run uses to avoid re-suggesting the same
-// idea. AddPath is set only for Decision==MaintenanceAdd;
-// MergedIntoID is set only for Decision==MaintenanceMerge.
+// idea. AddPath is set for Decision==MaintenanceAdd and (after
+// migration 023) for MaintenanceMerge — the on-disk SKILL.md path
+// the merge result was written to. MergedIntoID is set for
+// Decision==MaintenanceMerge AND there is a target candidate row;
+// NULL for the "merged into a hand-authored skill" sentinel case
+// where no candidate row owns the on-disk file.
 //
 // Triggers, Tags, Examples, and Version are the AutoSkill 7-tuple
 // metadata (τ, γ, ξ, v) — populated when the candidate is recorded
@@ -408,12 +412,17 @@ func MarkSkillCandidateAddedWithProvenance(ctx context.Context, db *sql.DB, llmO
 	if bodySHA256 != "" {
 		hashArg = bodySHA256
 	} // else nil → SQL NULL
+	// Clear merged_into_id on transitions INTO `add` (e.g. merge→add
+	// or discard→add). Without this, the row carries a stale FK
+	// pointing at whatever skill_candidates row the previous merge
+	// targeted, which is a lie about the row's current lifecycle.
 	res, err := db.ExecContext(ctx,
 		`UPDATE skill_candidates
 		    SET decision        = ?,
 		        decision_at_ms  = ?,
 		        add_path        = ?,
-		        add_body_sha256 = ?
+		        add_body_sha256 = ?,
+		        merged_into_id  = NULL
 		  WHERE llm_output_id = ? AND skill_name = ?`,
 		string(MaintenanceAdd), decisionAtMs, addPath, hashArg, llmOutputID, skillName,
 	)
@@ -436,25 +445,41 @@ func MarkSkillCandidateAddedWithProvenance(ctx context.Context, db *sql.DB, llmO
 // (or eventually will be) MaintenanceAdd — the on-disk SKILL.md
 // AutoSkill's "skill merger" prompt rewrites in place.
 //
-// mergedIntoID is required: a merge with no target is meaningless.
-// addPath is also recorded so callers can reach the on-disk file
-// directly (it duplicates the target row's add_path; storing it
-// here keeps the lifecycle row self-contained for reporting).
+// `mergedIntoID == 0` is a recognised sentinel for "merged into a
+// hand-authored skill that has no candidate row" — writes
+// merged_into_id = NULL. Without this case, a merge against a
+// pre-aichronicles SKILL.md leaves the candidate stuck in pending,
+// which future propose runs misread as "user ignored this
+// suggestion" instead of "user folded it into a hand-authored
+// skill". Negative ids are still rejected.
+//
+// addPath is recorded so callers can reach the on-disk file
+// directly (it duplicates the target row's add_path when there is
+// a target; for hand-authored merges it's the only handle).
 func MarkSkillCandidateMerged(ctx context.Context, db *sql.DB, llmOutputID int64, skillName string, mergedIntoID int64, addPath string, decisionAtMs int64) error {
 	if decisionAtMs <= 0 {
 		return errors.New("MarkSkillCandidateMerged: decision_at_ms is required")
 	}
-	if mergedIntoID <= 0 {
-		return errors.New("MarkSkillCandidateMerged: merged_into_id is required")
+	if mergedIntoID < 0 {
+		return errors.New("MarkSkillCandidateMerged: merged_into_id must be ≥ 0 (use 0 for hand-authored merges)")
 	}
+	var mergedArg any
+	if mergedIntoID > 0 {
+		mergedArg = mergedIntoID
+	} // else nil → SQL NULL (hand-authored merge target)
+	// Clear add_body_sha256 on transition INTO `merge`: the source
+	// candidate's body hash isn't meaningful once the row has been
+	// folded into the target — the new on-disk SKILL.md hash lives
+	// on the target's row (see writeMergedSkill), not here.
 	res, err := db.ExecContext(ctx,
 		`UPDATE skill_candidates
-		    SET decision       = ?,
-		        decision_at_ms = ?,
-		        merged_into_id = ?,
-		        add_path       = ?
+		    SET decision        = ?,
+		        decision_at_ms  = ?,
+		        merged_into_id  = ?,
+		        add_path        = ?,
+		        add_body_sha256 = NULL
 		  WHERE llm_output_id = ? AND skill_name = ?`,
-		string(MaintenanceMerge), decisionAtMs, mergedIntoID, addPath, llmOutputID, skillName,
+		string(MaintenanceMerge), decisionAtMs, mergedArg, addPath, llmOutputID, skillName,
 	)
 	if err != nil {
 		return fmt.Errorf("mark merge: %w", err)
@@ -477,10 +502,19 @@ func MarkSkillCandidateDiscarded(ctx context.Context, db *sql.DB, llmOutputID in
 	if decisionAtMs <= 0 {
 		return errors.New("MarkSkillCandidateDiscarded: decision_at_ms is required")
 	}
+	// Clear add_path / add_body_sha256 / merged_into_id on transition
+	// INTO `discard`: the user actively rejected the suggestion, so
+	// the row must not retain pointers to a SKILL.md file, a body
+	// hash, or a merge target. Pre-fix, an `add → discard` row kept
+	// add_path populated — a "rejected" candidate that still claimed
+	// to own an on-disk file, ready to confuse a drift check.
 	res, err := db.ExecContext(ctx,
 		`UPDATE skill_candidates
-		    SET decision       = ?,
-		        decision_at_ms = ?
+		    SET decision        = ?,
+		        decision_at_ms  = ?,
+		        add_path        = NULL,
+		        add_body_sha256 = NULL,
+		        merged_into_id  = NULL
 		  WHERE llm_output_id = ? AND skill_name = ?`,
 		string(MaintenanceDiscard), decisionAtMs, llmOutputID, skillName,
 	)
@@ -592,6 +626,87 @@ func LoadSkillCandidatesByName(ctx context.Context, db *sql.DB, skillName string
 	return out, rows.Err()
 }
 
+// UpdateSkillCandidateAddBodyHash refreshes the add_path and
+// add_body_sha256 of an existing skill_candidates row by id.
+// Used by `propose merge`: after the merge LLM rewrites the
+// target's SKILL.md, the target row's hash must reflect the new
+// on-disk body — otherwise the next `skills verify` would flag
+// every merged skill as tampered.
+//
+// Scoped tightly: the caller has already loaded the row (typically
+// via LoadAddedSkillCandidate) and is updating only the two fields
+// that the on-disk write changes. Decision/decision_at_ms stay
+// untouched: the row remains the active "added" target.
+//
+// Returns ErrSkillCandidateNotFound when the id doesn't exist.
+func UpdateSkillCandidateAddBodyHash(ctx context.Context, db *sql.DB, candidateID int64, addPath, bodySHA256 string) error {
+	if candidateID <= 0 {
+		return errors.New("UpdateSkillCandidateAddBodyHash: candidate_id is required")
+	}
+	var hashArg any
+	if bodySHA256 != "" {
+		hashArg = bodySHA256
+	} // else nil → SQL NULL
+	res, err := db.ExecContext(ctx,
+		`UPDATE skill_candidates
+		    SET add_path        = ?,
+		        add_body_sha256 = ?
+		  WHERE id = ?`,
+		addPath, hashArg, candidateID,
+	)
+	if err != nil {
+		return fmt.Errorf("update body hash: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: id=%d", ErrSkillCandidateNotFound, candidateID)
+	}
+	return nil
+}
+
+// UpdateSkillCandidateKind sets the kind column on a single
+// skill_candidates row by id. Used by `propose merge` after the
+// LLM-decided union: when a `pitfall` candidate merges into a
+// `pattern` skill (or vice-versa), the merged content is now
+// pitfall-flavoured, and the surviving target row's kind must
+// reflect that — otherwise downstream surfaces that branch on
+// kind (the SKILL.md frontmatter is one, but a future
+// pitfall-vs-pattern retrieval bias would be another) silently
+// misroute the merged skill.
+//
+// Out-of-enum values are rejected: the caller is expected to pass
+// SkillKindPattern or SkillKindPitfall. An empty kind is also
+// rejected (caller should compute a default before calling).
+//
+// Returns ErrSkillCandidateNotFound when the id doesn't exist.
+func UpdateSkillCandidateKind(ctx context.Context, db *sql.DB, candidateID int64, kind SkillKind) error {
+	if candidateID <= 0 {
+		return errors.New("UpdateSkillCandidateKind: candidate_id is required")
+	}
+	if kind != SkillKindPattern && kind != SkillKindPitfall {
+		return fmt.Errorf("UpdateSkillCandidateKind: kind must be %q or %q, got %q",
+			SkillKindPattern, SkillKindPitfall, kind)
+	}
+	res, err := db.ExecContext(ctx,
+		`UPDATE skill_candidates SET kind = ? WHERE id = ?`,
+		string(kind), candidateID,
+	)
+	if err != nil {
+		return fmt.Errorf("update kind: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: id=%d", ErrSkillCandidateNotFound, candidateID)
+	}
+	return nil
+}
+
 // LoadAddedSkillCandidate returns the most recent skill_candidates
 // row whose Decision==MaintenanceAdd for the given skill name. Used
 // by the merge path to find the surviving candidate that owns the
@@ -607,7 +722,7 @@ func LoadAddedSkillCandidate(ctx context.Context, db *sql.DB, skillName string) 
 		   FROM skill_candidates
 		  WHERE skill_name = ?
 		    AND decision = ?
-		  ORDER BY decision_at_ms DESC
+		  ORDER BY decision_at_ms DESC, id DESC
 		  LIMIT 1`,
 		skillName, string(MaintenanceAdd),
 	)

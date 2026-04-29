@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -195,6 +196,12 @@ func loadLatestProposal(ctx context.Context, s *store.Store, wantID int64) (*pro
 	if err := json.Unmarshal([]byte(output.Body), &result); err != nil {
 		return nil, nil, fmt.Errorf("parse cached propose body (id=%d): %w", output.ID, err)
 	}
+	// Anti-fabrication grounding: drop triggers the LLM emitted
+	// without anchoring in evidence Quote text. Done once at the
+	// load boundary so every consumer (propose add / merge / verify
+	// rendering / persistence) sees the same filtered set. See
+	// prompts.FilterGroundedTriggers for the rule.
+	result.GroundTriggers()
 	return &result, output, nil
 }
 
@@ -262,6 +269,17 @@ func addSkillCandidate(
 	// out of habit when "merge into the existing skill" is what
 	// they actually want.
 	if err := refuseDuplicateSkillName(skillMd, sk.Name, force); err != nil {
+		return err
+	}
+
+	// Discard-history check: if the user explicitly discarded a
+	// candidate with this skill name in any prior session, refuse
+	// the add unless --force. Without this, `propose discard
+	// --skill X` is undermined — a fresh `propose add --skill X`
+	// from a different output_id silently re-adds the rejected
+	// idea, which is exactly the "rejection signal for future
+	// propose runs" promise the discard command makes.
+	if err := refuseDiscardedSkillName(ctx, st, sk.Name, force); err != nil {
 		return err
 	}
 
@@ -470,13 +488,34 @@ func findProposedSkill(r *prompts.ProposalResult, name string) (*prompts.Propose
 // the skill listing per the docs; we trim aggressively below that
 // to stay safe.
 type skillFrontmatter struct {
-	Name        string                    `yaml:"name"`
-	Description string                    `yaml:"description"`
-	WhenToUse   string                    `yaml:"when_to_use,omitempty"`
-	Version     string                    `yaml:"version,omitempty"`
-	Tags        []string                  `yaml:"tags,omitempty"`
-	Triggers    []string                  `yaml:"triggers,omitempty"`
-	Examples    []skillFrontmatterExample `yaml:"examples,omitempty"`
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+	WhenToUse   string `yaml:"when_to_use,omitempty"`
+	Version     string `yaml:"version,omitempty"`
+	// Kind is the contrastive-induction label ("pattern" / "pitfall").
+	// Omitted when empty so legacy SKILL.md files (pre-Kind) aren't
+	// retroactively annotated with a guessed value. Out-of-enum
+	// values are normalised to empty by frontmatterKind() — defence
+	// in depth even though the schema already enforces the enum.
+	Kind     string                    `yaml:"kind,omitempty"`
+	Tags     []string                  `yaml:"tags,omitempty"`
+	Triggers []string                  `yaml:"triggers,omitempty"`
+	Examples []skillFrontmatterExample `yaml:"examples,omitempty"`
+}
+
+// frontmatterKind normalises a contrastive-induction label for YAML
+// frontmatter emission. Returns the input verbatim when it's a
+// recognised value ("pattern" / "pitfall"), empty string otherwise.
+// Mirrors the same store-side normalisation in
+// skillMetadataFromProposed so the SKILL.md frontmatter and the
+// skill_candidates row never disagree on what the kind is.
+func frontmatterKind(s string) string {
+	switch s {
+	case "pattern", "pitfall":
+		return s
+	default:
+		return ""
+	}
 }
 
 // skillFrontmatterExample is one (input, output) demonstration in
@@ -522,6 +561,7 @@ func renderSkillScaffold(sk *prompts.ProposedSkill, outputID int64) string {
 		Description: clipToRunes(buildSkillDescription(sk), skillFrontmatterCharCap),
 		WhenToUse:   clipToRunes(strings.TrimSpace(sk.WhenToUse), skillFrontmatterCharCap),
 		Version:     store.InitialSkillVersion, // fresh add — merge bumps
+		Kind:        frontmatterKind(sk.Kind),
 		Tags:        append([]string(nil), sk.Tags...),
 		Triggers:    append([]string(nil), sk.Triggers...),
 		Examples:    examples,
@@ -781,6 +821,41 @@ func refuseDuplicateSkillName(targetSkillMd, candidateName string, force bool) e
 			"the global skill, `aichronicles propose discard --skill %s` "+
 			"if it is no longer relevant, or pass --force to add anyway",
 			candidateName, globalPath, candidateName, candidateName)
+	}
+	return nil
+}
+
+// refuseDiscardedSkillName rejects an `add` against a skill name
+// that the user explicitly discarded in any prior run, unless
+// --force is set. Looks up skill_candidates rows with
+// decision='discard' for this name; the most recent decision_at_ms
+// makes the error message actionable ("you discarded this on Y").
+//
+// Returns nil for skill names that have never been discarded, or
+// for the discard → re-add flow under --force.
+func refuseDiscardedSkillName(ctx context.Context, st *store.Store, candidateName string, force bool) error {
+	if force {
+		return nil
+	}
+	rows, err := store.LoadSkillCandidatesByName(ctx, st.DB(), candidateName, 0)
+	if err != nil {
+		// Soft-fail: a transient DB error here shouldn't block the
+		// add path entirely. The on-disk dedup check already ran;
+		// log and proceed.
+		slog.Warn("propose add: failed to check discard history", "skill", candidateName, "err", err)
+		return nil
+	}
+	for _, r := range rows {
+		if r.Decision == store.MaintenanceDiscard {
+			when := "earlier"
+			if r.DecisionAtMs.Valid {
+				when = time.UnixMilli(r.DecisionAtMs.Int64).UTC().Format("2006-01-02 15:04 UTC")
+			}
+			return fmt.Errorf("skill %q was previously discarded (%s) — "+
+				"add it again only if you've changed your mind. "+
+				"Pass --force to override the discard signal",
+				candidateName, when)
+		}
 	}
 	return nil
 }

@@ -49,7 +49,15 @@ func TestWorkflowsPage_RendersFoundRows(t *testing.T) {
 		"workflow": map[string]any{
 			"task_shape": "deploy a backend service to staging",
 			"procedure": []map[string]any{
-				{"action": "Tag the release commit with {version}"},
+				// `{version}` is declared in this step's placeholders;
+				// without that, the unmarshal-time AWM consistency
+				// check would (correctly) reject the fixture.
+				{
+					"action": "Tag the release commit with {version}",
+					"placeholders": []map[string]any{
+						{"token": "version", "description": "release version", "example": "v1.2.3"},
+					},
+				},
 				{"action": "Run kubectl rollout"},
 			},
 			"preconditions":  []string{"git working tree clean"},

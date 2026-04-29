@@ -988,6 +988,239 @@ func TestBuildMergeSkill_ValidInputs(t *testing.T) {
 	}
 }
 
+// TestFilterGroundedTriggers covers the anti-fabrication filter:
+// triggers are kept only when they appear (case-insensitively, as
+// substrings) inside at least one evidence Quote. Without this
+// filter, the LLM is free to invent retrieval phrases that have
+// no anchor in the actual session text, and the resulting skill
+// gets retrieved on adjacent-but-wrong queries.
+func TestFilterGroundedTriggers(t *testing.T) {
+	t.Parallel()
+	ev := []ProposalEvidence{
+		{Quote: "user asked: deploy to staging please"},
+		{Quote: "tooling: ran `kubectl apply -f staging.yaml`"},
+	}
+
+	cases := []struct {
+		name     string
+		in       []string
+		evidence []ProposalEvidence
+		want     []string
+	}{
+		{
+			name:     "all grounded",
+			in:       []string{"deploy to staging", "kubectl apply"},
+			evidence: ev,
+			want:     []string{"deploy to staging", "kubectl apply"},
+		},
+		{
+			name:     "ungrounded dropped",
+			in:       []string{"deploy to staging", "rollback prod"},
+			evidence: ev,
+			want:     []string{"deploy to staging"},
+		},
+		{
+			name:     "case insensitive match",
+			in:       []string{"DEPLOY TO STAGING"},
+			evidence: ev,
+			want:     []string{"DEPLOY TO STAGING"},
+		},
+		{
+			name:     "all ungrounded → nil",
+			in:       []string{"rollback prod", "ssh into bastion"},
+			evidence: ev,
+			want:     nil,
+		},
+		{
+			name:     "empty triggers → nil",
+			in:       nil,
+			evidence: ev,
+			want:     nil,
+		},
+		{
+			name:     "no evidence → nil even if triggers given",
+			in:       []string{"x"},
+			evidence: nil,
+			want:     nil,
+		},
+		{
+			name:     "evidence with empty quotes → nil",
+			in:       []string{"x"},
+			evidence: []ProposalEvidence{{Quote: ""}, {Quote: "   "}},
+			want:     nil,
+		},
+		{
+			name:     "whitespace trigger dropped",
+			in:       []string{"   ", "deploy"},
+			evidence: ev,
+			want:     []string{"deploy"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := FilterGroundedTriggers(tc.in, tc.evidence)
+			if len(got) != len(tc.want) {
+				t.Errorf("got %v, want %v", got, tc.want)
+				return
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("at [%d]: got %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestProposalResult_GroundTriggers exercises the in-place
+// orchestration helper: every skill's Triggers gets replaced with
+// the grounded subset, using that skill's own Evidence as the
+// substrate. Skills are independent — fabrication in one doesn't
+// affect another.
+func TestProposalResult_GroundTriggers(t *testing.T) {
+	t.Parallel()
+	r := &ProposalResult{
+		Skills: []ProposedSkill{
+			{
+				Name:     "deploy-staging",
+				Triggers: []string{"deploy to staging", "made-up phrase"},
+				Evidence: []ProposalEvidence{{Quote: "deploy to staging please"}},
+			},
+			{
+				Name:     "rollback-prod",
+				Triggers: []string{"rollback the prod deploy"},
+				Evidence: []ProposalEvidence{{Quote: "let's rollback the prod deploy"}},
+			},
+		},
+	}
+	r.GroundTriggers()
+	if len(r.Skills[0].Triggers) != 1 || r.Skills[0].Triggers[0] != "deploy to staging" {
+		t.Errorf("skill 0 triggers not filtered: %v", r.Skills[0].Triggers)
+	}
+	if len(r.Skills[1].Triggers) != 1 || r.Skills[1].Triggers[0] != "rollback the prod deploy" {
+		t.Errorf("skill 1 triggers should survive: %v", r.Skills[1].Triggers)
+	}
+}
+
+// TestBuildMergeSkill_RendersCandidateScriptsAndKind pins the
+// fix for the "scripts silently dropped" bug: when the candidate
+// has Scripts and a contrastive Kind, the merge prompt MUST surface
+// both so the LLM can actually decide what to keep. Without this,
+// the merger was told to "import only reusable, non-conflicting
+// additions" but couldn't see the candidate's AWM substrate at all.
+func TestBuildMergeSkill_RendersCandidateScriptsAndKind(t *testing.T) {
+	t.Parallel()
+	in := MergeSkillInputs{
+		SkillName:      "deploy-staging",
+		NextVersion:    "v0.1.5",
+		CurrentSkillMd: "---\nname: deploy-staging\nversion: v0.1.4\n---\n# deploy-staging\n\nrun the staging deploy.\n",
+		Candidate: ProposedSkill{
+			Name:      "deploy-staging",
+			WhenToUse: "when the user wants to deploy to staging",
+			Why:       "single command instead of remembering the script",
+			Kind:      "pitfall",
+			Scripts: []ProposedSkillScript{
+				{
+					Name:    "preflight.sh",
+					Purpose: "Sanity-check the staging cluster before deploy",
+					Steps: []ProposedScriptStep{
+						{Cmd: "kubectl --context={cluster} get nodes", Purpose: "verify cluster reachable"},
+						{Cmd: "test -f deploy/{branch}.yaml", Purpose: "manifest exists"},
+					},
+					Placeholders: []ProposedScriptPlaceholder{
+						{Token: "cluster", Description: "k8s context name", Example: "staging-eu1"},
+						{Token: "branch", Description: "release branch", Example: "release/2026.04"},
+					},
+				},
+			},
+		},
+	}
+	built, err := BuildMergeSkill(in)
+	if err != nil {
+		t.Fatalf("BuildMergeSkill: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	for _, want := range []string{
+		"Kind: pitfall",
+		"name: preflight.sh",
+		"purpose: Sanity-check the staging cluster",
+		"step 1: kubectl --context={cluster}",
+		"placeholder {cluster}",
+		"e.g. staging-eu1",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("merge prompt missing %q\n--- prompt ---\n%s", want, body)
+		}
+	}
+}
+
+// TestMergeSkillToolSchema_DescribesScriptsAndKind asserts the
+// merge schema actually requires the new fields. Without these,
+// the LLM has no grammar telling it scripts/kind are part of the
+// expected output.
+func TestMergeSkillToolSchema_DescribesScriptsAndKind(t *testing.T) {
+	t.Parallel()
+	var schema map[string]any
+	if err := json.Unmarshal([]byte(mergeSkillToolSchema), &schema); err != nil {
+		t.Fatalf("schema parse: %v", err)
+	}
+	required, _ := schema["required"].([]any)
+	requiredSet := map[string]bool{}
+	for _, r := range required {
+		s, _ := r.(string)
+		requiredSet[s] = true
+	}
+	if !requiredSet["kind"] {
+		t.Errorf("schema 'required' should list 'kind'; got %v", required)
+	}
+	props, _ := schema["properties"].(map[string]any)
+	if _, ok := props["scripts"]; !ok {
+		t.Errorf("schema 'properties' should declare 'scripts'")
+	}
+	kind, _ := props["kind"].(map[string]any)
+	enum, _ := kind["enum"].([]any)
+	if len(enum) != 2 {
+		t.Errorf("kind enum should be [pattern,pitfall]; got %v", enum)
+	}
+}
+
+// TestMergedSkillResult_RoundTripsScriptsAndKind asserts that the
+// Go struct can marshal/unmarshal a result containing scripts and
+// kind without losing data — guards against accidental json-tag
+// drift if the struct grows over time.
+func TestMergedSkillResult_RoundTripsScriptsAndKind(t *testing.T) {
+	t.Parallel()
+	original := MergedSkillResult{
+		Name:        "deploy-staging",
+		Description: "merged",
+		WhenToUse:   "now",
+		Kind:        "pitfall",
+		Triggers:    []string{"a", "b", "c"},
+		Tags:        []string{"x"},
+		Examples:    []ProposedSkillExample{{Input: "i", Output: "o"}},
+		Scripts: []ProposedSkillScript{
+			{Name: "rt.sh", Purpose: "round trip", Body: "echo hi"},
+		},
+		BodyMarkdown: "# x",
+		Rationale:    "merged the pitfall",
+	}
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var back MergedSkillResult
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if back.Kind != "pitfall" {
+		t.Errorf("kind not preserved: %q", back.Kind)
+	}
+	if len(back.Scripts) != 1 || back.Scripts[0].Name != "rt.sh" {
+		t.Errorf("scripts not preserved: %+v", back.Scripts)
+	}
+}
+
 // TestBuildMergeSkill_RequiresFields asserts the validation
 // guards fire for every load-bearing input.
 func TestBuildMergeSkill_RequiresFields(t *testing.T) {

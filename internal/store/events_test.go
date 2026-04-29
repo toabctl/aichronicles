@@ -79,6 +79,30 @@ func TestLoadEventsForSession_ExplicitLimitWins(t *testing.T) {
 	}
 }
 
+// TestLoadEventsForSession_UnboundedReturnsEverything pins the
+// segmenter's "give me every event, no cap" contract: passing
+// LoadEventsForSessionUnbounded must NOT clamp to the default cap.
+// A truncated event list silently mis-segments the session — the
+// final episode's ended_at_ms ends up at the (cap)-th event's
+// timestamp, not the session tail.
+func TestLoadEventsForSession_UnboundedReturnsEverything(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	// Seed past the default cap so truncation would be visible.
+	total := DefaultEventsPerSessionLimit + 25
+	seedEvents(t, s, "unbounded", total, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	sessionID := ingest.DeriveSessionID("claude-code", "unbounded")
+	got, err := LoadEventsForSession(t.Context(), s.DB(), sessionID, LoadEventsForSessionUnbounded)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(got) != total {
+		t.Errorf("unbounded load: got %d rows, want %d", len(got), total)
+	}
+}
+
 func TestLoadEventsForSession_UnknownSession_ReturnsEmpty(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)

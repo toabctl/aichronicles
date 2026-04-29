@@ -321,6 +321,121 @@ func TestRefuseDuplicateSkillName_PointsAtMerge(t *testing.T) {
 	})
 }
 
+// TestProposeAdd_EmitsKindInFrontmatter pins the parallel of the
+// merge-side Kind propagation: when the proposal's kind is in-enum
+// it lands in the SKILL.md frontmatter; otherwise the frontmatter
+// omits it (no fabrication, no out-of-enum YAML). Keeps add and
+// merge producing identical frontmatter shapes so a future
+// `skills verify` doesn't have to special-case.
+func TestProposeAdd_EmitsKindInFrontmatter(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		kind     string
+		wantLine string // "" → assert NO `kind:` line
+	}{
+		{name: "pattern emitted", kind: "pattern", wantLine: "kind: pattern"},
+		{name: "pitfall emitted", kind: "pitfall", wantLine: "kind: pitfall"},
+		{name: "empty omitted", kind: ""},
+		{name: "out-of-enum omitted", kind: "garbage"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := openTempCLIStore(t)
+			proposal := sampleProposal()
+			proposal.Skills[0].Kind = tc.kind
+			id := seedProposalOutput(t, s, proposal)
+			result, output, err := loadLatestProposal(t.Context(), s, 0)
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			if output.ID != id {
+				t.Fatalf("loaded wrong id")
+			}
+			dir := t.TempDir()
+			var out bytes.Buffer
+			if err := addSkillCandidate(t.Context(), s, result, output.ID,
+				proposal.Skills[0].Name, dir, false, true, nilLLMClient, &out); err != nil {
+				t.Fatalf("addSkillCandidate: %v", err)
+			}
+			body, err := os.ReadFile(filepath.Join(dir, proposal.Skills[0].Name, "SKILL.md"))
+			if err != nil {
+				t.Fatalf("read SKILL.md: %v", err)
+			}
+			bs := string(body)
+			if tc.wantLine != "" && !strings.Contains(bs, tc.wantLine) {
+				t.Errorf("expected %q in:\n%s", tc.wantLine, bs)
+			}
+			if tc.wantLine == "" && strings.Contains(bs, "kind:") {
+				t.Errorf("did not expect 'kind:' in:\n%s", bs)
+			}
+		})
+	}
+}
+
+// TestRefuseDiscardedSkillName covers the discard-history guard:
+// a name the user explicitly discarded must NOT silently re-add
+// from a different output_id. Without this check, `propose discard
+// --skill X` is a one-shot signal that the next `propose add
+// --skill X` (perhaps the user's own habit, perhaps the model
+// re-proposing the same kebab name) bypasses freely.
+func TestRefuseDiscardedSkillName(t *testing.T) {
+	t.Parallel()
+	s := openTempCLIStore(t)
+	ctx := t.Context()
+
+	// Plant a discarded candidate row under an isolated name so the
+	// test doesn't race against any other fixture.
+	const skillName = "previously-rejected"
+	loID := seedProposalOutput(t, s, sampleProposal())
+	if err := store.RecordSkillCandidate(ctx, s.DB(), loID, skillName, 1_700_000_000_000); err != nil {
+		t.Fatalf("seed candidate: %v", err)
+	}
+	if err := store.MarkSkillCandidateDiscarded(ctx, s.DB(), loID, skillName, 1_700_000_500_000); err != nil {
+		t.Fatalf("mark discard: %v", err)
+	}
+
+	t.Run("blocks add of previously-discarded name", func(t *testing.T) {
+		err := refuseDiscardedSkillName(ctx, s, skillName, false)
+		if err == nil {
+			t.Fatalf("expected refusal, got nil")
+		}
+		if !strings.Contains(err.Error(), "previously discarded") {
+			t.Errorf("error should mention 'previously discarded': %v", err)
+		}
+		if !strings.Contains(err.Error(), "--force") {
+			t.Errorf("error should mention --force escape hatch: %v", err)
+		}
+	})
+
+	t.Run("force bypasses", func(t *testing.T) {
+		if err := refuseDiscardedSkillName(ctx, s, skillName, true); err != nil {
+			t.Errorf("--force should bypass discard history: %v", err)
+		}
+	})
+
+	t.Run("no history returns nil", func(t *testing.T) {
+		if err := refuseDiscardedSkillName(ctx, s, "never-seen-this", false); err != nil {
+			t.Errorf("a fresh name should not error: %v", err)
+		}
+	})
+
+	t.Run("only-pending returns nil", func(t *testing.T) {
+		// A pending (recorded but un-decisioned) candidate is NOT
+		// a rejection signal — it just means the user hasn't acted
+		// yet. The add must proceed.
+		const pendingName = "still-pending"
+		loID2 := seedProposalOutput(t, s, sampleProposal())
+		if err := store.RecordSkillCandidate(ctx, s.DB(), loID2, pendingName, 1_700_000_000_000); err != nil {
+			t.Fatalf("seed pending: %v", err)
+		}
+		if err := refuseDiscardedSkillName(ctx, s, pendingName, false); err != nil {
+			t.Errorf("pending-only candidate should not block add: %v", err)
+		}
+	})
+}
+
 // TestRefuseDuplicateSkillName_GlobalCollision covers the secondary
 // check: the user is adding to a project-local skills dir, but a
 // global ~/.claude/skills/<name>/SKILL.md already covers the same
