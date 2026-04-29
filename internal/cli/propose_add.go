@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -282,6 +284,14 @@ func addSkillCandidate(
 	if err := refuseOversizedSkill(skillMd, body, force); err != nil {
 		return err
 	}
+	// SSGM-style provenance hash on the body BEFORE we append the
+	// trailing provenance line. The line itself is computed from
+	// the hash, so to keep the relationship reversible we hash the
+	// pre-provenance body, then append. A drift checker can later
+	// strip the trailing provenance line, recompute, and compare.
+	bodyHash := sha256.Sum256([]byte(body))
+	bodyHashHex := hex.EncodeToString(bodyHash[:])
+	body += skillProvenanceFooter(bodyHashHex)
 	if err := os.WriteFile(skillMd, []byte(body), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", skillMd, err)
 	}
@@ -314,10 +324,12 @@ func addSkillCandidate(
 	// are logged and the apply is reported as successful — the
 	// SKILL.md is on disk regardless.
 	now := time.Now().UnixMilli()
-	if merr := store.MarkSkillCandidateAdded(ctx, st.DB(), outputID, sk.Name, skillMd, now); merr != nil {
+	if merr := store.MarkSkillCandidateAddedWithProvenance(ctx, st.DB(),
+		outputID, sk.Name, skillMd, now, bodyHashHex); merr != nil {
 		if errors.Is(merr, store.ErrSkillCandidateNotFound) {
 			if rerr := store.RecordSkillCandidate(ctx, st.DB(), outputID, sk.Name, now); rerr == nil {
-				_ = store.MarkSkillCandidateAdded(ctx, st.DB(), outputID, sk.Name, skillMd, now)
+				_ = store.MarkSkillCandidateAddedWithProvenance(ctx, st.DB(),
+					outputID, sk.Name, skillMd, now, bodyHashHex)
 			}
 		} else {
 			_, _ = fmt.Fprintf(out, "warning: failed to record skill lifecycle: %v\n", merr)
@@ -366,6 +378,38 @@ func refuseOversizedSkill(path, body string, force bool) error {
 		"an existing skill via `aichronicles propose merge --skill %s`, or "+
 		"pass --force to override",
 		path, runes, skillMdBudgetRunes, filepath.Base(filepath.Dir(path)))
+}
+
+// skillProvenanceFingerprintLen is the number of leading hex
+// characters from the SHA-256 we embed in the SKILL.md footer.
+// 12 chars = 48 bits — plenty for human-readable cross-reference
+// against the candidate row's add_body_sha256, while staying
+// short enough to render compactly. The full hash lives in the
+// DB, the fingerprint is just for visual identification.
+const skillProvenanceFingerprintLen = 12
+
+// skillProvenanceFooter is the trailing block aichronicles appends
+// to a SKILL.md body after computing its hash. The line itself is
+// not part of the hash (see addSkillCandidate's hash-then-append
+// order), so a drift checker can strip the line, recompute the
+// hash, and compare against skill_candidates.add_body_sha256.
+//
+// SSGM (Lam et al., 2026 — arXiv:2603.11768) calls this primitive
+// "consistency verification": the lifecycle index has to be able
+// to tell "what aichronicles wrote" from "what was edited
+// afterwards." Without the hash, an undetected hand-edit silently
+// invalidates every downstream signal that assumes the body still
+// matches the LLM-emitted candidate.
+func skillProvenanceFooter(bodySHA256 string) string {
+	short := bodySHA256
+	if len(short) > skillProvenanceFingerprintLen {
+		short = short[:skillProvenanceFingerprintLen]
+	}
+	return fmt.Sprintf(
+		"\n<!-- aichronicles-provenance: sha256:%s — drift check via "+
+			"`aichronicles skills verify` (see skill_candidates.add_body_sha256). -->\n",
+		short,
+	)
 }
 
 // findProposedSkill matches by name, accepting either the kebab-

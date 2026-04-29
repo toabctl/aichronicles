@@ -3,7 +3,9 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -350,6 +352,89 @@ func TestRefuseDuplicateSkillName_GlobalCollision(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error missing %q: %v", want, err)
 		}
+	}
+}
+
+// TestProposeAdd_StampsProvenanceHash pins the SSGM provenance
+// invariant: a successful add stores the SHA-256 of the rendered
+// SKILL.md body on the skill_candidates row, and the on-disk
+// SKILL.md ends with a footer carrying the leading hex
+// fingerprint. A drift checker can later read the file, strip the
+// footer, recompute, and detect post-write tampering.
+func TestProposeAdd_StampsProvenanceHash(t *testing.T) {
+	t.Parallel()
+	s := openTempCLIStore(t)
+	id := seedProposalOutput(t, s, sampleProposal())
+	result, _, _ := loadLatestProposal(t.Context(), s, id)
+
+	dir := t.TempDir()
+	var out bytes.Buffer
+	if err := addSkillCandidate(t.Context(), s, result, id, "build-test",
+		dir, false, true, nilLLMClient, &out); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	// The skill_candidates row must carry a non-empty
+	// add_body_sha256 (64-hex-char SHA-256).
+	rows, err := store.LoadSkillCandidatesByName(t.Context(), s.DB(), "build-test", 0)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows: got %d want 1", len(rows))
+	}
+	got := rows[0].AddBodySHA256
+	if !got.Valid {
+		t.Fatal("add_body_sha256 must be populated after add")
+	}
+	if len(got.String) != 64 {
+		t.Errorf("add_body_sha256 length: got %d want 64", len(got.String))
+	}
+
+	// The SKILL.md must end with the provenance footer that
+	// embeds the first 12 hex chars of the same hash.
+	body, err := os.ReadFile(filepath.Join(dir, "build-test", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read SKILL.md: %v", err)
+	}
+	bodyStr := string(body)
+	wantFingerprint := "sha256:" + got.String[:12]
+	if !strings.Contains(bodyStr, wantFingerprint) {
+		t.Errorf("SKILL.md missing provenance fingerprint %q\n--- tail ---\n%s",
+			wantFingerprint, bodyStr[max(0, len(bodyStr)-300):])
+	}
+	if !strings.Contains(bodyStr, "aichronicles-provenance:") {
+		t.Errorf("SKILL.md missing aichronicles-provenance marker")
+	}
+
+	// The footer must appear AFTER the body so the body's hash is
+	// reproducible: stripping the trailing comment line should
+	// recover the input that was hashed.
+	prefix := strings.TrimSuffix(bodyStr, skillProvenanceFooter(got.String))
+	prefixHash := sha256.Sum256([]byte(prefix))
+	if hex.EncodeToString(prefixHash[:]) != got.String {
+		t.Errorf("recomputed body hash does not match stored hash; " +
+			"the provenance line breaks reversibility")
+	}
+}
+
+// TestSkillProvenanceFooter_Format pins the marker the drift
+// checker will key off, plus the fingerprint length budget.
+func TestSkillProvenanceFooter_Format(t *testing.T) {
+	t.Parallel()
+	footer := skillProvenanceFooter("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	for _, want := range []string{
+		"aichronicles-provenance:",
+		"sha256:0123456789ab",          // exactly 12 chars of fingerprint
+		"`aichronicles skills verify`", // hint at the future drift-check command
+	} {
+		if !strings.Contains(footer, want) {
+			t.Errorf("footer missing %q\n%s", want, footer)
+		}
+	}
+	// Short hash inputs (e.g. an empty hash) shouldn't panic.
+	if got := skillProvenanceFooter(""); !strings.Contains(got, "sha256:") {
+		t.Errorf("empty-hash footer should still emit the marker, got: %s", got)
 	}
 }
 

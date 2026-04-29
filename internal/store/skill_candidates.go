@@ -165,6 +165,14 @@ type SkillCandidate struct {
 	Tags         []string
 	Examples     []SkillExample
 	Version      string
+	// AddBodySHA256 is the SHA-256 of the rendered SKILL.md body
+	// captured at write time, when Decision == MaintenanceAdd. Per
+	// SSGM (Lam et al., 2026 — arXiv:2603.11768) governance, an
+	// integrity hash on the on-disk artefact lets a later sweep
+	// distinguish "what aichronicles wrote" from "what was edited
+	// after the fact." Empty / NULL when the candidate was never
+	// added or was added before migration 023.
+	AddBodySHA256 sql.NullString
 }
 
 // ErrSkillCandidateNotFound is returned by the Mark* helpers when
@@ -336,17 +344,37 @@ func scanSkillExamples(s sql.NullString) ([]SkillExample, error) {
 // extraction time); a missing row returns ErrSkillCandidateNotFound
 // so the caller can detect the "marked added for something we never
 // proposed" case rather than silently no-op-ing.
+//
+// Thin wrapper around MarkSkillCandidateAddedWithProvenance that
+// passes an empty body hash. Suitable for callers (mainly tests)
+// that don't have the rendered body to hand. Production callers
+// should use the WithProvenance form so SSGM tamper-detection has
+// something to compare against.
 func MarkSkillCandidateAdded(ctx context.Context, db *sql.DB, llmOutputID int64, skillName, addPath string, decisionAtMs int64) error {
+	return MarkSkillCandidateAddedWithProvenance(ctx, db, llmOutputID, skillName, addPath, decisionAtMs, "")
+}
+
+// MarkSkillCandidateAddedWithProvenance is the SSGM-aware variant:
+// also stores the SHA-256 of the rendered SKILL.md body so a later
+// drift check can compare what is on disk against what aichronicles
+// wrote. Empty bodySHA256 leaves the column NULL — same observable
+// shape as a pre-migration-023 row.
+func MarkSkillCandidateAddedWithProvenance(ctx context.Context, db *sql.DB, llmOutputID int64, skillName, addPath string, decisionAtMs int64, bodySHA256 string) error {
 	if decisionAtMs <= 0 {
 		return errors.New("MarkSkillCandidateAdded: decision_at_ms is required")
 	}
+	var hashArg any
+	if bodySHA256 != "" {
+		hashArg = bodySHA256
+	} // else nil → SQL NULL
 	res, err := db.ExecContext(ctx,
 		`UPDATE skill_candidates
-		    SET decision       = ?,
-		        decision_at_ms = ?,
-		        add_path       = ?
+		    SET decision        = ?,
+		        decision_at_ms  = ?,
+		        add_path        = ?,
+		        add_body_sha256 = ?
 		  WHERE llm_output_id = ? AND skill_name = ?`,
-		string(MaintenanceAdd), decisionAtMs, addPath, llmOutputID, skillName,
+		string(MaintenanceAdd), decisionAtMs, addPath, hashArg, llmOutputID, skillName,
 	)
 	if err != nil {
 		return fmt.Errorf("mark add: %w", err)
@@ -446,7 +474,8 @@ func scanSkillCandidate(rows *sql.Rows) (SkillCandidate, error) {
 	)
 	if err := rows.Scan(&r.ID, &r.LLMOutputID, &r.SkillName, &r.ProposedAtMs,
 		&r.DecisionAtMs, &r.AddPath, &decision, &r.MergedIntoID,
-		&triggersStr, &tagsStr, &examplesStr, &versionStr); err != nil {
+		&triggersStr, &tagsStr, &examplesStr, &versionStr,
+		&r.AddBodySHA256); err != nil {
 		return SkillCandidate{}, fmt.Errorf("scan: %w", err)
 	}
 	r.Decision = MaintenanceAction(decision)
@@ -477,7 +506,8 @@ func scanSkillCandidate(rows *sql.Rows) (SkillCandidate, error) {
 const candidateColumns = `id, llm_output_id, skill_name, proposed_at_ms,
 		        decision_at_ms, add_path,
 		        COALESCE(decision, ''), merged_into_id,
-		        triggers, tags, examples, version`
+		        triggers, tags, examples, version,
+		        add_body_sha256`
 
 // LoadSkillCandidatesByName returns every skill_candidates row for
 // the given skill name across history, newest-first. Used by the
