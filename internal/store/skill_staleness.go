@@ -26,13 +26,61 @@ import (
 // stale") should prefer RateLowerBound to keep noise from low-N skills
 // out of the work queue. Example session ids (max 3) help the user
 // click through to a concrete instance and decide whether to revise.
+//
+// AutoRefineScore is the AutoRefine (Qiu et al., 2026 —
+// arXiv:2601.22758) score combining effectiveness, frequency, and
+// precision into one ranking signal:
+//
+//	score = (s/(u+ε)) · log(1+u) · (1 + u/(r+ε))
+//
+// where s = effectiveness (success rate, 1 - Rate), u = utilised
+// (successful loads = TotalLoads - StaleLoads), r = retrieved
+// (TotalLoads), ε = 1.0. Higher score = more frequently used and
+// more reliable; LOWER score in the staleness view = stronger
+// retire candidate. Distinct from RateLowerBound (which is purely
+// confidence-on-failure-rate): AutoRefineScore also penalises
+// skills nobody loads, even when their failure rate is statistically
+// low. The two signals disagree most usefully on niche-but-broken
+// skills (high Wilson, irrelevant AutoRefine) vs popular-and-buggy
+// skills (low Wilson, low AutoRefine).
 type SkillStaleness struct {
-	Name           string   `json:"name"`
-	TotalLoads     int      `json:"total_loads"`
-	StaleLoads     int      `json:"stale_loads"`
-	Rate           float64  `json:"rate"`
-	RateLowerBound float64  `json:"rate_lower_bound"`
-	Examples       []string `json:"example_session_ids"`
+	Name            string   `json:"name"`
+	TotalLoads      int      `json:"total_loads"`
+	StaleLoads      int      `json:"stale_loads"`
+	Rate            float64  `json:"rate"`
+	RateLowerBound  float64  `json:"rate_lower_bound"`
+	AutoRefineScore float64  `json:"autorefine_score"`
+	Examples        []string `json:"example_session_ids"`
+}
+
+// autoRefineScore implements the AutoRefine (Qiu et al., 2026 —
+// arXiv:2601.22758) compound ranking score:
+//
+//	(s/(u+ε)) · log(1+u) · (1 + u/(r+ε))
+//
+// where s ∈ [0,1] is effectiveness (success rate), u is the count
+// of utilised loads (successful), r is the count of retrieved
+// loads (total). ε = 1.0 prevents divide-by-zero on never-loaded
+// skills. Returns 0 when r == 0 (no data — can't score).
+//
+// The 4.5×/8.9× repo-bloat / utilisation-drop the paper reports
+// without active maintenance directly motivates having a
+// utilisation-aware signal alongside Wilson — failure rate alone
+// retires niche skills that simply have nothing to be wrong about,
+// while AutoRefine retires skills nobody calls regardless of their
+// reliability.
+func autoRefineScore(retrieved, stale int) float64 {
+	if retrieved <= 0 {
+		return 0
+	}
+	r := float64(retrieved)
+	u := float64(retrieved - stale) // utilised = successful loads
+	if u < 0 {
+		u = 0
+	}
+	s := u / r // effectiveness in [0,1]
+	const eps = 1.0
+	return (s / (u + eps)) * math.Log(1+u) * (1 + u/(r+eps))
 }
 
 // wilsonLowerBound returns the Wilson-score 95%-CI lower bound on a
@@ -119,6 +167,7 @@ func LoadSkillStaleness(ctx context.Context, db *sql.DB, sinceMs int64, windowMs
 		}
 		row.Rate = float64(s.FailedLoads) / float64(s.TotalLoads)
 		row.RateLowerBound = wilsonLowerBound(s.FailedLoads, s.TotalLoads)
+		row.AutoRefineScore = autoRefineScore(s.TotalLoads, s.FailedLoads)
 		out = append(out, row)
 	}
 

@@ -240,6 +240,88 @@ func TestWilsonLowerBound_RanksHighNAboveLowN(t *testing.T) {
 	}
 }
 
+// TestAutoRefineScore covers the safe properties of the AutoRefine
+// (Qiu et al., 2026 — arXiv:2601.22758) compound ranking under
+// aichronicles' usage. The paper's metadata tracks (r retrieved,
+// u utilised, s successful) as three independent counters; we
+// derive u_aichronicles = retrieved − failed (utilised-and-
+// successful collapsed), so the formula's regime is constrained.
+// The properties below are the ones that still hold:
+//
+//  1. Zero retrieved → 0 (no data).
+//  2. All-failures → 0 (effectiveness = 0 forces the product to 0).
+//  3. Higher success count at the SAME retrieval count → higher
+//     score (the log(1+u) factor monotone in u, the second factor
+//     bounded above 1).
+//  4. The score is finite and non-negative for any sensible input.
+func TestAutoRefineScore(t *testing.T) {
+	t.Parallel()
+
+	// Property 1: zero retrieved → 0.
+	if got := autoRefineScore(0, 0); got != 0 {
+		t.Errorf("zero-data: got %f, want 0", got)
+	}
+
+	// Property 2: all-failures → 0.
+	if got := autoRefineScore(10, 10); got != 0 {
+		t.Errorf("all-failures: got %f, want 0", got)
+	}
+
+	// Property 3: at the same retrieval count, fewer failures
+	// (more successes) scores higher.
+	worse := autoRefineScore(10, 8)  // 2 successes
+	better := autoRefineScore(10, 0) // 10 successes
+	if !(better > worse) {
+		t.Errorf("expected better(%f) > worse(%f) at same retrieval count", better, worse)
+	}
+
+	// Property 4: non-negativity / finiteness.
+	for _, tc := range []struct{ r, fails int }{
+		{1, 0}, {1, 1}, {2, 1}, {100, 1}, {100, 50}, {1000, 0},
+	} {
+		got := autoRefineScore(tc.r, tc.fails)
+		if got < 0 {
+			t.Errorf("negative score for r=%d fails=%d: %f", tc.r, tc.fails, got)
+		}
+		if got != got { // NaN test
+			t.Errorf("NaN score for r=%d fails=%d", tc.r, tc.fails)
+		}
+	}
+}
+
+// TestAutoRefineScore_PopulatedOnLoad asserts the score is
+// computed and populated when LoadSkillStaleness returns a row,
+// alongside Wilson — both signals available for downstream
+// retire decisions.
+func TestAutoRefineScore_PopulatedOnLoad(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	t0 := time.Date(2026, 4, 26, 10, 0, 0, 0, time.UTC)
+
+	// Seed: 3 loads, 1 followed by failure → stale rate 1/3.
+	seedSkillLoadAt(t, s, "sess-arf-1", "build-test", t0)
+	seedToolFailureAt(t, s, "sess-arf-1", t0.Add(2*time.Minute))
+	seedSkillLoadAt(t, s, "sess-arf-2", "build-test", t0.Add(time.Hour))
+	seedSkillLoadAt(t, s, "sess-arf-3", "build-test", t0.Add(2*time.Hour))
+
+	since := t0.Add(-24 * time.Hour).UnixMilli()
+	rows, err := LoadSkillStaleness(t.Context(), s.DB(), since, 0, SkillStalenessLimits{})
+	if err != nil {
+		t.Fatalf("LoadSkillStaleness: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows: got %d want 1", len(rows))
+	}
+	r := rows[0]
+	if r.AutoRefineScore <= 0 {
+		t.Errorf("AutoRefineScore should be positive for a 2/3-success skill, got %f", r.AutoRefineScore)
+	}
+	// Sanity: matches the pure-helper computation.
+	if want := autoRefineScore(r.TotalLoads, r.StaleLoads); want != r.AutoRefineScore {
+		t.Errorf("score drift: row=%f helper=%f", r.AutoRefineScore, want)
+	}
+}
+
 func TestFormatStaleSummary_TruncatesAndFormats(t *testing.T) {
 	t.Parallel()
 	s := SkillStaleness{
