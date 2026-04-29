@@ -1,0 +1,249 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"strings"
+	"testing"
+
+	"github.com/toabctl/aichronicles/pkg/ingest"
+)
+
+// nullS is a tiny sql.NullString constructor for table-driven
+// tests that need to populate Cwd / Role values.
+func nullS(s string) sql.NullString {
+	return sql.NullString{String: s, Valid: s != ""}
+}
+
+// TestSegmentSession_EmptyInput pins the trivial cases — empty
+// session id and empty event slice both return nil.
+func TestSegmentSession_EmptyInput(t *testing.T) {
+	t.Parallel()
+	if got := SegmentSession("", nil, 0); got != nil {
+		t.Errorf("empty inputs: got %#v, want nil", got)
+	}
+	if got := SegmentSession("sess", nil, 0); got != nil {
+		t.Errorf("nil events: got %#v, want nil", got)
+	}
+}
+
+// TestSegmentSession_SingleEpisode covers the boring path: a
+// session whose events all sit within idleGapMs of each other and
+// share one cwd produces exactly one episode covering everything.
+func TestSegmentSession_SingleEpisode(t *testing.T) {
+	t.Parallel()
+	events := []EventView{
+		{EventID: "e1", Kind: ingest.KindUserPrompt,
+			ContentText: nullS("how do I fix the build"),
+			Cwd:         nullS("/repo/a"), TsSourceMs: 1_000},
+		{EventID: "e2", Kind: ingest.KindToolUse, Cwd: nullS("/repo/a"), TsSourceMs: 2_000},
+		{EventID: "e3", Kind: ingest.KindToolResult, Cwd: nullS("/repo/a"), TsSourceMs: 3_000},
+		{EventID: "e4", Kind: ingest.KindAssistantMessage, Cwd: nullS("/repo/a"), TsSourceMs: 4_000},
+	}
+	got := SegmentSession("sess-single", events, 0)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 episode, got %d: %+v", len(got), got)
+	}
+	ep := got[0]
+	if ep.Ordinal != 1 {
+		t.Errorf("ordinal: got %d want 1", ep.Ordinal)
+	}
+	if ep.StartedAtMs != 1_000 || ep.EndedAtMs != 4_000 {
+		t.Errorf("time bracket: got [%d,%d] want [1000,4000]", ep.StartedAtMs, ep.EndedAtMs)
+	}
+	if ep.EventCount != 4 {
+		t.Errorf("event_count: got %d want 4", ep.EventCount)
+	}
+	if !ep.Cwd.Valid || ep.Cwd.String != "/repo/a" {
+		t.Errorf("cwd: got %v want /repo/a", ep.Cwd)
+	}
+	if !strings.Contains(ep.IntentSummary, "how do I fix the build") {
+		t.Errorf("intent: got %q", ep.IntentSummary)
+	}
+	if ep.FirstEventID != "e1" {
+		t.Errorf("first_event_id: got %q want e1", ep.FirstEventID)
+	}
+}
+
+// TestSegmentSession_IdleGapBoundary covers the canonical
+// segmentation trigger: an inter-event gap ≥ idleGapMs splits
+// the session into two episodes.
+func TestSegmentSession_IdleGapBoundary(t *testing.T) {
+	t.Parallel()
+	const gap = int64(10_000) // 10s for test brevity
+	events := []EventView{
+		{EventID: "a", Kind: ingest.KindUserPrompt, ContentText: nullS("first intent"), TsSourceMs: 0},
+		{EventID: "b", Kind: ingest.KindAssistantMessage, TsSourceMs: 1_000},
+		// 12s gap → episode boundary.
+		{EventID: "c", Kind: ingest.KindUserPrompt, ContentText: nullS("second intent"), TsSourceMs: 13_000},
+		{EventID: "d", Kind: ingest.KindAssistantMessage, TsSourceMs: 14_000},
+	}
+	got := SegmentSession("sess-gap", events, gap)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 episodes, got %d: %+v", len(got), got)
+	}
+	if got[0].Ordinal != 1 || got[1].Ordinal != 2 {
+		t.Errorf("ordinals: got %d / %d", got[0].Ordinal, got[1].Ordinal)
+	}
+	if got[0].EndedAtMs != 1_000 || got[1].StartedAtMs != 13_000 {
+		t.Errorf("boundary: got ep1.end=%d ep2.start=%d", got[0].EndedAtMs, got[1].StartedAtMs)
+	}
+	if !strings.Contains(got[0].IntentSummary, "first intent") {
+		t.Errorf("ep1 intent: got %q", got[0].IntentSummary)
+	}
+	if !strings.Contains(got[1].IntentSummary, "second intent") {
+		t.Errorf("ep2 intent: got %q", got[1].IntentSummary)
+	}
+}
+
+// TestSegmentSession_CwdShiftBoundary covers the second trigger:
+// a cwd change closes the running episode even if the events are
+// time-adjacent. Catches the "user cd-hopped between projects in
+// the same session" pattern.
+func TestSegmentSession_CwdShiftBoundary(t *testing.T) {
+	t.Parallel()
+	events := []EventView{
+		{EventID: "x", Kind: ingest.KindUserPrompt, Cwd: nullS("/repo/a"), ContentText: nullS("project A work"), TsSourceMs: 0},
+		{EventID: "y", Kind: ingest.KindToolUse, Cwd: nullS("/repo/a"), TsSourceMs: 100},
+		// Same time-frame, but cwd shifted — still a boundary.
+		{EventID: "z", Kind: ingest.KindUserPrompt, Cwd: nullS("/repo/b"), ContentText: nullS("project B work"), TsSourceMs: 200},
+	}
+	got := SegmentSession("sess-cwd", events, 0)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 episodes, got %d: %+v", len(got), got)
+	}
+	if got[0].Cwd.String != "/repo/a" || got[1].Cwd.String != "/repo/b" {
+		t.Errorf("cwds: got [%s,%s]", got[0].Cwd.String, got[1].Cwd.String)
+	}
+}
+
+// TestSegmentSession_NullCwdDoesNotTrigger asserts that an event
+// with NULL cwd doesn't spuriously close the episode — a tool that
+// happens to omit cwd shouldn't fragment the timeline.
+func TestSegmentSession_NullCwdDoesNotTrigger(t *testing.T) {
+	t.Parallel()
+	events := []EventView{
+		{EventID: "p", Kind: ingest.KindUserPrompt, Cwd: nullS("/repo/a"), TsSourceMs: 0},
+		{EventID: "q", Kind: ingest.KindToolUse /* no cwd */, TsSourceMs: 100},
+		{EventID: "r", Kind: ingest.KindToolResult, Cwd: nullS("/repo/a"), TsSourceMs: 200},
+	}
+	got := SegmentSession("sess-nullcwd", events, 0)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 episode, got %d: %+v", len(got), got)
+	}
+	if got[0].EventCount != 3 {
+		t.Errorf("event_count: got %d want 3", got[0].EventCount)
+	}
+}
+
+// TestClipIntentSummary covers the intent-summary cap: long bodies
+// truncate with an ellipsis; embedded newlines collapse to spaces.
+func TestClipIntentSummary(t *testing.T) {
+	t.Parallel()
+	short := "fix the build"
+	if got := clipIntentSummary(short); got != short {
+		t.Errorf("short: got %q want %q", got, short)
+	}
+	multiline := "fix\nthe\nbuild"
+	if got := clipIntentSummary(multiline); got != "fix the build" {
+		t.Errorf("multiline collapse: got %q", got)
+	}
+	long := strings.Repeat("x", MaxEpisodeIntentSummaryRunes+50)
+	got := clipIntentSummary(long)
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("expected ellipsis on overflow")
+	}
+	if len([]rune(got)) > MaxEpisodeIntentSummaryRunes+1 {
+		t.Errorf("overflow truncate failed: %d runes", len([]rune(got)))
+	}
+}
+
+// TestSaveAndLoadEpisodes covers the round-trip via a real session.
+// The fixture seeds raw_envelopes + events for one session, runs
+// the segmenter, persists, and reloads — every Episode field must
+// round-trip exactly.
+func TestSaveAndLoadEpisodes(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+
+	// Seed minimal sessions row + 4 events, two of which sit on
+	// either side of an idle-gap boundary so the segmenter
+	// produces 2 episodes.
+	const sessID = "00000000-0000-0000-0000-0000000000ab"
+	if _, err := s.DB().Exec(
+		`INSERT INTO sessions(id, source_agent, source_session_id) VALUES (?, ?, ?)`,
+		sessID, "claude-code", "src-ab",
+	); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	for i, ts := range []int64{0, 1_000, 1_000_000_000, 1_000_001_000} {
+		eid := mkUUIDLikeID(t, "evt", i)
+		if _, err := s.DB().Exec(
+			`INSERT INTO raw_envelopes(event_id, ingest_seq, source_agent, source_session_id, ts_source_ms, ts_server_ms, envelope_json)
+			 VALUES (?, ?, ?, ?, ?, ?, '{}')`,
+			eid, i+1, "claude-code", "src-ab", ts, ts,
+		); err != nil {
+			t.Fatalf("envelope: %v", err)
+		}
+		if _, err := s.DB().Exec(
+			`INSERT INTO events(event_id, session_id, source_agent, kind, ts_source_ms, content_text, cwd)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			eid, sessID, "claude-code", ingest.KindUserPrompt, ts, "intent text", "/repo/a",
+		); err != nil {
+			t.Fatalf("event: %v", err)
+		}
+	}
+
+	events, err := LoadEventsForSession(ctx, s.DB(), sessID, 0)
+	if err != nil {
+		t.Fatalf("load events: %v", err)
+	}
+	if len(events) != 4 {
+		t.Fatalf("seeded events: got %d want 4", len(events))
+	}
+
+	// Use 60s idle gap so the 1_000_000s gap (≈ 17min) fires.
+	episodes := SegmentSession(sessID, events, 60_000)
+	if len(episodes) != 2 {
+		t.Fatalf("segmenter: got %d episodes, want 2", len(episodes))
+	}
+
+	n, err := SaveEpisodes(ctx, s.DB(), sessID, episodes)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("inserted: got %d want 2", n)
+	}
+
+	loaded, err := LoadEpisodesBySession(ctx, s.DB(), sessID)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("loaded: got %d want 2", len(loaded))
+	}
+	if loaded[0].Ordinal != 1 || loaded[1].Ordinal != 2 {
+		t.Errorf("ordinals: got %d / %d", loaded[0].Ordinal, loaded[1].Ordinal)
+	}
+	if loaded[0].SessionID != sessID {
+		t.Errorf("session_id round-trip: got %q", loaded[0].SessionID)
+	}
+	if loaded[0].FirstEventID == "" {
+		t.Errorf("first_event_id missing")
+	}
+
+	// Re-saving must be idempotent (DELETE-then-INSERT semantics).
+	n2, err := SaveEpisodes(ctx, s.DB(), sessID, episodes)
+	if err != nil {
+		t.Fatalf("re-save: %v", err)
+	}
+	if n2 != 2 {
+		t.Errorf("re-insert count: got %d want 2", n2)
+	}
+	reloaded, _ := LoadEpisodesBySession(ctx, s.DB(), sessID)
+	if len(reloaded) != 2 {
+		t.Errorf("re-load len: got %d want 2", len(reloaded))
+	}
+}

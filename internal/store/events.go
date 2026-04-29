@@ -481,6 +481,12 @@ type EventView struct {
 	ToolName     sql.NullString
 	SubagentID   sql.NullString
 	SubagentType sql.NullString
+	// Cwd is the working directory recorded on the event when the
+	// hook captured it. NULL for events whose hook frame omitted
+	// the cwd (some hook kinds don't carry one). Populated only by
+	// loaders that explicitly SELECT events.cwd; legacy paths that
+	// don't need it leave the field zero-valued.
+	Cwd sql.NullString
 }
 
 // SessionDigestRow is the read shape used by reflect/propose. Each
@@ -737,7 +743,7 @@ func LoadEventsForSession(ctx context.Context, db *sql.DB, sessionID string, lim
 	}
 	rows, err := db.QueryContext(ctx,
 		`SELECT event_id, kind, role, content_text, ts_source_ms, tool_name,
-		        subagent_id, subagent_type
+		        subagent_id, subagent_type, cwd
 		 FROM events
 		 WHERE session_id = ?
 		 ORDER BY ts_source_ms ASC, rowid ASC
@@ -753,7 +759,7 @@ func LoadEventsForSession(ctx context.Context, db *sql.DB, sessionID string, lim
 	for rows.Next() {
 		var e EventView
 		if err := rows.Scan(&e.EventID, &e.Kind, &e.Role, &e.ContentText,
-			&e.TsSourceMs, &e.ToolName, &e.SubagentID, &e.SubagentType); err != nil {
+			&e.TsSourceMs, &e.ToolName, &e.SubagentID, &e.SubagentType, &e.Cwd); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		out = append(out, e)
