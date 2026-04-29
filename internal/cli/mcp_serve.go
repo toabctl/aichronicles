@@ -32,6 +32,7 @@ func newMCPServeCmd() *cobra.Command {
 			"Tools exposed:\n" +
 			"  search_events        — keyword search over past events\n" +
 			"  list_sessions        — recent past conversations\n" +
+			"  find_episodes        — episodic recall (intent-keyed slices of past sessions)\n" +
 			"  get_summary          — cached summary of one session\n" +
 			"  list_subagents       — sub-agent threads inside a session\n" +
 			"  get_insights         — usage report (top tools / skills / activity)\n" +

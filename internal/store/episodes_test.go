@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/toabctl/aichronicles/pkg/ingest"
 )
@@ -155,6 +156,165 @@ func TestClipIntentSummary(t *testing.T) {
 	}
 	if len([]rune(got)) > MaxEpisodeIntentSummaryRunes+1 {
 		t.Errorf("overflow truncate failed: %d runes", len([]rune(got)))
+	}
+}
+
+// seedEpisodeRow inserts one episode row directly so the
+// FindEpisodes table-driven tests below can build a multi-episode
+// session without tripping SaveEpisodes' DELETE-then-INSERT
+// semantics (which would wipe earlier rows on each call). We
+// exercise the QUERY surface, not the segmentation algorithm —
+// building events fixtures for every case would obscure what's
+// under test.
+func seedEpisodeRow(t *testing.T, s *Store, sessionID string, ord int, startMs, endMs int64, cwd, intent string) {
+	t.Helper()
+	if _, err := s.DB().Exec(
+		`INSERT OR IGNORE INTO sessions(id, source_agent, source_session_id) VALUES (?, ?, ?)`,
+		sessionID, "claude-code", "src-"+sessionID,
+	); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	// Plant one envelope+event so first_event_id has a real referent
+	// (the FK in the episodes schema needs an actual row).
+	eid := mkUUIDLikeID(t, "evt-"+sessionID, ord)
+	if _, err := s.DB().Exec(
+		`INSERT OR IGNORE INTO raw_envelopes(event_id, ingest_seq, source_agent, source_session_id, ts_source_ms, ts_server_ms, envelope_json)
+		 VALUES (?, ?, ?, ?, ?, ?, '{}')`,
+		eid, time.Now().UnixNano()+int64(ord), "claude-code", "src-"+sessionID, startMs, startMs,
+	); err != nil {
+		t.Fatalf("envelope: %v", err)
+	}
+	if _, err := s.DB().Exec(
+		`INSERT OR IGNORE INTO events(event_id, session_id, source_agent, kind, ts_source_ms, content_text, cwd)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		eid, sessionID, "claude-code", "user_prompt", startMs, intent, cwd,
+	); err != nil {
+		t.Fatalf("event: %v", err)
+	}
+	if _, err := s.DB().Exec(
+		`INSERT INTO episodes(session_id, ordinal, started_at_ms, ended_at_ms,
+			cwd, intent_summary, event_count, first_event_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		sessionID, ord, startMs, endMs, cwd, intent, 1, eid,
+	); err != nil {
+		t.Fatalf("insert episode: %v", err)
+	}
+}
+
+// TestFindEpisodes_Filters covers each filter dimension on an
+// otherwise-shared corpus: 4 episodes across 3 sessions in 2 cwds.
+func TestFindEpisodes_Filters(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+
+	// Avoid relying on time.Now() so the SinceMs slice is
+	// deterministic across runs.
+	const (
+		sess1 = "00000000-0000-0000-0000-00000000aaaa"
+		sess2 = "00000000-0000-0000-0000-00000000bbbb"
+		sess3 = "00000000-0000-0000-0000-00000000cccc"
+	)
+	seedEpisodeRow(t, s, sess1, 1, 1_000, 2_000, "/repo/a", "fix the build script")
+	seedEpisodeRow(t, s, sess2, 1, 3_000, 4_000, "/repo/a", "review staging deploy")
+	seedEpisodeRow(t, s, sess2, 2, 5_000, 6_000, "/repo/b", "explore the new module")
+	seedEpisodeRow(t, s, sess3, 1, 7_000, 8_000, "/repo/b", "FIX the FLAKY test")
+
+	// All four episodes — bare opts.
+	all, err := FindEpisodes(ctx, s.DB(), FindEpisodesOpts{})
+	if err != nil {
+		t.Fatalf("FindEpisodes(zero): %v", err)
+	}
+	if len(all) != 4 {
+		t.Errorf("zero opts: got %d episodes, want 4", len(all))
+	}
+	// Result is ORDER BY ended_at_ms DESC — episode at ts 8_000 first.
+	if all[0].EndedAtMs != 8_000 {
+		t.Errorf("ordering: got first.EndedAtMs=%d, want 8000 (most-recent)", all[0].EndedAtMs)
+	}
+
+	// Cwd filter: /repo/a → 2 hits.
+	cwdHits, err := FindEpisodes(ctx, s.DB(), FindEpisodesOpts{Cwd: "/repo/a"})
+	if err != nil {
+		t.Fatalf("FindEpisodes(cwd): %v", err)
+	}
+	if len(cwdHits) != 2 {
+		t.Errorf("cwd filter: got %d, want 2", len(cwdHits))
+	}
+	for _, ep := range cwdHits {
+		if ep.Cwd.String != "/repo/a" {
+			t.Errorf("cwd filter leaked %q", ep.Cwd.String)
+		}
+	}
+
+	// SessionID filter: sess2 → 2 episodes.
+	sessHits, err := FindEpisodes(ctx, s.DB(), FindEpisodesOpts{SessionID: sess2})
+	if err != nil {
+		t.Fatalf("FindEpisodes(session): %v", err)
+	}
+	if len(sessHits) != 2 {
+		t.Errorf("session filter: got %d, want 2", len(sessHits))
+	}
+
+	// SinceMs filter: only episodes ended at or after 5_000 → 2.
+	recent, err := FindEpisodes(ctx, s.DB(), FindEpisodesOpts{SinceMs: 5_000})
+	if err != nil {
+		t.Fatalf("FindEpisodes(since): %v", err)
+	}
+	if len(recent) != 2 {
+		t.Errorf("since filter: got %d, want 2 (ended_at>=5000)", len(recent))
+	}
+
+	// QueryContains: "fix" should match both "fix the build script"
+	// and "FIX the FLAKY test" (case-insensitive).
+	fixHits, err := FindEpisodes(ctx, s.DB(), FindEpisodesOpts{QueryContains: "fix"})
+	if err != nil {
+		t.Fatalf("FindEpisodes(query): %v", err)
+	}
+	if len(fixHits) != 2 {
+		t.Errorf("query filter: got %d, want 2", len(fixHits))
+	}
+
+	// Combined: cwd=/repo/b AND query=flaky → 1.
+	combined, err := FindEpisodes(ctx, s.DB(), FindEpisodesOpts{
+		Cwd:           "/repo/b",
+		QueryContains: "flaky",
+	})
+	if err != nil {
+		t.Fatalf("FindEpisodes(combined): %v", err)
+	}
+	if len(combined) != 1 {
+		t.Errorf("combined filter: got %d, want 1", len(combined))
+	}
+
+	// Limit: capped to 1 → 1 returned, the most recent.
+	capped, err := FindEpisodes(ctx, s.DB(), FindEpisodesOpts{Limit: 1})
+	if err != nil {
+		t.Fatalf("FindEpisodes(limit): %v", err)
+	}
+	if len(capped) != 1 || capped[0].EndedAtMs != 8_000 {
+		t.Errorf("limit: got %+v, want one most-recent episode", capped)
+	}
+}
+
+// TestFindEpisodes_QueryContainsTrimsWhitespace pins the
+// trim-then-empty behaviour: a query that's pure whitespace must NOT
+// generate a SQL filter (otherwise '%   %' would match every row,
+// which is silly but harmless — the bug we're guarding against is
+// "the agent passed an unintentional space and the query degraded
+// to no-op gracefully").
+func TestFindEpisodes_QueryContainsTrimsWhitespace(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+	seedEpisodeRow(t, s, "00000000-0000-0000-0000-00000000ddd1", 1, 1, 2, "/repo/x", "anything")
+
+	hits, err := FindEpisodes(ctx, s.DB(), FindEpisodesOpts{QueryContains: "   "})
+	if err != nil {
+		t.Fatalf("FindEpisodes: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Errorf("whitespace-only query should be a no-op filter, got %d", len(hits))
 	}
 }
 

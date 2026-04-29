@@ -12,6 +12,7 @@ writes back.
 Tools exposed:
   search_events        — keyword search over past events
   list_sessions        — recent past conversations
+  find_episodes        — episodic recall (intent-keyed slices of past sessions)
   get_summary          — cached summary of one session
   list_subagents       — sub-agent threads inside a session
   get_insights         — usage report (top tools / skills / activity)

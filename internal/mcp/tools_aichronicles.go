@@ -66,6 +66,33 @@ func RegisterAichroniclesTools(s *Server, st *store.Store) {
 	})
 
 	s.RegisterTool(Tool{
+		Name: "find_episodes",
+		Description: "Find episodic memories — bounded, contextually-coherent slices of past " +
+			"sessions where the user (or agent) pursued one intent. Each episode is keyed by its " +
+			"intent_summary, the first user prompt that opened it. " +
+			"Use when the user asks 'when did I last try to X', 'show me the time we worked on Y', " +
+			"or wants to recall a SPECIFIC PAST ATTEMPT rather than a session as a whole. " +
+			"Distinct from list_sessions (whole sessions) and search_events (raw event hits): " +
+			"episodes are the substrate for instance-specific recall — Pink et al. (2026) frame " +
+			"this as the episodic layer agents need to retrieve concrete prior trajectories. " +
+			"Pass `query` to filter by case-insensitive substring on the intent summary; pass " +
+			"`cwd` to scope to one project; pair with get_summary on the returned session_id " +
+			"for the full session context. Empty result is normal — sessions only generate " +
+			"episodes after the daemon's induction sweep has run on them.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"query":      {"type": "string",  "description": "Case-insensitive substring to match against the episode's intent summary (the first user prompt that opened it)."},
+				"cwd":        {"type": "string",  "description": "Exact-match working directory; narrows to episodes whose first event was in this cwd."},
+				"session_id": {"type": "string",  "description": "Narrow to episodes within one session (full UUID; use list_sessions to discover ids)."},
+				"since_days": {"type": "integer", "minimum": 1, "maximum": 365, "description": "Only return episodes that ended within this many days."},
+				"limit":      {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}
+			}
+		}`),
+		Handler: findEpisodesHandler(st),
+	})
+
+	s.RegisterTool(Tool{
 		Name: "get_summary",
 		Description: "Fetch the cached LLM-generated summary of one past Claude Code / Gemini CLI session. " +
 			"Returns the structured summary body (topic, what-was-done, unresolved items, key files, links) " +
@@ -373,6 +400,58 @@ func listSessionsHandler(st *store.Store) ToolHandler {
 		}
 		if b.Len() == 0 {
 			return TextResult("(no sessions)"), nil
+		}
+		return TextResult(b.String()), nil
+	}
+}
+
+// --- find_episodes ---
+
+func findEpisodesHandler(st *store.Store) ToolHandler {
+	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
+		var req struct {
+			Query     string `json:"query"`
+			Cwd       string `json:"cwd"`
+			SessionID string `json:"session_id"`
+			SinceDays int    `json:"since_days"`
+			Limit     int    `json:"limit"`
+		}
+		if len(args) > 0 {
+			if err := json.Unmarshal(args, &req); err != nil {
+				return nil, &Error{Code: InvalidParams, Message: "find_episodes: bad args: " + err.Error()}
+			}
+		}
+		if req.Limit <= 0 || req.Limit > 100 {
+			req.Limit = store.DefaultFindEpisodesLimit
+		}
+		var sinceMs int64
+		if req.SinceDays > 0 {
+			sinceMs = time.Now().Add(-time.Duration(req.SinceDays) * 24 * time.Hour).UnixMilli()
+		}
+
+		hits, err := store.FindEpisodes(ctx, st.DB(), store.FindEpisodesOpts{
+			SessionID:     req.SessionID,
+			Cwd:           req.Cwd,
+			QueryContains: req.Query,
+			SinceMs:       sinceMs,
+			Limit:         req.Limit,
+		})
+		if err != nil {
+			return nil, &Error{Code: InternalError, Message: "find_episodes: query: " + err.Error()}
+		}
+		if len(hits) == 0 {
+			return TextResult("(no episodes)"), nil
+		}
+		var b strings.Builder
+		for _, ep := range hits {
+			fmt.Fprintf(&b, "%s\t%d\t%s\t%s\t%s\t%s\n",
+				first8(ep.SessionID),
+				ep.Ordinal,
+				formatTS(ep.StartedAtMs),
+				formatTS(ep.EndedAtMs),
+				nullOrDash(ep.Cwd),
+				oneLineSnippet(sql.NullString{String: ep.IntentSummary, Valid: ep.IntentSummary != ""}),
+			)
 		}
 		return TextResult(b.String()), nil
 	}

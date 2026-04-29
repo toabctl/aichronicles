@@ -88,7 +88,7 @@ func TestRegisterAichroniclesTools_InstallsAllFive(t *testing.T) {
 	RegisterAichroniclesTools(s, st)
 
 	for _, want := range []string{
-		"search_events", "list_sessions", "get_summary",
+		"search_events", "list_sessions", "find_episodes", "get_summary",
 		"list_subagents", "get_unresolved_for_cwd", "list_workflows",
 		"get_facts_for_subject", "find_fact_subjects",
 		"get_project_context",
@@ -946,6 +946,124 @@ func TestGetUnresolvedForCwd_ReturnsItems(t *testing.T) {
 	}
 }
 
+// seedEpisodeForTool inserts one episode row directly so the
+// find_episodes tool tests below have predictable data without
+// depending on the daemon's induction sweep wiring.
+func seedEpisodeForTool(t *testing.T, st *store.Store, sessionID string, ord int, startMs, endMs int64, cwd, intent string) {
+	t.Helper()
+	if _, err := st.DB().Exec(
+		`INSERT OR IGNORE INTO sessions(id, source_agent, source_session_id) VALUES (?, 'claude-code', ?)`,
+		sessionID, "src-"+sessionID,
+	); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	eid := uuid.Must(uuid.NewV7()).String()
+	if _, err := st.DB().Exec(
+		`INSERT INTO raw_envelopes(event_id, ingest_seq, source_agent, source_session_id, ts_source_ms, ts_server_ms, envelope_json)
+		 VALUES (?, ?, ?, ?, ?, ?, '{}')`,
+		eid, time.Now().UnixNano()+int64(ord), "claude-code", "src-"+sessionID, startMs, startMs,
+	); err != nil {
+		t.Fatalf("envelope: %v", err)
+	}
+	if _, err := st.DB().Exec(
+		`INSERT INTO events(event_id, session_id, source_agent, kind, ts_source_ms, content_text, cwd)
+		 VALUES (?, ?, 'claude-code', 'user_prompt', ?, ?, ?)`,
+		eid, sessionID, startMs, intent, cwd,
+	); err != nil {
+		t.Fatalf("event: %v", err)
+	}
+	if _, err := st.DB().Exec(
+		`INSERT INTO episodes(session_id, ordinal, started_at_ms, ended_at_ms,
+			cwd, intent_summary, event_count, first_event_id)
+		 VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
+		sessionID, ord, startMs, endMs, cwd, intent, eid,
+	); err != nil {
+		t.Fatalf("insert episode: %v", err)
+	}
+}
+
+func TestFindEpisodesTool_FiltersAndRendersRows(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	const (
+		sessA = "00000000-0000-0000-0000-00000000a1a1"
+		sessB = "00000000-0000-0000-0000-00000000b2b2"
+	)
+	now := time.Now().UnixMilli()
+	seedEpisodeForTool(t, st, sessA, 1, now-3600_000, now-3000_000, "/repo/x", "fix the failing build")
+	seedEpisodeForTool(t, st, sessB, 1, now-1800_000, now-1200_000, "/repo/y", "explore the new module")
+
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	// Bare call returns both rows, newest first.
+	all := callTool(t, s, "find_episodes", `{}`)
+	if all.IsError {
+		t.Fatalf("bare call: %+v", all)
+	}
+	body := all.Content[0].Text
+	if !strings.Contains(body, "fix the failing build") || !strings.Contains(body, "explore the new module") {
+		t.Errorf("expected both intents in output, got:\n%s", body)
+	}
+	// Newest first → sessB's row should appear before sessA's.
+	if strings.Index(body, "explore") > strings.Index(body, "fix the failing build") {
+		t.Errorf("ordering broken (expected newest first):\n%s", body)
+	}
+
+	// query filter narrows to one row.
+	q := callTool(t, s, "find_episodes", `{"query":"FAILING"}`)
+	if q.IsError {
+		t.Fatalf("query call: %+v", q)
+	}
+	if c := strings.Count(q.Content[0].Text, "\n"); c != 1 {
+		t.Errorf("query filter: expected 1 row (one newline), got %d:\n%s", c, q.Content[0].Text)
+	}
+	if !strings.Contains(q.Content[0].Text, "fix the failing build") {
+		t.Errorf("query filter missed the right row:\n%s", q.Content[0].Text)
+	}
+
+	// cwd filter narrows to /repo/y (one row).
+	cwd := callTool(t, s, "find_episodes", `{"cwd":"/repo/y"}`)
+	if cwd.IsError {
+		t.Fatalf("cwd call: %+v", cwd)
+	}
+	if !strings.Contains(cwd.Content[0].Text, "explore the new module") ||
+		strings.Contains(cwd.Content[0].Text, "fix the failing build") {
+		t.Errorf("cwd filter wrong rows:\n%s", cwd.Content[0].Text)
+	}
+}
+
+func TestFindEpisodesTool_NoEpisodesReturnsClearMessage(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	res := callTool(t, s, "find_episodes", `{}`)
+	if res.IsError {
+		t.Fatalf("unexpected error: %+v", res)
+	}
+	if !strings.Contains(res.Content[0].Text, "no episodes") {
+		t.Errorf("expected '(no episodes)' message, got:\n%s", res.Content[0].Text)
+	}
+}
+
+func TestFindEpisodesTool_BadArgsReturnsProtocolError(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	RegisterAichroniclesTools(s, st)
+
+	tool := s.tools["find_episodes"]
+	_, mcpErr := tool.Handler(context.Background(), json.RawMessage(`{"limit":"oops"}`))
+	if mcpErr == nil {
+		t.Fatal("expected protocol error for malformed args")
+	}
+	if mcpErr.Code != InvalidParams {
+		t.Errorf("expected InvalidParams (%d), got %d", InvalidParams, mcpErr.Code)
+	}
+}
+
 func TestToolsList_IncludesInputSchema(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
@@ -968,8 +1086,8 @@ func TestToolsList_IncludesInputSchema(t *testing.T) {
 	}
 	result := resp["result"].(map[string]any)
 	tools := result["tools"].([]any)
-	if len(tools) != 9 {
-		t.Errorf("expected 9 tools, got %d", len(tools))
+	if len(tools) != 10 {
+		t.Errorf("expected 10 tools, got %d", len(tools))
 	}
 	for _, t0 := range tools {
 		tool := t0.(map[string]any)

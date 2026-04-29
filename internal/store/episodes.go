@@ -220,6 +220,105 @@ func SaveEpisodes(ctx context.Context, db *sql.DB, sessionID string, episodes []
 	return len(episodes), nil
 }
 
+// FindEpisodesOpts narrows a FindEpisodes query. All fields are
+// optional; an opts-zero call returns the most recent episodes
+// across the corpus, capped at Limit (or DefaultFindEpisodesLimit
+// when Limit ≤ 0).
+//
+// Pink et al. (2026 — arXiv:2502.06975) frame episodic memory as
+// instance-specific, contextually-bound recall. The natural query
+// surface for an agent doing recall is therefore:
+//
+//   - SessionID   → "show me the episodes within session X" (after
+//     a session id surfaced via list_sessions)
+//   - Cwd         → "episodes in this project" (most common
+//     practical filter when reopening a project)
+//   - QueryContains → case-insensitive substring on intent_summary,
+//     which is the first user prompt — the natural
+//     human handle for "the time I did Y"
+//   - SinceMs     → recency window (older episodes age out as the
+//     active context shifts)
+//
+// QueryContains does NOT use FTS5: intent_summary is a thin 200-rune
+// field by design, and a LIKE substring scan over the episodes table
+// is faster and more predictable than maintaining a parallel FTS index
+// for a column that's already small. If the agent wants to search
+// inside the episode's events, it pivots through search_events with
+// the returned session_id + time window.
+type FindEpisodesOpts struct {
+	SessionID     string
+	Cwd           string
+	QueryContains string
+	SinceMs       int64
+	Limit         int
+}
+
+// DefaultFindEpisodesLimit caps a FindEpisodes call when the
+// caller doesn't specify one. 50 is the same envelope list_sessions
+// uses — enough that an agent's recall query lands on the right
+// row without scrolling, small enough that the response body stays
+// in MCP's text budget.
+const DefaultFindEpisodesLimit = 50
+
+// FindEpisodes runs the recall query described by opts and returns
+// matching rows ordered by ended_at_ms DESC (most-recent first). An
+// empty result is NOT an error — it's the normal "no episodes match
+// this filter" outcome.
+func FindEpisodes(ctx context.Context, db *sql.DB, opts FindEpisodesOpts) ([]Episode, error) {
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = DefaultFindEpisodesLimit
+	}
+
+	var (
+		filter strings.Builder
+		args   []any
+	)
+	if opts.SessionID != "" {
+		filter.WriteString(` AND session_id = ?`)
+		args = append(args, opts.SessionID)
+	}
+	if opts.Cwd != "" {
+		filter.WriteString(` AND cwd = ?`)
+		args = append(args, opts.Cwd)
+	}
+	if opts.SinceMs > 0 {
+		filter.WriteString(` AND ended_at_ms >= ?`)
+		args = append(args, opts.SinceMs)
+	}
+	if q := strings.TrimSpace(opts.QueryContains); q != "" {
+		filter.WriteString(` AND lower(intent_summary) LIKE ?`)
+		// `%` wildcards on both sides → substring; lower() on both
+		// sides for case-insensitive match.
+		args = append(args, "%"+strings.ToLower(q)+"%")
+	}
+	args = append(args, limit)
+
+	q := `SELECT id, session_id, ordinal, started_at_ms, ended_at_ms,
+	             cwd, intent_summary, event_count, first_event_id
+	        FROM episodes
+	       WHERE 1=1` + filter.String() + `
+	       ORDER BY ended_at_ms DESC
+	       LIMIT ?`
+
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query episodes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []Episode
+	for rows.Next() {
+		var ep Episode
+		if err := rows.Scan(&ep.ID, &ep.SessionID, &ep.Ordinal,
+			&ep.StartedAtMs, &ep.EndedAtMs, &ep.Cwd, &ep.IntentSummary,
+			&ep.EventCount, &ep.FirstEventID); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		out = append(out, ep)
+	}
+	return out, rows.Err()
+}
+
 // LoadEpisodesBySession returns every episode for the given
 // session in ordinal order. Empty slice (not error) when the
 // session hasn't been segmented yet.
