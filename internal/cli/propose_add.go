@@ -250,17 +250,25 @@ func addSkillCandidate(
 		return err
 	}
 
+	dir := filepath.Join(root, sk.Name)
+	skillMd := filepath.Join(dir, "SKILL.md")
+
+	// Dedup-against-installed runs BEFORE the verify gate: the
+	// critic LLM is the expensive call, so a same-name collision
+	// is the cheapest possible refusal. The error message points
+	// the user at `propose merge` so they don't reach for --force
+	// out of habit when "merge into the existing skill" is what
+	// they actually want.
+	if err := refuseDuplicateSkillName(skillMd, sk.Name, force); err != nil {
+		return err
+	}
+
 	if !noVerify {
 		if err := verifyProposalOrAbort(ctx, st, sk, outputID, newClient, out); err != nil {
 			return err
 		}
 	}
 
-	dir := filepath.Join(root, sk.Name)
-	skillMd := filepath.Join(dir, "SKILL.md")
-	if err := refuseExistingUnlessForce(skillMd, force); err != nil {
-		return err
-	}
 	for _, sc := range sk.Scripts {
 		if err := refuseExistingUnlessForce(filepath.Join(dir, "scripts", sc.Name), force); err != nil {
 			return err
@@ -671,6 +679,64 @@ func refuseExistingUnlessForce(path string, force bool) error {
 	}
 	if _, err := os.Stat(path); err == nil {
 		return fmt.Errorf("%s already exists (pass --force to overwrite)", path)
+	}
+	return nil
+}
+
+// refuseDuplicateSkillName fires before the verify gate and the
+// write path: if a skill with the candidate's kebab-case name
+// already lives at the target SKILL.md path or in the global
+// ~/.claude/skills directory, refuse and point the user at
+// `propose merge` instead of `propose add`. Cheap: a couple of
+// os.Stat calls; no LLM, no DB.
+//
+// Empirical motivation: the Claude skills marketplace data-driven
+// study (Ling et al., 2026 — arXiv:2602.08004) reports 46.3% of
+// listings are name-duplicates and AutoRefine (Qiu et al., 2026 —
+// arXiv:2601.22758) shows that without active dedup a skill repo
+// grows 4.5× and utilisation drops 8.9×. Aichronicles' propose
+// step already shows installed skills to the LLM, but the LLM
+// occasionally re-proposes the same name anyway; this is the
+// hard guard at the maintenance-decision boundary.
+//
+// --force bypasses (the legitimate "I really do want to clobber"
+// case). Returns nil when nothing collides; an error suggesting
+// the merge / discard alternatives otherwise.
+func refuseDuplicateSkillName(targetSkillMd, candidateName string, force bool) error {
+	if force {
+		return nil
+	}
+
+	// Primary: the target path (current behaviour, but with a
+	// merge-pointing message).
+	if _, err := os.Stat(targetSkillMd); err == nil {
+		return fmt.Errorf("skill %q already exists at %s — "+
+			"use `aichronicles propose merge --skill %s` to fold the "+
+			"candidate into the existing skill, "+
+			"`aichronicles propose discard --skill %s` if you do not "+
+			"want it, or pass --force to overwrite",
+			candidateName, targetSkillMd, candidateName, candidateName)
+	}
+
+	// Secondary: the global skills dir, when the user is adding to
+	// a different (e.g. project-local) location. Catches the case
+	// where the global already covers the trigger and the user is
+	// about to add a project-local duplicate.
+	home, herr := os.UserHomeDir()
+	if herr != nil {
+		return nil
+	}
+	globalPath := filepath.Join(home, ".claude", "skills", candidateName, "SKILL.md")
+	if globalPath == targetSkillMd {
+		return nil // already checked above
+	}
+	if _, err := os.Stat(globalPath); err == nil {
+		return fmt.Errorf("skill %q already exists globally at %s — "+
+			"add it project-local would create a duplicate; "+
+			"either run `aichronicles propose merge --skill %s` against "+
+			"the global skill, `aichronicles propose discard --skill %s` "+
+			"if it is no longer relevant, or pass --force to add anyway",
+			candidateName, globalPath, candidateName, candidateName)
 	}
 	return nil
 }

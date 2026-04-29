@@ -272,6 +272,87 @@ func TestProposeAdd_SkillWithoutScripts(t *testing.T) {
 	}
 }
 
+// TestRefuseDuplicateSkillName_PointsAtMerge pins the dedup gate's
+// error messaging: a same-name collision must mention `propose
+// merge` and `propose discard` so the user reaches for the right
+// verb instead of habitually --force'ing through.
+func TestRefuseDuplicateSkillName_PointsAtMerge(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	skillMd := filepath.Join(dir, "deploy-staging", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skillMd), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(skillMd, []byte("# pre-existing\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	t.Run("collision without force", func(t *testing.T) {
+		err := refuseDuplicateSkillName(skillMd, "deploy-staging", false)
+		if err == nil {
+			t.Fatalf("expected refusal")
+		}
+		for _, want := range []string{
+			"deploy-staging",
+			"propose merge --skill",
+			"propose discard --skill",
+			"--force",
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error missing %q: %v", want, err)
+			}
+		}
+	})
+	t.Run("force bypasses", func(t *testing.T) {
+		if err := refuseDuplicateSkillName(skillMd, "deploy-staging", true); err != nil {
+			t.Errorf("--force should bypass: %v", err)
+		}
+	})
+	t.Run("no collision returns nil", func(t *testing.T) {
+		fresh := filepath.Join(dir, "fresh-skill", "SKILL.md")
+		if err := refuseDuplicateSkillName(fresh, "fresh-skill", false); err != nil {
+			// Note: a real ~/.claude/skills/fresh-skill could exist on
+			// the developer's machine — this test isolates HOME to
+			// keep the case deterministic.
+			t.Errorf("no-collision case unexpectedly errored: %v", err)
+		}
+	})
+}
+
+// TestRefuseDuplicateSkillName_GlobalCollision covers the secondary
+// check: the user is adding to a project-local skills dir, but a
+// global ~/.claude/skills/<name>/SKILL.md already covers the same
+// name. Without HOME isolation the test would race the developer's
+// real skills directory; t.Setenv pins it.
+func TestRefuseDuplicateSkillName_GlobalCollision(t *testing.T) {
+	fakeHome := t.TempDir()
+	t.Setenv("HOME", fakeHome)
+
+	globalSkill := filepath.Join(fakeHome, ".claude", "skills", "shared-skill", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(globalSkill), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(globalSkill, []byte("# global\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	projectLocal := filepath.Join(t.TempDir(), "shared-skill", "SKILL.md")
+	err := refuseDuplicateSkillName(projectLocal, "shared-skill", false)
+	if err == nil {
+		t.Fatalf("expected global-collision refusal, got nil")
+	}
+	for _, want := range []string{
+		"globally",
+		"shared-skill",
+		"propose merge",
+		"--force",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q: %v", want, err)
+		}
+	}
+}
+
 // TestProposeAdd_RefusesOversizedSkill pins the SWE-Skills-Bench
 // budget guard: an oversized SKILL.md is refused unless --force is
 // passed. The error message must point at the trim/merge/force
