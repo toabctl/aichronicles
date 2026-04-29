@@ -101,6 +101,97 @@ func TestSessionDetail_RendersCachedSummary(t *testing.T) {
 	}
 }
 
+// TestSessionDetail_RendersEpisodesSection seeds a session with two
+// segmenter-produced episodes and asserts the detail page shows the
+// "Episodes" header, both ordinals, and both intent summaries.
+func TestSessionDetail_RendersEpisodesSection(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	// Seed enough events to produce a session row + first events. We
+	// then plant the episode rows directly so the test exercises the
+	// page render path, not the segmenter (which has its own tests).
+	id := seedSession(t, st, "sess-eps", "first intent prompt", now)
+	seedSession(t, st, "sess-eps", "second intent prompt", now.Add(20*time.Minute))
+
+	// First-event ids needed for the FK in episodes.first_event_id.
+	rows, err := st.DB().Query(
+		`SELECT event_id FROM events WHERE session_id = ? ORDER BY ts_source_ms ASC`, id,
+	)
+	if err != nil {
+		t.Fatalf("event_ids: %v", err)
+	}
+	var eventIDs []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		eventIDs = append(eventIDs, s)
+	}
+	_ = rows.Close()
+	if len(eventIDs) < 2 {
+		t.Fatalf("seeded too few events: %d", len(eventIDs))
+	}
+
+	for i, intent := range []string{"first intent prompt", "second intent prompt"} {
+		if _, err := st.DB().Exec(
+			`INSERT INTO episodes(session_id, ordinal, started_at_ms, ended_at_ms,
+				cwd, intent_summary, event_count, first_event_id)
+			 VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
+			id, i+1, now.Add(time.Duration(i)*20*time.Minute).UnixMilli(),
+			now.Add(time.Duration(i)*20*time.Minute+5*time.Minute).UnixMilli(),
+			"/work/sess-eps", intent, eventIDs[i],
+		); err != nil {
+			t.Fatalf("insert episode %d: %v", i+1, err)
+		}
+	}
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	status, body := fetch(t, base+"/sessions/"+id)
+	if status != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", status)
+	}
+	for _, want := range []string{
+		"Episodes",             // section header
+		"first intent prompt",  // ep 1 intent_summary
+		"second intent prompt", // ep 2 intent_summary
+		"/work/sess-eps",       // shared cwd
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q\n--- body ---\n%s", want, body)
+		}
+	}
+}
+
+// TestSessionDetail_HidesEpisodesSectionWhenEmpty asserts the
+// detail page does NOT render the Episodes header when the
+// segmenter hasn't run on the session — the {{with}} block hides
+// it cleanly.
+func TestSessionDetail_HidesEpisodesSectionWhenEmpty(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	id := seedSession(t, st, "sess-noeps", "no episodes here", now)
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	status, body := fetch(t, base+"/sessions/"+id)
+	if status != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", status)
+	}
+	// The "Episodes" word must not appear as a section header. We
+	// look for the section's distinguishing subtitle instead of the
+	// bare word, which might collide with future copy elsewhere on
+	// the page.
+	if strings.Contains(body, "contextually-coherent slices") {
+		t.Errorf("Episodes section should be hidden when no episodes exist:\n%s", body)
+	}
+}
+
 // TestSessionDetail_IncludesLiveBannerWiring confirms the
 // session-detail page subscribes to /stream filtered by its own
 // session_id, so a new event for THIS session lands in the banner

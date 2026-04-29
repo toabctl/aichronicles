@@ -95,6 +95,39 @@
 </article>
 {{end}}
 
+{{with .Episodes}}
+<article>
+  <header>
+    <h2>Episodes</h2>
+    <small>contextually-coherent slices of this session — bounded by idle gap or cwd shift</small>
+  </header>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Started</th>
+        <th>Ended</th>
+        <th>Events</th>
+        <th>Cwd</th>
+        <th>Intent</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .}}
+      <tr>
+        <td>{{.Ordinal}}</td>
+        <td class="ts">{{.Started}}</td>
+        <td class="ts">{{.Ended}}</td>
+        <td>{{.EventCount}}</td>
+        <td>{{if .Cwd}}<code>{{.Cwd}}</code>{{else}}-{{end}}</td>
+        <td>{{if .IntentSummary}}{{.IntentSummary}}{{else}}<span class="empty">(none)</span>{{end}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</article>
+{{end}}
+
 <h2>Events</h2>
 {{if .Events}}
 <table>

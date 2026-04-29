@@ -94,10 +94,42 @@ func loadSessionDetail(ctx context.Context, st *store.Store, id string) (*Sessio
 	if err != nil {
 		return nil, fmt.Errorf("load related sessions: %w", err)
 	}
+	episodes, err := loadEpisodeRows(ctx, st, id)
+	if err != nil {
+		return nil, fmt.Errorf("load episodes: %w", err)
+	}
 	header.Summary = summary
 	header.Events = events
 	header.RelatedSessions = related
+	header.Episodes = episodes
 	return header, nil
+}
+
+// loadEpisodeRows fetches the segmenter's output for one session
+// and renders each row for the Episodes section on the detail page.
+// Returns an empty slice (not error) when the daemon hasn't
+// segmented this session yet — the template hides the section.
+func loadEpisodeRows(ctx context.Context, st *store.Store, sessionID string) ([]EpisodeRow, error) {
+	episodes, err := store.LoadEpisodesBySession(ctx, st.DB(), sessionID)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	out := make([]EpisodeRow, 0, len(episodes))
+	for _, ep := range episodes {
+		row := EpisodeRow{
+			Ordinal:       ep.Ordinal,
+			Started:       relativeTime(ep.StartedAtMs, now),
+			Ended:         relativeTime(ep.EndedAtMs, now),
+			IntentSummary: ep.IntentSummary,
+			EventCount:    ep.EventCount,
+		}
+		if ep.Cwd.Valid {
+			row.Cwd = ep.Cwd.String
+		}
+		out = append(out, row)
+	}
+	return out, nil
 }
 
 // loadRelatedSessions assembles the "Related sessions" sidebar.

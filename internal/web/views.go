@@ -129,6 +129,28 @@ type SessionDetail struct {
 	// in the slice with no entries; the template hides them. Nil
 	// when neither direction has any links.
 	RelatedSessions []RelatedSessionGroup
+
+	// Episodes is the per-session segmenter output: each entry is
+	// one bounded run within the session where the user pursued
+	// one intent. Nil/empty when the daemon hasn't segmented this
+	// session yet (the candidate filter is identical to induction's,
+	// so a session that hasn't been induced won't have episodes).
+	Episodes []EpisodeRow
+}
+
+// EpisodeRow is one row of the Episodes section on the session
+// detail page. Pre-rendered for the template so the template stays
+// formatting-free. Mirrors the fields the user actually reads:
+// ordinal as a recognisable label, time bracket as relative-since,
+// cwd if any, and the intent summary as the first user prompt
+// clipped to MaxEpisodeIntentSummaryRunes.
+type EpisodeRow struct {
+	Ordinal       int
+	Started       string // relative since-now, e.g. "3h ago"
+	Ended         string // relative since-now, e.g. "2h ago"
+	Cwd           string // empty when episode has no cwd
+	IntentSummary string // first user prompt, clipped at the store layer
+	EventCount    int
 }
 
 // RelatedSessionGroup is one kind's worth of links rendered into
