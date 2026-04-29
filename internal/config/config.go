@@ -144,6 +144,14 @@ type Induction struct {
 	// memory layer without manual intervention. Set true if facts
 	// induction is producing low-value rows for your workload.
 	SkipFacts bool `toml:"skip_facts"`
+
+	// SkipEpisodes, when true, suppresses the per-candidate
+	// episode segmentation phase (cheap local-only work — no LLM
+	// call). Defaults to false: episode-keyed retrieval (Pink et
+	// al., 2026 — arXiv:2502.06975) needs the segmenter to have
+	// run on every settled session. Set true to defer segmentation
+	// to manual control.
+	SkipEpisodes bool `toml:"skip_episodes"`
 }
 
 // Limits exposes operationally-tunable defaults that previously lived

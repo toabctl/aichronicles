@@ -224,6 +224,7 @@ func startInductionSweeper(ctx context.Context, st *store.Store, cfg *config.Con
 					Limit:            maxPerSweep,
 					SkipSummarize:    cfg.Induction.SkipSummarize,
 					SkipFacts:        cfg.Induction.SkipFacts,
+					SkipEpisodes:     cfg.Induction.SkipEpisodes,
 					SummarizeTimeout: cfg.Limits.SummarizeTimeout.Or(3 * time.Minute),
 					InductionTimeout: cfg.Limits.ReflectTimeout.Or(5 * time.Minute),
 					FactsTimeout:     cfg.Limits.SummarizeTimeout.Or(3 * time.Minute),
@@ -238,7 +239,8 @@ func startInductionSweeper(ctx context.Context, st *store.Store, cfg *config.Con
 		"interval", interval, "idle", idle,
 		"min_events", minEvents, "max_per_sweep", maxPerSweep,
 		"skip_summarize", cfg.Induction.SkipSummarize,
-		"skip_facts", cfg.Induction.SkipFacts)
+		"skip_facts", cfg.Induction.SkipFacts,
+		"skip_episodes", cfg.Induction.SkipEpisodes)
 }
 
 // defaultMetaAnalysisInterval is the cadence-check tick. 1h is

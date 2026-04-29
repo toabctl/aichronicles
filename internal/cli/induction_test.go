@@ -640,6 +640,141 @@ func (d *deadlineCapturingLLM) Complete(ctx context.Context, req llm.Request) (*
 	return resp, nil
 }
 
+// countEpisodes returns how many rows exist in the episodes table
+// for the given session. Used by the episode-phase tests below.
+func countEpisodes(t *testing.T, s *store.Store, sessionID string) int {
+	t.Helper()
+	var n int
+	if err := s.DB().QueryRow(
+		`SELECT COUNT(*) FROM episodes WHERE session_id = ?`, sessionID,
+	).Scan(&n); err != nil {
+		t.Fatalf("count episodes: %v", err)
+	}
+	return n
+}
+
+// TestRunInductionSweep_SegmentsEpisodesByDefault asserts that the
+// daemon-resident sweep populates the episodes table for every
+// candidate it processes. Phase 0 is local-only (no LLM call) so
+// this works without a fakeLLM result; we plant a summary so
+// phases 1+ don't bail early and confound the assertion.
+func TestRunInductionSweep_SegmentsEpisodesByDefault(t *testing.T) {
+	t.Parallel()
+	s, sessID := seedSessionForSummarize(t)
+	oneHourAgo := time.Now().Add(-1 * time.Hour).UnixMilli()
+	if _, err := s.DB().Exec(
+		`UPDATE sessions SET ended_at_ms = ?, event_count = 30 WHERE id = ?`,
+		oneHourAgo, sessID,
+	); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	plantSummary(t, s, sessID, "x", "did a thing across multiple services and components")
+
+	indResult := prompts.InductionResult{Rationale: "x"}
+	toolInput, _ := json.Marshal(indResult)
+	f := &fakeLLM{toolInput: toolInput}
+
+	if err := RunInductionSweep(context.Background(), s,
+		func() (llm.Client, error) { return f, nil },
+		InductionSweepOptions{
+			Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
+			SkipFacts: true,
+		},
+		&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("RunInductionSweep: %v", err)
+	}
+	// The seed fixture's 4 events all share /work/systemd cwd and
+	// sit within seconds of each other → the segmenter produces
+	// exactly one episode covering the whole session.
+	if got := countEpisodes(t, s, sessID); got != 1 {
+		t.Errorf("expected 1 episode persisted, got %d", got)
+	}
+}
+
+// TestRunInductionSweep_SkipEpisodesSuppressesPhase0: opt-out is
+// honoured.
+func TestRunInductionSweep_SkipEpisodesSuppressesPhase0(t *testing.T) {
+	t.Parallel()
+	s, sessID := seedSessionForSummarize(t)
+	oneHourAgo := time.Now().Add(-1 * time.Hour).UnixMilli()
+	if _, err := s.DB().Exec(
+		`UPDATE sessions SET ended_at_ms = ?, event_count = 30 WHERE id = ?`,
+		oneHourAgo, sessID,
+	); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	plantSummary(t, s, sessID, "x", "did a thing across multiple services and components")
+
+	indResult := prompts.InductionResult{Rationale: "x"}
+	toolInput, _ := json.Marshal(indResult)
+	f := &fakeLLM{toolInput: toolInput}
+
+	if err := RunInductionSweep(context.Background(), s,
+		func() (llm.Client, error) { return f, nil },
+		InductionSweepOptions{
+			Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
+			SkipEpisodes: true, SkipFacts: true,
+		},
+		&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("RunInductionSweep: %v", err)
+	}
+	if got := countEpisodes(t, s, sessID); got != 0 {
+		t.Errorf("SkipEpisodes violated: %d episode rows persisted", got)
+	}
+}
+
+// TestRunInductionSweep_EpisodeSegmentationIsIdempotent: re-running
+// the sweep on the same candidate (forced by clearing the induction
+// row so the candidate query re-selects it) produces the same
+// episode set. SaveEpisodes is DELETE-then-INSERT so the row count
+// stays stable and ordinal/start-time round-trip.
+func TestRunInductionSweep_EpisodeSegmentationIsIdempotent(t *testing.T) {
+	t.Parallel()
+	s, sessID := seedSessionForSummarize(t)
+	oneHourAgo := time.Now().Add(-1 * time.Hour).UnixMilli()
+	if _, err := s.DB().Exec(
+		`UPDATE sessions SET ended_at_ms = ?, event_count = 30 WHERE id = ?`,
+		oneHourAgo, sessID,
+	); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	plantSummary(t, s, sessID, "x", "did a thing across multiple services and components")
+
+	indResult := prompts.InductionResult{Rationale: "x"}
+	toolInput, _ := json.Marshal(indResult)
+
+	run := func() {
+		f := &fakeLLM{toolInput: toolInput}
+		if err := RunInductionSweep(context.Background(), s,
+			func() (llm.Client, error) { return f, nil },
+			InductionSweepOptions{
+				Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
+				SkipFacts: true,
+			},
+			&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+			t.Fatalf("RunInductionSweep: %v", err)
+		}
+	}
+	run()
+	first := countEpisodes(t, s, sessID)
+	if first != 1 {
+		t.Fatalf("first sweep: expected 1 episode, got %d", first)
+	}
+
+	// Drop the induction row so the candidate query re-selects this
+	// session and phase 0 fires again. Without this, the candidate
+	// filter would skip the already-induced session.
+	if _, err := s.DB().Exec(
+		`DELETE FROM llm_outputs WHERE session_id = ? AND kind = 'induction'`, sessID,
+	); err != nil {
+		t.Fatalf("clear induction row: %v", err)
+	}
+	run()
+	if got := countEpisodes(t, s, sessID); got != first {
+		t.Errorf("idempotency broken: got %d episodes after re-sweep, want %d", got, first)
+	}
+}
+
 func TestRunInductionSweep_NoCandidatesReturnsCleanly(t *testing.T) {
 	t.Parallel()
 	s, _ := seedSessionForSummarize(t)

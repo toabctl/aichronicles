@@ -68,6 +68,7 @@ func newInductionSweepCmd() *cobra.Command {
 		dbPath        string
 		skipSummarize bool
 		skipFacts     bool
+		skipEpisodes  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "sweep",
@@ -120,6 +121,7 @@ func newInductionSweepCmd() *cobra.Command {
 					Model:            model,
 					SkipSummarize:    skipSummarize,
 					SkipFacts:        skipFacts,
+					SkipEpisodes:     skipEpisodes,
 					SummarizeTimeout: cfg.Limits.SummarizeTimeout.Or(defaultSummarizeTimeout),
 					InductionTimeout: cfg.Limits.ReflectTimeout.Or(defaultMetaLLMTimeout),
 					FactsTimeout:     cfg.Limits.SummarizeTimeout.Or(defaultSummarizeTimeout),
@@ -138,6 +140,8 @@ func newInductionSweepCmd() *cobra.Command {
 		"skip phase 1 (auto-summarize). Sessions without summaries will be skipped — keeps summarize manual.")
 	cmd.Flags().BoolVar(&skipFacts, "skip-facts", false,
 		"skip phase 3 (semantic-facts induction); saves one LLM call per candidate")
+	cmd.Flags().BoolVar(&skipEpisodes, "skip-episodes", false,
+		"skip phase 0 (episode segmentation); episode-keyed retrieval will have no rows for new candidates")
 	return cmd
 }
 
@@ -259,6 +263,17 @@ type InductionSweepOptions struct {
 	// empty semantic-facts table.
 	SkipFacts bool
 
+	// SkipEpisodes, when true, suppresses the per-candidate
+	// episode segmentation phase. Default (SkipEpisodes=false)
+	// runs SegmentSession + SaveEpisodes for every candidate as
+	// a cheap local-only step (no LLM call) so episode-keyed
+	// retrieval has data to work with. Pink et al. (2026 —
+	// arXiv:2502.06975) treats segmentation as the substrate for
+	// instance-specific recall; without it the daemon ingests
+	// events but never produces the episode index. Set true if
+	// you want to defer episode persistence to manual control.
+	SkipEpisodes bool
+
 	// SummarizeTimeout caps a single summarize LLM round-trip
 	// inside the sweep. Per-call (not per-sweep) so one slow
 	// session can't strangle the next 399. Zero falls back to
@@ -342,6 +357,24 @@ func RunInductionSweep(
 			return ctx.Err()
 		}
 
+		// Phase 0: segment the session into episodes. Pure local
+		// work (no LLM); idempotent via DELETE-then-INSERT. Runs
+		// before the LLM phases so retrieval has the episode
+		// index even when downstream phases fail. Pink et al.
+		// (2026 — arXiv:2502.06975) frame episodes as the
+		// substrate for instance-specific recall; segmentation is
+		// the cheap precondition.
+		if !opts.SkipEpisodes {
+			if eerr := segmentAndSaveEpisodes(ctx, s, c.ID); eerr != nil {
+				slog.Warn("induction sweep: episode segmentation failed",
+					"session_id", c.ID, "err", eerr)
+				_, _ = fmt.Fprintf(errOut,
+					"  ✗ episodes %s: %v\n", c.ID[:8], eerr)
+				// Non-fatal: downstream phases don't depend on
+				// episodes (yet). Continue to phases 1+.
+			}
+		}
+
 		// Phase 1: auto-summarize when no kind=summary row exists
 		// for this session yet. Closes the manual gate that used
 		// to block phases 2+3 — the autonomous pipeline.
@@ -417,6 +450,31 @@ func RunInductionSweep(
 					"  ✗ facts %s: %v\n", c.ID[:8], ferr)
 			}
 		}
+	}
+	return nil
+}
+
+// segmentAndSaveEpisodes loads the session's events, runs the
+// pure-function segmenter, and persists the result. Idempotent:
+// store.SaveEpisodes is DELETE-then-INSERT, so re-running on the
+// same (or extended) session converges. Skips persistence when
+// the segmenter returns no episodes (a session with zero events
+// shouldn't reach the candidate query, but the guard keeps the
+// DB write trivial in the degenerate case).
+func segmentAndSaveEpisodes(ctx context.Context, s *store.Store, sessionID string) error {
+	events, err := store.LoadEventsForSession(ctx, s.DB(), sessionID, 0)
+	if err != nil {
+		return fmt.Errorf("load events: %w", err)
+	}
+	if len(events) == 0 {
+		return nil
+	}
+	episodes := store.SegmentSession(sessionID, events, 0)
+	if len(episodes) == 0 {
+		return nil
+	}
+	if _, err := store.SaveEpisodes(ctx, s.DB(), sessionID, episodes); err != nil {
+		return fmt.Errorf("save episodes: %w", err)
 	}
 	return nil
 }
