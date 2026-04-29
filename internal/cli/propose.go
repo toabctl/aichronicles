@@ -418,10 +418,10 @@ func recordSkillCandidatesFromProposal(ctx context.Context, s *store.Store, llmO
 }
 
 // skillMetadataFromProposed lifts the AutoSkill 7-tuple metadata
-// (triggers τ, tags γ, examples ξ, version v) from a
-// prompts.ProposedSkill into the store's SkillCandidateMetadata
-// shape. Centralised so the propose and induction call paths can't
-// drift on the field mapping.
+// (triggers τ, tags γ, examples ξ, version v) plus the contrastive
+// kind label from a prompts.ProposedSkill into the store's
+// SkillCandidateMetadata shape. Centralised so the propose and
+// induction call paths can't drift on the field mapping.
 func skillMetadataFromProposed(sk prompts.ProposedSkill) store.SkillCandidateMetadata {
 	examples := make([]store.SkillExample, 0, len(sk.Examples))
 	for _, e := range sk.Examples {
@@ -430,10 +430,18 @@ func skillMetadataFromProposed(sk prompts.ProposedSkill) store.SkillCandidateMet
 			Output: e.Output,
 		})
 	}
+	kind := store.SkillKind(sk.Kind)
+	if kind != store.SkillKindPattern && kind != store.SkillKindPitfall {
+		// LLM omitted the field or emitted something out-of-enum;
+		// the store defaults to "pattern" anyway, so the explicit
+		// fallback here keeps the mapping reversible.
+		kind = ""
+	}
 	return store.SkillCandidateMetadata{
 		Triggers: append([]string(nil), sk.Triggers...),
 		Tags:     append([]string(nil), sk.Tags...),
 		Examples: examples,
+		Kind:     kind,
 		// Version is set by the store at insert time
 		// (InitialSkillVersion) when meta.Version is empty —
 		// new candidates always start at v0.1.0; the merge path

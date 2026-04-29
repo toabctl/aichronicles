@@ -903,7 +903,9 @@ func TestBuildPropose_SetsForcedTool(t *testing.T) {
 // TestProposalToolSchema_AutoSkillFieldsRequired pins the AutoSkill
 // (Yang et al., 2026) 7-tuple metadata: every emitted skill MUST
 // carry triggers, tags, and examples alongside the existing fields.
-// The schema bytes are stable (hashRequest depends on them); a
+// The contrastive-induction `kind` field (EvoSkill / EvoSC) joins
+// the required set so every emission carries a pattern-vs-pitfall
+// label. Schema bytes are stable (hashRequest depends on them); a
 // regression here breaks both the LLM contract and the cache key,
 // so the test asserts presence loudly.
 func TestProposalToolSchema_AutoSkillFieldsRequired(t *testing.T) {
@@ -912,9 +914,12 @@ func TestProposalToolSchema_AutoSkillFieldsRequired(t *testing.T) {
 		`"triggers"`,
 		`"tags"`,
 		`"examples"`,
+		`"kind"`,
 		`"#/$defs/triggers"`,
 		`"#/$defs/tags"`,
 		`"#/$defs/examples"`,
+		`"#/$defs/kind"`,
+		`"enum":["pattern","pitfall"]`,
 	} {
 		if !strings.Contains(proposalToolSchema, want) {
 			t.Errorf("proposalToolSchema missing %q", want)
@@ -924,8 +929,10 @@ func TestProposalToolSchema_AutoSkillFieldsRequired(t *testing.T) {
 		`"triggers"`,
 		`"tags"`,
 		`"examples"`,
+		`"kind"`,
 		`"input"`,
 		`"output"`,
+		`"enum":["pattern","pitfall"]`,
 	} {
 		if !strings.Contains(inductionToolSchema, want) {
 			t.Errorf("inductionToolSchema missing %q", want)

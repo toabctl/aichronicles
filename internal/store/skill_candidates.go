@@ -103,6 +103,31 @@ type SkillExample struct {
 	Output string `json:"output"`
 }
 
+// SkillKind labels what shape a candidate skill encodes — a
+// success pattern ("when X fires, do Y") or a failure pitfall
+// ("when X is about to fail, AVOID Y"). EvoSkill (2603.02766) and
+// EvoSC (2602.01966) argue that contrastive induction needs both
+// forms; conflating them in one bank loses the negative-evidence
+// half of the corpus. Stored on the skill_candidates row so the
+// merge gate, retire signals, and SKILL.md frontmatter can branch
+// on the kind without re-deriving it from the body text.
+type SkillKind string
+
+const (
+	// SkillKindPattern is the canonical success-driven form: the
+	// LLM saw the same successful procedure across two or more
+	// sessions and emitted a skill that codifies it.
+	SkillKindPattern SkillKind = "pattern"
+
+	// SkillKindPitfall is the failure-driven form: the LLM saw
+	// the same recurring failure mode across two or more
+	// failure_likely sessions and emitted a skill that names what
+	// to avoid (or how to recover early). Loaded by Claude Code
+	// the same way as a pattern skill; Claude reads its body and
+	// follows the avoid-this guidance.
+	SkillKindPitfall SkillKind = "pitfall"
+)
+
 // MaintenanceAction names the AutoSkill (Yang et al., 2026 —
 // arXiv:2603.01145) maintenance decisions. After a candidate skill
 // is extracted from session experience, the user picks exactly one
@@ -173,6 +198,12 @@ type SkillCandidate struct {
 	// after the fact." Empty / NULL when the candidate was never
 	// added or was added before migration 023.
 	AddBodySHA256 sql.NullString
+
+	// Kind is the contrastive-induction label: pattern (success-
+	// driven, "do X") or pitfall (failure-driven, "avoid X").
+	// Defaults to SkillKindPattern for legacy rows via migration
+	// 024's column default.
+	Kind SkillKind
 }
 
 // ErrSkillCandidateNotFound is returned by the Mark* helpers when
@@ -194,6 +225,11 @@ type SkillCandidateMetadata struct {
 	// Version stamps the candidate row. Empty falls back to
 	// InitialSkillVersion at write time.
 	Version string
+	// Kind labels the candidate as a success pattern or a failure
+	// pitfall (contrastive induction). Empty defaults to
+	// SkillKindPattern at write time — the existing aichronicles
+	// emission shape.
+	Kind SkillKind
 }
 
 // RecordSkillCandidate inserts the (llm_output_id, skill_name) pair
@@ -250,20 +286,25 @@ func RecordSkillCandidateWithMetadata(ctx context.Context, db *sql.DB, llmOutput
 	if version == "" {
 		version = InitialSkillVersion
 	}
+	kind := meta.Kind
+	if kind == "" {
+		kind = SkillKindPattern
+	}
 
 	_, err = db.ExecContext(ctx,
 		`INSERT INTO skill_candidates(
 			llm_output_id, skill_name, proposed_at_ms,
-			triggers, tags, examples, version
+			triggers, tags, examples, version, kind
 		)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(llm_output_id, skill_name) DO UPDATE SET
 		     triggers = COALESCE(excluded.triggers, skill_candidates.triggers),
 		     tags     = COALESCE(excluded.tags,     skill_candidates.tags),
 		     examples = COALESCE(excluded.examples, skill_candidates.examples),
-		     version  = COALESCE(skill_candidates.version, excluded.version)`,
+		     version  = COALESCE(skill_candidates.version, excluded.version),
+		     kind     = excluded.kind`,
 		llmOutputID, skillName, proposedAtMs,
-		nullableJSON(triggersJSON), nullableJSON(tagsJSON), nullableJSON(examplesJSON), version,
+		nullableJSON(triggersJSON), nullableJSON(tagsJSON), nullableJSON(examplesJSON), version, string(kind),
 	)
 	if err != nil {
 		return fmt.Errorf("insert skill_candidates: %w", err)
@@ -471,14 +512,19 @@ func scanSkillCandidate(rows *sql.Rows) (SkillCandidate, error) {
 		tagsStr     sql.NullString
 		examplesStr sql.NullString
 		versionStr  sql.NullString
+		kindStr     string
 	)
 	if err := rows.Scan(&r.ID, &r.LLMOutputID, &r.SkillName, &r.ProposedAtMs,
 		&r.DecisionAtMs, &r.AddPath, &decision, &r.MergedIntoID,
 		&triggersStr, &tagsStr, &examplesStr, &versionStr,
-		&r.AddBodySHA256); err != nil {
+		&r.AddBodySHA256, &kindStr); err != nil {
 		return SkillCandidate{}, fmt.Errorf("scan: %w", err)
 	}
 	r.Decision = MaintenanceAction(decision)
+	if kindStr == "" {
+		kindStr = string(SkillKindPattern)
+	}
+	r.Kind = SkillKind(kindStr)
 
 	triggers, err := scanSkillStringList(triggersStr)
 	if err != nil {
@@ -507,7 +553,7 @@ const candidateColumns = `id, llm_output_id, skill_name, proposed_at_ms,
 		        decision_at_ms, add_path,
 		        COALESCE(decision, ''), merged_into_id,
 		        triggers, tags, examples, version,
-		        add_body_sha256`
+		        add_body_sha256, kind`
 
 // LoadSkillCandidatesByName returns every skill_candidates row for
 // the given skill name across history, newest-first. Used by the

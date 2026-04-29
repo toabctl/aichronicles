@@ -645,6 +645,49 @@ func TestBumpPatch(t *testing.T) {
 	}
 }
 
+// TestRecordSkillCandidate_DefaultKindIsPattern pins migration
+// 024's behavioural default: a candidate inserted without an
+// explicit Kind comes back as SkillKindPattern, matching the
+// existing pre-024 emission shape.
+func TestRecordSkillCandidate_DefaultKindIsPattern(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+	loID := mkProposeRow(t, s, 1_700_000_000_000)
+	if err := RecordSkillCandidate(ctx, s.DB(), loID, "default-kind", 1_700_000_000_000); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	rows, err := LoadSkillCandidatesByName(ctx, s.DB(), "default-kind", 0)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if rows[0].Kind != SkillKindPattern {
+		t.Errorf("default kind: got %q want %q", rows[0].Kind, SkillKindPattern)
+	}
+}
+
+// TestRecordSkillCandidateWithMetadata_PersistsKind covers an
+// explicit pitfall emission: the metadata-aware writer carries the
+// label into the row, and the loader returns it unchanged.
+func TestRecordSkillCandidateWithMetadata_PersistsKind(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+	loID := mkProposeRow(t, s, 1_700_000_000_000)
+	if err := RecordSkillCandidateWithMetadata(ctx, s.DB(),
+		loID, "avoid-shared-rebase", 1_700_000_000_000,
+		SkillCandidateMetadata{Kind: SkillKindPitfall}); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	rows, err := LoadSkillCandidatesByName(ctx, s.DB(), "avoid-shared-rebase", 0)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if rows[0].Kind != SkillKindPitfall {
+		t.Errorf("kind: got %q want %q", rows[0].Kind, SkillKindPitfall)
+	}
+}
+
 // TestSkillCandidates_NoSupersededByIdColumn pins migration 022's
 // payload: the dead `superseded_by_id` column from migration 018 is
 // gone after the table-recreate and the merged_into_id self-FK

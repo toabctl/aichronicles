@@ -234,6 +234,13 @@ type ProposedSkill struct {
 	Frequency            int                    `json:"frequency"`
 	Effort               string                 `json:"effort"`
 	AlternativesRejected string                 `json:"alternatives_rejected"`
+	// Kind is the contrastive-induction label: "pattern" (success-
+	// driven, "do X") or "pitfall" (failure-driven, "avoid X").
+	// EvoSkill (2603.02766) and EvoSC (2602.01966) argue both
+	// halves of the corpus carry signal; aichronicles persists the
+	// label so the lifecycle can branch on it. Defaults to
+	// "pattern" downstream when the LLM omits it.
+	Kind string `json:"kind,omitempty"`
 }
 
 // ProposedSkillExample is one entry in ProposedSkill.Examples —
@@ -695,6 +702,11 @@ Hard rules:
     - tags: 1–5 categorical labels the skill belongs to. Lowercase kebab-case. Use standard buckets when applicable: language ("go", "python", "rust", "typescript"), domain ("ci", "deploy", "testing", "git", "database", "infra"), level ("workflow", "single-tool", "diagnostic"). The skill listing groups by tags; pick the discriminating ones.
     - examples: 1–3 concrete (input → output) demonstrations. input is a representative user query that should fire the skill ("the CI build is red on main"); output is a short summary of what the skill does for that input ("runs the failing test locally with -count=1, captures stderr, opens a fix PR"). Examples ground the skill's intent; downstream retrieval and the SKILL.md scaffold both consume them.
 
+7b. KIND (contrastive induction — EvoSkill, 2603.02766; EvoSC, 2602.01966) — required for every emitted skill:
+    - kind="pattern" (the default, "do X" form): emitted when the evidence is success_likely or mixed and the skill codifies a positive procedure that worked. when_to_use names the trigger condition; the body teaches HOW to do the thing. Most skills are this.
+    - kind="pitfall" (the avoid-X form): emitted when the evidence is dominated by failure_likely sessions sharing the SAME failure mode (rule 13 territory), and the skill teaches what to AVOID or how to short-circuit the failure early. when_to_use names the trigger condition that LEADS to the failure; the body teaches the avoidance / recovery rule. Pitfall-named kebab examples: "avoid-rebase-on-shared-branch", "fail-fast-on-missing-migration", "short-circuit-stale-cache". Triggers should still describe when the skill fires, not when the failure happens.
+    - The two kinds are NOT alternatives: if a session has both a successful pattern and a contrastive pitfall worth capturing, emit two separate skills with distinct names. Never blend a pattern and a pitfall into one skill body.
+
 Skill-awareness rules (the "Skills installed" and "Skills invoked recently" sections at the top of the user message are CANONICAL — do not invent skill names):
 
 8. If a recurring pattern overlaps an *installed* skill (same domain or trigger), do NOT propose a new skill with that name or near-duplicate name. Skip the pattern.
@@ -777,14 +789,20 @@ const proposalToolSchema = `{
         }
       }
     },
+    "kind": {
+      "type":"string",
+      "enum":["pattern","pitfall"],
+      "description":"Contrastive-induction label. 'pattern' (default): success-driven 'when X fires, do Y' skill. 'pitfall': failure-driven 'when X is about to fail, AVOID Y' skill grounded in failure_likely sessions. Pick 'pitfall' when the evidence is dominated by failure-shaped sessions and the skill body teaches what to avoid; otherwise 'pattern'."
+    },
     "proposalSkill": {
       "type":"object",
-      "required":["name","when_to_use","why","triggers","tags","examples","evidence","frequency","effort","alternatives_rejected"],
+      "required":["name","when_to_use","why","kind","triggers","tags","examples","evidence","frequency","effort","alternatives_rejected"],
       "additionalProperties": false,
       "properties": {
         "name":                  {"type":"string","pattern":"^[a-z][a-z0-9-]*$"},
         "when_to_use":           {"type":"string","minLength":1},
         "why":                   {"type":"string","minLength":1},
+        "kind":                  {"$ref":"#/$defs/kind"},
         "triggers":              {"$ref":"#/$defs/triggers"},
         "tags":                  {"$ref":"#/$defs/tags"},
         "examples":              {"$ref":"#/$defs/examples"},
@@ -1223,6 +1241,7 @@ Hard rules:
       - triggers: 3–8 short query-shaped phrases the user would type ("ci red on go", "rebase conflict resolved"). NOT prose; retrieval anchors.
       - tags: 1–5 lowercase kebab-case categorical labels ("go", "ci", "deploy", "testing", "workflow", "single-tool").
       - examples: 1–3 (input → output) demonstrations. input is a representative user query; output is a short summary of what the skill does for it.
+   g. KIND (contrastive induction — EvoSkill, 2603.02766; EvoSC, 2602.01966): label the skill as "pattern" (success-driven, "do X") or "pitfall" (failure-driven, "avoid X"). Pick "pitfall" only when this session was failure_likely AND the lesson is what to avoid (e.g. "do not rebase a shared branch"); otherwise "pattern". Most online-induction emissions are "pattern".
 
 4. WORKFLOW CRITERIA — emit a workflow ONLY when:
    a. The session ran a recognisable PROCEDURE (sequence of high-level actions the same user, or a different user with a similar goal, would benefit from following next time).
@@ -1248,12 +1267,17 @@ const inductionToolSchema = `{
   "properties": {
     "skill": {
       "type":"object",
-      "required":["name","when_to_use","why","triggers","tags","examples","evidence","frequency","effort","alternatives_rejected"],
+      "required":["name","when_to_use","why","kind","triggers","tags","examples","evidence","frequency","effort","alternatives_rejected"],
       "additionalProperties": false,
       "properties": {
         "name":                  {"type":"string","pattern":"^[a-z][a-z0-9-]*$"},
         "when_to_use":           {"type":"string","minLength":1},
         "why":                   {"type":"string","minLength":1},
+        "kind": {
+          "type":"string",
+          "enum":["pattern","pitfall"],
+          "description":"Contrastive-induction label. 'pattern' (default): success-driven 'when X fires, do Y' skill. 'pitfall': failure-driven 'when X is about to fail, AVOID Y' skill grounded in this session's failure-shaped trajectory. Pick 'pitfall' when the session was failure_likely AND the lesson is what to avoid; otherwise 'pattern'."
+        },
         "triggers": {
           "type":"array",
           "description":"Short keyword phrases that activate retrieval — the terms a user would actually type when this skill should fire (3-8 entries, lowercase, query-shaped).",
