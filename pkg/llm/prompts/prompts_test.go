@@ -1043,6 +1043,113 @@ func TestBuildMergeSkill_ScrubsAndReportsPatterns(t *testing.T) {
 	}
 }
 
+// TestBuildVerifyProposal_SurfacesScopeFields pins that the
+// verify prompt now exposes the candidate's triggers, tags, and a
+// body excerpt to the critic — without these the critic cannot
+// reason about scope tightness or regression risk (rules 5 and 6
+// in verifyProposalSystem). The behavioural-verify upgrade is
+// load-bearing: the prompt must include what the rules ask the
+// critic to evaluate.
+func TestBuildVerifyProposal_SurfacesScopeFields(t *testing.T) {
+	t.Parallel()
+	built, err := BuildVerifyProposal(VerifyProposalInputs{
+		Skill: ProposedSkill{
+			Name:      "deploy-staging",
+			WhenToUse: "when shipping to staging",
+			Why:       "single command instead of remembering the script",
+			Triggers:  []string{"deploy staging", "ship staging", "push to staging"},
+			Tags:      []string{"deploy", "ci"},
+			Examples:  []ProposedSkillExample{{Input: "ship this branch", Output: "calls deploy"}},
+			Frequency: 2,
+			Effort:    "small",
+			Evidence: []ProposalEvidence{
+				{SessionID: "abc12345", Quote: "deploy this branch to staging please", WhatHappened: "ran the deploy script"},
+				{SessionID: "def67890", Quote: "ship to staging again", WhatHappened: "same flow"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildVerifyProposal: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	for _, want := range []string{
+		"triggers:",
+		"deploy staging, ship staging, push to staging", // joined trigger list
+		"tags:",
+		"deploy, ci",
+		"prompt body excerpt:",
+		"first example: ship this branch", // excerpt includes the example
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("verify prompt missing %q\n--- body ---\n%s", want, body)
+		}
+	}
+}
+
+// TestVerifyProposalSystem_HasBehaviouralRules pins that the
+// system prompt embeds the SWE-Skills-Bench-derived empirical
+// rationale and the two new refusal categories (regression risk,
+// scope tightness). A regression that drops these rules would
+// silently revert the gate to its weaker pre-2026-04-29 form.
+func TestVerifyProposalSystem_HasBehaviouralRules(t *testing.T) {
+	t.Parallel()
+	// Empirical motivation surfaces as a quotable phrase so a
+	// future reader knows where the rules came from.
+	if !strings.Contains(verifyProposalSystem, "SWE-Skills-Bench") {
+		t.Errorf("system prompt missing SWE-Skills-Bench citation")
+	}
+	if !strings.Contains(verifyProposalSystem, "REGRESSION RISK") {
+		t.Errorf("system prompt missing REGRESSION RISK rule")
+	}
+	if !strings.Contains(verifyProposalSystem, "SCOPE TIGHTNESS") {
+		t.Errorf("system prompt missing SCOPE TIGHTNESS rule")
+	}
+	if !strings.Contains(verifyProposalSystem, "near-match context pollution") {
+		t.Errorf("system prompt missing the near-match-pollution failure-mode language")
+	}
+}
+
+// TestExcerptForVerify_BoundsAndContent covers the excerpt helper:
+// includes when_to_use / why / first example / scripts; caps at
+// ~600 runes so the verify-LLM doesn't burn a token budget on a
+// full SKILL.md render.
+func TestExcerptForVerify_BoundsAndContent(t *testing.T) {
+	t.Parallel()
+	t.Run("happy path", func(t *testing.T) {
+		got := excerptForVerify(ProposedSkill{
+			WhenToUse: "trigger condition",
+			Why:       "rationale text",
+			Examples: []ProposedSkillExample{
+				{Input: "user query", Output: "skill output"},
+			},
+			Scripts: []ProposedSkillScript{
+				{Name: "build.sh", Purpose: "builds the project"},
+			},
+		})
+		for _, want := range []string{
+			"when_to_use: trigger condition",
+			"why: rationale text",
+			"first example: user query → skill output",
+			`script "build.sh": builds the project`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("excerpt missing %q:\n%s", want, got)
+			}
+		}
+	})
+	t.Run("over-cap truncates with ellipsis", func(t *testing.T) {
+		big := strings.Repeat("y", 800)
+		got := excerptForVerify(ProposedSkill{Why: big})
+		runes := len([]rune(got))
+		if runes > 700 { // 600 cap + the "why: " prefix
+			t.Errorf("excerpt should be capped near 600 runes, got %d", runes)
+		}
+		if !strings.Contains(got, "…") {
+			t.Errorf("expected ellipsis on truncation, got: %s", got[:80])
+		}
+	})
+}
+
 // TestProposedSkill_AutoSkillRoundTrips asserts the Go struct
 // carries triggers, tags, and examples through a JSON round-trip.
 // Without this, an LLM emitting AutoSkill fields would deserialise

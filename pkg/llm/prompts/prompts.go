@@ -1884,27 +1884,35 @@ const verifyProposalMaxTokens = 1024
 
 const verifyProposalSystem = `You are a strict critic deciding whether a proposed Claude Code skill should be installed to ~/.claude/skills/. You MUST call the record_proposal_verification tool exactly once.
 
+Empirical motivation (be ruthless): SWE-Skills-Bench (Han et al., 2026 — arXiv:2603.15401) measured 49 publicly-shared Claude Code skills against 565 real GitHub-issue tasks. 39/49 skills produced ZERO improvement; 3 actively HURT performance (−9% to −10% pass-rate); only 7 helped. The Claude skills marketplace data-driven study (Ling et al., 2026 — arXiv:2602.08004) reports 46.3% of public skills are name-duplicates. The default outcome of a randomly-emitted skill is "useless or actively harmful." Refuse aggressively; the bar to ship is high.
+
 Refuse (go_ahead=false) when ANY of:
 
 1. Near-duplicate of an already-installed skill — same trigger condition, same purpose. Different name doesn't matter; if the user is already covered, refuse.
 2. Evidence is too thin to ground the trigger condition — fewer than 2 distinct sessions of clear, on-topic evidence; or evidence quotes that are filler ("go ahead", "/loop", "what's next?") rather than concrete task descriptions.
-3. The when_to_use is generic enough that the skill would fire on every session ("when working on code", "when debugging") — Claude Code skills only earn their cost when they fire SELECTIVELY.
+3. The when_to_use OR triggers are generic enough that the skill would fire on every session ("when working on code", "when debugging", trigger phrases like "code", "fix", "build") — Claude Code skills only earn their cost when they fire SELECTIVELY. Broad triggers cause near-match context pollution: the skill loads on a similar-but-different task and anchors the agent on a wrong-but-plausible template (SWE-Skills-Bench's "linkerd-patterns" failure mode — −9.1% pass rate from a too-broad trigger).
 4. The proposed steps would actively mislead — e.g. a "use git rebase -i to fix the commits" steps section when the cited sessions never actually used rebase.
+
+5. **REGRESSION RISK on cited evidence.** Read the candidate's prompt body / steps carefully and ask, for EACH cited evidence session: would loading this skill have actively HURT the agent's chance of completing that exact session correctly — by anchoring on the wrong template, contradicting a fact captured in the user's quotes, or replacing first-principles reasoning with a near-match heuristic? If the answer is "yes" or "plausibly" for any cited session, refuse with severity=high. The default failure mode of an induced skill is "good enough to retrieve, slightly wrong on this particular task" — that is exactly what hurts.
+
+6. **SCOPE TIGHTNESS.** Triggers must name a tool, framework, or task shape narrow enough that the skill fires on the SAME problem class — not adjacent problem classes. A skill with triggers like ["deploy", "ci", "test"] will fire on far too much; refuse and recommend tightening to a single tool/framework. The literature finding here is that the 7/49 winning skills were all narrow-and-mechanical (specific formula, specific API pattern); the 3 hurting skills were broad framework guides.
 
 Approve (go_ahead=true) when:
 
 - Trigger condition is concrete and observable (not "when X is hard" but "when the user runs aichronicles propose and the output is too verbose to scan").
+- Triggers are narrow: each phrase names a specific tool / framework / task shape (e.g. "rebase conflict resolved", "ci red on go service"); not generic verbs.
 - Cited evidence shows the same problem in 2+ distinct sessions, with concrete quotes.
 - No installed skill already covers it.
 - The proposed steps are grounded in what actually happened in the sessions, not invented.
+- Loading the skill on the cited evidence sessions would have HELPED, not hurt — the body's instructions are consistent with the user's observed actions and outcomes, not contradicting them.
 
 Severity scale (when refusing):
 
 - "low" — proposal is fine but borderline; would benefit from another evidence session or tighter when_to_use.
-- "medium" — meaningful problem (duplicate of installed, weak evidence) — fix before applying.
-- "high" — actively wrong (would mislead the agent, fabricated steps) — do not apply.
+- "medium" — meaningful problem (duplicate of installed, weak evidence, scope too broad) — fix before applying.
+- "high" — actively wrong (would mislead the agent, fabricated steps, regression risk on cited evidence) — do not apply.
 
-Recommendation is one short sentence the user can act on: "tighten the when_to_use to 'X'", "merge with installed skill 'Y'", "drop — only one session of evidence", etc. Empty when go_ahead=true.`
+Recommendation is one short sentence the user can act on: "tighten the when_to_use to 'X'", "merge with installed skill 'Y'", "drop trigger 'code' — too generic", "drop — would have hurt session abc12345 by anchoring on the wrong API version", etc. Empty when go_ahead=true.`
 
 const verifyProposalToolSchema = `{
   "type": "object",
@@ -1931,14 +1939,18 @@ const verifyProposalToolSchema = `{
   }
 }`
 
-const verifyProposalTemplate = `Decide whether to apply this proposed skill.
+const verifyProposalTemplate = `Decide whether to add this proposed skill.
 
 PROPOSED SKILL:
-name: %s
+name:        %s
 when_to_use: %s
-why: %s
-frequency: %d
-effort: %s
+why:         %s
+frequency:   %d
+effort:      %s
+triggers:    %s
+tags:        %s
+prompt body excerpt:
+%s
 
 EVIDENCE (sessions cited by the proposal):
 %s
@@ -1946,7 +1958,37 @@ EVIDENCE (sessions cited by the proposal):
 INSTALLED SKILLS (already on disk; near-duplicates trigger refusal):
 %s
 
-Call record_proposal_verification with your decision.`
+Call record_proposal_verification with your decision. Pay particular attention to rules 5 (REGRESSION RISK) and 6 (SCOPE TIGHTNESS).`
+
+// excerptForVerify returns the candidate skill's load-bearing
+// content (when_to_use + why + first script's purpose + first
+// example) as a single string capped at ~600 runes. The critic
+// gate only needs enough of the body to judge "would this hurt
+// the cited sessions?" — full SKILL.md rendering would burn
+// verify-LLM tokens without changing the verdict.
+func excerptForVerify(sk ProposedSkill) string {
+	var b strings.Builder
+	if sk.WhenToUse != "" {
+		fmt.Fprintf(&b, "when_to_use: %s\n", strings.TrimSpace(sk.WhenToUse))
+	}
+	if sk.Why != "" {
+		fmt.Fprintf(&b, "why: %s\n", strings.TrimSpace(sk.Why))
+	}
+	if len(sk.Examples) > 0 {
+		fmt.Fprintf(&b, "first example: %s → %s\n",
+			strings.TrimSpace(sk.Examples[0].Input),
+			strings.TrimSpace(sk.Examples[0].Output))
+	}
+	for _, sc := range sk.Scripts {
+		fmt.Fprintf(&b, "script %q: %s\n", sc.Name, strings.TrimSpace(sc.Purpose))
+	}
+	const cap = 600
+	r := []rune(b.String())
+	if len(r) > cap {
+		return string(r[:cap]) + "…"
+	}
+	return b.String()
+}
 
 // BuildVerifyProposal composes the critic prompt that gates
 // `propose add`. Returns a Built — caller threads through
@@ -1982,9 +2024,33 @@ func BuildVerifyProposal(in VerifyProposalInputs) (Built, error) {
 	whyClean, wypats := redact.Outbound(in.Skill.Why)
 	pats.addAll(wypats)
 
+	// Triggers and tags are render-only join (no redaction needed —
+	// they are short keyword phrases the LLM emitted; if anything
+	// sensitive landed there it would already have failed the
+	// induction-time scrub). Empty list renders as a literal "[]" so
+	// the critic sees "scope is undefined → likely too broad."
+	triggersStr := "[]"
+	if len(in.Skill.Triggers) > 0 {
+		triggersStr = "[" + strings.Join(in.Skill.Triggers, ", ") + "]"
+	}
+	tagsStr := "[]"
+	if len(in.Skill.Tags) > 0 {
+		tagsStr = "[" + strings.Join(in.Skill.Tags, ", ") + "]"
+	}
+
+	// Prompt body excerpt — the first ~600 runes of the candidate's
+	// emitted body fields are what the critic actually needs to
+	// judge regression risk. Anything past that exceeds the
+	// verify-LLM's working budget and rarely changes the verdict.
+	bodyExcerpt := excerptForVerify(in.Skill)
+	bodyClean, bpats := redact.Outbound(bodyExcerpt)
+	pats.addAll(bpats)
+
 	userMsg := fmt.Sprintf(verifyProposalTemplate,
 		in.Skill.Name, whenClean, whyClean,
 		in.Skill.Frequency, in.Skill.Effort,
+		triggersStr, tagsStr,
+		bodyClean,
 		strings.TrimRight(evidence.String(), "\n"),
 		renderInstalledSkills(in.InstalledSkills),
 	)
