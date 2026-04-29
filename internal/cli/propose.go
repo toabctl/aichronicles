@@ -118,7 +118,7 @@ func newProposeCmd() *cobra.Command {
 		"forward-looking mode: propose what to tackle NEXT (Voyager-style curriculum)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	addFormatFlag(cmd, &formatIn)
-	cmd.AddCommand(newProposeApplyCmd())
+	cmd.AddCommand(newProposeAddCmd())
 	cmd.AddCommand(newProposeMergeCmd())
 	cmd.AddCommand(newProposeDiscardCmd())
 	cmd.AddCommand(newProposeListCmd())

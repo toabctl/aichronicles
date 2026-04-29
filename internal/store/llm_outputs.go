@@ -21,7 +21,7 @@ const (
 	LLMKindPropose       LLMOutputKind = "propose"
 	LLMKindReflectWeekly LLMOutputKind = "reflect_weekly"
 	// LLMKindProposeVerify is the cached output of the critic LLM
-	// pass that `propose apply` runs before writing a SKILL.md
+	// pass that `propose add` runs before writing a SKILL.md
 	// (Voyager-style verification gate). One row per (proposal-id,
 	// skill-name) pair so re-running apply on the same skill is
 	// free.
@@ -166,7 +166,7 @@ func LoadLLMOutputByHash(ctx context.Context, db *sql.DB, kind LLMOutputKind, pr
 
 // LoadLLMOutputByID returns the row with the given primary key,
 // or nil if no row matches. Used by callers that have a stable
-// reference to a specific output (e.g. `propose apply --output-id`)
+// reference to a specific output (e.g. `propose add --output-id`)
 // and want to act on that exact row regardless of recency.
 func LoadLLMOutputByID(ctx context.Context, db *sql.DB, id int64) (*LLMOutput, error) {
 	row := db.QueryRowContext(ctx,

@@ -96,7 +96,7 @@ func sampleProposal() *prompts.ProposalResult {
 	}
 }
 
-func TestProposeApply_SkillWritesScaffoldAndScripts(t *testing.T) {
+func TestProposeAdd_SkillWritesScaffoldAndScripts(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, sampleProposal())
@@ -111,8 +111,8 @@ func TestProposeApply_SkillWritesScaffoldAndScripts(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := applyProposedSkill(t.Context(), s, result, output.ID, "build-test", dir, false, true, nilLLMClient, &out); err != nil {
-		t.Fatalf("applyProposedSkill: %v", err)
+	if err := addSkillCandidate(t.Context(), s, result, output.ID, "build-test", dir, false, true, nilLLMClient, &out); err != nil {
+		t.Fatalf("addSkillCandidate: %v", err)
 	}
 
 	skillMd := filepath.Join(dir, "build-test", "SKILL.md")
@@ -171,11 +171,11 @@ func TestProposeApply_SkillWritesScaffoldAndScripts(t *testing.T) {
 	}
 }
 
-// TestProposeApply_RecordsLifecycle: applying a skill must update
+// TestProposeAdd_RecordsLifecycle: applying a skill must update
 // skill_candidates with decision='add', decision_at_ms, and
 // add_path, regardless of whether the row was pre-recorded by
 // RunPropose or absent (the fallback path inserts a row post-hoc).
-func TestProposeApply_RecordsLifecycle(t *testing.T) {
+func TestProposeAdd_RecordsLifecycle(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, sampleProposal())
@@ -188,8 +188,8 @@ func TestProposeApply_RecordsLifecycle(t *testing.T) {
 
 	dir := t.TempDir()
 	var out bytes.Buffer
-	if err := applyProposedSkill(t.Context(), s, result, id, "build-test", dir, false, true, nilLLMClient, &out); err != nil {
-		t.Fatalf("applyProposedSkill: %v", err)
+	if err := addSkillCandidate(t.Context(), s, result, id, "build-test", dir, false, true, nilLLMClient, &out); err != nil {
+		t.Fatalf("addSkillCandidate: %v", err)
 	}
 
 	rows, err := store.LoadSkillCandidatesByName(t.Context(), s.DB(), "build-test", 0)
@@ -232,8 +232,8 @@ func TestProposeApply_RecordsLifecycle(t *testing.T) {
 	result2, _, _ := loadLatestProposal(context.Background(), s, id2)
 	dir2 := t.TempDir()
 	out.Reset()
-	if err := applyProposedSkill(t.Context(), s, result2, id2, "another-skill", dir2, false, true, nilLLMClient, &out); err != nil {
-		t.Fatalf("path B applyProposedSkill: %v", err)
+	if err := addSkillCandidate(t.Context(), s, result2, id2, "another-skill", dir2, false, true, nilLLMClient, &out); err != nil {
+		t.Fatalf("path B addSkillCandidate: %v", err)
 	}
 	rows2, err := store.LoadSkillCandidatesByName(t.Context(), s.DB(), "another-skill", 0)
 	if err != nil {
@@ -250,9 +250,9 @@ func TestProposeApply_RecordsLifecycle(t *testing.T) {
 	}
 }
 
-// TestProposeApply_SkillWithoutScripts confirms the no-scripts
+// TestProposeAdd_SkillWithoutScripts confirms the no-scripts
 // branch still works (no scripts/ dir, no Helper-scripts section).
-func TestProposeApply_SkillWithoutScripts(t *testing.T) {
+func TestProposeAdd_SkillWithoutScripts(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, sampleProposal())
@@ -260,8 +260,8 @@ func TestProposeApply_SkillWithoutScripts(t *testing.T) {
 
 	dir := t.TempDir()
 	var out bytes.Buffer
-	if err := applyProposedSkill(t.Context(), s, result, id, "another-skill", dir, false, true, nilLLMClient, &out); err != nil {
-		t.Fatalf("applyProposedSkill: %v", err)
+	if err := addSkillCandidate(t.Context(), s, result, id, "another-skill", dir, false, true, nilLLMClient, &out); err != nil {
+		t.Fatalf("addSkillCandidate: %v", err)
 	}
 	body, _ := os.ReadFile(filepath.Join(dir, "another-skill", "SKILL.md"))
 	if strings.Contains(string(body), "Run `scripts/") {
@@ -272,11 +272,11 @@ func TestProposeApply_SkillWithoutScripts(t *testing.T) {
 	}
 }
 
-// TestProposeApply_RefusesOverwriteWithoutForce: writing twice
+// TestProposeAdd_RefusesOverwriteWithoutForce: writing twice
 // must fail unless --force is passed. Pin the invariant directly.
 // Also covers the case where the SKILL.md is fine but a script
 // already exists — must refuse before writing anything.
-func TestProposeApply_RefusesOverwriteWithoutForce(t *testing.T) {
+func TestProposeAdd_RefusesOverwriteWithoutForce(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, sampleProposal())
@@ -285,27 +285,27 @@ func TestProposeApply_RefusesOverwriteWithoutForce(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
 
-	if err := applyProposedSkill(t.Context(), s, result, id, "build-test", dir, false, true, nilLLMClient, &out); err != nil {
+	if err := addSkillCandidate(t.Context(), s, result, id, "build-test", dir, false, true, nilLLMClient, &out); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
 
 	out.Reset()
-	err := applyProposedSkill(t.Context(), s, result, id, "build-test", dir, false, true, nilLLMClient, &out)
+	err := addSkillCandidate(t.Context(), s, result, id, "build-test", dir, false, true, nilLLMClient, &out)
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("second apply without --force should error, got %v", err)
 	}
 
 	out.Reset()
-	if err := applyProposedSkill(t.Context(), s, result, id, "build-test", dir, true, true, nilLLMClient, &out); err != nil {
+	if err := addSkillCandidate(t.Context(), s, result, id, "build-test", dir, true, true, nilLLMClient, &out); err != nil {
 		t.Errorf("apply with --force should succeed, got %v", err)
 	}
 }
 
-// TestProposeApply_RefusesWhenScriptExists: even if SKILL.md
+// TestProposeAdd_RefusesWhenScriptExists: even if SKILL.md
 // doesn't exist, an existing script under <skill>/scripts/<name>
 // should block the write. The check fires before any file is
 // created so the user doesn't end up with a half-applied skill.
-func TestProposeApply_RefusesWhenScriptExists(t *testing.T) {
+func TestProposeAdd_RefusesWhenScriptExists(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, sampleProposal())
@@ -321,7 +321,7 @@ func TestProposeApply_RefusesWhenScriptExists(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := applyProposedSkill(t.Context(), s, result, id, "build-test", dir, false, true, nilLLMClient, &out)
+	err := addSkillCandidate(t.Context(), s, result, id, "build-test", dir, false, true, nilLLMClient, &out)
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("apply should refuse when script exists, got %v", err)
 	}
@@ -408,7 +408,7 @@ func TestRenderProposalIndex_ListsSkillsAndScripts(t *testing.T) {
 		"scripts=1",
 		"└── scripts/run-checks.sh",
 		"another-skill",
-		"propose apply --skill",
+		"propose add --skill",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("index missing %q\n%s", want, body)

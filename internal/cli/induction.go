@@ -607,7 +607,7 @@ func renderInductionResult(out io.Writer, sessionID string, r *prompts.Induction
 		if sk.WhenToUse != "" {
 			_, _ = fmt.Fprintf(out, "  when_to_use: %s\n", sk.WhenToUse)
 		}
-		_, _ = fmt.Fprintf(out, "  apply: aichronicles propose apply --skill %s --output-id <id>\n", sk.Name)
+		_, _ = fmt.Fprintf(out, "  add: aichronicles propose add --skill %s --output-id <id>\n", sk.Name)
 	}
 	if r.Workflow != nil {
 		wf := r.Workflow

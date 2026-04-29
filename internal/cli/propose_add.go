@@ -21,11 +21,12 @@ import (
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
-// newProposeApplyCmd materialises one skill from the latest cached
-// `propose` output as on-disk files. Writes the SKILL.md plus any
-// helper scripts the proposal carried (skill-scoped, under
-// <skill-dir>/scripts/<name>) — the canonical locations Claude
-// Code reads from.
+// newProposeAddCmd is the AutoSkill (Yang et al., 2026 —
+// arXiv:2603.01145) maintenance action 'add' command: materialise
+// one skill from the latest cached `propose` output as on-disk
+// files. Writes the SKILL.md plus any helper scripts the proposal
+// carried (skill-scoped, under <skill-dir>/scripts/<name>) — the
+// canonical locations Claude Code reads from.
 //
 // Closes the suggestion → action loop: today `propose` outputs JSON
 // saying "you should make a skill called X" and the user has to
@@ -39,7 +40,7 @@ import (
 // invariants without a trigger condition (CLAUDE.md territory)
 // are explicitly out of scope for propose, so there's no
 // `--rule` path here.
-func newProposeApplyCmd() *cobra.Command {
+func newProposeAddCmd() *cobra.Command {
 	var (
 		dbPath    string
 		skillName string
@@ -49,14 +50,14 @@ func newProposeApplyCmd() *cobra.Command {
 		noVerify  bool
 	)
 	cmd := &cobra.Command{
-		Use:   "apply --skill <name>",
-		Short: "Materialise a proposed skill (SKILL.md + scripts) on disk",
+		Use:   "add --skill <name>",
+		Short: "Add a proposed skill (SKILL.md + scripts) to disk (AutoSkill action 'add')",
 		Long: "Loads the latest cached `propose` output (or the one\n" +
 			"identified by --output-id) and writes the named skill to\n" +
 			"~/.claude/skills/<name>/. Includes:\n\n" +
-			"  - SKILL.md with frontmatter (name, description) and a\n" +
-			"    scaffolded body (When to apply, Why, Steps/Pitfalls/\n" +
-			"    Verification with TODO markers).\n" +
+			"  - SKILL.md with frontmatter (name, description, version,\n" +
+			"    tags, triggers, examples — the AutoSkill 7-tuple) and a\n" +
+			"    scaffolded body (When to use, Steps with TODO markers).\n" +
 			"  - scripts/<name> for each helper script the proposal\n" +
 			"    listed under the skill (chmod 0755, with shebang and\n" +
 			"    purpose-comment header).\n\n" +
@@ -64,14 +65,16 @@ func newProposeApplyCmd() *cobra.Command {
 			"a second LLM pass evaluates the proposed skill against its\n" +
 			"cited evidence and your installed skills. On a refusal\n" +
 			"(near-duplicate of an installed skill, evidence too thin,\n" +
-			"generic when_to_use, or fabricated steps) the apply is\n" +
+			"generic when_to_use, or fabricated steps) the add is\n" +
 			"aborted with the critic's concern + recommendation. Pass\n" +
 			"--no-verify to bypass the gate. The verification result is\n" +
 			"cached as kind=propose_verify so re-running on the same\n" +
 			"proposal is free.\n\n" +
 			"All targets are refused if they already exist unless\n" +
 			"--force is passed. Use `aichronicles propose list` to see\n" +
-			"what's in the cached proposal.",
+			"what's in the cached proposal. Use `aichronicles propose\n" +
+			"merge --skill <name>` instead to fold the candidate into\n" +
+			"an existing on-disk skill rather than creating a new one.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			s, err := openStore(dbPath)
 			if err != nil {
@@ -103,7 +106,7 @@ func newProposeApplyCmd() *cobra.Command {
 				return llm.FromConfig(ctx, llmCfg)
 			}
 
-			return applyProposedSkill(ctx, s, result, output.ID, skillName,
+			return addSkillCandidate(ctx, s, result, output.ID, skillName,
 				resolveSkillsDir(skillsDir), force, noVerify,
 				newClient, cmd.OutOrStdout())
 		},
@@ -216,10 +219,10 @@ func renderProposalIndex(out io.Writer, r *prompts.ProposalResult, output *store
 			_, _ = fmt.Fprintf(out, "      └── scripts/%s  — %s\n", sc.Name, oneLineN(sc.Purpose, 80))
 		}
 	}
-	_, _ = fmt.Fprintln(out, "  apply: aichronicles propose apply --skill <name>")
+	_, _ = fmt.Fprintln(out, "  add:    aichronicles propose add --skill <name>")
 }
 
-// applyProposedSkill writes ~/.claude/skills/<name>/SKILL.md plus
+// addSkillCandidate writes ~/.claude/skills/<name>/SKILL.md plus
 // any scripts the proposal carried under
 // ~/.claude/skills/<name>/scripts/<script-name>. The agent owns
 // further editing — we leave "TODO" markers in the procedural
@@ -232,7 +235,7 @@ func renderProposalIndex(out io.Writer, r *prompts.ProposalResult, output *store
 // nothing to disk — propose's evidence is the substrate the gate
 // checks against, and writing-then-rolling-back would risk leaving
 // a half-skill on disk.
-func applyProposedSkill(
+func addSkillCandidate(
 	ctx context.Context,
 	st *store.Store,
 	r *prompts.ProposalResult,
@@ -477,7 +480,7 @@ func renderSkillScaffold(sk *prompts.ProposedSkill, outputID int64) string {
 	// docs' content-lifecycle section), so a 50-row footer
 	// would burn tokens for every invocation.
 	fmt.Fprintln(&b, "---")
-	fmt.Fprintf(&b, "*Scaffolded by `aichronicles propose apply` from llm_outputs id=%d.*  \n", outputID)
+	fmt.Fprintf(&b, "*Scaffolded by `aichronicles propose add` from llm_outputs id=%d.*  \n", outputID)
 	if sk.AlternativesRejected != "" {
 		fmt.Fprintf(&b, "*Alternatives considered:* %s  \n", oneLine(sk.AlternativesRejected))
 	}
@@ -559,7 +562,7 @@ func renderSkillScriptScaffold(sc *prompts.ProposedSkillScript, sk *prompts.Prop
 	fmt.Fprintln(&b, "# "+strings.TrimSpace(sc.Purpose))
 	fmt.Fprintln(&b, "#")
 	fmt.Fprintf(&b, "# Skill: %s\n", sk.Name)
-	fmt.Fprintf(&b, "# Scaffolded by `aichronicles propose apply` from llm_outputs id=%d.\n", outputID)
+	fmt.Fprintf(&b, "# Scaffolded by `aichronicles propose add` from llm_outputs id=%d.\n", outputID)
 
 	switch {
 	case len(sc.Steps) > 0:

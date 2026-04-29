@@ -18,7 +18,7 @@ import (
 )
 
 // verifyProposalOrAbort runs the Voyager-style critic gate before
-// `propose apply` writes anything. The critic's decision is cached
+// `propose add` writes anything. The critic's decision is cached
 // under kind=propose_verify keyed by (outputID, skill.Name) — so a
 // second run on the same proposal hits the cache for free, and the
 // user can see the same concern again if they re-invoke without

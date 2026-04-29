@@ -13,7 +13,7 @@ import (
 )
 
 // fakeLLMClientFn wraps a *fakeLLM into the newClient closure
-// shape applyProposedSkill expects. Tests that want the fake to
+// shape addSkillCandidate expects. Tests that want the fake to
 // refuse / approve set toolInput before calling.
 func fakeLLMClientFn(f *fakeLLM) func() (llm.Client, error) {
 	return func() (llm.Client, error) { return f, nil }
@@ -45,7 +45,7 @@ func refusedVerification(t *testing.T, severity, concern, rec string) json.RawMe
 	return b
 }
 
-func TestProposeApply_VerifyApproves_WritesSkill(t *testing.T) {
+func TestProposeAdd_VerifyApproves_WritesSkill(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, sampleProposal())
@@ -59,9 +59,9 @@ func TestProposeApply_VerifyApproves_WritesSkill(t *testing.T) {
 
 	fake := &fakeLLM{toolInput: approvedVerification(t)}
 	var out bytes.Buffer
-	if err := applyProposedSkill(t.Context(), s, result, output.ID,
+	if err := addSkillCandidate(t.Context(), s, result, output.ID,
 		"build-test", dir, false, false, fakeLLMClientFn(fake), &out); err != nil {
-		t.Fatalf("applyProposedSkill: %v", err)
+		t.Fatalf("addSkillCandidate: %v", err)
 	}
 	if !strings.Contains(out.String(), "verify: ✓ critic approved") {
 		t.Errorf("expected approval line in output, got:\n%s", out.String())
@@ -71,7 +71,7 @@ func TestProposeApply_VerifyApproves_WritesSkill(t *testing.T) {
 	}
 }
 
-func TestProposeApply_VerifyRefuses_AbortsAndPropagatesConcern(t *testing.T) {
+func TestProposeAdd_VerifyRefuses_AbortsAndPropagatesConcern(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, sampleProposal())
@@ -88,7 +88,7 @@ func TestProposeApply_VerifyRefuses_AbortsAndPropagatesConcern(t *testing.T) {
 		"near-duplicate of installed skill 'foo-test'",
 		"merge with foo-test instead")}
 	var out bytes.Buffer
-	err = applyProposedSkill(t.Context(), s, result, output.ID,
+	err = addSkillCandidate(t.Context(), s, result, output.ID,
 		"build-test", dir, false, false, fakeLLMClientFn(fake), &out)
 	if err == nil {
 		t.Fatal("expected error on critic refusal")
@@ -109,7 +109,7 @@ func TestProposeApply_VerifyRefuses_AbortsAndPropagatesConcern(t *testing.T) {
 	}
 }
 
-func TestProposeApply_VerifyCachesDecision(t *testing.T) {
+func TestProposeAdd_VerifyCachesDecision(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, sampleProposal())
@@ -127,7 +127,7 @@ func TestProposeApply_VerifyCachesDecision(t *testing.T) {
 
 	// First apply triggers a fresh verification.
 	var out1 bytes.Buffer
-	if err := applyProposedSkill(t.Context(), s, result, output.ID,
+	if err := addSkillCandidate(t.Context(), s, result, output.ID,
 		"build-test", dir1, false, false, clientFn, &out1); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestProposeApply_VerifyCachesDecision(t *testing.T) {
 	// Second apply on the SAME proposal+skill must hit the cache —
 	// no second LLM call, output marked "cached".
 	var out2 bytes.Buffer
-	if err := applyProposedSkill(t.Context(), s, result, output.ID,
+	if err := addSkillCandidate(t.Context(), s, result, output.ID,
 		"build-test", dir2, false, false, clientFn, &out2); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestProposeApply_VerifyCachesDecision(t *testing.T) {
 	}
 }
 
-func TestProposeApply_NoVerifyFlag_BypassesCriticEntirely(t *testing.T) {
+func TestProposeAdd_NoVerifyFlag_BypassesCriticEntirely(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
 	_ = seedProposalOutput(t, s, sampleProposal())
@@ -168,7 +168,7 @@ func TestProposeApply_NoVerifyFlag_BypassesCriticEntirely(t *testing.T) {
 	// noVerify=true is set.
 	refusing := &fakeLLM{toolInput: refusedVerification(t, "high", "no", "drop")}
 	var out bytes.Buffer
-	if err := applyProposedSkill(t.Context(), s, result, output.ID,
+	if err := addSkillCandidate(t.Context(), s, result, output.ID,
 		"build-test", dir, false, true /* noVerify */, fakeLLMClientFn(refusing), &out); err != nil {
 		t.Fatalf("--no-verify path errored: %v", err)
 	}

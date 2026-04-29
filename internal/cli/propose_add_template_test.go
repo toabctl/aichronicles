@@ -60,7 +60,7 @@ func proposalWithStepsTemplate() *prompts.ProposalResult {
 	}
 }
 
-func TestProposeApply_StepsTemplateMaterialisesAsBashScript(t *testing.T) {
+func TestProposeAdd_StepsTemplateMaterialisesAsBashScript(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, proposalWithStepsTemplate())
@@ -75,9 +75,9 @@ func TestProposeApply_StepsTemplateMaterialisesAsBashScript(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := applyProposedSkill(t.Context(), s, result, output.ID,
+	if err := addSkillCandidate(t.Context(), s, result, output.ID,
 		"wt-launch", dir, false, true, nilLLMClient, &out); err != nil {
-		t.Fatalf("applyProposedSkill: %v", err)
+		t.Fatalf("addSkillCandidate: %v", err)
 	}
 
 	scriptPath := filepath.Join(dir, "wt-launch", "scripts", "wt-start.sh")
@@ -134,7 +134,7 @@ func TestProposeApply_StepsTemplateMaterialisesAsBashScript(t *testing.T) {
 	}
 }
 
-func TestProposeApply_StepsAndBodyAreMutuallyExclusive_StepsWin(t *testing.T) {
+func TestProposeAdd_StepsAndBodyAreMutuallyExclusive_StepsWin(t *testing.T) {
 	t.Parallel()
 	// When both Steps and Body are set, Steps wins. The schema
 	// allows both at the JSON level (so the LLM doesn't fail to
@@ -155,9 +155,9 @@ func TestProposeApply_StepsAndBodyAreMutuallyExclusive_StepsWin(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := applyProposedSkill(t.Context(), s, result, output.ID,
+	if err := addSkillCandidate(t.Context(), s, result, output.ID,
 		"wt-launch", dir, false, true, nilLLMClient, &out); err != nil {
-		t.Fatalf("applyProposedSkill: %v", err)
+		t.Fatalf("addSkillCandidate: %v", err)
 	}
 	body, err := os.ReadFile(filepath.Join(dir, "wt-launch", "scripts", "wt-start.sh"))
 	if err != nil {
@@ -172,7 +172,7 @@ func TestProposeApply_StepsAndBodyAreMutuallyExclusive_StepsWin(t *testing.T) {
 	}
 }
 
-func TestProposeApply_NoStepsNoBodyEmitsTODO(t *testing.T) {
+func TestProposeAdd_NoStepsNoBodyEmitsTODO(t *testing.T) {
 	t.Parallel()
 	r := proposalWithStepsTemplate()
 	r.Skills[0].Scripts[0].Steps = nil
@@ -190,9 +190,9 @@ func TestProposeApply_NoStepsNoBodyEmitsTODO(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := applyProposedSkill(t.Context(), s, result, output.ID,
+	if err := addSkillCandidate(t.Context(), s, result, output.ID,
 		"wt-launch", dir, false, true, nilLLMClient, &out); err != nil {
-		t.Fatalf("applyProposedSkill: %v", err)
+		t.Fatalf("addSkillCandidate: %v", err)
 	}
 	body, _ := os.ReadFile(filepath.Join(dir, "wt-launch", "scripts", "wt-start.sh"))
 	if !strings.Contains(string(body), "TODO") {

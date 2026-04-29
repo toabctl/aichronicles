@@ -989,7 +989,7 @@ func BuildPropose(in ProposeInputs) (Built, error) {
 //
 //   - Skill (Voyager-style): a high-confidence specific reusable
 //     capability the user could materialise as a SKILL.md on disk
-//     via `propose apply`. when_to_use names a concrete trigger
+//     via `propose add`. when_to_use names a concrete trigger
 //     condition; the model is biased to NOT emit one.
 //
 //   - Workflow (AWM-style; Wang et al. 2024, arXiv:2409.07429): an
@@ -1010,7 +1010,7 @@ func BuildPropose(in ProposeInputs) (Built, error) {
 type InductionResult struct {
 	// Skill, if non-nil, is a Voyager-style concrete reusable
 	// capability. Same shape ProposalResult.Skills carries — so
-	// `propose apply --output-id=<llm_outputs.id>` consumes it
+	// `propose add --output-id=<llm_outputs.id>` consumes it
 	// without translation.
 	Skill *ProposedSkill `json:"skill,omitempty"`
 
@@ -1856,7 +1856,7 @@ func renderUnresolvedStanza(items []UnresolvedItemForChallenge, pats patternSet)
 
 // ProposalVerification is the schema-validated payload of a
 // record_proposal_verification tool call. The critic decides
-// whether `propose apply` should proceed; on go_ahead=false the
+// whether `propose add` should proceed; on go_ahead=false the
 // CLI refuses to write and surfaces concern + recommendation.
 //
 // "Severity" gives the user a single axis to sort concerns by
@@ -1913,7 +1913,7 @@ const verifyProposalToolSchema = `{
   "properties": {
     "go_ahead": {
       "type": "boolean",
-      "description": "true to allow propose apply to write the SKILL.md; false to refuse."
+      "description": "true to allow propose add to write the SKILL.md; false to refuse."
     },
     "concern": {
       "type": "string",
@@ -1949,7 +1949,7 @@ INSTALLED SKILLS (already on disk; near-duplicates trigger refusal):
 Call record_proposal_verification with your decision.`
 
 // BuildVerifyProposal composes the critic prompt that gates
-// `propose apply`. Returns a Built — caller threads through
+// `propose add`. Returns a Built — caller threads through
 // runCachedLLM the same way summarize / reflect / propose do, so
 // repeated runs against the same proposal hit the cache for free.
 func BuildVerifyProposal(in VerifyProposalInputs) (Built, error) {

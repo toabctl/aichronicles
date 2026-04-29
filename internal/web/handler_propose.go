@@ -22,7 +22,7 @@ const proposeDefaultLimit = 20
 // newest first. Each card lists the skills the model proposed,
 // each skill with its evidence sessions linked back to
 // /sessions/<id> and a copy-to-clipboard button carrying the exact
-// `aichronicles propose apply --skill <name> --output-id <id>`
+// `aichronicles propose add --skill <name> --output-id <id>`
 // command — explicit --output-id so copy-paste works even when a
 // newer propose row has landed since the page was rendered.
 //

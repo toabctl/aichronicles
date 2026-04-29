@@ -31,7 +31,7 @@ import (
 // existing skill must have the same kebab-case name as the
 // candidate (AutoSkill rule: merge preserves identity).
 //
-// Flags mirror `propose apply`: --skill, --output-id, --skills-dir,
+// Flags mirror `propose add`: --skill, --output-id, --skills-dir,
 // --no-verify (the verify gate runs the same critic — a bad
 // candidate is bad whether you add it fresh or merge it in).
 func newProposeMergeCmd() *cobra.Command {
@@ -57,7 +57,7 @@ func newProposeMergeCmd() *cobra.Command {
 			"transition on the candidate's skill_candidates row\n" +
 			"(decision='merge', merged_into_id=existing-candidate-id).\n\n" +
 			"Verification gate runs by default — same critic that\n" +
-			"`propose apply` invokes. Pass --no-verify to bypass.",
+			"`propose add` invokes. Pass --no-verify to bypass.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			s, err := openStore(dbPath)
 			if err != nil {
@@ -132,7 +132,7 @@ func mergeProposedSkill(
 	existingBytes, err := os.ReadFile(skillMd)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("merge: %s does not exist; use `aichronicles propose apply --skill %s` for a fresh add",
+			return fmt.Errorf("merge: %s does not exist; use `aichronicles propose add --skill %s` for a fresh add",
 				skillMd, candidate.Name)
 		}
 		return fmt.Errorf("read existing SKILL.md: %w", err)
