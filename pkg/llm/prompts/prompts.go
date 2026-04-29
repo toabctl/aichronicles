@@ -75,9 +75,25 @@ const (
 // SummaryResult is the schema-validated payload of a record_summary
 // tool call. Fields are always populated (empty slices/strings on
 // fields the model had nothing to say about).
+//
+// Field organisation follows LoCoBench-Agent's (Salesforce, 2025 —
+// arXiv:2511.13998) 5-section structured-summary schema:
+//
+//	CONTEXT             → Topic
+//	ACTIONS             → WhatWasDone
+//	OUTCOMES            → Outcomes
+//	NEXT_STEPS          → Unresolved
+//	IMPORTANT_REFERENCES→ KeyFiles + Links
+//
+// The mapping keeps backwards-compat — every pre-existing field
+// stays put — and adds Outcomes as the new explicit "what changed
+// / what worked / what failed" bucket. WhatWasDone has historically
+// blended actions and outcomes; splitting them gives downstream
+// induction and outcome-classification cleaner signal.
 type SummaryResult struct {
 	Topic        string                  `json:"topic"`
 	WhatWasDone  []string                `json:"what_was_done"`
+	Outcomes     []string                `json:"outcomes,omitempty"`
 	Unresolved   []string                `json:"unresolved"`
 	KeyFiles     []string                `json:"key_files"`
 	Links        []LinkAnnotation        `json:"links"`
@@ -297,19 +313,30 @@ type ProposedScriptPlaceholder struct {
 
 // --- summary ---
 
-const summarySystem = `You summarize a single coding session between a human and an AI coding assistant. You MUST call the record_summary tool exactly once. Be factual and tight. Do not invent details. Do not invent URLs — only annotate links that were observed in the session. Do not invent prior sessions — only emit session_links to ids that appear in the "Possibly-related prior sessions" stanza, and only when the connection is grounded in this session's transcript or the prior session's topic. If a list section has no content, return an empty array.`
+const summarySystem = `You summarize a single coding session between a human and an AI coding assistant. You MUST call the record_summary tool exactly once. Be factual and tight. Do not invent details. Do not invent URLs — only annotate links that were observed in the session. Do not invent prior sessions — only emit session_links to ids that appear in the "Possibly-related prior sessions" stanza, and only when the connection is grounded in this session's transcript or the prior session's topic. If a list section has no content, return an empty array.
+
+Mental model — LoCoBench-Agent (Salesforce, 2025 — arXiv:2511.13998) 5-section schema. Map to the tool fields like this:
+
+  - CONTEXT              → topic (one line: what was this session about?)
+  - ACTIONS              → what_was_done (what the user / assistant DID; verb-led bullets)
+  - OUTCOMES             → outcomes (what CHANGED, what WORKED, what FAILED — concrete results: files written, tests passed/failed, commits landed, errors encountered, decisions reached). Distinct from actions: an action is "ran the test suite", an outcome is "3 tests failed in pkg/store/migrate_test.go".
+  - NEXT_STEPS           → unresolved (what is still open at session end)
+  - IMPORTANT_REFERENCES → key_files (file paths) + links (URLs)
+
+The key discipline is the actions/outcomes split: a bullet that says "ran X and got Y" should usually become two — one in actions ("ran X"), one in outcomes ("Y"). When the action and outcome are tightly bound and splitting would be noise (e.g. "added the import"), pick whichever frame fits better and don't duplicate.`
 
 // summaryToolSchema is the JSON Schema for record_summary. Kept as a
 // const so its bytes are stable; hashRequest includes these bytes
 // when computing prompt_hash.
 const summaryToolSchema = `{
   "type": "object",
-  "required": ["topic","what_was_done","unresolved","key_files","links","subagents","session_links"],
+  "required": ["topic","what_was_done","outcomes","unresolved","key_files","links","subagents","session_links"],
   "additionalProperties": false,
   "properties": {
-    "topic": {"type":"string","minLength":1},
-    "what_was_done": {"type":"array","items":{"type":"string","minLength":1},"minItems":1,"maxItems":8},
-    "unresolved": {"type":"array","items":{"type":"string","minLength":1}},
+    "topic": {"type":"string","minLength":1,"description":"CONTEXT: one line naming what this session was about."},
+    "what_was_done": {"type":"array","items":{"type":"string","minLength":1},"minItems":1,"maxItems":8,"description":"ACTIONS: verb-led bullets of what the user / assistant DID. Distinct from outcomes — keep results out of this list."},
+    "outcomes": {"type":"array","items":{"type":"string","minLength":1},"maxItems":8,"description":"OUTCOMES: what CHANGED, WORKED, or FAILED — concrete results (files written, tests passed/failed, commits landed, errors hit, decisions reached). Empty array when no concrete results landed."},
+    "unresolved": {"type":"array","items":{"type":"string","minLength":1},"description":"NEXT_STEPS: what is still open at session end."},
     "key_files": {
       "type":"array",
       "description": "Absolute file paths the session worked on. Prefer entries from the 'Files observed' stanza when present. For files referenced only in prose, copy the path verbatim from the transcript — never shorten, infer, or reformat. Do not invent paths.",

@@ -124,7 +124,7 @@ func TestBuildSummary_SetsForcedTool(t *testing.T) {
 		t.Errorf("schema type: got %v, want object", schema["type"])
 	}
 	required, _ := schema["required"].([]any)
-	wantRequired := map[string]bool{"topic": true, "what_was_done": true, "unresolved": true, "key_files": true, "links": true}
+	wantRequired := map[string]bool{"topic": true, "what_was_done": true, "outcomes": true, "unresolved": true, "key_files": true, "links": true}
 	for _, r := range required {
 		delete(wantRequired, r.(string))
 	}
@@ -1047,6 +1047,67 @@ func TestBuildMergeSkill_ScrubsAndReportsPatterns(t *testing.T) {
 	}
 	if len(built.Patterns) == 0 {
 		t.Errorf("expected at least one pattern reported")
+	}
+}
+
+// TestSummary_FiveSectionVocabulary pins the LoCoBench-Agent
+// (Salesforce, 2025 — arXiv:2511.13998) 5-section schema mapping
+// in both the system prompt and the tool schema. The actions /
+// outcomes split is the load-bearing change: a regression that
+// drops "outcomes" or stops teaching the model to split
+// silently reverts the summary back to its pre-2026-04-29 shape
+// where actions and outcomes were blended.
+func TestSummary_FiveSectionVocabulary(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		"LoCoBench-Agent",
+		"CONTEXT",
+		"ACTIONS",
+		"OUTCOMES",
+		"NEXT_STEPS",
+		"IMPORTANT_REFERENCES",
+		"actions/outcomes split",
+	} {
+		if !strings.Contains(summarySystem, want) {
+			t.Errorf("summarySystem missing %q", want)
+		}
+	}
+	for _, want := range []string{
+		`"outcomes"`,
+		`OUTCOMES:`,
+		`what CHANGED, WORKED, or FAILED`,
+	} {
+		if !strings.Contains(summaryToolSchema, want) {
+			t.Errorf("summaryToolSchema missing %q", want)
+		}
+	}
+}
+
+// TestSummaryResult_OutcomesRoundTrips covers the JSON shape:
+// an LLM that omits outcomes round-trips to a nil/empty slice
+// (omitempty + array semantics); an LLM that emits two outcomes
+// preserves both bullets and their order through Marshal /
+// Unmarshal.
+func TestSummaryResult_OutcomesRoundTrips(t *testing.T) {
+	t.Parallel()
+	in := SummaryResult{
+		Topic:       "ran the failing migration",
+		WhatWasDone: []string{"investigated migrate_test.go failure"},
+		Outcomes:    []string{"3 tests in pkg/store still fail", "0042 migration applies cleanly"},
+	}
+	body, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out SummaryResult
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.Outcomes) != 2 {
+		t.Fatalf("outcomes len: got %d want 2", len(out.Outcomes))
+	}
+	if out.Outcomes[0] != in.Outcomes[0] || out.Outcomes[1] != in.Outcomes[1] {
+		t.Errorf("outcomes order/content drift: %v", out.Outcomes)
 	}
 }
 
