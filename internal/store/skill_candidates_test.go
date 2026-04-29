@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -641,6 +642,79 @@ func TestBumpPatch(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("BumpPatch(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// TestSkillCandidates_NoSupersededByIdColumn pins migration 022's
+// payload: the dead `superseded_by_id` column from migration 018 is
+// gone after the table-recreate and the merged_into_id self-FK
+// still works (records merge target, cascades to NULL on referent
+// deletion). Reaching directly into sqlite_master keeps the assertion
+// honest — a Go-side struct rename alone wouldn't prove the column
+// is actually absent at the DB level.
+func TestSkillCandidates_NoSupersededByIdColumn(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	// Confirm the column is absent. PRAGMA table_info returns one
+	// row per column; the legacy name should not appear.
+	rows, err := s.DB().Query(`PRAGMA table_info(skill_candidates)`)
+	if err != nil {
+		t.Fatalf("PRAGMA table_info: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var (
+			cid     int
+			name    string
+			ctype   string
+			notnull int
+			dflt    sql.NullString
+			pk      int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if name == "superseded_by_id" {
+			t.Errorf("migration 022 left superseded_by_id behind (expected to be dropped)")
+		}
+	}
+
+	// Confirm merged_into_id self-FK still works end-to-end:
+	// inserting a row that references another row's id round-trips,
+	// and the loader returns the pointer.
+	ctx := context.Background()
+	loID := mkProposeRow(t, s, 1_700_000_000_000)
+	if err := RecordSkillCandidate(ctx, s.DB(), loID, "target", 1_700_000_000_000); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+	if err := MarkSkillCandidateAdded(ctx, s.DB(), loID, "target", "/p/SKILL.md", 1_700_000_100_000); err != nil {
+		t.Fatalf("mark target added: %v", err)
+	}
+	target, err := LoadAddedSkillCandidate(ctx, s.DB(), "target")
+	if err != nil || target == nil {
+		t.Fatalf("load target: %v", err)
+	}
+
+	loID2 := mkProposeRow(t, s, 1_700_001_000_000)
+	if err := RecordSkillCandidate(ctx, s.DB(), loID2, "target", 1_700_001_000_000); err != nil {
+		t.Fatalf("seed merger: %v", err)
+	}
+	if err := MarkSkillCandidateMerged(ctx, s.DB(), loID2, "target",
+		target.ID, "/p/SKILL.md", 1_700_001_500_000); err != nil {
+		t.Fatalf("mark merged: %v", err)
+	}
+
+	candidates, err := LoadSkillCandidatesByName(ctx, s.DB(), "target", 0)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("rows: got %d want 2", len(candidates))
+	}
+	merged := candidates[0]
+	if !merged.MergedIntoID.Valid || merged.MergedIntoID.Int64 != target.ID {
+		t.Errorf("merged_into_id self-FK broken: got %v want %d", merged.MergedIntoID, target.ID)
 	}
 }
 
