@@ -272,6 +272,94 @@ func TestProposeAdd_SkillWithoutScripts(t *testing.T) {
 	}
 }
 
+// TestProposeAdd_RefusesOversizedSkill pins the SWE-Skills-Bench
+// budget guard: an oversized SKILL.md is refused unless --force is
+// passed. The error message must point at the trim/merge/force
+// remediations so the user knows which lever to pull.
+func TestProposeAdd_RefusesOversizedSkill(t *testing.T) {
+	t.Parallel()
+	s := openTempCLIStore(t)
+
+	// Build a proposal with a comically over-budget Why so the
+	// rendered SKILL.md crosses skillMdBudgetRunes (Why becomes the
+	// scaffold's H1 intro paragraph and is not pre-clipped, unlike
+	// the frontmatter description / when_to_use fields).
+	bigText := strings.Repeat("x", skillMdBudgetRunes+1024)
+	id := seedProposalOutput(t, s, &prompts.ProposalResult{
+		Skills: []prompts.ProposedSkill{{
+			Name:                 "oversized-skill",
+			WhenToUse:            "trigger condition",
+			Why:                  bigText,
+			Frequency:            2,
+			Effort:               "small",
+			AlternativesRejected: "n/a",
+			Evidence: []prompts.ProposalEvidence{
+				{SessionID: "s1", Quote: "q", WhatHappened: "w"},
+				{SessionID: "s2", Quote: "q", WhatHappened: "w"},
+			},
+		}},
+	})
+	result, _, _ := loadLatestProposal(context.Background(), s, id)
+
+	dir := t.TempDir()
+	var out bytes.Buffer
+	err := addSkillCandidate(t.Context(), s, result, id, "oversized-skill",
+		dir, false, true, nilLLMClient, &out)
+	if err == nil {
+		t.Fatalf("expected refusal for oversized skill")
+	}
+	for _, want := range []string{"runes", "budget", "merge", "--force"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error message missing %q: %v", want, err)
+		}
+	}
+
+	// SKILL.md must NOT have been written.
+	if _, err := os.Stat(filepath.Join(dir, "oversized-skill", "SKILL.md")); !os.IsNotExist(err) {
+		t.Errorf("SKILL.md should not exist after refusal, stat=%v", err)
+	}
+
+	// --force bypasses the budget — the rare legitimate case.
+	out.Reset()
+	if err := addSkillCandidate(t.Context(), s, result, id, "oversized-skill",
+		dir, true, true, nilLLMClient, &out); err != nil {
+		t.Errorf("--force should bypass the budget: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "oversized-skill", "SKILL.md")); err != nil {
+		t.Errorf("--force should have written SKILL.md: %v", err)
+	}
+}
+
+// TestRefuseOversizedSkill_UnitChecks pins the helper's behaviour:
+// over-budget without force returns an error that names the
+// remediation; force always returns nil; under-budget always
+// returns nil.
+func TestRefuseOversizedSkill_UnitChecks(t *testing.T) {
+	t.Parallel()
+	tiny := "small body"
+	huge := strings.Repeat("y", skillMdBudgetRunes+1)
+	cases := []struct {
+		name      string
+		body      string
+		force     bool
+		wantError bool
+	}{
+		{"under cap, no force", tiny, false, false},
+		{"under cap, force", tiny, true, false},
+		{"over cap, no force", huge, false, true},
+		{"over cap, force", huge, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := refuseOversizedSkill("/some/skill/SKILL.md", tc.body, tc.force)
+			if tc.wantError != (err != nil) {
+				t.Errorf("got err=%v, wantError=%v", err, tc.wantError)
+			}
+		})
+	}
+}
+
 // TestProposeAdd_RefusesOverwriteWithoutForce: writing twice
 // must fail unless --force is passed. Pin the invariant directly.
 // Also covers the case where the SKILL.md is fine but a script

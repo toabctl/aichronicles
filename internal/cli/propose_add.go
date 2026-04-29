@@ -271,6 +271,9 @@ func addSkillCandidate(
 		return fmt.Errorf("ensure %s: %w", dir, err)
 	}
 	body := renderSkillScaffold(sk, outputID)
+	if err := refuseOversizedSkill(skillMd, body, force); err != nil {
+		return err
+	}
 	if err := os.WriteFile(skillMd, []byte(body), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", skillMd, err)
 	}
@@ -319,6 +322,42 @@ func addSkillCandidate(
 		_, _ = fmt.Fprintf(out, "  • aichronicles sessions --session %s\n", ev.SessionID)
 	}
 	return nil
+}
+
+// skillMdBudgetRunes caps the size of a freshly-added SKILL.md.
+// SWE-Skills-Bench (Han et al., 2026 — arXiv:2603.15401) found that
+// token overhead of induced skills ranges from −78% to +451% of
+// baseline session size, decoupled from any pass-rate gain — i.e.
+// long skills routinely cost a lot without helping. The Claude
+// skills marketplace (Ling et al., 2026 — arXiv:2602.08004) reports
+// a median of 1,414 tokens per skill, with a heavy tail past ~9k
+// that brings no improvement. 8,000 runes is generous (≈2–4k
+// tokens depending on language density); skills past it are almost
+// certainly bloated and should either be merged into an existing
+// skill or trimmed. --force bypasses the cap for the rare
+// legitimate case (a skill that genuinely needs a big body).
+const skillMdBudgetRunes = 8000
+
+// refuseOversizedSkill enforces skillMdBudgetRunes against a
+// rendered SKILL.md body before it lands on disk. Returns a clear
+// error pointing at the option (trim, merge, or --force) when the
+// budget is exceeded; nil otherwise. Force=true is the operator
+// escape hatch.
+func refuseOversizedSkill(path, body string, force bool) error {
+	runes := len([]rune(body))
+	if runes <= skillMdBudgetRunes {
+		return nil
+	}
+	if force {
+		return nil
+	}
+	return fmt.Errorf("refusing %s: rendered SKILL.md is %d runes (budget %d). "+
+		"Long skills cost tokens without helping (SWE-Skills-Bench: token "+
+		"overhead is decoupled from pass-rate gain). Trim the proposal "+
+		"(focus when_to_use, drop redundant triggers/examples), merge into "+
+		"an existing skill via `aichronicles propose merge --skill %s`, or "+
+		"pass --force to override",
+		path, runes, skillMdBudgetRunes, filepath.Base(filepath.Dir(path)))
 }
 
 // findProposedSkill matches by name, accepting either the kebab-
