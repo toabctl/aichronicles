@@ -565,31 +565,31 @@ func TestBuildPropose_RendersPriorProposalsStanza(t *testing.T) {
 		Digests: digests,
 		PriorProposals: []PriorProposal{
 			{
-				SkillName:       "deploy-staging",
-				ProposedAtMs:    now.Add(-30 * 24 * time.Hour).UnixMilli(),
-				Applied:         true,
-				AppliedAtMs:     now.Add(-29 * 24 * time.Hour).UnixMilli(),
-				LoadsAfterApply: 8,
+				SkillName:     "deploy-staging",
+				ProposedAtMs:  now.Add(-30 * 24 * time.Hour).UnixMilli(),
+				Added:         true,
+				AddedAtMs:     now.Add(-29 * 24 * time.Hour).UnixMilli(),
+				LoadsAfterAdd: 8,
 			},
 			{
-				SkillName:       "fix-flake",
-				ProposedAtMs:    now.Add(-20 * 24 * time.Hour).UnixMilli(),
-				Applied:         true,
-				AppliedAtMs:     now.Add(-19 * 24 * time.Hour).UnixMilli(),
-				LoadsAfterApply: 0, // applied but unused
+				SkillName:     "fix-flake",
+				ProposedAtMs:  now.Add(-20 * 24 * time.Hour).UnixMilli(),
+				Added:         true,
+				AddedAtMs:     now.Add(-19 * 24 * time.Hour).UnixMilli(),
+				LoadsAfterAdd: 0, // added but unused
 			},
 			{
 				SkillName:        "buggy-skill",
 				ProposedAtMs:     now.Add(-10 * 24 * time.Hour).UnixMilli(),
-				Applied:          true,
-				AppliedAtMs:      now.Add(-9 * 24 * time.Hour).UnixMilli(),
-				LoadsAfterApply:  4,
+				Added:            true,
+				AddedAtMs:        now.Add(-9 * 24 * time.Hour).UnixMilli(),
+				LoadsAfterAdd:    4,
 				FailedLoadsAfter: 3,
 			},
 			{
 				SkillName:    "rejected-idea",
 				ProposedAtMs: now.Add(-5 * 24 * time.Hour).UnixMilli(),
-				Applied:      false,
+				Added:        false,
 			},
 		},
 	}
@@ -601,12 +601,12 @@ func TestBuildPropose_RendersPriorProposalsStanza(t *testing.T) {
 
 	for _, want := range []string{
 		"Prior proposals",
-		"deploy-staging — proposed 30 days ago, APPLIED 29 days ago, 8 loads, 0 failures",
+		"deploy-staging — proposed 30 days ago, ADDED 29 days ago, 8 loads, 0 failures",
 		"in use, working — DO NOT repropose",
-		"fix-flake — proposed 20 days ago, APPLIED 19 days ago, 0 loads since",
+		"fix-flake — proposed 20 days ago, ADDED 19 days ago, 0 loads since",
 		"skill on disk but unused — when_to_use may be wrong",
-		"buggy-skill — proposed 10 days ago, APPLIED 9 days ago, 4 loads with 3 failures",
-		"rejected-idea — proposed 5 days ago, NOT APPLIED",
+		"buggy-skill — proposed 10 days ago, ADDED 9 days ago, 4 loads with 3 failures",
+		"rejected-idea — proposed 5 days ago, PENDING",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q\n--- body ---\n%s", want, body)

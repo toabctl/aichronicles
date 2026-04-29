@@ -320,9 +320,9 @@ func loadPriorProposalsForPrompt(ctx context.Context, s *store.Store, sinceMs in
 		out = append(out, prompts.PriorProposal{
 			SkillName:        e.SkillName,
 			ProposedAtMs:     e.ProposedAtMs,
-			Applied:          true,
-			AppliedAtMs:      e.AddedAtMs,
-			LoadsAfterApply:  e.LoadsAfterAdd,
+			Added:            true,
+			AddedAtMs:        e.AddedAtMs,
+			LoadsAfterAdd:    e.LoadsAfterAdd,
 			FailedLoadsAfter: e.FailedLoadsAfter,
 			LastLoadedMs:     lastLoaded,
 		})
@@ -335,7 +335,7 @@ func loadPriorProposalsForPrompt(ctx context.Context, s *store.Store, sinceMs in
 		out = append(out, prompts.PriorProposal{
 			SkillName:    u.SkillName,
 			ProposedAtMs: u.ProposedAtMs,
-			Applied:      false,
+			Added:        false,
 		})
 		if len(out) >= maxEntries {
 			break

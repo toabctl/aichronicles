@@ -703,11 +703,11 @@ Skill-awareness rules (the "Skills installed" and "Skills invoked recently" sect
 
 11. Outcome cues (Outcome: success_likely / failure_likely / mixed / unknown, with optional counter tail) are HEURISTICS over observable signals — tool_failures, git_undos, consecutive prompt_repeats. Treat them as priors, not facts. A failure_likely session is NOT automatically uninteresting: a recurring failure shape across multiple sessions IS a pattern (the friction is the signal — propose a skill that prevents or short-circuits the failure). But avoid grounding a skill ONLY in failure_likely sessions when no success_likely session shows the same pattern — the user was probably stuck, not exhibiting reusable behaviour. Prefer mixed evidence (some success_likely, some failure_likely) over single-flavour evidence.
 
-12. The "Prior proposals" stanza is the closed-loop signal: previous proposals from this system, with their applied / not-applied / used / failing state. Treat each entry as a STRONG prior:
-    - APPLIED, in use, working — DO NOT repropose. If a current pattern overlaps, skip it (cite the existing skill in alternatives_rejected).
-    - APPLIED but unused — the user kept the SKILL.md but never invoked it. The when_to_use trigger may be wrong. If you see new evidence for the same domain, propose a REVISION (different name, alternatives_rejected explains the increment) — do not propose the same shape again.
-    - APPLIED but failing — the skill exists but trips tool_failures after load. If new evidence reveals the failure mode, you MAY propose a follow-up skill that addresses it; otherwise leave it alone.
-    - NOT APPLIED — the user saw this proposal and did not act on it. Near-duplicate proposals are likely to be rejected the same way; skip the pattern.
+12. The "Prior proposals" stanza is the closed-loop signal: previous candidates from this system, with their AutoSkill (Yang et al., 2026) maintenance state — added / pending / used / failing. Treat each entry as a STRONG prior:
+    - ADDED, in use, working — DO NOT repropose. If a current pattern overlaps, skip it (cite the existing skill in alternatives_rejected).
+    - ADDED but unused — the user kept the SKILL.md but never invoked it. The when_to_use trigger may be wrong. If you see new evidence for the same domain, propose a REVISION (different name, alternatives_rejected explains the increment) — do not propose the same shape again.
+    - ADDED but failing — the skill exists but trips tool_failures after load. If new evidence reveals the failure mode, you MAY propose a follow-up skill that addresses it; otherwise leave it alone.
+    - PENDING — the user saw this proposal and did not act on it. Near-duplicate proposals are likely to be rejected the same way; skip the pattern.
 
 13. The "Failure shapes observed" stanza is the contrastive half of the corpus: sessions where things went wrong (high tool_failure / git_undo / prompt_repeat counts). Treat these as CANDIDATES for prevention skills, not just things to ignore. A skill that catches a known failure mode early — "when test X fails with Y, before retrying do Z" — is as valuable as one that codifies a successful workflow. RULES:
     - Group failure-shaped sessions by dominant mode (tool_failures, git_undos, prompt_repeats). A failure mode that appears in ≥2 distinct failure-shaped sessions IS a recurring pattern worth a prevention skill.
@@ -876,12 +876,19 @@ type InvokedSkill struct {
 }
 
 // PriorProposal is one entry in the propose-prompt stanza that
-// surfaces the lifecycle of past proposals to the LLM. The LLM uses
-// this to (a) avoid re-proposing skills the user already rejected
-// (Applied=false), (b) avoid duplicating skills already on disk and
-// in active use (Applied=true with high loads), and (c) reconsider
+// surfaces the lifecycle of past skill candidates to the LLM. The
+// LLM uses this to (a) avoid re-proposing skills the user already
+// rejected (Decision==MaintenanceDiscard or pending), (b) avoid
+// duplicating skills already on disk and in active use
+// (Decision==MaintenanceAdd with high loads), and (c) reconsider
 // the trigger conditions of skills that landed but went unused
-// (Applied=true with zero post-apply loads).
+// (Decision==MaintenanceAdd with zero post-add loads).
+//
+// Field names follow the AutoSkill (Yang et al., 2026 —
+// arXiv:2603.01145) maintenance-action vocabulary: Added /
+// AddedAtMs / LoadsAfterAdd. The "applied" terminology used pre-
+// migration-021 is retired throughout — here, in the renderer's
+// prompt strings, and on the read-side store API.
 //
 // Closes the AWM (Agent Workflow Memory) loop: without this signal
 // the propose prompt is open-loop — every run is a fresh shot,
@@ -891,9 +898,9 @@ type InvokedSkill struct {
 type PriorProposal struct {
 	SkillName        string
 	ProposedAtMs     int64
-	Applied          bool
-	AppliedAtMs      int64
-	LoadsAfterApply  int
+	Added            bool
+	AddedAtMs        int64
+	LoadsAfterAdd    int
 	FailedLoadsAfter int
 	LastLoadedMs     int64
 }
@@ -924,8 +931,8 @@ type ProposeInputs struct {
 	InstalledSkills []InstalledSkill
 	InvokedSkills   []InvokedSkill
 	// PriorProposals, when non-empty, surfaces the lifecycle of
-	// every proposal the system has emitted (applied or not, with
-	// post-apply usage stats for applied ones). Drives the "don't
+	// every candidate the system has emitted (added or pending,
+	// with post-add usage stats for added ones). Drives the "don't
 	// repropose what we already tried" rule; renders as a stanza
 	// before the per-session digest body.
 	PriorProposals []PriorProposal
@@ -2789,50 +2796,50 @@ func renderFailureShapes(shapes []FailureShapeDigest) string {
 
 // renderPriorProposals formats the prior-proposals stanza for the
 // propose prompt. Empty input → empty string so the template
-// splices cleanly. Each line categorises the proposal so the LLM
-// doesn't have to derive the lifecycle state from raw fields:
+// splices cleanly. Each line categorises the candidate by its
+// AutoSkill (Yang et al., 2026 — arXiv:2603.01145) maintenance
+// state so the LLM doesn't have to derive it from raw fields:
 //
-//   - APPLIED, in use     — applied + LoadsAfterApply > 0
-//   - APPLIED, unused     — applied + LoadsAfterApply == 0 (the user
+//   - ADDED, in use     — Added + LoadsAfterAdd > 0
+//   - ADDED, unused     — Added + LoadsAfterAdd == 0 (the user
 //     kept it on disk but never invoked it;
 //     weakest "still relevant" signal)
-//   - APPLIED, failing    — applied + FailedLoadsAfter > 0 with
+//   - ADDED, failing    — Added + FailedLoadsAfter > 0 with
 //     non-trivial load count (skill exists
 //     but trips tool failures)
-//   - NOT APPLIED         — proposed but applied_at_ms is NULL (user
-//     did not act on the suggestion; near-
-//     duplicate proposals are likely to be
-//     rejected too)
+//   - PENDING           — extracted but Added=false (user did not
+//     act on the suggestion; near-duplicate
+//     proposals are likely to be rejected too)
 //
 // Hard rule (rule 12) in the system prompt instructs the LLM to
-// treat each category as guidance: don't repropose APPLIED skills,
-// reconsider triggers for APPLIED-unused, address failures for
-// APPLIED-failing, and avoid repeating NOT APPLIED suggestions.
+// treat each category as guidance: don't repropose ADDED skills,
+// reconsider triggers for ADDED-unused, address failures for
+// ADDED-failing, and avoid repeating PENDING suggestions.
 func renderPriorProposals(props []PriorProposal) string {
 	if len(props) == 0 {
 		return ""
 	}
 	now := time.Now().UTC()
 	var b strings.Builder
-	b.WriteString("\nPrior proposals (the system has emitted these before — DO NOT repropose near-duplicates; reconsider when_to_use for ones that landed but went unused; address the failure for ones with post-apply tool_failures):\n")
+	b.WriteString("\nPrior proposals (the system has emitted these before — DO NOT repropose near-duplicates; reconsider when_to_use for ones that landed but went unused; address the failure for ones with post-add tool_failures):\n")
 	for _, p := range props {
 		ageDays := daysSince(now, p.ProposedAtMs)
 		switch {
-		case !p.Applied:
-			fmt.Fprintf(&b, "- %s — proposed %d days ago, NOT APPLIED (user did not act on this suggestion)\n",
+		case !p.Added:
+			fmt.Fprintf(&b, "- %s — proposed %d days ago, PENDING (user did not act on this suggestion)\n",
 				p.SkillName, ageDays)
-		case p.LoadsAfterApply == 0:
-			appliedDays := daysSince(now, p.AppliedAtMs)
-			fmt.Fprintf(&b, "- %s — proposed %d days ago, APPLIED %d days ago, 0 loads since (skill on disk but unused — when_to_use may be wrong)\n",
-				p.SkillName, ageDays, appliedDays)
+		case p.LoadsAfterAdd == 0:
+			addedDays := daysSince(now, p.AddedAtMs)
+			fmt.Fprintf(&b, "- %s — proposed %d days ago, ADDED %d days ago, 0 loads since (skill on disk but unused — when_to_use may be wrong)\n",
+				p.SkillName, ageDays, addedDays)
 		case p.FailedLoadsAfter > 0:
-			appliedDays := daysSince(now, p.AppliedAtMs)
-			fmt.Fprintf(&b, "- %s — proposed %d days ago, APPLIED %d days ago, %d loads with %d failures (skill exists but failing — propose an evolution if the failure pattern is grounded in evidence)\n",
-				p.SkillName, ageDays, appliedDays, p.LoadsAfterApply, p.FailedLoadsAfter)
+			addedDays := daysSince(now, p.AddedAtMs)
+			fmt.Fprintf(&b, "- %s — proposed %d days ago, ADDED %d days ago, %d loads with %d failures (skill exists but failing — propose an evolution if the failure pattern is grounded in evidence)\n",
+				p.SkillName, ageDays, addedDays, p.LoadsAfterAdd, p.FailedLoadsAfter)
 		default:
-			appliedDays := daysSince(now, p.AppliedAtMs)
-			fmt.Fprintf(&b, "- %s — proposed %d days ago, APPLIED %d days ago, %d loads, 0 failures (in use, working — DO NOT repropose)\n",
-				p.SkillName, ageDays, appliedDays, p.LoadsAfterApply)
+			addedDays := daysSince(now, p.AddedAtMs)
+			fmt.Fprintf(&b, "- %s — proposed %d days ago, ADDED %d days ago, %d loads, 0 failures (in use, working — DO NOT repropose)\n",
+				p.SkillName, ageDays, addedDays, p.LoadsAfterAdd)
 		}
 	}
 	return b.String()
