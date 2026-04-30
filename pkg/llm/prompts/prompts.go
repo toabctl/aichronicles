@@ -821,11 +821,12 @@ Skill-awareness rules (the "Skills installed" and "Skills invoked recently" sect
     - ADDED but failing — the skill exists but trips tool_failures after load. If new evidence reveals the failure mode, you MAY propose a follow-up skill that addresses it; otherwise leave it alone.
     - PENDING — the user saw this proposal and did not act on it. Near-duplicate proposals are likely to be rejected the same way; skip the pattern.
 
-13. The "Failure shapes observed" stanza is the contrastive half of the corpus: sessions where things went wrong (high tool_failure / git_undo / prompt_repeat counts). Treat these as CANDIDATES for prevention skills, not just things to ignore. A skill that catches a known failure mode early — "when test X fails with Y, before retrying do Z" — is as valuable as one that codifies a successful workflow. RULES:
-    - Group failure-shaped sessions by dominant mode (tool_failures, git_undos, prompt_repeats). A failure mode that appears in ≥2 distinct failure-shaped sessions IS a recurring pattern worth a prevention skill.
+13. The "Failure modes observed" stanza is the contrastive half of the corpus: sessions where things went wrong, pre-grouped by failure mode (tool_failures, git_undos, prompt_repeats). Treat each cluster as a CANDIDATE for a prevention skill, not just something to ignore. A skill that catches a known failure mode early — "when test X fails with Y, before retrying do Z" — is as valuable as one that codifies a successful workflow. RULES:
+    - The grouping is precomputed. Each bucket is flagged RECURRING (≥2 distinct sessions, a candidate for a prevention skill) or ONE-OFF (1 session, NOT a pattern). Use the flags directly; do not re-derive the clustering from the digest body.
+    - A session can appear under multiple modes when it exhibits more than one failure type — that's intentional. Treat each mode independently.
     - Skill names should reference the failure ("recover-from-rebase-conflict", "diagnose-test-flake", "unblock-stuck-deploy") rather than be generic.
     - Evidence MUST cite the failure-shaped sessions (verbatim quotes from their summaries / first_prompts) — same anti-fabrication rule as positive evidence; do NOT invent failure modes the corpus doesn't show.
-    - If a failure mode appears once, it's a one-off — do not propose a prevention skill on its strength alone.
+    - ONE-OFF buckets must not ground a skill on their own — they are listed for transparency, not as patterns.
 
 For a typical 25-session window, expect 1–4 well-grounded skills total — not 0, not 5. Zero is acceptable only if every recurring pattern you see is already covered by an installed skill or is out of scope per the rules above. Lean toward proposing a clearly-grounded skill even when its time-saving estimate is moderate; the user wants concrete leads, not perfect ones.`
 
@@ -1089,7 +1090,7 @@ func BuildPropose(in ProposeInputs) (Built, error) {
 		renderInstalledSkills(in.InstalledSkills),
 		renderInvokedSkills(in.InvokedSkills),
 		renderPriorProposals(in.PriorProposals),
-		renderFailureShapes(in.FailureShapes),
+		renderFailureModes(in.FailureShapes),
 		body,
 	)
 	req := llm.Request{
@@ -3193,18 +3194,40 @@ func renderDigests(digests []SessionDigest, pats patternSet) string {
 	return b.String()
 }
 
-// renderFailureShapes formats the negative-example stanza for the
-// propose prompt. Empty input → empty string so the template
-// splices unconditionally. Each line is one failure-shaped session
-// with its dominant failure mode summarised in a counter tail —
-// the LLM groups by mode and decides whether a skill could
-// prevent or short-circuit it. ExpeL's contrastive principle.
-func renderFailureShapes(shapes []FailureShapeDigest) string {
+// renderFailureModes formats the negative-example stanza as a
+// per-mode cluster instead of a flat list of sessions. Empty input
+// → empty string so the template splices unconditionally.
+//
+// Each failure-shaped session contributes to every non-zero mode it
+// exhibits (multi-tag, not argmax-per-session): a session with both
+// tool_failures and git_undos appears under both buckets. The cluster
+// signal — "which mode RECURS across distinct sessions?" — is what
+// rule 13 wants the LLM to act on, and multi-tag is the honest read
+// of "this session exhibited this mode."
+//
+// Each bucket header carries a precomputed flag: RECURRING for ≥2
+// distinct sessions (a candidate for a prevention skill per rule 13),
+// ONE-OFF for 1 (explicitly not a pattern). The LLM no longer has
+// to count distinct sessions per mode — the clustering is done.
+//
+// ExpeL-style contrastive insight extraction (Zhao et al. 2024,
+// arXiv:2308.10144): the negative half of the corpus, but pre-grouped
+// so the LLM's job is to decide which clusters warrant a prevention
+// skill, not to derive the clusters first.
+func renderFailureModes(shapes []FailureShapeDigest) string {
 	if len(shapes) == 0 {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString("\nFailure shapes observed (sessions that went wrong — recurring failures here are CANDIDATES for prevention skills, not just things to ignore):\n")
+
+	type entry struct {
+		sessionID string
+		title     string
+		count     int
+	}
+	// Buckets — a session can land in multiple. Keep insertion order
+	// (LoadFailureShapes returns newest-first) so the rendered list
+	// is recency-ranked within each bucket.
+	var toolFailures, gitUndos, promptRepeats []entry
 	for _, fs := range shapes {
 		title := fs.Title
 		if title == "" {
@@ -3217,24 +3240,43 @@ func renderFailureShapes(shapes []FailureShapeDigest) string {
 		if r := []rune(clean); len(r) > maxTitleRunes {
 			clean = string(r[:maxTitleRunes]) + "…"
 		}
-		// Counter tail — only the non-zero counters render, so the
-		// dominant failure mode is visually obvious.
-		var markers []string
-		if fs.ToolFailureCount > 0 {
-			markers = append(markers, fmt.Sprintf("%d tool_failures", fs.ToolFailureCount))
-		}
-		if fs.GitUndoCount > 0 {
-			markers = append(markers, fmt.Sprintf("%d git_undos", fs.GitUndoCount))
-		}
-		if fs.PromptRepeatCount > 0 {
-			markers = append(markers, fmt.Sprintf("%d prompt_repeats", fs.PromptRepeatCount))
-		}
 		short := fs.SessionID
 		if len(short) > 8 {
 			short = short[:8]
 		}
-		fmt.Fprintf(&b, "- [%s] %s  (%s)\n", short, clean, strings.Join(markers, ", "))
+		if fs.ToolFailureCount > 0 {
+			toolFailures = append(toolFailures, entry{short, clean, fs.ToolFailureCount})
+		}
+		if fs.GitUndoCount > 0 {
+			gitUndos = append(gitUndos, entry{short, clean, fs.GitUndoCount})
+		}
+		if fs.PromptRepeatCount > 0 {
+			promptRepeats = append(promptRepeats, entry{short, clean, fs.PromptRepeatCount})
+		}
 	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b,
+		"\nFailure modes observed across %d failure-shaped sessions (modes flagged RECURRING appear in ≥2 distinct sessions and are candidates for prevention skills per rule 13; ONE-OFF modes are not patterns and should not ground a skill on their own):\n",
+		len(shapes))
+
+	renderBucket := func(mode string, entries []entry) {
+		if len(entries) == 0 {
+			return
+		}
+		flag := "ONE-OFF"
+		if len(entries) >= 2 {
+			flag = "RECURRING"
+		}
+		fmt.Fprintf(&b, "- %s (%d sessions, %s):\n", mode, len(entries), flag)
+		for _, e := range entries {
+			fmt.Fprintf(&b, "  - [%s] %s (%d %s)\n", e.sessionID, e.title, e.count, mode)
+		}
+	}
+	renderBucket("tool_failures", toolFailures)
+	renderBucket("git_undos", gitUndos)
+	renderBucket("prompt_repeats", promptRepeats)
+
 	return b.String()
 }
 

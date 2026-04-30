@@ -692,7 +692,12 @@ func TestBuildFacts_HashStableAcrossCalls(t *testing.T) {
 	}
 }
 
-func TestBuildPropose_RendersFailureShapesStanza(t *testing.T) {
+// TestBuildPropose_RendersFailureModesCluster confirms the
+// failure-shape input renders as a per-mode grouping (tool_failures
+// / git_undos / prompt_repeats) with RECURRING / ONE-OFF flags
+// derived from distinct-session counts, and that a session
+// exhibiting multiple modes appears under each (multi-tag).
+func TestBuildPropose_RendersFailureModesCluster(t *testing.T) {
 	t.Parallel()
 	in := ProposeInputs{
 		Digests: []SessionDigest{
@@ -706,7 +711,12 @@ func TestBuildPropose_RendersFailureShapesStanza(t *testing.T) {
 				GitUndoCount:     1,
 			},
 			{
-				SessionID:         "00000000-0000-0000-0000-0000000000bb",
+				SessionID:        "00000000-0000-0000-0000-0000000000bb",
+				Title:            "rebase blew up",
+				ToolFailureCount: 2,
+			},
+			{
+				SessionID:         "00000000-0000-0000-0000-0000000000cc",
 				Title:             "fix the test flake",
 				PromptRepeatCount: 2,
 			},
@@ -718,23 +728,32 @@ func TestBuildPropose_RendersFailureShapesStanza(t *testing.T) {
 	}
 	body := built.Request.Messages[0].Content
 	for _, want := range []string{
-		"Failure shapes observed",
-		"deploy went sideways three times",
-		"3 tool_failures, 1 git_undos",
-		"fix the test flake",
-		"2 prompt_repeats",
+		"Failure modes observed across 3 failure-shaped sessions",
+		// tool_failures appears in 2 sessions → RECURRING
+		"- tool_failures (2 sessions, RECURRING):",
+		"[00000000] deploy went sideways three times (3 tool_failures)",
+		"[00000000] rebase blew up (2 tool_failures)",
+		// git_undos appears in 1 session (the deploy one too) → ONE-OFF
+		"- git_undos (1 sessions, ONE-OFF):",
+		"[00000000] deploy went sideways three times (1 git_undos)",
+		// prompt_repeats appears in 1 session → ONE-OFF
+		"- prompt_repeats (1 sessions, ONE-OFF):",
+		"[00000000] fix the test flake (2 prompt_repeats)",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q\n--- body ---\n%s", want, body)
 		}
 	}
-	// System prompt rule 13 must explain the negative-example role.
-	if !strings.Contains(built.Request.System, "Failure shapes observed") {
-		t.Errorf("system prompt missing rule 13 reference to failure shapes")
+	// System prompt rule 13 must point at the precomputed clusters.
+	if !strings.Contains(built.Request.System, "Failure modes observed") {
+		t.Errorf("system prompt rule 13 should reference the precomputed cluster stanza")
+	}
+	if !strings.Contains(built.Request.System, "RECURRING") {
+		t.Errorf("system prompt rule 13 should explain the RECURRING / ONE-OFF flags")
 	}
 }
 
-func TestBuildPropose_OmitsFailureShapesStanzaWhenEmpty(t *testing.T) {
+func TestBuildPropose_OmitsFailureModesStanzaWhenEmpty(t *testing.T) {
 	t.Parallel()
 	in := ProposeInputs{
 		Digests:       []SessionDigest{{ID: "s1", Summary: "x"}, {ID: "s2", Summary: "y"}},
@@ -745,12 +764,12 @@ func TestBuildPropose_OmitsFailureShapesStanzaWhenEmpty(t *testing.T) {
 		t.Fatalf("BuildPropose: %v", err)
 	}
 	body := built.Request.Messages[0].Content
-	if strings.Contains(body, "Failure shapes observed") {
+	if strings.Contains(body, "Failure modes observed") {
 		t.Errorf("empty FailureShapes must produce empty stanza:\n%s", body)
 	}
 }
 
-func TestBuildPropose_FailureShapesPassThroughEgressRedaction(t *testing.T) {
+func TestBuildPropose_FailureModesPassThroughEgressRedaction(t *testing.T) {
 	t.Parallel()
 	in := ProposeInputs{
 		Digests: []SessionDigest{{ID: "s1", Summary: "x"}, {ID: "s2", Summary: "y"}},
@@ -769,6 +788,27 @@ func TestBuildPropose_FailureShapesPassThroughEgressRedaction(t *testing.T) {
 	body := built.Request.Messages[0].Content
 	if strings.Contains(body, "AKIAIOSFODNN7EXAMPLE") {
 		t.Errorf("aws key leaked into prompt: %s", body)
+	}
+}
+
+// TestRenderFailureModes_OmitsBucketsThatHaveNoSessions confirms a
+// failure corpus that exercises only one mode renders only that
+// mode's bucket — empty buckets must not produce phantom headers
+// that make the LLM think the absent modes are "ONE-OFF" patterns.
+func TestRenderFailureModes_OmitsBucketsThatHaveNoSessions(t *testing.T) {
+	t.Parallel()
+	shapes := []FailureShapeDigest{
+		{SessionID: "00000000-only-tools", Title: "all tool fails", ToolFailureCount: 4},
+		{SessionID: "00000000-also-tools", Title: "another tool fail", ToolFailureCount: 2},
+	}
+	out := renderFailureModes(shapes)
+	if !strings.Contains(out, "- tool_failures (2 sessions, RECURRING):") {
+		t.Errorf("expected tool_failures bucket; got:\n%s", out)
+	}
+	for _, unwanted := range []string{"git_undos", "prompt_repeats"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("unexpected %q bucket on tool-only corpus:\n%s", unwanted, out)
+		}
 	}
 }
 
