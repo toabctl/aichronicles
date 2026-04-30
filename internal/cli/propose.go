@@ -562,6 +562,7 @@ func mergeImpactIntoInvoked(invoked []prompts.InvokedSkill, impact []store.Skill
 			invoked[i].TotalLoads = im.TotalLoads
 			invoked[i].FailedLoads = im.FailedLoads
 			invoked[i].SuccessRate = im.SuccessRate
+			invoked[i].LastLoadedMs = im.LastLoadedMs
 		}
 	}
 	return invoked

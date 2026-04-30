@@ -15,9 +15,9 @@ func TestMergeImpactIntoInvoked_PopulatesMatchingRows(t *testing.T) {
 		{Name: "gamma-no-impact", Count: 1}, // no impact row → unchanged
 	}
 	impact := []store.SkillImpact{
-		{Name: "alpha", TotalLoads: 5, FailedLoads: 1, SuccessRate: 0.8},
-		{Name: "beta", TotalLoads: 3, FailedLoads: 3, SuccessRate: 0.0},
-		{Name: "delta-not-invoked", TotalLoads: 9, FailedLoads: 0, SuccessRate: 1.0},
+		{Name: "alpha", TotalLoads: 5, FailedLoads: 1, SuccessRate: 0.8, LastLoadedMs: 1_700_000_000_000},
+		{Name: "beta", TotalLoads: 3, FailedLoads: 3, SuccessRate: 0.0, LastLoadedMs: 1_700_000_111_000},
+		{Name: "delta-not-invoked", TotalLoads: 9, FailedLoads: 0, SuccessRate: 1.0, LastLoadedMs: 1_700_000_222_000},
 	}
 
 	out := mergeImpactIntoInvoked(invoked, impact)
@@ -25,10 +25,11 @@ func TestMergeImpactIntoInvoked_PopulatesMatchingRows(t *testing.T) {
 	want := map[string]struct {
 		total, fail int
 		rate        float64
+		lastLoaded  int64
 	}{
-		"alpha":           {5, 1, 0.8},
-		"beta":            {3, 3, 0.0},
-		"gamma-no-impact": {0, 0, 0}, // stays at zero — no impact data
+		"alpha":           {5, 1, 0.8, 1_700_000_000_000},
+		"beta":            {3, 3, 0.0, 1_700_000_111_000},
+		"gamma-no-impact": {0, 0, 0, 0}, // stays at zero — no impact data
 	}
 	for _, r := range out {
 		w, ok := want[r.Name]
@@ -44,6 +45,9 @@ func TestMergeImpactIntoInvoked_PopulatesMatchingRows(t *testing.T) {
 		}
 		if r.SuccessRate != w.rate {
 			t.Errorf("%q rate: got %v want %v", r.Name, r.SuccessRate, w.rate)
+		}
+		if r.LastLoadedMs != w.lastLoaded {
+			t.Errorf("%q last_loaded: got %d want %d", r.Name, r.LastLoadedMs, w.lastLoaded)
 		}
 	}
 	if len(out) != len(invoked) {

@@ -1639,6 +1639,69 @@ func TestBuildPropose_OmitsSkillSectionsWhenEmpty(t *testing.T) {
 	}
 }
 
+// TestRenderInvokedSkills_RendersLastLoadedAnnotation confirms the
+// "last loaded" annotation appears whenever LastLoadedMs is set, in
+// every combination with TotalLoads (success-rate present or absent).
+// The recency signal is what lets the LLM distinguish a skill loaded
+// 12× yesterday from one loaded 12× five days ago — a count alone
+// hides the staleness.
+func TestRenderInvokedSkills_RendersLastLoadedAnnotation(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UnixMilli()
+	twoHoursAgo := now - 2*int64(time.Hour/time.Millisecond)
+	threeDaysAgo := now - 3*24*int64(time.Hour/time.Millisecond)
+	skills := []InvokedSkill{
+		{Name: "fresh-impact", Count: 6, TotalLoads: 6, FailedLoads: 0, SuccessRate: 1.0, LastLoadedMs: twoHoursAgo},
+		{Name: "stale-impact", Count: 12, TotalLoads: 12, FailedLoads: 3, SuccessRate: 0.75, LastLoadedMs: threeDaysAgo},
+		{Name: "no-impact-with-recency", Count: 2, LastLoadedMs: twoHoursAgo},
+		{Name: "no-impact-no-recency", Count: 1},
+	}
+	out := renderInvokedSkills(skills)
+	for _, want := range []string{
+		"fresh-impact × 6  (success: 100%, 0/6 loads followed by tool_failure, last loaded 2h ago)",
+		"stale-impact × 12  (success: 75%, 3/12 loads followed by tool_failure, last loaded 3d ago)",
+		"no-impact-with-recency × 2  (last loaded 2h ago)",
+		"no-impact-no-recency × 1\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	// The orientation sentence in the header must teach the LLM what
+	// the new annotation means; without it the recency number is just
+	// a number on the line.
+	if !strings.Contains(out, "loaded N times yesterday is a stronger signal") {
+		t.Errorf("renderInvokedSkills must teach the LLM how to read the recency annotation; got:\n%s", out)
+	}
+}
+
+func TestHumanAgo_RoundsToCoarsestUnit(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		ms   int64
+		want string
+	}{
+		{"zero is just-now", 0, "just now"},
+		{"future is just-now", now.Add(time.Hour).UnixMilli(), "just now"},
+		{"sub-minute is just-now", now.Add(-30 * time.Second).UnixMilli(), "just now"},
+		{"5 minutes", now.Add(-5 * time.Minute).UnixMilli(), "5m ago"},
+		{"2 hours", now.Add(-2 * time.Hour).UnixMilli(), "2h ago"},
+		{"23 hours stays in hours", now.Add(-23 * time.Hour).UnixMilli(), "23h ago"},
+		{"24 hours flips to days", now.Add(-24 * time.Hour).UnixMilli(), "1d ago"},
+		{"3 days", now.Add(-3 * 24 * time.Hour).UnixMilli(), "3d ago"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := humanAgo(now, tc.ms); got != tc.want {
+				t.Errorf("humanAgo(%d) = %q, want %q", tc.ms, got, tc.want)
+			}
+		})
+	}
+}
+
 // --- hash stability ---
 
 func TestHashRequest_ModelChangeDoesNotAffectHash(t *testing.T) {

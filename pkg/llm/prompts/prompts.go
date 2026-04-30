@@ -985,12 +985,19 @@ type InstalledSkill struct {
 // per-skill success annotation rather than reporting a misleading
 // "0% success" — that's the CLAUDE.md correctness rule applied
 // to this layer.
+//
+// LastLoadedMs, when > 0, is the unix-ms timestamp of the most
+// recent skill_load extraction for this skill in the window. The
+// renderer turns it into a "last loaded Xh ago" annotation so the
+// LLM can distinguish a skill loaded 12 times yesterday from one
+// loaded 12 times six days ago — a count alone hides recency.
 type InvokedSkill struct {
-	Name        string
-	Count       int
-	SuccessRate float64
-	FailedLoads int
-	TotalLoads  int
+	Name         string
+	Count        int
+	SuccessRate  float64
+	FailedLoads  int
+	TotalLoads   int
+	LastLoadedMs int64
 }
 
 // PriorProposal is one entry in the propose-prompt stanza that
@@ -2914,14 +2921,23 @@ func renderInvokedSkills(skills []InvokedSkill) string {
 	if len(skills) == 0 {
 		return ""
 	}
+	now := time.Now().UTC()
 	var b strings.Builder
-	b.WriteString("\nSkills invoked recently (count = times loaded in the window — these are working for the user; a low success rate suggests the existing skill needs a revision rather than displacement by a brand-new proposal):\n")
+	b.WriteString("\nSkills invoked recently (count = times loaded in the window — these are working for the user; a low success rate suggests the existing skill needs a revision rather than displacement by a brand-new proposal; \"last loaded\" is the most recent invocation in the window — a skill loaded N times yesterday is a stronger signal than one loaded N times five days ago):\n")
 	for _, s := range skills {
-		if s.TotalLoads > 0 {
+		switch {
+		case s.TotalLoads > 0 && s.LastLoadedMs > 0:
+			pct := int(s.SuccessRate * 100)
+			_, _ = fmt.Fprintf(&b, "- %s × %d  (success: %d%%, %d/%d loads followed by tool_failure, last loaded %s)\n",
+				s.Name, s.Count, pct, s.FailedLoads, s.TotalLoads, humanAgo(now, s.LastLoadedMs))
+		case s.TotalLoads > 0:
 			pct := int(s.SuccessRate * 100)
 			_, _ = fmt.Fprintf(&b, "- %s × %d  (success: %d%%, %d/%d loads followed by tool_failure)\n",
 				s.Name, s.Count, pct, s.FailedLoads, s.TotalLoads)
-		} else {
+		case s.LastLoadedMs > 0:
+			_, _ = fmt.Fprintf(&b, "- %s × %d  (last loaded %s)\n",
+				s.Name, s.Count, humanAgo(now, s.LastLoadedMs))
+		default:
 			_, _ = fmt.Fprintf(&b, "- %s × %d\n", s.Name, s.Count)
 		}
 	}
@@ -3287,6 +3303,32 @@ func daysSince(now time.Time, ms int64) int {
 		return 0
 	}
 	return int(delta / (24 * time.Hour))
+}
+
+// humanAgo formats the delta between `now` and the unix-ms timestamp
+// `ms` as a short relative-time phrase: "Xm ago" / "Xh ago" / "Xd
+// ago". Sub-day granularity matters for the propose prompt because a
+// skill loaded an hour ago is a much stronger signal than one loaded
+// five days ago, even when both fall inside the propose window.
+//
+// Future or zero/negative timestamps collapse to "just now" so the
+// rendering stays sensible without a guard at every call site.
+func humanAgo(now time.Time, ms int64) string {
+	if ms <= 0 {
+		return "just now"
+	}
+	delta := now.Sub(time.UnixMilli(ms))
+	if delta < time.Minute {
+		return "just now"
+	}
+	switch {
+	case delta < time.Hour:
+		return fmt.Sprintf("%dm ago", int(delta/time.Minute))
+	case delta < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(delta/time.Hour))
+	default:
+		return fmt.Sprintf("%dd ago", int(delta/(24*time.Hour)))
+	}
 }
 
 // renderOutcomeCue formats the per-session outcome heuristic as one
