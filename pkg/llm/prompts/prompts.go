@@ -3332,34 +3332,58 @@ func humanAgo(now time.Time, ms int64) string {
 }
 
 // renderOutcomeCue formats the per-session outcome heuristic as one
-// line: "Outcome: <label> (n failures, n undos, n repeats)". Returns
-// "" when Outcome is nil so callers can splice unconditionally
-// without a guard. The detail tail is suppressed for success_likely
-// (zero by definition there) and unknown (no signal worth showing)
-// to keep the prompt token-lean — only failure_likely / mixed
-// sessions get the detail tail.
+// line. Returns "" when Outcome is nil so callers can splice
+// unconditionally without a guard.
 //
-// Outcome is a HEURISTIC. The label is computed by store.deriveOutcomeLabel
-// from observable signals (tool_failure_count, git_undo_count,
-// prompt_repeat_count, last_event_kind). Downstream prompts treat it
-// as a prior, not ground truth.
+// The line carries different details per label:
+//   - success_likely → tool_use_count, so the LLM can distinguish a
+//     thin successful session (2 tool calls) from a substantial one
+//     (50). Scale matters when weighting evidence; failure counters
+//     are zero by definition here so they stay suppressed.
+//   - failure_likely / mixed → the failure counter tail
+//     (tool_failures, git_undos, prompt_repeats). error_count
+//     appends only when non-zero — it's a separate signal from
+//     tool_failures (an `error` event is broader than a tool failure)
+//     and a zero would just clutter the line. last_event_kind
+//     appends only when the session ended on a failure terminator
+//     (tool_failure / error), where it shifts interpretation:
+//     "ended on tool_failure" means the user walked away mid-flight
+//     vs. "the session continued past the failure," which the bare
+//     counter tail can't tell you.
+//   - unknown → bare label. By definition the session was too thin
+//     to have a useful signal; rendering the label confirms the
+//     outcome was computed (not withheld).
+//
+// Outcome is a HEURISTIC. The label is computed by
+// store.deriveOutcomeLabel from observable signals
+// (tool_failure_count, git_undo_count, prompt_repeat_count,
+// last_event_kind). Downstream prompts treat it as a prior, not
+// ground truth.
 func renderOutcomeCue(o *store.SessionOutcome) string {
 	if o == nil {
 		return ""
 	}
 	switch o.Outcome {
 	case store.OutcomeSuccessLikely:
-		return "Outcome: success_likely\n"
+		return fmt.Sprintf("Outcome: success_likely (%d tool_uses)\n", o.ToolUseCount)
 	case store.OutcomeUnknown:
-		// No detail — by definition the session was too thin to
-		// have a useful signal here. Still render the label so the
-		// LLM doesn't conclude "outcome was withheld."
 		return "Outcome: unknown\n"
 	case store.OutcomeFailureLikely, store.OutcomeMixed:
-		return fmt.Sprintf(
-			"Outcome: %s (%d tool_failures, %d git_undos, %d prompt_repeats)\n",
-			o.Outcome, o.ToolFailureCount, o.GitUndoCount, o.PromptRepeatCount,
-		)
+		parts := []string{
+			fmt.Sprintf("%d tool_failures", o.ToolFailureCount),
+			fmt.Sprintf("%d git_undos", o.GitUndoCount),
+			fmt.Sprintf("%d prompt_repeats", o.PromptRepeatCount),
+		}
+		if o.ErrorCount > 0 {
+			parts = append(parts, fmt.Sprintf("%d errors", o.ErrorCount))
+		}
+		line := fmt.Sprintf("Outcome: %s (%s)", o.Outcome, strings.Join(parts, ", "))
+		if o.LastEventKind.Valid &&
+			(o.LastEventKind.String == ingest.KindToolFailure ||
+				o.LastEventKind.String == ingest.KindError) {
+			line += ", ended on " + o.LastEventKind.String
+		}
+		return line + "\n"
 	default:
 		// Defensive: a label outside the closed set means the
 		// store package added a value we don't render here yet.

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/ingest"
 	"github.com/toabctl/aichronicles/pkg/llm"
 )
 
@@ -787,15 +788,16 @@ func TestBuildPropose_OmitsPriorProposalsStanzaWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestBuildReflect_OutcomeSuccessOmitsCounterTail(t *testing.T) {
+func TestBuildReflect_OutcomeSuccessRendersScaleNotFailureCounters(t *testing.T) {
 	t.Parallel()
 	digests := []SessionDigest{
 		{
 			ID:      "s-success",
 			Summary: "Got it done.",
 			Outcome: &store.SessionOutcome{
-				SessionID: "s-success",
-				Outcome:   store.OutcomeSuccessLikely,
+				SessionID:    "s-success",
+				Outcome:      store.OutcomeSuccessLikely,
+				ToolUseCount: 12,
 			},
 		},
 	}
@@ -804,13 +806,16 @@ func TestBuildReflect_OutcomeSuccessOmitsCounterTail(t *testing.T) {
 		t.Fatalf("BuildReflect: %v", err)
 	}
 	body := built.Request.Messages[0].Content
-	if !strings.Contains(body, "Outcome: success_likely\n") {
-		t.Errorf("expected bare success_likely cue:\n%s", body)
+	// success_likely carries tool_uses so the LLM can distinguish a
+	// thin successful session (2 tool calls) from a substantial one
+	// (50) — both look identical without scale.
+	if !strings.Contains(body, "Outcome: success_likely (12 tool_uses)\n") {
+		t.Errorf("expected success_likely cue with tool_uses scale:\n%s", body)
 	}
-	// success_likely is by-definition zero on the failure counters,
-	// so the tail is suppressed to save tokens.
+	// Failure counters stay suppressed — they're zero by definition
+	// here and would just be noise.
 	if strings.Contains(body, "tool_failures") {
-		t.Errorf("unexpected counter tail on success_likely cue:\n%s", body)
+		t.Errorf("unexpected failure-counter tail on success_likely cue:\n%s", body)
 	}
 }
 
@@ -1645,6 +1650,89 @@ func TestBuildPropose_OmitsSkillSectionsWhenEmpty(t *testing.T) {
 // The recency signal is what lets the LLM distinguish a skill loaded
 // 12× yesterday from one loaded 12× five days ago — a count alone
 // hides the staleness.
+// TestRenderOutcomeCue_FailureAppendsErrorCountAndTerminator confirms
+// the two newly-surfaced signals on the failure_likely / mixed line:
+//
+//   - error_count is appended only when non-zero (it's distinct from
+//     tool_failure_count — an "error" event is broader than a tool
+//     failure, and a zero would just clutter the line);
+//   - "ended on <kind>" is appended only when the session terminated
+//     on tool_failure or error (the failure-shaped terminators);
+//     other terminators (assistant_message, user_prompt, ...) leave
+//     the line clean.
+func TestRenderOutcomeCue_FailureAppendsErrorCountAndTerminator(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name         string
+		outcome      store.SessionOutcome
+		wantContains []string
+		wantOmits    []string
+	}{
+		{
+			name: "ended_on_tool_failure_with_error_count",
+			outcome: store.SessionOutcome{
+				Outcome:           store.OutcomeFailureLikely,
+				ToolFailureCount:  4,
+				GitUndoCount:      1,
+				PromptRepeatCount: 0,
+				ErrorCount:        2,
+				LastEventKind:     sql.NullString{String: ingest.KindToolFailure, Valid: true},
+			},
+			wantContains: []string{
+				"Outcome: failure_likely (4 tool_failures, 1 git_undos, 0 prompt_repeats, 2 errors), ended on " + ingest.KindToolFailure + "\n",
+			},
+		},
+		{
+			name: "no_error_count_no_terminator_clutter",
+			outcome: store.SessionOutcome{
+				Outcome:           store.OutcomeMixed,
+				ToolFailureCount:  1,
+				GitUndoCount:      0,
+				PromptRepeatCount: 2,
+				ErrorCount:        0,
+				LastEventKind:     sql.NullString{String: ingest.KindAssistantMessage, Valid: true},
+			},
+			wantContains: []string{
+				"Outcome: mixed (1 tool_failures, 0 git_undos, 2 prompt_repeats)\n",
+			},
+			wantOmits: []string{"errors", "ended on"},
+		},
+		{
+			name: "ended_on_error_terminator",
+			outcome: store.SessionOutcome{
+				Outcome:          store.OutcomeFailureLikely,
+				ToolFailureCount: 3,
+				LastEventKind:    sql.NullString{String: ingest.KindError, Valid: true},
+			},
+			wantContains: []string{"ended on " + ingest.KindError + "\n"},
+		},
+		{
+			name: "no_last_event_kind_no_terminator_phrase",
+			outcome: store.SessionOutcome{
+				Outcome:          store.OutcomeFailureLikely,
+				ToolFailureCount: 3,
+			},
+			wantOmits: []string{"ended on"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := renderOutcomeCue(&tc.outcome)
+			for _, w := range tc.wantContains {
+				if !strings.Contains(got, w) {
+					t.Errorf("missing %q in %q", w, got)
+				}
+			}
+			for _, w := range tc.wantOmits {
+				if strings.Contains(got, w) {
+					t.Errorf("unexpected %q in %q", w, got)
+				}
+			}
+		})
+	}
+}
+
 func TestRenderInvokedSkills_RendersLastLoadedAnnotation(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UnixMilli()
