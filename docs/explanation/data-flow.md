@@ -24,7 +24,8 @@ For the static view, two complementary docs:
 | `aichronicles summarize --session <id>`                   | One summarize LLM call → `llm_outputs(kind=summary)`                                                       | Manual, on demand                                      |
 | `aichronicles reflect` / `propose`                        | Multi-session digest → reflect/propose LLM call → `llm_outputs(kind=reflection / propose)`                 | Manual, on demand                                      |
 | `aichronicles propose add` / `merge` / `discard --skill X` | One `skill_candidates` lifecycle transition; `add`/`merge` also write `<skills>/<name>/SKILL.md` to disk   | Manual, per skill                                      |
-| `aichronicles induction sweep`                            | One-shot of the daemon's periodic work; useful when the daemon is off or you want to see per-session output | Manual, on demand                                      |
+| `aichronicles induction sweep` (manual)                   | One-shot of the timer-driven sweep; useful when the timer is off or you want per-session output on stdout   | Manual, on demand                                      |
+| `aichronicles meta sweep` (manual)                        | One-shot of the cadence-gated meta dispatch; same gating as the timer-driven run                            | Manual, on demand                                      |
 | MCP tool call from Claude Code (`search_events`, `find_episodes`, `get_summary`, …) | Read-only SQL against the store; no writes                                                                 | Per agent tool-use, while a session is active          |
 
 The sections below detail each automatic flow (A, D) and each

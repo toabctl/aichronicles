@@ -25,6 +25,8 @@ Auto-generated from the live `cobra.Command.Long` strings via `make docs-cli`. E
 - [`aichronicles ingest`](./aichronicles_ingest.md)
 - [`aichronicles insights`](./aichronicles_insights.md)
 - [`aichronicles mcp-serve`](./aichronicles_mcp-serve.md)
+- [`aichronicles meta`](./aichronicles_meta.md)
+- [`aichronicles meta sweep`](./aichronicles_meta_sweep.md)
 - [`aichronicles propose`](./aichronicles_propose.md)
 - [`aichronicles propose add`](./aichronicles_propose_add.md)
 - [`aichronicles propose discard`](./aichronicles_propose_discard.md)

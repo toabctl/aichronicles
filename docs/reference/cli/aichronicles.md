@@ -26,6 +26,7 @@ aichronicles is the client binary for the aichroniclesd ingest daemon. It receiv
 * [aichronicles ingest](./aichronicles_ingest.md)	 - Read a hook payload on stdin and forward as an envelope
 * [aichronicles insights](./aichronicles_insights.md)	 - Cross-session usage digest (sessions, top tools, top skills, activity-by-hour)
 * [aichronicles mcp-serve](./aichronicles_mcp-serve.md)	 - Run an MCP server over stdio exposing the user's session history
+* [aichronicles meta](./aichronicles_meta.md)	 - Cadence-gated meta-analyses (propose / reflect / challenge / reflect_weekly / skill_revision)
 * [aichronicles propose](./aichronicles_propose.md)	 - LLM-suggested skills / CLAUDE.md entries / scripts from recent sessions
 * [aichronicles prune](./aichronicles_prune.md)	 - Delete sessions (and everything they own) older than --older-than
 * [aichronicles reflect](./aichronicles_reflect.md)	 - LLM-derived meta-analysis of recent sessions
