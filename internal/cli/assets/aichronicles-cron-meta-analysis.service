@@ -1,0 +1,6 @@
+[Unit]
+Description=aichronicles meta-analysis sweep run
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/aichronicles meta sweep

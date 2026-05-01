@@ -1,0 +1,20 @@
+[Unit]
+Description=aichronicles meta-analysis sweep timer
+
+[Timer]
+# Mirrors the daemon-resident sweeper's poll cadence (1h). Per-kind
+# cadences (propose=1d, reflect=7d, etc.) are gated inside the sweep
+# itself by SQLite-resident last_fired_at timestamps, so firing
+# hourly just polls "any kind overdue?" — exactly what the goroutine
+# did.
+#
+# OnBootSec=5min keeps a fresh boot from immediately running every
+# overdue kind in one burst. Persistent=true catches up missed
+# runs after suspend.
+OnBootSec=5min
+OnUnitInactiveSec=1h
+Persistent=true
+Unit=aichronicles-cron-meta-analysis.service
+
+[Install]
+WantedBy=timers.target
