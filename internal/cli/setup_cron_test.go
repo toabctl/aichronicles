@@ -58,6 +58,8 @@ func TestInstallCronUnits_WritesEmbeddedFiles(t *testing.T) {
 	wantCalls := [][]string{
 		{"daemon-reload"},
 		{"enable", "--now", "aichronicles-cron-weekly-digest.timer"},
+		{"enable", "--now", "aichronicles-cron-induction.timer"},
+		{"enable", "--now", "aichronicles-cron-meta-analysis.timer"},
 	}
 	if !reflect.DeepEqual(f.calls, wantCalls) {
 		t.Errorf("systemctl calls: got %v, want %v", f.calls, wantCalls)
@@ -83,9 +85,11 @@ func TestInstallCronUnits_NoOpOnRerun(t *testing.T) {
 	}
 	// daemon-reload + enable still fire (idempotent on systemd's
 	// side); only the file writes are skipped. So we expect calls
-	// to grow by 2 (one daemon-reload + one enable per timer).
-	if got := len(f.calls) - preCalls; got != 2 {
-		t.Errorf("rerun systemctl calls: got %d, want 2", got)
+	// to grow by 1 + len(cronTimerUnits) — one daemon-reload plus
+	// one enable per timer.
+	want := 1 + len(cronTimerUnits)
+	if got := len(f.calls) - preCalls; got != want {
+		t.Errorf("rerun systemctl calls: got %d, want %d", got, want)
 	}
 }
 
@@ -138,7 +142,12 @@ func TestRemoveCronUnits_LiveDisablesAndDeletes(t *testing.T) {
 	}
 
 	wantCalls := [][]string{
-		{"disable", "--now", "aichronicles-cron-weekly-digest.timer"},
+		{
+			"disable", "--now",
+			"aichronicles-cron-weekly-digest.timer",
+			"aichronicles-cron-induction.timer",
+			"aichronicles-cron-meta-analysis.timer",
+		},
 		{"daemon-reload"},
 	}
 	if !reflect.DeepEqual(f.calls, wantCalls) {

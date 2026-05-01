@@ -23,11 +23,27 @@ var cronWeeklyDigestTimer []byte
 //go:embed assets/aichronicles-cron-weekly-digest.service
 var cronWeeklyDigestService []byte
 
+//go:embed assets/aichronicles-cron-induction.timer
+var cronInductionTimer []byte
+
+//go:embed assets/aichronicles-cron-induction.service
+var cronInductionService []byte
+
+//go:embed assets/aichronicles-cron-meta-analysis.timer
+var cronMetaAnalysisTimer []byte
+
+//go:embed assets/aichronicles-cron-meta-analysis.service
+var cronMetaAnalysisService []byte
+
 // cronUnitFilenames is the canonical install set, in dependency
 // order (timer can be enabled only after the service is on disk).
 var cronUnitFilenames = []string{
 	"aichronicles-cron-weekly-digest.service",
 	"aichronicles-cron-weekly-digest.timer",
+	"aichronicles-cron-induction.service",
+	"aichronicles-cron-induction.timer",
+	"aichronicles-cron-meta-analysis.service",
+	"aichronicles-cron-meta-analysis.timer",
 }
 
 // cronTimerUnits is the subset of cronUnitFilenames that ARE
@@ -36,6 +52,8 @@ var cronUnitFilenames = []string{
 // suffix tests.
 var cronTimerUnits = []string{
 	"aichronicles-cron-weekly-digest.timer",
+	"aichronicles-cron-induction.timer",
+	"aichronicles-cron-meta-analysis.timer",
 }
 
 func newSetupCronCmd() *cobra.Command {
@@ -86,6 +104,14 @@ func cronUnitContent(name string) []byte {
 		return cronWeeklyDigestTimer
 	case "aichronicles-cron-weekly-digest.service":
 		return cronWeeklyDigestService
+	case "aichronicles-cron-induction.timer":
+		return cronInductionTimer
+	case "aichronicles-cron-induction.service":
+		return cronInductionService
+	case "aichronicles-cron-meta-analysis.timer":
+		return cronMetaAnalysisTimer
+	case "aichronicles-cron-meta-analysis.service":
+		return cronMetaAnalysisService
 	default:
 		panic("unknown cron unit: " + name)
 	}

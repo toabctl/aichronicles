@@ -20,7 +20,6 @@ import (
 	"github.com/toabctl/aichronicles/internal/notify"
 	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/llm"
 )
 
 // defaultShutdownDrainTimeout caps how long the daemon will wait for
@@ -141,23 +140,11 @@ func run(sockFlag, dbFlag string) error {
 		logger.Warn("start watchdog", "err", err)
 	}
 
-	// Online induction sweeper — disabled-by-default. When enabled,
-	// the goroutine periodically asks the LLM whether each newly-
-	// idle session contained a reusable workflow worth saving as a
-	// skill. See config.Induction; cli.RunInductionSweep is the
-	// callback. No-op when cfg.Induction.Enabled is false.
-	if cfg.Induction.Enabled {
-		startInductionSweeper(sigCtx, st, cfg, logger)
-	}
-
-	// Meta-analysis sweeper — disabled-by-default. When enabled,
-	// the goroutine fires propose/reflect/challenge/digest_weekly/
-	// skill_revision on per-kind cadences. See config.MetaAnalysis;
-	// cli.RunMetaAnalysisSweep is the callback. No-op when
-	// cfg.MetaAnalysis.Enabled is false.
-	if cfg.MetaAnalysis.Enabled {
-		startMetaAnalysisSweeper(sigCtx, st, cfg, logger)
-	}
+	// Induction and meta-analysis sweepers are no longer daemon-
+	// resident: they ship as `aichronicles induction sweep` and
+	// `aichronicles meta sweep`, driven by systemd --user timers
+	// installed via `aichronicles setup cron`. The daemon's only
+	// job is the UDS ingest API.
 
 	<-sigCtx.Done()
 	drainTimeout := cfg.Limits.ShutdownDrainTimeout.Or(defaultShutdownDrainTimeout)
@@ -172,115 +159,4 @@ func run(sockFlag, dbFlag string) error {
 	drainCtx, cancel := context.WithTimeout(context.Background(), drainTimeout)
 	defer cancel()
 	return shutdown(drainCtx)
-}
-
-// defaultInductionSweepInterval — the daemon-resident sweeper's
-// cadence when the user hasn't configured one. 15 minutes is a
-// sweet spot: short enough that a finished session gets induced
-// while it's still cognitively warm, long enough that the LLM
-// spend amortises (with the per-session cache, re-running on the
-// same body is free).
-const defaultInductionSweepInterval = 15 * time.Minute
-
-// defaultInductionSweepMaxPerTick caps the per-sweep blast
-// radius. With ~50¢/induction typical, 5 per tick keeps the
-// worst case at ~$10/hour even with a pathological backlog of
-// idle sessions. The next tick drains the rest.
-const defaultInductionSweepMaxPerTick = 5
-
-// startInductionSweeper spawns the daemon-resident induction
-// goroutine. Pulled out of run() to keep the main path focused;
-// the actual sweep work happens in cli.RunInductionSweep, which
-// the goroutine wraps in the Sweep callback.
-//
-// LLM client construction is deferred per-tick (`llm.FromConfig`
-// is called inside the callback, not closed over here) so a
-// transient credentials issue at daemon start doesn't permanently
-// disable the sweeper — the next tick retries with fresh config.
-func startInductionSweeper(ctx context.Context, st *store.Store, cfg *config.Config, log *slog.Logger) {
-	interval := cfg.Induction.SweepInterval.Or(defaultInductionSweepInterval)
-	idle := cfg.Induction.Idle.Or(30 * time.Minute)
-	minEvents := cfg.Induction.MinEvents
-	if minEvents <= 0 {
-		minEvents = 5
-	}
-	maxPerSweep := cfg.Induction.MaxPerSweep
-	if maxPerSweep <= 0 {
-		maxPerSweep = defaultInductionSweepMaxPerTick
-	}
-	llmCfg := cli.LLMConfigFromFile(cfg.LLM)
-
-	sw := &daemon.InductionSweeper{
-		Interval: interval,
-		Log:      log,
-		Sweep: func(sctx context.Context) error {
-			return cli.RunInductionSweep(sctx, st,
-				func() (llm.Client, error) {
-					return llm.FromConfig(sctx, llmCfg)
-				},
-				cli.InductionSweepOptions{
-					Idle:             idle,
-					MinEvents:        minEvents,
-					Limit:            maxPerSweep,
-					SkipSummarize:    cfg.Induction.SkipSummarize,
-					SkipFacts:        cfg.Induction.SkipFacts,
-					SkipEpisodes:     cfg.Induction.SkipEpisodes,
-					SummarizeTimeout: cfg.Limits.SummarizeTimeout.Or(3 * time.Minute),
-					InductionTimeout: cfg.Limits.ReflectTimeout.Or(5 * time.Minute),
-					FactsTimeout:     cfg.Limits.SummarizeTimeout.Or(3 * time.Minute),
-				},
-				daemon.DiscardWriter, // stdout has no audience here
-				daemon.DiscardWriter, // stderr telemetry duplicates slog calls inside the sweep
-			)
-		},
-	}
-	go sw.Run(ctx)
-	log.Info("induction sweeper enabled",
-		"interval", interval, "idle", idle,
-		"min_events", minEvents, "max_per_sweep", maxPerSweep,
-		"skip_summarize", cfg.Induction.SkipSummarize,
-		"skip_facts", cfg.Induction.SkipFacts,
-		"skip_episodes", cfg.Induction.SkipEpisodes)
-}
-
-// defaultMetaAnalysisInterval is the cadence-check tick. 1h is
-// fine: per-kind cadences are measured in days, so one wakeup per
-// hour is plenty (and a tighter loop would mostly burn cycles
-// finding "still in cadence, nothing to do").
-const defaultMetaAnalysisInterval = time.Hour
-
-// startMetaAnalysisSweeper spawns the daemon-resident meta-analysis
-// goroutine. Pulled out of run() to keep the main path focused;
-// the actual cadence-gated dispatch happens in
-// cli.RunMetaAnalysisSweep. LLM client construction is deferred
-// per-tick so a transient credentials issue at daemon start does
-// not permanently disable the sweeper.
-func startMetaAnalysisSweeper(ctx context.Context, st *store.Store, cfg *config.Config, log *slog.Logger) {
-	interval := cfg.MetaAnalysis.SweepInterval.Or(defaultMetaAnalysisInterval)
-	llmCfg := cli.LLMConfigFromFile(cfg.LLM)
-	opts := cli.MetaAnalysisSweepOptionsFromConfig(cfg.MetaAnalysis)
-
-	sw := &daemon.MetaAnalysisSweeper{
-		Interval: interval,
-		Log:      log,
-		Sweep: func(sctx context.Context) error {
-			return cli.RunMetaAnalysisSweep(sctx, st,
-				func() (llm.Client, error) {
-					return llm.FromConfig(sctx, llmCfg)
-				},
-				opts,
-				daemon.DiscardWriter,
-				daemon.DiscardWriter,
-			)
-		},
-	}
-	go sw.Run(ctx)
-	log.Info("meta-analysis sweeper enabled",
-		"interval", interval,
-		"propose_cadence", opts.ProposeCadence,
-		"reflect_cadence", opts.ReflectCadence,
-		"challenge_cadence", opts.ChallengeCadence,
-		"reflect_weekly_cadence", opts.ReflectWeeklyCadence,
-		"skill_revision_cadence", opts.SkillRevisionCadence,
-		"skill_revision_min_rate", opts.SkillRevisionMinRate)
 }
