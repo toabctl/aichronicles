@@ -19,7 +19,8 @@ For the static view, two complementary docs:
 | Trigger                                                   | What runs                                                                                                  | Cadence                                                |
 | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
 | Claude Code / Gemini CLI hook fires                       | `aichronicles ingest` → daemon → `raw_envelopes` + `events` (+ FTS / extractions / sessions aggregates)    | Every event (prompt, tool call, response, …)           |
-| Daemon ticker fires (when `Induction.Enabled = true`)     | One sweep: phase 0 (segment stale episodes) → 1 (summarize) → 2 (induction) → 3 (facts), per candidate     | Every `Induction.SweepInterval`                        |
+| `aichronicles-cron-induction.timer` fires                 | One sweep: phase 0 (segment stale episodes) → 1 (summarize) → 2 (induction) → 3 (facts), per candidate     | `OnUnitInactiveSec=15min` (configurable in the unit)   |
+| `aichronicles-cron-meta-analysis.timer` fires             | Cadence-gated dispatch of overdue propose / reflect / challenge / reflect_weekly / skill_revision           | `OnUnitInactiveSec=1h` (configurable in the unit)      |
 | `aichronicles summarize --session <id>`                   | One summarize LLM call → `llm_outputs(kind=summary)`                                                       | Manual, on demand                                      |
 | `aichronicles reflect` / `propose`                        | Multi-session digest → reflect/propose LLM call → `llm_outputs(kind=reflection / propose)`                 | Manual, on demand                                      |
 | `aichronicles propose add` / `merge` / `discard --skill X` | One `skill_candidates` lifecycle transition; `add`/`merge` also write `<skills>/<name>/SKILL.md` to disk   | Manual, per skill                                      |
@@ -214,19 +215,22 @@ This is why the README diagram shows the `mcp-serve` arrow as
 *read-only SQL* — there is no insert path through MCP. An
 adversarial MCP client can't pollute the corpus.
 
-## D. The induction sweep (automatic, when enabled)
+## D. The induction sweep (automatic, when the timer is enabled)
 
 Section A handles capture; this is the automatic *processing* layer.
-A daemon-resident goroutine
-(`internal/daemon/induction.go:InductionSweeper`) fires the sweep
-on every `Induction.SweepInterval` tick — plus once immediately on
-daemon start so a backlog after downtime drains without waiting a
-full interval. Disabled by default; opt in via config
-(`Induction.Enabled = true` in the daemon config TOML).
+A systemd `--user` timer
+(`aichronicles-cron-induction.timer`) drives `aichronicles induction
+sweep` on the configured cadence (`OnUnitInactiveSec=15min` by
+default). `Persistent=true` on the timer means a missed window
+after suspend is caught up on next wake — better than the previous
+in-process ticker, which silently dropped firings while the laptop
+was asleep. Disabled by default; opt in via
+`systemctl --user enable --now aichronicles-cron-induction.timer`
+(installed by `aichronicles setup cron`).
 
 ```mermaid
 flowchart TB
-    Tick["ticker fires every SweepInterval<br/>(also: one immediate fire on daemon start)"] --> P0
+    Tick["timer fires every OnUnitInactiveSec<br/>(systemd catches up missed runs after suspend)"] --> P0
     P0["Phase 0 (sweep-wide):<br/>LoadSessionsNeedingSegmentation"] --> P0Loop
     P0Loop["for each stale session:<br/>SegmentSession + SaveEpisodes<br/>(local, no LLM)"] --> CL
     CL[LoadInductionCandidates<br/>idle + min_events +<br/>NOT EXISTS llm_outputs.kind=induction] --> Loop{any candidates?}

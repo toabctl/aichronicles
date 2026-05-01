@@ -29,27 +29,30 @@ type Config struct {
 	MetaAnalysis  MetaAnalysis  `toml:"meta_analysis"`
 }
 
-// MetaAnalysis controls the daemon-resident meta-analysis sweeper.
-// Unlike per-session induction (driven by "session settled"), the
-// meta-analyses (propose, reflect, challenge, weekly digest, skill
-// revision) are time-driven — they fire on a fixed cadence per
-// kind. Disabled by default: enabling it accepts the LLM spend of
-// running these unsupervised.
+// MetaAnalysis controls the `aichronicles meta sweep` subcommand,
+// which is driven by the aichronicles-cron-meta-analysis.timer
+// systemd unit. Unlike per-session induction (driven by "session
+// settled"), the meta-analyses (propose, reflect, challenge, weekly
+// digest, skill revision) are time-driven — they fire on a fixed
+// cadence per kind.
+//
+// Whether the sweep runs at all is controlled by the timer
+// (`systemctl --user enable aichronicles-cron-meta-analysis.timer`),
+// not by a config flag. The poll cadence (how often the timer fires
+// to check for overdue kinds) lives on the timer itself; this
+// struct only configures the per-kind cadence and dispatch knobs.
 //
 // Cadences are absolute and read off the most-recent persisted row
-// of each kind, so a daemon restart does not double-fire and a
-// missed window is automatically picked up on the next tick.
+// of each kind, so a missed window is automatically picked up on
+// the next firing.
 //
 // Per-kind Skip flags are independent: a user can run propose
 // auto-fired but keep weekly digest manual, or vice versa.
 type MetaAnalysis struct {
-	Enabled       bool     `toml:"enabled"`
-	SweepInterval Duration `toml:"sweep_interval"`
-
 	// ProposeCadence / ProposeSkip control the ad-hoc propose
-	// path. Zero cadence with Enabled=true means "use the
-	// built-in default" (24h). Set Skip=true to disable just
-	// this kind without unsetting the master switch.
+	// path. Zero cadence falls back to the built-in default
+	// (24h). Set Skip=true to disable just this kind without
+	// disabling the timer.
 	ProposeCadence     Duration `toml:"propose_cadence"`
 	ProposeSkip        bool     `toml:"propose_skip"`
 	ProposeSinceWindow Duration `toml:"propose_since"`
@@ -97,17 +100,14 @@ type MetaAnalysis struct {
 	Model string `toml:"model"`
 }
 
-// Induction controls the daemon-resident online-induction sweeper.
-// Disabled by default — enabling it means the daemon will, on each
-// SweepInterval tick, automatically run single-session induction
-// against every idle un-induced session. That's a non-trivial amount
-// of LLM spend, so we make the user opt in explicitly.
+// Induction controls the `aichronicles induction sweep` subcommand,
+// which is driven by the aichronicles-cron-induction.timer systemd
+// unit. Whether the sweep runs at all is controlled by the timer
+// (`systemctl --user enable aichronicles-cron-induction.timer`),
+// not by a config flag. The wake cadence lives on the timer itself
+// (OnUnitInactiveSec=15min by default).
 //
 // Tuning rules:
-//
-//   - SweepInterval: how often the goroutine wakes. Default 15
-//     minutes. Smaller intervals make induction "more online" but
-//     don't help if the per-sweep work cap has nothing to do.
 //
 //   - Idle: how long a session must be quiet before it counts as
 //     ended. Default 30 minutes — same definition the manual sweep
@@ -120,15 +120,13 @@ type MetaAnalysis struct {
 //     pathological backlog of 100 idle sessions costs only ~5
 //     calls per interval until it drains.
 type Induction struct {
-	Enabled       bool     `toml:"enabled"`
-	SweepInterval Duration `toml:"sweep_interval"`
-	Idle          Duration `toml:"idle"`
-	MinEvents     int      `toml:"min_events"`
-	MaxPerSweep   int      `toml:"max_per_sweep"`
+	Idle        Duration `toml:"idle"`
+	MinEvents   int      `toml:"min_events"`
+	MaxPerSweep int      `toml:"max_per_sweep"`
 
 	// SkipSummarize, when true, suppresses the phase-1
 	// auto-summarize call. Defaults to false — the autonomous
-	// pipeline assumes the daemon owns summarize too. Set true to
+	// pipeline assumes the sweep owns summarize too. Set true to
 	// keep summarize manual (run `aichronicles summarize <id>`
 	// yourself); the sweeper will then skip phases 2+3 for
 	// sessions you haven't summarized.
@@ -137,12 +135,12 @@ type Induction struct {
 	// SkipFacts, when true, suppresses the per-candidate
 	// facts-induction LLM call that the sweep would otherwise fire
 	// alongside the (skill+workflow merged) induction call.
-	// Defaults to false: a user who has opted into
-	// [induction].enabled has accepted the LLM-spend tradeoff for
-	// auto-extraction; running facts on the same candidate adds
-	// one LLM call per tick but completes the MIRIX semantic
-	// memory layer without manual intervention. Set true if facts
-	// induction is producing low-value rows for your workload.
+	// Defaults to false: a user who has enabled the timer has
+	// accepted the LLM-spend tradeoff for auto-extraction; running
+	// facts on the same candidate adds one LLM call per tick but
+	// completes the MIRIX semantic memory layer without manual
+	// intervention. Set true if facts induction is producing
+	// low-value rows for your workload.
 	SkipFacts bool `toml:"skip_facts"`
 
 	// SkipEpisodes, when true, suppresses the per-candidate
