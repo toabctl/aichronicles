@@ -249,20 +249,6 @@ func startInductionSweeper(ctx context.Context, st *store.Store, cfg *config.Con
 // finding "still in cadence, nothing to do").
 const defaultMetaAnalysisInterval = time.Hour
 
-// Per-kind cadence defaults — only applied when the operator
-// turned the feature on (cfg.MetaAnalysis.Enabled) but didn't
-// pick a number. Match the prompts' natural horizons.
-const (
-	defaultMetaProposeCadence     = 24 * time.Hour
-	defaultMetaReflectCadence     = 7 * 24 * time.Hour
-	defaultMetaChallengeCadence   = 7 * 24 * time.Hour
-	defaultMetaReflectWeeklyCad   = 7 * 24 * time.Hour
-	defaultMetaSkillRevisionCad   = 24 * time.Hour
-	defaultMetaSkillRevisionMinR  = 0.5
-	defaultMetaSkillRevisionMaxN  = 5
-	defaultMetaSkillRevisionSince = 30 * 24 * time.Hour
-)
-
 // startMetaAnalysisSweeper spawns the daemon-resident meta-analysis
 // goroutine. Pulled out of run() to keep the main path focused;
 // the actual cadence-gated dispatch happens in
@@ -272,36 +258,7 @@ const (
 func startMetaAnalysisSweeper(ctx context.Context, st *store.Store, cfg *config.Config, log *slog.Logger) {
 	interval := cfg.MetaAnalysis.SweepInterval.Or(defaultMetaAnalysisInterval)
 	llmCfg := cli.LLMConfigFromFile(cfg.LLM)
-
-	opts := cli.MetaAnalysisSweepOptions{
-		ProposeCadence:       cfg.MetaAnalysis.ProposeCadence.Or(defaultMetaProposeCadence),
-		ProposeSkip:          cfg.MetaAnalysis.ProposeSkip,
-		ProposeSinceWindow:   cfg.MetaAnalysis.ProposeSinceWindow.Or(0),
-		ProposeLimit:         cfg.MetaAnalysis.ProposeLimit,
-		ReflectCadence:       cfg.MetaAnalysis.ReflectCadence.Or(defaultMetaReflectCadence),
-		ReflectSkip:          cfg.MetaAnalysis.ReflectSkip,
-		ReflectSinceWindow:   cfg.MetaAnalysis.ReflectSinceWindow.Or(0),
-		ReflectLimit:         cfg.MetaAnalysis.ReflectLimit,
-		ChallengeCadence:     cfg.MetaAnalysis.ChallengeCadence.Or(defaultMetaChallengeCadence),
-		ChallengeSkip:        cfg.MetaAnalysis.ChallengeSkip,
-		ChallengeSinceWindow: cfg.MetaAnalysis.ChallengeSinceWindow.Or(0),
-		ChallengeLimit:       cfg.MetaAnalysis.ChallengeLimit,
-		ReflectWeeklyCadence: cfg.MetaAnalysis.ReflectWeeklyCadence.Or(defaultMetaReflectWeeklyCad),
-		ReflectWeeklySkip:    cfg.MetaAnalysis.ReflectWeeklySkip,
-		SkillRevisionCadence: cfg.MetaAnalysis.SkillRevisionCadence.Or(defaultMetaSkillRevisionCad),
-		SkillRevisionSkip:    cfg.MetaAnalysis.SkillRevisionSkip,
-		SkillRevisionSince:   cfg.MetaAnalysis.SkillRevisionSince.Or(defaultMetaSkillRevisionSince),
-		SkillRevisionWindow:  cfg.MetaAnalysis.SkillRevisionWindow.Or(0),
-		SkillRevisionMinRate: cfg.MetaAnalysis.SkillRevisionMinRate,
-		SkillRevisionMax:     cfg.MetaAnalysis.SkillRevisionMax,
-		Model:                cfg.MetaAnalysis.Model,
-	}
-	if opts.SkillRevisionMinRate <= 0 {
-		opts.SkillRevisionMinRate = defaultMetaSkillRevisionMinR
-	}
-	if opts.SkillRevisionMax <= 0 {
-		opts.SkillRevisionMax = defaultMetaSkillRevisionMaxN
-	}
+	opts := cli.MetaAnalysisSweepOptionsFromConfig(cfg.MetaAnalysis)
 
 	sw := &daemon.MetaAnalysisSweeper{
 		Interval: interval,

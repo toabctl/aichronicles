@@ -9,15 +9,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/llm"
 )
 
 // MetaAnalysisKinds enumerates the cadence-gated meta-analyses
-// the daemon's MetaAnalysisSweeper drives. The set is closed:
-// adding a kind here is a deliberate choice (per-kind cadence,
-// per-kind skip flag, per-kind dispatch) and unknown kinds in
-// config are rejected so a typo can't silently disable a feature.
+// the meta sweep drives. The set is closed: adding a kind here is
+// a deliberate choice (per-kind cadence, per-kind skip flag, per-
+// kind dispatch) and unknown kinds in config are rejected so a
+// typo can't silently disable a feature.
 const (
 	MetaKindPropose       = "propose"
 	MetaKindReflect       = "reflect"
@@ -25,6 +26,60 @@ const (
 	MetaKindReflectWeekly = "reflect_weekly"
 	MetaKindSkillRevision = "skill_revision"
 )
+
+// Cadence defaults for the meta sweep. Applied by
+// MetaAnalysisSweepOptionsFromConfig when the operator left a
+// field zero. Match the prompts' natural horizons (running them
+// more often produces near-identical outputs at full LLM cost).
+const (
+	DefaultMetaProposeCadence           = 24 * time.Hour
+	DefaultMetaReflectCadence           = 7 * 24 * time.Hour
+	DefaultMetaChallengeCadence         = 7 * 24 * time.Hour
+	DefaultMetaReflectWeeklyCadence     = 7 * 24 * time.Hour
+	DefaultMetaSkillRevisionCadence     = 24 * time.Hour
+	DefaultMetaSkillRevisionMinRate     = 0.5
+	DefaultMetaSkillRevisionMaxPerSweep = 5
+	DefaultMetaSkillRevisionSince       = 30 * 24 * time.Hour
+)
+
+// MetaAnalysisSweepOptionsFromConfig converts the toml-shaped
+// config block into typed sweep options, applying built-in
+// defaults where the operator left a field zero. Shared between
+// the `aichronicles meta sweep` subcommand and any other caller
+// that drives RunMetaAnalysisSweep, so defaulting rules can't
+// drift between paths.
+func MetaAnalysisSweepOptionsFromConfig(cfg config.MetaAnalysis) MetaAnalysisSweepOptions {
+	opts := MetaAnalysisSweepOptions{
+		ProposeCadence:       cfg.ProposeCadence.Or(DefaultMetaProposeCadence),
+		ProposeSkip:          cfg.ProposeSkip,
+		ProposeSinceWindow:   cfg.ProposeSinceWindow.Or(0),
+		ProposeLimit:         cfg.ProposeLimit,
+		ReflectCadence:       cfg.ReflectCadence.Or(DefaultMetaReflectCadence),
+		ReflectSkip:          cfg.ReflectSkip,
+		ReflectSinceWindow:   cfg.ReflectSinceWindow.Or(0),
+		ReflectLimit:         cfg.ReflectLimit,
+		ChallengeCadence:     cfg.ChallengeCadence.Or(DefaultMetaChallengeCadence),
+		ChallengeSkip:        cfg.ChallengeSkip,
+		ChallengeSinceWindow: cfg.ChallengeSinceWindow.Or(0),
+		ChallengeLimit:       cfg.ChallengeLimit,
+		ReflectWeeklyCadence: cfg.ReflectWeeklyCadence.Or(DefaultMetaReflectWeeklyCadence),
+		ReflectWeeklySkip:    cfg.ReflectWeeklySkip,
+		SkillRevisionCadence: cfg.SkillRevisionCadence.Or(DefaultMetaSkillRevisionCadence),
+		SkillRevisionSkip:    cfg.SkillRevisionSkip,
+		SkillRevisionSince:   cfg.SkillRevisionSince.Or(DefaultMetaSkillRevisionSince),
+		SkillRevisionWindow:  cfg.SkillRevisionWindow.Or(0),
+		SkillRevisionMinRate: cfg.SkillRevisionMinRate,
+		SkillRevisionMax:     cfg.SkillRevisionMax,
+		Model:                cfg.Model,
+	}
+	if opts.SkillRevisionMinRate <= 0 {
+		opts.SkillRevisionMinRate = DefaultMetaSkillRevisionMinRate
+	}
+	if opts.SkillRevisionMax <= 0 {
+		opts.SkillRevisionMax = DefaultMetaSkillRevisionMaxPerSweep
+	}
+	return opts
+}
 
 // MetaAnalysisSweepOptions drives RunMetaAnalysisSweep. Each per-
 // kind block carries its own cadence and skip flag; per-kind
