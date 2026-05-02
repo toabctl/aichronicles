@@ -19,7 +19,7 @@ import (
 	"github.com/toabctl/aichronicles/pkg/events"
 )
 
-// isolateEnv scopes XDG + notification env so RunIngest never reads
+// isolateEnv scopes XDG + notification env so RunHook never reads
 // the user's real config or fires real DBus notifications from a test.
 func isolateEnv(t *testing.T) {
 	t.Helper()
@@ -55,8 +55,8 @@ func TestCLI_IngestRoundTrip(t *testing.T) {
 	}`)
 
 	var stderr bytes.Buffer
-	if err := cli.RunIngest(bytes.NewReader(hook), &stderr, sock, ""); err != nil {
-		t.Fatalf("RunIngest returned error: %v", err)
+	if err := cli.RunHook(bytes.NewReader(hook), &stderr, sock, ""); err != nil {
+		t.Fatalf("RunHook returned error: %v", err)
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("unexpected stderr: %q", stderr.String())
@@ -119,7 +119,7 @@ func TestCLI_IngestRedactsSecretsEndToEnd(t *testing.T) {
 	}`)
 
 	var stderr bytes.Buffer
-	if err := cli.RunIngest(bytes.NewReader(hook), &stderr, sock, ""); err != nil {
+	if err := cli.RunHook(bytes.NewReader(hook), &stderr, sock, ""); err != nil {
 		t.Fatalf("RunIngest: %v", err)
 	}
 
@@ -195,7 +195,7 @@ func TestCLI_IngestRespectsDenyPaths(t *testing.T) {
 	}`)
 
 	var stderr bytes.Buffer
-	if err := cli.RunIngest(bytes.NewReader(hook), &stderr, sock, ""); err != nil {
+	if err := cli.RunHook(bytes.NewReader(hook), &stderr, sock, ""); err != nil {
 		t.Fatalf("RunIngest: %v", err)
 	}
 
@@ -216,8 +216,8 @@ func TestCLI_IngestRespectsDenyPaths(t *testing.T) {
 		"prompt": "ok"
 	}`)
 	stderr.Reset()
-	if err := cli.RunIngest(bytes.NewReader(hookOK), &stderr, sock, ""); err != nil {
-		t.Fatalf("RunIngest allowed: %v", err)
+	if err := cli.RunHook(bytes.NewReader(hookOK), &stderr, sock, ""); err != nil {
+		t.Fatalf("RunHook allowed: %v", err)
 	}
 	_ = s.DB().QueryRow(`SELECT COUNT(*) FROM raw_envelopes`).Scan(&n)
 	if n != 1 {
@@ -241,15 +241,15 @@ func TestCLI_IngestUnreachableDaemon_LogsAndContinues(t *testing.T) {
 	hook := []byte(`{"session_id":"x","hook_event_name":"UserPromptSubmit","cwd":"/","prompt":"hi"}`)
 	var stderr bytes.Buffer
 
-	err := cli.RunIngest(bytes.NewReader(hook), &stderr, filepath.Join(t.TempDir(), "nope.sock"), "")
+	err := cli.RunHook(bytes.NewReader(hook), &stderr, filepath.Join(t.TempDir(), "nope.sock"), "")
 	if err != nil {
 		t.Fatalf("expected nil error even when daemon unreachable, got %v", err)
 	}
-	if !strings.Contains(stderr.String(), "aichronicles ingest") {
-		t.Errorf("expected stderr to mention ingest error, got %q", stderr.String())
+	if !strings.Contains(stderr.String(), "aichronicles hook") {
+		t.Errorf("expected stderr to mention hook error, got %q", stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "post to daemon") {
-		t.Errorf("expected stderr to name the failure mode (post to daemon), got %q", stderr.String())
+	if !strings.Contains(stderr.String(), "post to aichronicles-api") {
+		t.Errorf("expected stderr to name the failure mode (post to aichronicles-api), got %q", stderr.String())
 	}
 }
 
@@ -265,7 +265,7 @@ func TestCLI_IngestUnreachableDaemon_FlipsOutageFlag(t *testing.T) {
 	isolateEnv(t)
 	hook := []byte(`{"session_id":"x","hook_event_name":"UserPromptSubmit","cwd":"/","prompt":"hi"}`)
 
-	err := cli.RunIngest(bytes.NewReader(hook), &bytes.Buffer{},
+	err := cli.RunHook(bytes.NewReader(hook), &bytes.Buffer{},
 		filepath.Join(t.TempDir(), "nope.sock"), "")
 	if err != nil {
 		t.Fatalf("RunIngest: %v", err)
@@ -289,7 +289,7 @@ func TestCLI_IngestRecoveryClearsOutageFlag(t *testing.T) {
 	// First: fail once to plant the flag.
 	missingSock := filepath.Join(t.TempDir(), "nope.sock")
 	hook := []byte(`{"session_id":"x","hook_event_name":"UserPromptSubmit","cwd":"/","prompt":"hi"}`)
-	if err := cli.RunIngest(bytes.NewReader(hook), &bytes.Buffer{}, missingSock, ""); err != nil {
+	if err := cli.RunHook(bytes.NewReader(hook), &bytes.Buffer{}, missingSock, ""); err != nil {
 		t.Fatalf("first RunIngest: %v", err)
 	}
 	flag := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "aichronicles", "outage.flag")
@@ -312,7 +312,7 @@ func TestCLI_IngestRecoveryClearsOutageFlag(t *testing.T) {
 	}
 	defer func() { _ = shutdown(context.Background()) }()
 
-	if err := cli.RunIngest(bytes.NewReader(hook), &bytes.Buffer{}, sock, ""); err != nil {
+	if err := cli.RunHook(bytes.NewReader(hook), &bytes.Buffer{}, sock, ""); err != nil {
 		t.Fatalf("second RunIngest: %v", err)
 	}
 	if _, err := os.Stat(flag); !os.IsNotExist(err) {
@@ -377,17 +377,17 @@ func TestCLI_IngestHangingDaemon_FlipsOutageFlag(t *testing.T) {
 	var stderr bytes.Buffer
 
 	start := time.Now()
-	err = cli.RunIngest(bytes.NewReader(hook), &stderr, sockPath, "")
+	err = cli.RunHook(bytes.NewReader(hook), &stderr, sockPath, "")
 	elapsed := time.Since(start)
 
 	if err != nil {
-		t.Fatalf("RunIngest must not surface the timeout to the hook, got: %v", err)
+		t.Fatalf("RunHook must not surface the timeout to the hook, got: %v", err)
 	}
 	// defaultIngestTimeout is 250ms; allow generous slack for slow CI.
 	if elapsed > 5*time.Second {
-		t.Errorf("RunIngest blocked for %v on a hanging daemon; the timeout did not trip", elapsed)
+		t.Errorf("RunHook blocked for %v on a hanging daemon; the timeout did not trip", elapsed)
 	}
-	if !strings.Contains(stderr.String(), "post to daemon") {
+	if !strings.Contains(stderr.String(), "post to aichronicles-api") {
 		t.Errorf("expected stderr to log the failed POST, got %q", stderr.String())
 	}
 

@@ -16,15 +16,17 @@ import (
 	"github.com/toabctl/aichronicles/internal/agents"
 )
 
-// defaultHookCommand is what we drop into settings.json's command field.
-// It relies on `aichronicles` being on the user's PATH.
-const defaultHookCommand = "aichronicles ingest"
+// defaultHookCommand is what we drop into settings.json's command
+// field. It relies on `aichronicles` being on the user's PATH.
+// The subcommand was renamed from "ingest" to "hook" with the
+// aichronicles-api rearchitecture (the api now owns redaction
+// and accepts the post; the CLI just translates and forwards).
+const defaultHookCommand = "aichronicles hook"
 
-// defaultHookCommandFor returns the per-agent hook command. Claude
-// Code keeps the bare "aichronicles ingest" form for backwards
-// compatibility with existing installs (it's the --agent default).
-// Other agents pass --agent <slug> so RunIngest dispatches to the
-// right per-agent assembler.
+// defaultHookCommandFor returns the per-agent hook command.
+// Claude Code keeps the bare "aichronicles hook" form (the
+// --agent default). Other agents pass --agent <slug> so RunHook
+// dispatches to the right per-agent assembler.
 func defaultHookCommandFor(agent agents.Agent) string {
 	if agent.Slug == agents.ClaudeCode.Slug {
 		return defaultHookCommand
@@ -58,7 +60,7 @@ func newSetupClaudeCodeCmd() *cobra.Command {
 			"  1. Hooks → ~/.claude/settings.json: merges six entries\n" +
 			"     (UserPromptSubmit, Stop, PostToolUse, PostToolUseFailure,\n" +
 			"     SessionStart, SessionEnd) each pointing at\n" +
-			"     `aichronicles ingest`.\n" +
+			"     `aichronicles hook`.\n" +
 			"  2. MCP server → ~/.claude.json: registers\n" +
 			"     mcpServers.aichronicles pointing at `aichronicles\n" +
 			"     mcp-serve`, so Claude can query past sessions / cached\n" +
@@ -129,7 +131,7 @@ func newSetupGeminiCLICmd() *cobra.Command {
 		Short: "Install Gemini CLI hooks that forward events to aichroniclesd",
 		Long: "Idempotently merges five hook entries (BeforeAgent, AfterModel,\n" +
 			"AfterTool, SessionStart, SessionEnd) into the target\n" +
-			"settings.json, each pointing at `aichronicles ingest --agent\n" +
+			"settings.json, each pointing at `aichronicles hook --agent\n" +
 			"gemini-cli`. Existing hook entries from other tools are\n" +
 			"preserved; running twice is a no-op.\n\n" +
 			"Default settings path is ~/.gemini/settings.json (user-level\n" +

@@ -61,7 +61,7 @@ func NewRootCmd() *cobra.Command {
 	}
 	cmd.SetOut(os.Stdout)
 	cmd.SetErr(os.Stderr)
-	cmd.AddCommand(newIngestCmd())
+	cmd.AddCommand(newHookCmd())
 	cmd.AddCommand(newDoctorCmd())
 	cmd.AddCommand(newSetupCmd())
 	cmd.AddCommand(newTeardownCmd())

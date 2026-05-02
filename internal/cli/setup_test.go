@@ -157,13 +157,13 @@ func TestInstall_RespectsCustomCommand(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
 
-	if _, err := InstallClaudeCodeHooks(path, "/opt/bin/aichronicles ingest --socket /var/run/my.sock"); err != nil {
+	if _, err := InstallClaudeCodeHooks(path, "/opt/bin/aichronicles hook --socket /var/run/my.sock"); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 	got := readJSON(t, path)
 	entries := got["hooks"].(map[string]any)["UserPromptSubmit"].([]any)
 	inner := entries[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
-	if inner["command"] != "/opt/bin/aichronicles ingest --socket /var/run/my.sock" {
+	if inner["command"] != "/opt/bin/aichronicles hook --socket /var/run/my.sock" {
 		t.Errorf("custom command not written: %v", inner["command"])
 	}
 }
@@ -216,11 +216,11 @@ func TestEntryHasCommand(t *testing.T) {
 		map[string]any{
 			"hooks": []any{
 				map[string]any{"type": "command", "command": "other"},
-				map[string]any{"type": "command", "command": "aichronicles ingest"},
+				map[string]any{"type": "command", "command": "aichronicles hook"},
 			},
 		},
 	}
-	if !entryHasCommand(entries, "aichronicles ingest") {
+	if !entryHasCommand(entries, "aichronicles hook") {
 		t.Errorf("expected match for existing command")
 	}
 	if entryHasCommand(entries, "missing") {
