@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // fixture describes the expected shape of an assembled envelope for a
@@ -217,17 +217,17 @@ func TestExtractSubagent(t *testing.T) {
 	cases := []struct {
 		name string
 		hook map[string]any
-		want *ingest.Subagent
+		want *events.Subagent
 	}{
 		{
 			name: "both id and type → populated",
 			hook: map[string]any{"agent_id": "agent-7", "agent_type": "planner"},
-			want: &ingest.Subagent{ID: "agent-7", Type: "planner"},
+			want: &events.Subagent{ID: "agent-7", Type: "planner"},
 		},
 		{
 			name: "id only → populated with empty type",
 			hook: map[string]any{"agent_id": "agent-7"},
-			want: &ingest.Subagent{ID: "agent-7", Type: ""},
+			want: &events.Subagent{ID: "agent-7", Type: ""},
 		},
 		{
 			// Pinned by the symmetry fix: a payload with only
@@ -485,7 +485,7 @@ func TestRoleForKind(t *testing.T) {
 
 func TestHookKindMap_CoversInstalledHooks(t *testing.T) {
 	t.Parallel()
-	for _, name := range ingest.ClaudeCode.HookEvents {
+	for _, name := range events.ClaudeCode.HookEvents {
 		if _, ok := hookKindMap[name]; !ok {
 			t.Errorf("installed hook %q has no kind mapping", name)
 		}

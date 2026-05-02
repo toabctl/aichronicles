@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // seedSession ingests one user_prompt envelope into the store and
@@ -37,7 +37,7 @@ func seedSessionWithCwd(t *testing.T, st *store.Store, sourceSession, prompt, cw
 // need to mix claude-code and gemini-cli sessions in one store.
 func seedSessionFull(t *testing.T, st *store.Store, sourceAgent, sourceSession, prompt, cwd string, ts time.Time) string {
 	t.Helper()
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     sourceAgent,
@@ -49,7 +49,7 @@ func seedSessionFull(t *testing.T, st *store.Store, sourceAgent, sourceSession, 
 		ContentText:     prompt,
 		Payload:         map[string]any{},
 		Transport:       "hook",
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	raw, _ := json.Marshal(env)
 	tx, err := st.DB().Begin()
@@ -63,7 +63,7 @@ func seedSessionFull(t *testing.T, st *store.Store, sourceAgent, sourceSession, 
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	return ingest.DeriveSessionID(sourceAgent, sourceSession)
+	return events.DeriveSessionID(sourceAgent, sourceSession)
 }
 
 // fetch is a one-liner that fetches and reads-fully a URL. Tests
@@ -472,7 +472,7 @@ func TestSessionsPage_StatusEndedWhenSessionEndEventPresent(t *testing.T) {
 	// status dot — same path the SessionEnd hook fires on real claude
 	// sessions.
 	seedSession(t, st, "sess-ended", "wrapping up", time.Now().Add(-1*time.Minute))
-	seedEnv := &ingest.Envelope{
+	seedEnv := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -483,7 +483,7 @@ func TestSessionsPage_StatusEndedWhenSessionEndEventPresent(t *testing.T) {
 		Cwd:             "/work/sess-ended",
 		Payload:         map[string]any{"reason": "user-quit"},
 		Transport:       "hook",
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	rawBytes, _ := json.Marshal(seedEnv)
 	tx, err := st.DB().Begin()

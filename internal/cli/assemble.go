@@ -11,28 +11,28 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // hookKindMap translates Claude Code hook_event_name values to our
-// canonical Envelope.Kind. Anything not listed maps to ingest.KindUnknown
+// canonical Envelope.Kind. Anything not listed maps to events.KindUnknown
 // so new hook events surface through observability rather than crashing.
 var hookKindMap = map[string]string{
-	"UserPromptSubmit":    ingest.KindUserPrompt,
-	"UserPromptExpansion": ingest.KindUserPrompt,
-	"Stop":                ingest.KindAssistantMessage,
-	"SessionStart":        ingest.KindSessionStart,
-	"SessionEnd":          ingest.KindSessionEnd,
-	"PostToolUse":         ingest.KindToolUse,
-	"PostToolUseFailure":  ingest.KindToolFailure,
-	"PostToolBatch":       ingest.KindToolUse,
-	"SubagentStart":       ingest.KindSubagentStart,
-	"SubagentStop":        ingest.KindSubagentStop,
-	"PreCompact":          ingest.KindCompactStart,
-	"PostCompact":         ingest.KindCompactEnd,
-	"CwdChanged":          ingest.KindCwdChanged,
-	"InstructionsLoaded":  ingest.KindInstructionsLoaded,
-	"Notification":        ingest.KindSystemMessage,
+	"UserPromptSubmit":    events.KindUserPrompt,
+	"UserPromptExpansion": events.KindUserPrompt,
+	"Stop":                events.KindAssistantMessage,
+	"SessionStart":        events.KindSessionStart,
+	"SessionEnd":          events.KindSessionEnd,
+	"PostToolUse":         events.KindToolUse,
+	"PostToolUseFailure":  events.KindToolFailure,
+	"PostToolBatch":       events.KindToolUse,
+	"SubagentStart":       events.KindSubagentStart,
+	"SubagentStop":        events.KindSubagentStop,
+	"PreCompact":          events.KindCompactStart,
+	"PostCompact":         events.KindCompactEnd,
+	"CwdChanged":          events.KindCwdChanged,
+	"InstructionsLoaded":  events.KindInstructionsLoaded,
+	"Notification":        events.KindSystemMessage,
 }
 
 // roleForKind fills in the Envelope.Role hint from the canonical kind.
@@ -40,18 +40,18 @@ var hookKindMap = map[string]string{
 // directly; role exists so cross-source queries can filter on it.
 func roleForKind(kind string) string {
 	switch kind {
-	case ingest.KindUserPrompt:
-		return ingest.RoleUser
-	case ingest.KindAssistantMessage:
-		return ingest.RoleAssistant
-	case ingest.KindToolUse, ingest.KindToolResult, ingest.KindToolFailure:
-		return ingest.RoleTool
-	case ingest.KindSessionStart, ingest.KindSessionEnd,
-		ingest.KindCompactStart, ingest.KindCompactEnd,
-		ingest.KindSubagentStart, ingest.KindSubagentStop,
-		ingest.KindCwdChanged, ingest.KindInstructionsLoaded,
-		ingest.KindSystemMessage, ingest.KindError:
-		return ingest.RoleSystem
+	case events.KindUserPrompt:
+		return events.RoleUser
+	case events.KindAssistantMessage:
+		return events.RoleAssistant
+	case events.KindToolUse, events.KindToolResult, events.KindToolFailure:
+		return events.RoleTool
+	case events.KindSessionStart, events.KindSessionEnd,
+		events.KindCompactStart, events.KindCompactEnd,
+		events.KindSubagentStart, events.KindSubagentStop,
+		events.KindCwdChanged, events.KindInstructionsLoaded,
+		events.KindSystemMessage, events.KindError:
+		return events.RoleSystem
 	default:
 		return ""
 	}
@@ -61,40 +61,40 @@ func roleForKind(kind string) string {
 // agent slug must match one of the known sources (claude-code,
 // gemini-cli). Unknown slugs return an error so a typo in --agent
 // surfaces immediately rather than producing a malformed envelope.
-func AssembleByAgent(agent string, raw []byte, now time.Time) (ingest.Envelope, error) {
+func AssembleByAgent(agent string, raw []byte, now time.Time) (events.Envelope, error) {
 	switch agent {
 	case "claude-code":
 		return Assemble(raw, now)
 	case "gemini-cli":
 		return AssembleGemini(raw, now)
 	default:
-		return ingest.Envelope{}, fmt.Errorf("AssembleByAgent: unknown agent slug %q", agent)
+		return events.Envelope{}, fmt.Errorf("AssembleByAgent: unknown agent slug %q", agent)
 	}
 }
 
 // Assemble parses a Claude Code hook payload (JSON on stdin) and returns
 // a wire Envelope ready to be POSTed. The payload is stored verbatim so
 // downstream enrichment can recover anything we didn't normalize.
-func Assemble(raw []byte, now time.Time) (ingest.Envelope, error) {
+func Assemble(raw []byte, now time.Time) (events.Envelope, error) {
 	var hook map[string]any
 	if err := json.Unmarshal(raw, &hook); err != nil {
-		return ingest.Envelope{}, fmt.Errorf("parse hook payload: %w", err)
+		return events.Envelope{}, fmt.Errorf("parse hook payload: %w", err)
 	}
 
 	sourceSessionID, _ := hook["session_id"].(string)
 	if sourceSessionID == "" {
-		return ingest.Envelope{}, errors.New("hook payload missing session_id")
+		return events.Envelope{}, errors.New("hook payload missing session_id")
 	}
 	hookEvent, _ := hook["hook_event_name"].(string)
 	kind, ok := hookKindMap[hookEvent]
 	if !ok {
-		kind = ingest.KindUnknown
+		kind = events.KindUnknown
 	}
 
-	env := ingest.Envelope{
-		V:               ingest.CurrentSchemaVersion,
+	env := events.Envelope{
+		V:               events.CurrentSchemaVersion,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
-		SourceAgent:     ingest.ClaudeCode.Slug,
+		SourceAgent:     events.ClaudeCode.Slug,
 		SourceSessionID: sourceSessionID,
 		Kind:            kind,
 		Role:            roleForKind(kind),
@@ -106,7 +106,7 @@ func Assemble(raw []byte, now time.Time) (ingest.Envelope, error) {
 		env.Cwd = cwd
 	}
 	if toolName, ok := hook["tool_name"].(string); ok && toolName != "" {
-		env.Tool = &ingest.Tool{Name: toolName}
+		env.Tool = &events.Tool{Name: toolName}
 	}
 	if content := extractContentText(kind, hook); content != "" {
 		env.ContentText = content
@@ -128,13 +128,13 @@ func Assemble(raw []byte, now time.Time) (ingest.Envelope, error) {
 // from a host we don't understand); fabricating a thread out of
 // it would label events with an empty ID, which downstream
 // queries can't reason about.
-func extractSubagent(hook map[string]any) *ingest.Subagent {
+func extractSubagent(hook map[string]any) *events.Subagent {
 	id, _ := hook["agent_id"].(string)
 	if id == "" {
 		return nil
 	}
 	typ, _ := hook["agent_type"].(string)
-	return &ingest.Subagent{ID: id, Type: typ}
+	return &events.Subagent{ID: id, Type: typ}
 }
 
 // extractContentText pulls the most informative human-readable field
@@ -143,16 +143,16 @@ func extractSubagent(hook map[string]any) *ingest.Subagent {
 // (see internal/cli/testdata/hooks/*.json for samples).
 func extractContentText(kind string, hook map[string]any) string {
 	switch kind {
-	case ingest.KindUserPrompt:
+	case events.KindUserPrompt:
 		if s, ok := hook["prompt"].(string); ok {
 			return s
 		}
-	case ingest.KindAssistantMessage:
+	case events.KindAssistantMessage:
 		// Stop hooks carry the full assistant turn text here.
 		if s, ok := hook["last_assistant_message"].(string); ok {
 			return s
 		}
-	case ingest.KindToolUse, ingest.KindToolFailure:
+	case events.KindToolUse, events.KindToolFailure:
 		return renderToolContent(hook)
 	}
 	return ""
@@ -186,7 +186,7 @@ func renderToolContent(hook map[string]any) string {
 // tool's tool_input. Returns empty for unknown tools, which makes
 // renderToolContent fall back to the bare tool name. Adding a new
 // tool here should be paired with a matching extractor in
-// pkg/ingest/extract so the typed-fact tier can also reach it.
+// pkg/events/extract so the typed-fact tier can also reach it.
 //
 // Both Claude Code's tool naming (PascalCase: Bash, Read, …) and
 // Gemini CLI's equivalents (snake_case: run_shell_command,

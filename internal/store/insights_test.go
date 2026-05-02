@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // seedInsightsEvents inserts a tool_use event with the given tool
@@ -17,7 +17,7 @@ import (
 func seedInsightsEvents(t *testing.T, s *Store, sessionKey, toolName string, n int, baseTs time.Time) {
 	t.Helper()
 	for i := range n {
-		env := &ingest.Envelope{
+		env := &events.Envelope{
 			V:               1,
 			EventID:         uuid.Must(uuid.NewV7()).String(),
 			SourceAgent:     "claude-code",
@@ -25,10 +25,10 @@ func seedInsightsEvents(t *testing.T, s *Store, sessionKey, toolName string, n i
 			Kind:            "tool_use",
 			Role:            "assistant",
 			TsSource:        baseTs.Add(time.Duration(i) * time.Minute),
-			Tool:            &ingest.Tool{Name: toolName},
+			Tool:            &events.Tool{Name: toolName},
 			ContentText:     toolName,
 			Payload:         map[string]any{"tool_input": map[string]any{}},
-			Redaction:       &ingest.Redaction{Applied: true},
+			Redaction:       &events.Redaction{Applied: true},
 		}
 		withTx(t, s, func(tx *sql.Tx) {
 			if _, err := IngestEnvelope(t.Context(), tx, env, []byte(`{"v":1}`), env.TsSource.UnixMilli()); err != nil {
@@ -43,7 +43,7 @@ func seedInsightsEvents(t *testing.T, s *Store, sessionKey, toolName string, n i
 // end (insert event → extractor → row in extractions).
 func seedSkillLoad(t *testing.T, s *Store, sessionKey, skillName string, ts time.Time) {
 	t.Helper()
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -51,12 +51,12 @@ func seedSkillLoad(t *testing.T, s *Store, sessionKey, skillName string, ts time
 		Kind:            "tool_use",
 		Role:            "assistant",
 		TsSource:        ts,
-		Tool:            &ingest.Tool{Name: "Skill"},
+		Tool:            &events.Tool{Name: "Skill"},
 		ContentText:     "Skill",
 		Payload: map[string]any{
 			"tool_input": map[string]any{"skill": skillName},
 		},
-		Redaction: &ingest.Redaction{Applied: true},
+		Redaction: &events.Redaction{Applied: true},
 	}
 	withTx(t, s, func(tx *sql.Tx) {
 		if _, err := IngestEnvelope(t.Context(), tx, env, []byte(`{"v":1}`), env.TsSource.UnixMilli()); err != nil {

@@ -19,7 +19,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // Kind names for Extraction.Kind. Kept as exported constants so
@@ -42,7 +42,7 @@ type Extraction struct {
 // Extractor is the uniform contract every extractor satisfies:
 // pure (no state, no I/O), total (no error — best-effort), safe for
 // concurrent use. Returns zero or more extractions.
-type Extractor func(env *ingest.Envelope) []Extraction
+type Extractor func(env *events.Envelope) []Extraction
 
 // Registered is the ordered list FromEnvelope walks. Tests and (later)
 // config gating mutate this slice for isolation; production reads the
@@ -58,7 +58,7 @@ var Registered = []Extractor{
 
 // FromEnvelope runs every Registered extractor against env and returns
 // their combined output. Nil envelope → nil slice.
-func FromEnvelope(env *ingest.Envelope) []Extraction {
+func FromEnvelope(env *events.Envelope) []Extraction {
 	if env == nil {
 		return nil
 	}
@@ -78,7 +78,7 @@ var urlRE = regexp.MustCompile(`https?://[^\s<>"'\x60]+`)
 // URLExtractor emits one row per distinct http(s) URL found in
 // ContentText. Deduped within the envelope so duplicate text doesn't
 // inflate extraction counts.
-func URLExtractor(env *ingest.Envelope) []Extraction {
+func URLExtractor(env *events.Envelope) []Extraction {
 	if env.ContentText == "" {
 		return nil
 	}
@@ -121,7 +121,7 @@ var fileToolNames = map[string]struct{}{
 // the resulting `key_files` / search hits are noticeably more
 // useful when every stored path is canonical. Absolute inputs
 // pass through untouched (filepath.IsAbs short-circuits).
-func FilePathExtractor(env *ingest.Envelope) []Extraction {
+func FilePathExtractor(env *events.Envelope) []Extraction {
 	if env.Tool == nil {
 		return nil
 	}
@@ -149,7 +149,7 @@ const shellToolName = "Bash"
 
 // ShellCommandExtractor emits the command string from a Bash
 // tool_use, attaching tool_input.description under Extra when present.
-func ShellCommandExtractor(env *ingest.Envelope) []Extraction {
+func ShellCommandExtractor(env *events.Envelope) []Extraction {
 	if env.Tool == nil || env.Tool.Name != shellToolName {
 		return nil
 	}
@@ -175,7 +175,7 @@ func ShellCommandExtractor(env *ingest.Envelope) []Extraction {
 // toolInput pulls the "tool_input" map out of an envelope's payload.
 // Returns (nil, false) if the payload isn't shaped as expected —
 // every extractor treats that as "nothing to extract here."
-func toolInput(env *ingest.Envelope) (map[string]any, bool) {
+func toolInput(env *events.Envelope) (map[string]any, bool) {
 	if env.Payload == nil {
 		return nil, false
 	}
@@ -191,7 +191,7 @@ func toolInput(env *ingest.Envelope) (map[string]any, bool) {
 // fact joins the existing URL pool. Reusing KindURL keeps the
 // snippet labelling consistent — `[url] https://...` regardless of
 // whether the URL was found in prose or in a WebFetch tool_input.
-func WebFetchExtractor(env *ingest.Envelope) []Extraction {
+func WebFetchExtractor(env *events.Envelope) []Extraction {
 	if env.Tool == nil || env.Tool.Name != "WebFetch" {
 		return nil
 	}
@@ -219,7 +219,7 @@ func WebFetchExtractor(env *ingest.Envelope) []Extraction {
 // args field is optional and may be empty. A future Codex / gemini
 // adapter would extend this same helper rather than the extractor
 // body — keeping the extractor logic itself shape-agnostic.
-func skillToolInput(env *ingest.Envelope) (skill, args string, ok bool) {
+func skillToolInput(env *events.Envelope) (skill, args string, ok bool) {
 	if env.Payload == nil {
 		return "", "", false
 	}
@@ -274,7 +274,7 @@ func skillToolInput(env *ingest.Envelope) (skill, args string, ok bool) {
 // Powers downstream features: skill-frequency reports, propose
 // awareness of installed-vs-invoked skills, and skill-staleness
 // detection (load + subsequent failure correlation).
-func SkillLoadExtractor(env *ingest.Envelope) []Extraction {
+func SkillLoadExtractor(env *events.Envelope) []Extraction {
 	if env.Tool == nil || env.Tool.Name != "Skill" {
 		return nil
 	}

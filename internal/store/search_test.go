@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // contains is a one-letter alias for strings.Contains, kept to
@@ -22,7 +22,7 @@ func contains(haystack, needle string) bool { return strings.Contains(haystack, 
 // so the extractions_fts fallback can be exercised in isolation.
 func ingestFileTouch(t *testing.T, s *Store, sourceSession, toolName, filePath, content string, ts time.Time) string {
 	t.Helper()
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -32,12 +32,12 @@ func ingestFileTouch(t *testing.T, s *Store, sourceSession, toolName, filePath, 
 		TsSource:        ts.UTC(),
 		Cwd:             "/work/" + sourceSession,
 		ContentText:     content,
-		Tool:            &ingest.Tool{Name: toolName},
+		Tool:            &events.Tool{Name: toolName},
 		Payload: map[string]any{
 			"tool_input": map[string]any{"file_path": filePath},
 		},
 		Transport: "hook",
-		Redaction: &ingest.Redaction{Applied: true},
+		Redaction: &events.Redaction{Applied: true},
 	}
 	raw, err := json.Marshal(env)
 	if err != nil {
@@ -54,7 +54,7 @@ func ingestFileTouch(t *testing.T, s *Store, sourceSession, toolName, filePath, 
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	return ingest.DeriveSessionID("claude-code", sourceSession)
+	return events.DeriveSessionID("claude-code", sourceSession)
 }
 
 // ingestForSearch is the multi-arg cousin of ingestText that lets
@@ -62,7 +62,7 @@ func ingestFileTouch(t *testing.T, s *Store, sourceSession, toolName, filePath, 
 // session_id so callers can filter by it.
 func ingestForSearch(t *testing.T, s *Store, sourceSession, kind, content, transport string, ts time.Time) string {
 	t.Helper()
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -74,7 +74,7 @@ func ingestForSearch(t *testing.T, s *Store, sourceSession, kind, content, trans
 		ContentText:     content,
 		Payload:         map[string]any{},
 		Transport:       transport,
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	raw, err := json.Marshal(env)
 	if err != nil {
@@ -91,7 +91,7 @@ func ingestForSearch(t *testing.T, s *Store, sourceSession, kind, content, trans
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	return ingest.DeriveSessionID("claude-code", sourceSession)
+	return events.DeriveSessionID("claude-code", sourceSession)
 }
 
 func TestSearchEvents_FindsByKeyword(t *testing.T) {
@@ -584,7 +584,7 @@ func TestSearchEvents_RecencyBoostHasExponentialHalfLife(t *testing.T) {
 		t.Fatalf("hits: got %d, want 2", len(hits))
 	}
 	// Newer row wins under recency boost regardless of formula.
-	if hits[0].SessionID != ingest.DeriveSessionID("claude-code", "sess-now") {
+	if hits[0].SessionID != events.DeriveSessionID("claude-code", "sess-now") {
 		t.Errorf("expected newer row first, got session %q", hits[0].SessionID)
 	}
 }
@@ -755,7 +755,7 @@ func TestSearchEvents_ExtractionsFallbackDedupsPerEvent(t *testing.T) {
 	// itself contains a URL — two extractions on the same event:
 	// one shell_command, one url. Search for the shared substring
 	// the trigram path can't catch (extraction-only fallback).
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -765,14 +765,14 @@ func TestSearchEvents_ExtractionsFallbackDedupsPerEvent(t *testing.T) {
 		TsSource:        now.UTC(),
 		Cwd:             "/work/multi",
 		ContentText:     "running a curl",
-		Tool:            &ingest.Tool{Name: "Bash"},
+		Tool:            &events.Tool{Name: "Bash"},
 		Payload: map[string]any{
 			"tool_input": map[string]any{
 				"command": "curl https://example.com/uniquefactpath/ok.json",
 			},
 		},
 		Transport: "hook",
-		Redaction: &ingest.Redaction{Applied: true},
+		Redaction: &events.Redaction{Applied: true},
 	}
 	raw, _ := json.Marshal(env)
 	tx, err := s.DB().Begin()
@@ -807,7 +807,7 @@ func TestSearchEvents_ExtractionsFallbackDedupsPerEvent(t *testing.T) {
 // SourceAgent filter has something to discriminate.
 func ingestForAgent(t *testing.T, s *Store, sourceAgent, sourceSession, content string, ts time.Time) string {
 	t.Helper()
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     sourceAgent,
@@ -819,7 +819,7 @@ func ingestForAgent(t *testing.T, s *Store, sourceAgent, sourceSession, content 
 		ContentText:     content,
 		Payload:         map[string]any{},
 		Transport:       "hook",
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	raw, _ := json.Marshal(env)
 	tx, _ := s.DB().Begin()
@@ -827,7 +827,7 @@ func ingestForAgent(t *testing.T, s *Store, sourceAgent, sourceSession, content 
 		t.Fatalf("ingest: %v", err)
 	}
 	_ = tx.Commit()
-	return ingest.DeriveSessionID(sourceAgent, sourceSession)
+	return events.DeriveSessionID(sourceAgent, sourceSession)
 }
 
 func TestSearchEvents_FilterBySourceAgent(t *testing.T) {
@@ -855,7 +855,7 @@ func TestSearchEvents_FilterBySourceAgent(t *testing.T) {
 	if len(gem) != 1 {
 		t.Fatalf("--agent gemini-cli should narrow to 1, got %d", len(gem))
 	}
-	if gem[0].SessionID != ingest.DeriveSessionID("gemini-cli", "gem-1") {
+	if gem[0].SessionID != events.DeriveSessionID("gemini-cli", "gem-1") {
 		t.Errorf("filtered hit: got %q, want gemini session", gem[0].SessionID)
 	}
 }
@@ -878,7 +878,7 @@ func TestSearchEvents_FilterByToolName(t *testing.T) {
 	if len(hits) != 1 {
 		t.Fatalf("--tool Bash: got %d hits, want 1", len(hits))
 	}
-	if hits[0].SessionID != ingest.DeriveSessionID("claude-code", "sess-bash") {
+	if hits[0].SessionID != events.DeriveSessionID("claude-code", "sess-bash") {
 		t.Errorf("filtered to wrong tool")
 	}
 }
@@ -945,7 +945,7 @@ func TestSearchEvents_FilterWithFailures(t *testing.T) {
 	_ = ingestForSearch(t, s, "clean", "user_prompt",
 		"omegamark", "hook", now)
 	// Add a tool_failure event to the "failed" session.
-	failEnv := &ingest.Envelope{
+	failEnv := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -953,10 +953,10 @@ func TestSearchEvents_FilterWithFailures(t *testing.T) {
 		Kind:            "tool_failure",
 		Role:            "tool",
 		TsSource:        now.Add(time.Minute),
-		Tool:            &ingest.Tool{Name: "Bash"},
+		Tool:            &events.Tool{Name: "Bash"},
 		ContentText:     "exit 1",
 		Payload:         map[string]any{"error": "boom"},
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	raw, _ := json.Marshal(failEnv)
 	tx, _ := s.DB().Begin()

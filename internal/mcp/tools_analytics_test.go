@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // seedToolUseForAnalytics ingests one tool_use envelope so the
@@ -17,7 +17,7 @@ import (
 // extraction logic — those tests have their own helpers below.
 func seedToolUseForAnalytics(t *testing.T, st *store.Store, sourceSession, toolName string, ts time.Time) {
 	t.Helper()
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -25,10 +25,10 @@ func seedToolUseForAnalytics(t *testing.T, st *store.Store, sourceSession, toolN
 		Kind:            "tool_use",
 		Role:            "assistant",
 		TsSource:        ts,
-		Tool:            &ingest.Tool{Name: toolName},
+		Tool:            &events.Tool{Name: toolName},
 		ContentText:     toolName,
 		Payload:         map[string]any{"tool_input": map[string]any{}},
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	raw, _ := json.Marshal(env)
 	tx, _ := st.DB().Begin()
@@ -122,7 +122,7 @@ func TestGetSkillStaleness_ReportsCorrelations(t *testing.T) {
 
 	// Skill load + tool_failure inside the same session, within
 	// the default 10-minute window.
-	skillLoad := &ingest.Envelope{
+	skillLoad := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -130,16 +130,16 @@ func TestGetSkillStaleness_ReportsCorrelations(t *testing.T) {
 		Kind:            "tool_use",
 		Role:            "assistant",
 		TsSource:        now,
-		Tool:            &ingest.Tool{Name: "Skill"},
+		Tool:            &events.Tool{Name: "Skill"},
 		Payload:         map[string]any{"tool_input": map[string]any{"skill": "build-test"}},
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	raw, _ := json.Marshal(skillLoad)
 	tx, _ := st.DB().Begin()
 	_, _ = store.IngestEnvelope(t.Context(), tx, skillLoad, raw, now.UnixMilli())
 	_ = tx.Commit()
 
-	failure := &ingest.Envelope{
+	failure := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -147,10 +147,10 @@ func TestGetSkillStaleness_ReportsCorrelations(t *testing.T) {
 		Kind:            "tool_failure",
 		Role:            "tool",
 		TsSource:        now.Add(2 * time.Minute),
-		Tool:            &ingest.Tool{Name: "Bash"},
+		Tool:            &events.Tool{Name: "Bash"},
 		ContentText:     "exit 1",
 		Payload:         map[string]any{"error": "boom"},
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	rawF, _ := json.Marshal(failure)
 	tx2, _ := st.DB().Begin()

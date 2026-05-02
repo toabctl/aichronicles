@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
-	"github.com/toabctl/aichronicles/pkg/ingest/extract"
+	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // InitialSkillVersion is the version stamp every newly-recorded
@@ -808,7 +808,7 @@ SELECT sc.id, sc.llm_output_id, sc.skill_name, sc.proposed_at_ms,
  LIMIT ?`
 	rows, err := db.QueryContext(ctx, q,
 		extract.KindSkillLoad,
-		extract.KindSkillLoad, ingest.KindToolFailure, windowMs,
+		extract.KindSkillLoad, events.KindToolFailure, windowMs,
 		extract.KindSkillLoad,
 		string(MaintenanceAdd), sinceMs, limit,
 	)

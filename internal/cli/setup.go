@@ -13,7 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // defaultHookCommand is what we drop into settings.json's command field.
@@ -25,8 +25,8 @@ const defaultHookCommand = "aichronicles ingest"
 // compatibility with existing installs (it's the --agent default).
 // Other agents pass --agent <slug> so RunIngest dispatches to the
 // right per-agent assembler.
-func defaultHookCommandFor(agent ingest.Agent) string {
-	if agent.Slug == ingest.ClaudeCode.Slug {
+func defaultHookCommandFor(agent events.Agent) string {
+	if agent.Slug == events.ClaudeCode.Slug {
 		return defaultHookCommand
 	}
 	return defaultHookCommand + " --agent " + agent.Slug
@@ -74,7 +74,7 @@ func newSetupClaudeCodeCmd() *cobra.Command {
 			hookPath := settingsPath
 			if hookPath == "" {
 				var err error
-				hookPath, err = ingest.ClaudeCode.DefaultSettingsPath()
+				hookPath, err = events.ClaudeCode.DefaultSettingsPath()
 				if err != nil {
 					return err
 				}
@@ -144,12 +144,12 @@ func newSetupGeminiCLICmd() *cobra.Command {
 			path := settingsPath
 			if path == "" {
 				var err error
-				path, err = ingest.GeminiCLI.DefaultSettingsPath()
+				path, err = events.GeminiCLI.DefaultSettingsPath()
 				if err != nil {
 					return err
 				}
 			}
-			report, err := InstallAgentHooks(ingest.GeminiCLI, path, hookCommand)
+			report, err := InstallAgentHooks(events.GeminiCLI, path, hookCommand)
 			if err != nil {
 				return err
 			}
@@ -158,7 +158,7 @@ func newSetupGeminiCLICmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&settingsPath, "settings", "", "path to Gemini settings.json (default: ~/.gemini/settings.json)")
-	cmd.Flags().StringVar(&hookCommand, "command", defaultHookCommandFor(ingest.GeminiCLI), "command to run from each hook")
+	cmd.Flags().StringVar(&hookCommand, "command", defaultHookCommandFor(events.GeminiCLI), "command to run from each hook")
 	return cmd
 }
 
@@ -193,7 +193,7 @@ func InstallClaudeCodeFull(settingsPath, userConfigPath, hookCommand string, mcp
 	if err != nil {
 		return "", err
 	}
-	hooksAdded, hooksPresent := mergeAllHooks(settings, ingest.ClaudeCode.HookEvents, hookCommand)
+	hooksAdded, hooksPresent := mergeAllHooks(settings, events.ClaudeCode.HookEvents, hookCommand)
 	if len(hooksAdded) > 0 {
 		if err := writeSettingsAtomic(settingsPath, settings); err != nil {
 			return "", err
@@ -289,11 +289,11 @@ func formatClaudeCodeReport(settingsPath, userConfigPath string, hooksAdded, hoo
 // human-readable summary of what changed. Safe to run repeatedly.
 //
 // The function is agent-neutral: a future Codex CLI integration calls
-// this with ingest.Codex (a sibling of ingest.ClaudeCode) and gets
+// this with events.Codex (a sibling of events.ClaudeCode) and gets
 // the same install logic for free. The agent supplies which event
 // names to register; everything else — JSON shape, file mode,
 // merge semantics — is shared.
-func InstallAgentHooks(agent ingest.Agent, path, command string) (string, error) {
+func InstallAgentHooks(agent events.Agent, path, command string) (string, error) {
 	if command == "" {
 		command = defaultHookCommand
 	}
@@ -316,9 +316,9 @@ func InstallAgentHooks(agent ingest.Agent, path, command string) (string, error)
 // InstallClaudeCodeHooks is a thin wrapper kept for callers (mainly
 // the test suite) that target the Claude Code agent specifically.
 // New code should call InstallAgentHooks directly with the desired
-// ingest.Agent value.
+// events.Agent value.
 func InstallClaudeCodeHooks(path, command string) (string, error) {
-	return InstallAgentHooks(ingest.ClaudeCode, path, command)
+	return InstallAgentHooks(events.ClaudeCode, path, command)
 }
 
 // readSettings returns the settings.json contents as a generic map, or

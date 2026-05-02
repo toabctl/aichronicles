@@ -9,25 +9,25 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // geminiHookKindMap translates Gemini CLI hook_event_name values
 // into our canonical Envelope.Kind. Gemini's hook surface is
 // documented at https://geminicli.com/docs/hooks/reference; the
 // subset here matches what aichronicles subscribes to via
-// ingest.GeminiCLI.HookEvents.
+// events.GeminiCLI.HookEvents.
 //
 // AfterTool maps to tool_use as a default; AssembleGemini
 // promotes it to tool_failure when the response indicates an
 // error (gemini reports failures via tool_response.error rather
 // than via a dedicated event).
 var geminiHookKindMap = map[string]string{
-	"BeforeAgent":  ingest.KindUserPrompt,
-	"AfterModel":   ingest.KindAssistantMessage,
-	"AfterTool":    ingest.KindToolUse,
-	"SessionStart": ingest.KindSessionStart,
-	"SessionEnd":   ingest.KindSessionEnd,
+	"BeforeAgent":  events.KindUserPrompt,
+	"AfterModel":   events.KindAssistantMessage,
+	"AfterTool":    events.KindToolUse,
+	"SessionStart": events.KindSessionStart,
+	"SessionEnd":   events.KindSessionEnd,
 }
 
 // AssembleGemini parses a Gemini CLI hook payload (JSON on stdin)
@@ -40,33 +40,33 @@ var geminiHookKindMap = map[string]string{
 // timestamp} base) plus per-event extras (tool_name, tool_input,
 // tool_response, prompt). Fields we don't map land untouched in
 // env.Payload.
-func AssembleGemini(raw []byte, now time.Time) (ingest.Envelope, error) {
+func AssembleGemini(raw []byte, now time.Time) (events.Envelope, error) {
 	var hook map[string]any
 	if err := json.Unmarshal(raw, &hook); err != nil {
-		return ingest.Envelope{}, fmt.Errorf("parse hook payload: %w", err)
+		return events.Envelope{}, fmt.Errorf("parse hook payload: %w", err)
 	}
 
 	sourceSessionID, _ := hook["session_id"].(string)
 	if sourceSessionID == "" {
-		return ingest.Envelope{}, errors.New("hook payload missing session_id")
+		return events.Envelope{}, errors.New("hook payload missing session_id")
 	}
 	hookEvent, _ := hook["hook_event_name"].(string)
 	kind, ok := geminiHookKindMap[hookEvent]
 	if !ok {
-		kind = ingest.KindUnknown
+		kind = events.KindUnknown
 	}
 
 	// AfterTool with an error response → tool_failure. Detect
 	// before building the envelope so role/kind stay consistent
 	// (kind=tool_failure → role=tool, same as claude's path).
-	if kind == ingest.KindToolUse && hookEvent == "AfterTool" && geminiToolResponseHasError(hook) {
-		kind = ingest.KindToolFailure
+	if kind == events.KindToolUse && hookEvent == "AfterTool" && geminiToolResponseHasError(hook) {
+		kind = events.KindToolFailure
 	}
 
-	env := ingest.Envelope{
-		V:               ingest.CurrentSchemaVersion,
+	env := events.Envelope{
+		V:               events.CurrentSchemaVersion,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
-		SourceAgent:     ingest.GeminiCLI.Slug,
+		SourceAgent:     events.GeminiCLI.Slug,
 		SourceSessionID: sourceSessionID,
 		Kind:            kind,
 		Role:            roleForKind(kind),
@@ -78,7 +78,7 @@ func AssembleGemini(raw []byte, now time.Time) (ingest.Envelope, error) {
 		env.Cwd = cwd
 	}
 	if toolName, ok := hook["tool_name"].(string); ok && toolName != "" {
-		env.Tool = &ingest.Tool{Name: toolName}
+		env.Tool = &events.Tool{Name: toolName}
 	}
 	if content := extractGeminiContentText(kind, hookEvent, hook); content != "" {
 		env.ContentText = content
@@ -130,11 +130,11 @@ func geminiToolResponseHasError(hook map[string]any) bool {
 //     handle both.
 func extractGeminiContentText(kind, event string, hook map[string]any) string {
 	switch kind {
-	case ingest.KindUserPrompt:
+	case events.KindUserPrompt:
 		if s, _ := hook["prompt"].(string); s != "" {
 			return s
 		}
-	case ingest.KindAssistantMessage:
+	case events.KindAssistantMessage:
 		// Direct string response.
 		if s, _ := hook["response"].(string); s != "" {
 			return s
@@ -145,7 +145,7 @@ func extractGeminiContentText(kind, event string, hook map[string]any) string {
 				return s
 			}
 		}
-	case ingest.KindToolUse, ingest.KindToolFailure:
+	case events.KindToolUse, events.KindToolFailure:
 		return renderToolContent(hook)
 	}
 	_ = event

@@ -9,14 +9,14 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // newValidEnvelope returns an Envelope that passes Validate and is
 // suitable for IngestEnvelope. Tests mutate it where needed.
-func newValidEnvelope(t *testing.T) (*ingest.Envelope, []byte) {
+func newValidEnvelope(t *testing.T) (*events.Envelope, []byte) {
 	t.Helper()
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -28,7 +28,7 @@ func newValidEnvelope(t *testing.T) (*ingest.Envelope, []byte) {
 		ContentText:     "hello from ingest test",
 		Payload:         map[string]any{"prompt": "hello from ingest test"},
 		Transport:       "hook",
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	raw, err := json.Marshal(env)
 	if err != nil {
@@ -74,7 +74,7 @@ func TestIngestEnvelope_RejectsAppliedFalse(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
 	env, raw := newValidEnvelope(t)
-	env.Redaction = &ingest.Redaction{Applied: false}
+	env.Redaction = &events.Redaction{Applied: false}
 
 	withTx(t, s, func(tx *sql.Tx) {
 		_, err := IngestEnvelope(t.Context(), tx, env, raw, 99)
@@ -88,7 +88,7 @@ func TestIngestEnvelope_SubagentFieldsRoundTrip(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
 	env, raw := newValidEnvelope(t)
-	env.Subagent = &ingest.Subagent{ID: "agent-42", Type: "planner"}
+	env.Subagent = &events.Subagent{ID: "agent-42", Type: "planner"}
 	rawWithSubagent, err := jsonMarshalEnvelope(env)
 	if err != nil {
 		t.Fatalf("re-marshal: %v", err)
@@ -144,7 +144,7 @@ func TestIngestEnvelope_TopLevelEventLeavesSubagentNull(t *testing.T) {
 // jsonMarshalEnvelope re-serialises an envelope after a test mutation
 // so envelope_json stored alongside the row matches the typed columns
 // extracted from the same struct.
-func jsonMarshalEnvelope(env *ingest.Envelope) ([]byte, error) {
+func jsonMarshalEnvelope(env *events.Envelope) ([]byte, error) {
 	return json.Marshal(env)
 }
 
@@ -165,7 +165,7 @@ func TestIngestEnvelope_ConcurrentAllocatesUniqueSeqs(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
 	const n = 20
-	envs := make([]*ingest.Envelope, n)
+	envs := make([]*events.Envelope, n)
 	raws := make([][]byte, n)
 	for i := 0; i < n; i++ {
 		envs[i], raws[i] = newValidEnvelope(t)
@@ -450,7 +450,7 @@ func TestIngestEnvelope_ToolFieldsPersist(t *testing.T) {
 	env, raw := newValidEnvelope(t)
 	env.Kind = "tool_use"
 	env.Role = "tool"
-	env.Tool = &ingest.Tool{Name: "Bash", CallID: "toolu_abc"}
+	env.Tool = &events.Tool{Name: "Bash", CallID: "toolu_abc"}
 
 	withTx(t, s, func(tx *sql.Tx) {
 		if _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
@@ -512,7 +512,7 @@ func TestIngestEnvelope_ExtractorsPopulateExtractions(t *testing.T) {
 	env, raw := newValidEnvelope(t)
 	env.Kind = "tool_use"
 	env.Role = "tool"
-	env.Tool = &ingest.Tool{Name: "Bash"}
+	env.Tool = &events.Tool{Name: "Bash"}
 	env.ContentText = "curl https://example.com/api"
 	env.Payload = map[string]any{
 		"tool_input": map[string]any{
@@ -588,7 +588,7 @@ func TestIngestEnvelope_ExtractionsCascadeOnRawDelete(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
 	env, raw := newValidEnvelope(t)
-	env.Tool = &ingest.Tool{Name: "Bash"}
+	env.Tool = &events.Tool{Name: "Bash"}
 	env.ContentText = "see https://example.com"
 	env.Payload = map[string]any{"tool_input": map[string]any{"command": "ls"}}
 

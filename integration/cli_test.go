@@ -16,7 +16,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/cli"
 	"github.com/toabctl/aichronicles/internal/daemon"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // isolateEnv scopes XDG + notification env so RunIngest never reads
@@ -63,7 +63,7 @@ func TestCLI_IngestRoundTrip(t *testing.T) {
 	}
 
 	// The event should now be in the store.
-	wantSessionID := ingest.DeriveSessionID("claude-code", "e2e-1")
+	wantSessionID := events.DeriveSessionID("claude-code", "e2e-1")
 	var kind, cwd, content string
 	err = s.DB().QueryRow(
 		`SELECT kind, cwd, content_text FROM events WHERE session_id=?`, wantSessionID,
@@ -123,7 +123,7 @@ func TestCLI_IngestRedactsSecretsEndToEnd(t *testing.T) {
 		t.Fatalf("RunIngest: %v", err)
 	}
 
-	wantSessionID := ingest.DeriveSessionID("claude-code", "e2e-secret")
+	wantSessionID := events.DeriveSessionID("claude-code", "e2e-secret")
 	var content string
 	err = s.DB().QueryRow(
 		`SELECT content_text FROM events WHERE session_id=?`, wantSessionID,

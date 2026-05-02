@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // seedSessionAt ingests one user_prompt envelope tagged with the
@@ -17,7 +17,7 @@ import (
 // ts_source_ms).
 func seedSessionAt(t *testing.T, s *Store, sessionKey string, ts time.Time) string {
 	t.Helper()
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -28,14 +28,14 @@ func seedSessionAt(t *testing.T, s *Store, sessionKey string, ts time.Time) stri
 		ContentText:     "anchor — distinctive content " + sessionKey,
 		Cwd:             "/work/" + sessionKey,
 		Payload:         map[string]any{},
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	withTx(t, s, func(tx *sql.Tx) {
 		if _, err := IngestEnvelope(t.Context(), tx, env, []byte(`{"v":1}`), env.TsSource.UnixMilli()); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 	})
-	return ingest.DeriveSessionID("claude-code", sessionKey)
+	return events.DeriveSessionID("claude-code", sessionKey)
 }
 
 // countAll returns the row counts across the four canonical

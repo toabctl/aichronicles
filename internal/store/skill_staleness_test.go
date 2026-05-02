@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // seedSkillLoadAt ingests a Skill tool_use envelope at the given
@@ -16,7 +16,7 @@ import (
 // IngestEnvelope.
 func seedSkillLoadAt(t *testing.T, s *Store, sessionKey, skill string, ts time.Time) {
 	t.Helper()
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -24,9 +24,9 @@ func seedSkillLoadAt(t *testing.T, s *Store, sessionKey, skill string, ts time.T
 		Kind:            "tool_use",
 		Role:            "assistant",
 		TsSource:        ts,
-		Tool:            &ingest.Tool{Name: "Skill"},
+		Tool:            &events.Tool{Name: "Skill"},
 		Payload:         map[string]any{"tool_input": map[string]any{"skill": skill}},
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	withTx(t, s, func(tx *sql.Tx) {
 		if _, err := IngestEnvelope(t.Context(), tx, env, []byte(`{"v":1}`), env.TsSource.UnixMilli()); err != nil {
@@ -40,7 +40,7 @@ func seedSkillLoadAt(t *testing.T, s *Store, sessionKey, skill string, ts time.T
 // detection joins against.
 func seedToolFailureAt(t *testing.T, s *Store, sessionKey string, ts time.Time) {
 	t.Helper()
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -48,10 +48,10 @@ func seedToolFailureAt(t *testing.T, s *Store, sessionKey string, ts time.Time) 
 		Kind:            "tool_failure",
 		Role:            "tool",
 		TsSource:        ts,
-		Tool:            &ingest.Tool{Name: "Bash"},
+		Tool:            &events.Tool{Name: "Bash"},
 		ContentText:     "Exit code 1",
 		Payload:         map[string]any{"error": "boom"},
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	withTx(t, s, func(tx *sql.Tx) {
 		if _, err := IngestEnvelope(t.Context(), tx, env, []byte(`{"v":1}`), env.TsSource.UnixMilli()); err != nil {
@@ -92,7 +92,7 @@ func TestLoadSkillStaleness_FlagsLoadFollowedByFailure(t *testing.T) {
 	if rows[0].Rate != 1.0 {
 		t.Errorf("rate: got %f, want 1.0", rows[0].Rate)
 	}
-	if len(rows[0].Examples) != 1 || rows[0].Examples[0] != ingest.DeriveSessionID("claude-code", "sess-stale-1") {
+	if len(rows[0].Examples) != 1 || rows[0].Examples[0] != events.DeriveSessionID("claude-code", "sess-stale-1") {
 		t.Errorf("examples: got %+v", rows[0].Examples)
 	}
 }

@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
@@ -36,7 +36,7 @@ func seedAuditStore(t *testing.T) *store.Store {
 		{"assistant_message", "another benign line"},
 	}
 	for i, fx := range fixtures {
-		env := ingest.Envelope{
+		env := events.Envelope{
 			V:               1,
 			EventID:         uuid.Must(uuid.NewV7()).String(),
 			SourceAgent:     "claude-code",
@@ -46,7 +46,7 @@ func seedAuditStore(t *testing.T) *store.Store {
 			TsSource:        now.Add(time.Duration(i) * time.Second),
 			ContentText:     fx.content,
 			Payload:         map[string]any{"i": i},
-			Redaction:       &ingest.Redaction{Applied: true},
+			Redaction:       &events.Redaction{Applied: true},
 		}
 		raw, _ := json.Marshal(env)
 		tx, err := s.DB().Begin()

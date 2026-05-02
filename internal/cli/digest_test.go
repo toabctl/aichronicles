@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
@@ -90,7 +90,7 @@ func TestDigestHashFor_DifferentWeeksDifferentHashes(t *testing.T) {
 // (digestsFromRowsWithLinks rejects sessions without a summary).
 func seedSessionWithSummary(t *testing.T, s *store.Store, sourceID, prompt string, ts time.Time) {
 	t.Helper()
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -101,13 +101,13 @@ func seedSessionWithSummary(t *testing.T, s *store.Store, sourceID, prompt strin
 		Cwd:             "/work/" + sourceID,
 		ContentText:     prompt,
 		Payload:         map[string]any{},
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	tx, _ := s.DB().Begin()
 	if _, err := store.IngestEnvelope(t.Context(), tx, env, []byte(`{"v":1}`), env.TsSource.UnixMilli()); err != nil {
 		t.Fatalf("ingest: %v", err)
 	}
-	sid := ingest.DeriveSessionID("claude-code", sourceID)
+	sid := events.DeriveSessionID("claude-code", sourceID)
 	body, _ := json.Marshal(prompts.SummaryResult{
 		Topic:       "topic for " + sourceID,
 		WhatWasDone: []string{"work A", "work B"},

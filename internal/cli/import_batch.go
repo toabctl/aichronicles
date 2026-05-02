@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // importBatchRows caps how many envelopes ride a single import
@@ -31,7 +31,7 @@ const importBatchBytes = 32 << 20
 // same semantic the per-row pre-batching code carried, just no
 // longer coupled to commit cadence.
 type pendingEnvelope struct {
-	env  *ingest.Envelope
+	env  *events.Envelope
 	raw  []byte
 	tsMs int64
 }
@@ -105,7 +105,7 @@ func newEnvelopeBatcherForTest(s *store.Store, batchRows, batchBytes int) *envel
 // cap or the byte cap, Add transparently flushes — so callers
 // stream their input through Add and only need an explicit Flush
 // at end-of-input.
-func (b *envelopeBatcher) Add(ctx context.Context, env *ingest.Envelope, raw []byte) error {
+func (b *envelopeBatcher) Add(ctx context.Context, env *events.Envelope, raw []byte) error {
 	b.buf = append(b.buf, pendingEnvelope{
 		env:  env,
 		raw:  raw,
@@ -206,7 +206,7 @@ func importRowByRow(ctx context.Context, s *store.Store, batch []pendingEnvelope
 // The only per-row writer in the package; both ImportJSONL and
 // ImportClaudeTranscripts historically had their own copies
 // (importOne / importOneEnvelope), now consolidated here.
-func importOne(ctx context.Context, s *store.Store, env *ingest.Envelope, raw []byte, tsMs int64) (bool, error) {
+func importOne(ctx context.Context, s *store.Store, env *events.Envelope, raw []byte, tsMs int64) (bool, error) {
 	tx, err := s.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return false, fmt.Errorf("begin: %w", err)

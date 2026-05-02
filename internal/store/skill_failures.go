@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
-	"github.com/toabctl/aichronicles/pkg/ingest/extract"
+	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // SkillFailureContext is one (session_id, ts, body, nearby) tuple
@@ -62,7 +62,7 @@ SELECT x.session_id,
  LIMIT ?`
 
 	rows, err := db.QueryContext(ctx, pairsQuery,
-		ingest.KindToolFailure, windowMs,
+		events.KindToolFailure, windowMs,
 		extract.KindSkillLoad, skill, sinceMs, limit,
 	)
 	if err != nil {

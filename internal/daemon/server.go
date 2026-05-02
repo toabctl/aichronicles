@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // DefaultMaxEnvelopeBytes is the body cap NewServer applies when the
@@ -184,7 +184,7 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var env ingest.Envelope
+	var env events.Envelope
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&env); err != nil {
@@ -233,7 +233,7 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, ingest.Ack{
+	writeJSON(w, http.StatusOK, events.Ack{
 		EventID:   env.EventID,
 		SessionID: store.ResolveSessionID(env.SourceAgent, env.SourceSessionID),
 		Deduped:   deduped,

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // nullS is a tiny sql.NullString constructor for table-driven
@@ -34,12 +34,12 @@ func TestSegmentSession_EmptyInput(t *testing.T) {
 func TestSegmentSession_SingleEpisode(t *testing.T) {
 	t.Parallel()
 	events := []EventView{
-		{EventID: "e1", Kind: ingest.KindUserPrompt,
+		{EventID: "e1", Kind: events.KindUserPrompt,
 			ContentText: nullS("how do I fix the build"),
 			Cwd:         nullS("/repo/a"), TsSourceMs: 1_000},
-		{EventID: "e2", Kind: ingest.KindToolUse, Cwd: nullS("/repo/a"), TsSourceMs: 2_000},
-		{EventID: "e3", Kind: ingest.KindToolResult, Cwd: nullS("/repo/a"), TsSourceMs: 3_000},
-		{EventID: "e4", Kind: ingest.KindAssistantMessage, Cwd: nullS("/repo/a"), TsSourceMs: 4_000},
+		{EventID: "e2", Kind: events.KindToolUse, Cwd: nullS("/repo/a"), TsSourceMs: 2_000},
+		{EventID: "e3", Kind: events.KindToolResult, Cwd: nullS("/repo/a"), TsSourceMs: 3_000},
+		{EventID: "e4", Kind: events.KindAssistantMessage, Cwd: nullS("/repo/a"), TsSourceMs: 4_000},
 	}
 	got := SegmentSession("sess-single", events, 0)
 	if len(got) != 1 {
@@ -73,11 +73,11 @@ func TestSegmentSession_IdleGapBoundary(t *testing.T) {
 	t.Parallel()
 	const gap = int64(10_000) // 10s for test brevity
 	events := []EventView{
-		{EventID: "a", Kind: ingest.KindUserPrompt, ContentText: nullS("first intent"), TsSourceMs: 0},
-		{EventID: "b", Kind: ingest.KindAssistantMessage, TsSourceMs: 1_000},
+		{EventID: "a", Kind: events.KindUserPrompt, ContentText: nullS("first intent"), TsSourceMs: 0},
+		{EventID: "b", Kind: events.KindAssistantMessage, TsSourceMs: 1_000},
 		// 12s gap → episode boundary.
-		{EventID: "c", Kind: ingest.KindUserPrompt, ContentText: nullS("second intent"), TsSourceMs: 13_000},
-		{EventID: "d", Kind: ingest.KindAssistantMessage, TsSourceMs: 14_000},
+		{EventID: "c", Kind: events.KindUserPrompt, ContentText: nullS("second intent"), TsSourceMs: 13_000},
+		{EventID: "d", Kind: events.KindAssistantMessage, TsSourceMs: 14_000},
 	}
 	got := SegmentSession("sess-gap", events, gap)
 	if len(got) != 2 {
@@ -104,10 +104,10 @@ func TestSegmentSession_IdleGapBoundary(t *testing.T) {
 func TestSegmentSession_CwdShiftBoundary(t *testing.T) {
 	t.Parallel()
 	events := []EventView{
-		{EventID: "x", Kind: ingest.KindUserPrompt, Cwd: nullS("/repo/a"), ContentText: nullS("project A work"), TsSourceMs: 0},
-		{EventID: "y", Kind: ingest.KindToolUse, Cwd: nullS("/repo/a"), TsSourceMs: 100},
+		{EventID: "x", Kind: events.KindUserPrompt, Cwd: nullS("/repo/a"), ContentText: nullS("project A work"), TsSourceMs: 0},
+		{EventID: "y", Kind: events.KindToolUse, Cwd: nullS("/repo/a"), TsSourceMs: 100},
 		// Same time-frame, but cwd shifted — still a boundary.
-		{EventID: "z", Kind: ingest.KindUserPrompt, Cwd: nullS("/repo/b"), ContentText: nullS("project B work"), TsSourceMs: 200},
+		{EventID: "z", Kind: events.KindUserPrompt, Cwd: nullS("/repo/b"), ContentText: nullS("project B work"), TsSourceMs: 200},
 	}
 	got := SegmentSession("sess-cwd", events, 0)
 	if len(got) != 2 {
@@ -124,9 +124,9 @@ func TestSegmentSession_CwdShiftBoundary(t *testing.T) {
 func TestSegmentSession_NullCwdDoesNotTrigger(t *testing.T) {
 	t.Parallel()
 	events := []EventView{
-		{EventID: "p", Kind: ingest.KindUserPrompt, Cwd: nullS("/repo/a"), TsSourceMs: 0},
-		{EventID: "q", Kind: ingest.KindToolUse /* no cwd */, TsSourceMs: 100},
-		{EventID: "r", Kind: ingest.KindToolResult, Cwd: nullS("/repo/a"), TsSourceMs: 200},
+		{EventID: "p", Kind: events.KindUserPrompt, Cwd: nullS("/repo/a"), TsSourceMs: 0},
+		{EventID: "q", Kind: events.KindToolUse /* no cwd */, TsSourceMs: 100},
+		{EventID: "r", Kind: events.KindToolResult, Cwd: nullS("/repo/a"), TsSourceMs: 200},
 	}
 	got := SegmentSession("sess-nullcwd", events, 0)
 	if len(got) != 1 {
@@ -535,7 +535,7 @@ func TestSaveAndLoadEpisodes(t *testing.T) {
 		if _, err := s.DB().Exec(
 			`INSERT INTO events(event_id, session_id, source_agent, kind, ts_source_ms, content_text, cwd)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			eid, sessID, "claude-code", ingest.KindUserPrompt, ts, "intent text", "/repo/a",
+			eid, sessID, "claude-code", events.KindUserPrompt, ts, "intent text", "/repo/a",
 		); err != nil {
 			t.Fatalf("event: %v", err)
 		}

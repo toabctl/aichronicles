@@ -12,7 +12,7 @@
 //     so the JSON output renders `null` instead of `0` or "" for
 //     missing values. Used by --format=json paths.
 //
-// Write-side wrappers (string → sql.NullString) stay in store/ingest.go
+// Write-side wrappers (string → sql.NullString) stay in store/events.go
 // where the only producer lives; this package is read-side only.
 package nullable
 

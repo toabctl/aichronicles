@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // testStore opens a fresh Store in a temp dir and wires teardown.
@@ -27,7 +27,7 @@ func testStore(t *testing.T) *store.Store {
 
 // jsonlFromEnvelopes renders one envelope per line, as aichroniclesd
 // would have written to events.jsonl in the POC era.
-func jsonlFromEnvelopes(t *testing.T, envs ...ingest.Envelope) []byte {
+func jsonlFromEnvelopes(t *testing.T, envs ...events.Envelope) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	for _, e := range envs {
@@ -41,8 +41,8 @@ func jsonlFromEnvelopes(t *testing.T, envs ...ingest.Envelope) []byte {
 	return buf.Bytes()
 }
 
-func newEnv(kind string) ingest.Envelope {
-	return ingest.Envelope{
+func newEnv(kind string) events.Envelope {
+	return events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -193,7 +193,7 @@ func TestImportJSONL_ScrubsSecretsEvenWhenInputClaimsApplied(t *testing.T) {
 	env.ContentText = "here is my key " + secret
 	// Input file LIES about being pre-scrubbed. The importer must not
 	// trust the incoming Redaction.Applied and must scrub anyway.
-	env.Redaction = &ingest.Redaction{Applied: true, Patterns: nil}
+	env.Redaction = &events.Redaction{Applied: true, Patterns: nil}
 	data := jsonlFromEnvelopes(t, env)
 
 	report, err := ImportJSONL(t.Context(), bytes.NewReader(data), s)

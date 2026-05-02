@@ -33,7 +33,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
@@ -2981,15 +2981,15 @@ const (
 // future kind can be added with a one-liner here.
 func capForKind(kind string) int {
 	switch kind {
-	case ingest.KindUserPrompt:
+	case events.KindUserPrompt:
 		return maxRunesUserPrompt
-	case ingest.KindAssistantMessage:
+	case events.KindAssistantMessage:
 		return maxRunesAssistantMessage
-	case ingest.KindToolFailure:
+	case events.KindToolFailure:
 		return maxRunesToolFailure
-	case ingest.KindToolUse:
+	case events.KindToolUse:
 		return maxRunesToolUse
-	case ingest.KindToolResult:
+	case events.KindToolResult:
 		return maxRunesToolResult
 	default:
 		return maxRunesDefault
@@ -3066,7 +3066,7 @@ func renderOneEvent(e store.EventView, pats patternSet) string {
 //     tool_use args lose less by losing their tail.
 func truncateForKind(kind, s string, n int) (string, bool) {
 	switch kind {
-	case ingest.KindToolResult, ingest.KindToolFailure:
+	case events.KindToolResult, events.KindToolFailure:
 		return truncateMiddleRunes(s, n)
 	default:
 		return truncateTextRunes(s, n)
@@ -3421,8 +3421,8 @@ func renderOutcomeCue(o *store.SessionOutcome) string {
 		}
 		line := fmt.Sprintf("Outcome: %s (%s)", o.Outcome, strings.Join(parts, ", "))
 		if o.LastEventKind.Valid &&
-			(o.LastEventKind.String == ingest.KindToolFailure ||
-				o.LastEventKind.String == ingest.KindError) {
+			(o.LastEventKind.String == events.KindToolFailure ||
+				o.LastEventKind.String == events.KindError) {
 			line += ", ended on " + o.LastEventKind.String
 		}
 		return line + "\n"

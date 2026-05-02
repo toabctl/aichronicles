@@ -15,7 +15,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/mcp"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // TestMCPServe_EndToEnd pipes a minimal MCP handshake + tools/list
@@ -33,7 +33,7 @@ func TestMCPServe_EndToEnd(t *testing.T) {
 
 	// Seed one searchable event so tools/call on search_events has
 	// something real to return.
-	env := ingest.Envelope{
+	env := events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -44,7 +44,7 @@ func TestMCPServe_EndToEnd(t *testing.T) {
 		Cwd:             "/work/mcp",
 		ContentText:     "mcp end to end test marker",
 		Payload:         map[string]any{},
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	raw, _ := json.Marshal(env)
 	tx, _ := s.DB().Begin()

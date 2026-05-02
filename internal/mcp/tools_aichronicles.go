@@ -24,7 +24,7 @@ import (
 //
 // All tools read through *store.Store — no privileged writes. An
 // MCP client that compromises its sandbox still only reads a subset
-// of already-stored events, already scrubbed at ingest.
+// of already-stored events, already scrubbed at events.
 func RegisterAichroniclesTools(s *Server, st *store.Store) {
 	s.RegisterTool(Tool{
 		Name: "search_events",

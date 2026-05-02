@@ -17,7 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // newTestServer returns a Server backed by a fresh temp SQLite store.
@@ -32,9 +32,9 @@ func newTestServer(t *testing.T) *Server {
 	return NewServer(s, nil)
 }
 
-func validEnvelope(t *testing.T) ingest.Envelope {
+func validEnvelope(t *testing.T) events.Envelope {
 	t.Helper()
-	return ingest.Envelope{
+	return events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -42,7 +42,7 @@ func validEnvelope(t *testing.T) ingest.Envelope {
 		Kind:            "user_prompt",
 		TsSource:        time.Now().UTC(),
 		Payload:         map[string]any{"hook_event_name": "UserPromptSubmit", "prompt": "hi"},
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 }
 
@@ -66,7 +66,7 @@ func TestIngest_Accepts_ValidEnvelope(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: got %d, body=%s", rr.Code, rr.Body.String())
 	}
-	var ack ingest.Ack
+	var ack events.Ack
 	if err := json.Unmarshal(rr.Body.Bytes(), &ack); err != nil {
 		t.Fatalf("ack decode: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestIngest_DuplicateReturnsDedupedAck(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("second: status %d, body=%s", rr.Code, rr.Body.String())
 	}
-	var ack ingest.Ack
+	var ack events.Ack
 	_ = json.Unmarshal(rr.Body.Bytes(), &ack)
 	if !ack.Deduped {
 		t.Errorf("expected Deduped=true on replay, got %+v", ack)
@@ -193,7 +193,7 @@ func TestIngest_Rejects_RedactionAppliedFalse(t *testing.T) {
 	srv := newTestServer(t)
 
 	env := validEnvelope(t)
-	env.Redaction = &ingest.Redaction{Applied: false} // claim present but negative
+	env.Redaction = &events.Redaction{Applied: false} // claim present but negative
 	body, _ := json.Marshal(env)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/ingest", bytes.NewReader(body))

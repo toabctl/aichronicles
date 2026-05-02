@@ -5,7 +5,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // kindValue is a compact (kind, value) pair used for assertion on
@@ -28,7 +28,7 @@ func toKV(xs []Extraction) []kindValue {
 
 func TestURL_SingleMatch(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{ContentText: "see https://example.com for details"}
+	env := &events.Envelope{ContentText: "see https://example.com for details"}
 	got := toKV(FromEnvelope(env))
 	want := []kindValue{{KindURL, "https://example.com"}}
 	if !reflect.DeepEqual(got, want) {
@@ -38,7 +38,7 @@ func TestURL_SingleMatch(t *testing.T) {
 
 func TestURL_MultipleDeduped(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{ContentText: `
+	env := &events.Envelope{ContentText: `
 		first https://foo.dev/a
 		second: https://bar.dev/b?x=1
 		first again https://foo.dev/a
@@ -55,7 +55,7 @@ func TestURL_MultipleDeduped(t *testing.T) {
 
 func TestURL_TrailingPunctuationStripped(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{ContentText: "check https://example.com/a/b."}
+	env := &events.Envelope{ContentText: "check https://example.com/a/b."}
 	got := toKV(FromEnvelope(env))
 	want := []kindValue{{KindURL, "https://example.com/a/b"}}
 	if !reflect.DeepEqual(got, want) {
@@ -65,7 +65,7 @@ func TestURL_TrailingPunctuationStripped(t *testing.T) {
 
 func TestURL_HTTPAlsoMatched(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{ContentText: "legacy http://old.example/"}
+	env := &events.Envelope{ContentText: "legacy http://old.example/"}
 	got := toKV(FromEnvelope(env))
 	want := []kindValue{{KindURL, "http://old.example/"}}
 	if !reflect.DeepEqual(got, want) {
@@ -75,7 +75,7 @@ func TestURL_HTTPAlsoMatched(t *testing.T) {
 
 func TestURL_FTPIsNotExtracted(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{ContentText: "ftp://anon.example/ and file:///tmp/x"}
+	env := &events.Envelope{ContentText: "ftp://anon.example/ and file:///tmp/x"}
 	got := FromEnvelope(env)
 	if len(got) != 0 {
 		t.Errorf("expected 0 URL extractions, got %v", got)
@@ -84,7 +84,7 @@ func TestURL_FTPIsNotExtracted(t *testing.T) {
 
 func TestURL_NoContentNoExtractions(t *testing.T) {
 	t.Parallel()
-	got := FromEnvelope(&ingest.Envelope{})
+	got := FromEnvelope(&events.Envelope{})
 	if len(got) != 0 {
 		t.Errorf("empty envelope should produce no extractions, got %v", got)
 	}
@@ -92,8 +92,8 @@ func TestURL_NoContentNoExtractions(t *testing.T) {
 
 func TestFilePath_ReadToolExtractsFileField(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{
-		Tool: &ingest.Tool{Name: "Read"},
+	env := &events.Envelope{
+		Tool: &events.Tool{Name: "Read"},
 		Payload: map[string]any{
 			"tool_input": map[string]any{
 				"file_path": "/home/user/project/main.go",
@@ -110,8 +110,8 @@ func TestFilePath_ReadToolExtractsFileField(t *testing.T) {
 func TestFilePath_WriteAndEditAlsoExtract(t *testing.T) {
 	t.Parallel()
 	for _, tool := range []string{"Write", "Edit", "NotebookEdit"} {
-		env := &ingest.Envelope{
-			Tool: &ingest.Tool{Name: tool},
+		env := &events.Envelope{
+			Tool: &events.Tool{Name: tool},
 			Payload: map[string]any{
 				"tool_input": map[string]any{"file_path": "/p.go"},
 			},
@@ -126,8 +126,8 @@ func TestFilePath_WriteAndEditAlsoExtract(t *testing.T) {
 
 func TestFilePath_RelativePathJoinedWithCwd(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{
-		Tool: &ingest.Tool{Name: "Edit"},
+	env := &events.Envelope{
+		Tool: &events.Tool{Name: "Edit"},
 		Cwd:  "/home/me/repo",
 		Payload: map[string]any{
 			"tool_input": map[string]any{
@@ -144,8 +144,8 @@ func TestFilePath_RelativePathJoinedWithCwd(t *testing.T) {
 
 func TestFilePath_AbsolutePathPassesThroughUntouched(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{
-		Tool: &ingest.Tool{Name: "Read"},
+	env := &events.Envelope{
+		Tool: &events.Tool{Name: "Read"},
 		Cwd:  "/home/me/repo",
 		Payload: map[string]any{
 			"tool_input": map[string]any{
@@ -162,8 +162,8 @@ func TestFilePath_AbsolutePathPassesThroughUntouched(t *testing.T) {
 
 func TestFilePath_RelativePathNoCwdKeptAsIs(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{
-		Tool: &ingest.Tool{Name: "Read"},
+	env := &events.Envelope{
+		Tool: &events.Tool{Name: "Read"},
 		// Cwd intentionally empty — agent didn't supply one.
 		Payload: map[string]any{
 			"tool_input": map[string]any{
@@ -183,8 +183,8 @@ func TestFilePath_RelativePathNoCwdKeptAsIs(t *testing.T) {
 func TestFilePath_NonFileToolSkipped(t *testing.T) {
 	t.Parallel()
 	// Grep does not emit a canonical file_path — skip even if present.
-	env := &ingest.Envelope{
-		Tool: &ingest.Tool{Name: "Grep"},
+	env := &events.Envelope{
+		Tool: &events.Tool{Name: "Grep"},
 		Payload: map[string]any{
 			"tool_input": map[string]any{"file_path": "/p.go"},
 		},
@@ -197,8 +197,8 @@ func TestFilePath_NonFileToolSkipped(t *testing.T) {
 
 func TestFilePath_MissingFieldSkipped(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{
-		Tool: &ingest.Tool{Name: "Read"},
+	env := &events.Envelope{
+		Tool: &events.Tool{Name: "Read"},
 		Payload: map[string]any{
 			"tool_input": map[string]any{"not_a_file": "/p.go"},
 		},
@@ -211,8 +211,8 @@ func TestFilePath_MissingFieldSkipped(t *testing.T) {
 
 func TestShellCommand_BashExtractsCommand(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{
-		Tool: &ingest.Tool{Name: "Bash"},
+	env := &events.Envelope{
+		Tool: &events.Tool{Name: "Bash"},
 		Payload: map[string]any{
 			"tool_input": map[string]any{
 				"command":     "npm test",
@@ -235,8 +235,8 @@ func TestShellCommand_BashExtractsCommand(t *testing.T) {
 func TestShellCommand_NonBashToolSkipped(t *testing.T) {
 	t.Parallel()
 	// Some other tool happens to carry a "command" — don't extract.
-	env := &ingest.Envelope{
-		Tool: &ingest.Tool{Name: "Read"},
+	env := &events.Envelope{
+		Tool: &events.Tool{Name: "Read"},
 		Payload: map[string]any{
 			"tool_input": map[string]any{"command": "vim"},
 		},
@@ -249,8 +249,8 @@ func TestShellCommand_NonBashToolSkipped(t *testing.T) {
 
 func TestShellCommand_MissingCommandSkipped(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{
-		Tool: &ingest.Tool{Name: "Bash"},
+	env := &events.Envelope{
+		Tool: &events.Tool{Name: "Bash"},
 		Payload: map[string]any{
 			"tool_input": map[string]any{"description": "stub"},
 		},
@@ -263,8 +263,8 @@ func TestShellCommand_MissingCommandSkipped(t *testing.T) {
 
 func TestShellCommand_NoDescriptionOmitsExtra(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{
-		Tool: &ingest.Tool{Name: "Bash"},
+	env := &events.Envelope{
+		Tool: &events.Tool{Name: "Bash"},
 		Payload: map[string]any{
 			"tool_input": map[string]any{"command": "ls"},
 		},
@@ -283,9 +283,9 @@ func TestMixed_EnvelopeWithMultipleExtractions(t *testing.T) {
 	// Contrived but legal: a Bash tool_use with a URL in its
 	// content_text (e.g. the flattened command description). We
 	// expect both a URL and a shell_command extraction.
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		ContentText: "curl https://api.example.com/healthz",
-		Tool:        &ingest.Tool{Name: "Bash"},
+		Tool:        &events.Tool{Name: "Bash"},
 		Payload: map[string]any{
 			"tool_input": map[string]any{
 				"command": "curl https://api.example.com/healthz",
@@ -317,15 +317,15 @@ func TestRegistry_FromEnvelopeHonorsRegisteredOrder(t *testing.T) {
 	defer func() { Registered = orig }()
 
 	Registered = []Extractor{
-		func(env *ingest.Envelope) []Extraction {
+		func(env *events.Envelope) []Extraction {
 			return []Extraction{{Kind: "first", Value: "1"}}
 		},
-		func(env *ingest.Envelope) []Extraction {
+		func(env *events.Envelope) []Extraction {
 			return []Extraction{{Kind: "second", Value: "2"}}
 		},
 	}
 
-	got := toKV(FromEnvelope(&ingest.Envelope{}))
+	got := toKV(FromEnvelope(&events.Envelope{}))
 	want := []kindValue{{"first", "1"}, {"second", "2"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
@@ -337,7 +337,7 @@ func TestRegistry_EmptySliceYieldsEmpty(t *testing.T) {
 	defer func() { Registered = orig }()
 	Registered = nil
 
-	got := FromEnvelope(&ingest.Envelope{ContentText: "https://example.com"})
+	got := FromEnvelope(&events.Envelope{ContentText: "https://example.com"})
 	if len(got) != 0 {
 		t.Errorf("empty registry should produce no extractions, got %v", got)
 	}
@@ -356,8 +356,8 @@ var (
 
 func TestWebFetch_URLExtractedAsKindURL(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{
-		Tool: &ingest.Tool{Name: "WebFetch"},
+	env := &events.Envelope{
+		Tool: &events.Tool{Name: "WebFetch"},
 		Payload: map[string]any{
 			"tool_input": map[string]any{"url": "https://example.com/x"},
 		},
@@ -378,8 +378,8 @@ func TestWebFetch_URLExtractedAsKindURL(t *testing.T) {
 // tool_name="Skill". Args is optional and lands under Extra.
 func TestSkillLoad_HookShape(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{
-		Tool: &ingest.Tool{Name: "Skill"},
+	env := &events.Envelope{
+		Tool: &events.Tool{Name: "Skill"},
 		Payload: map[string]any{
 			"tool_input": map[string]any{
 				"skill": "build-test",
@@ -406,8 +406,8 @@ func TestSkillLoad_HookShape(t *testing.T) {
 // dev box, so the regression case lives here.
 func TestSkillLoad_ImportShape(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{
-		Tool: &ingest.Tool{Name: "Skill"},
+	env := &events.Envelope{
+		Tool: &events.Tool{Name: "Skill"},
 		Payload: map[string]any{
 			"message": map[string]any{
 				"content": []any{
@@ -443,8 +443,8 @@ func TestSkillLoad_ImportShape(t *testing.T) {
 // than {args:""} when the invocation carried no arguments.
 func TestSkillLoad_NoArgsOmitsExtra(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{
-		Tool: &ingest.Tool{Name: "Skill"},
+	env := &events.Envelope{
+		Tool: &events.Tool{Name: "Skill"},
 		Payload: map[string]any{
 			"tool_input": map[string]any{"skill": "effective-go"},
 		},
@@ -463,8 +463,8 @@ func TestSkillLoad_NoArgsOmitsExtra(t *testing.T) {
 // key in tool_input must not produce a skill_load row.
 func TestSkillLoad_NonSkillToolSkipped(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{
-		Tool: &ingest.Tool{Name: "Bash"},
+	env := &events.Envelope{
+		Tool: &events.Tool{Name: "Bash"},
 		Payload: map[string]any{
 			"tool_input": map[string]any{
 				"command": "ls",
@@ -485,8 +485,8 @@ func TestSkillLoad_NonSkillToolSkipped(t *testing.T) {
 // a row with empty value.
 func TestSkillLoad_MissingSkillFieldSkipped(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{
-		Tool: &ingest.Tool{Name: "Skill"},
+	env := &events.Envelope{
+		Tool: &events.Tool{Name: "Skill"},
 		Payload: map[string]any{
 			"tool_input": map[string]any{"args": "stray args, no skill"},
 		},
@@ -504,8 +504,8 @@ func TestSkillLoad_MissingSkillFieldSkipped(t *testing.T) {
 // transcript shape.
 func TestSkillLoad_ImportShape_NoToolUseBlock(t *testing.T) {
 	t.Parallel()
-	env := &ingest.Envelope{
-		Tool: &ingest.Tool{Name: "Skill"},
+	env := &events.Envelope{
+		Tool: &events.Tool{Name: "Skill"},
 		Payload: map[string]any{
 			"message": map[string]any{
 				"content": []any{

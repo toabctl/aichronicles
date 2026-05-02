@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
-	"github.com/toabctl/aichronicles/pkg/ingest/extract"
+	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // OutcomeLabel is the coarse derived verdict for a session. The
@@ -126,11 +126,11 @@ SELECT
 FROM events WHERE session_id = ?`
 	var ups, tus, tfs, errs, cmps sql.NullInt64
 	if err := db.QueryRowContext(ctx, aggQuery,
-		ingest.KindUserPrompt,
-		ingest.KindToolUse,
-		ingest.KindToolFailure,
-		ingest.KindError,
-		ingest.KindCompactStart,
+		events.KindUserPrompt,
+		events.KindToolUse,
+		events.KindToolFailure,
+		events.KindError,
+		events.KindCompactStart,
 		sessionID,
 	).Scan(&ups, &tus, &tfs, &errs, &cmps); err != nil {
 		return SessionOutcome{}, fmt.Errorf("aggregate event kinds: %w", err)
@@ -442,7 +442,7 @@ func loadUserPromptTexts(ctx context.Context, db *sql.DB, sessionID string) ([]s
 		  WHERE session_id = ? AND kind = ?
 		    AND content_text IS NOT NULL AND content_text <> ''
 		  ORDER BY ts_source_ms ASC, rowid ASC`,
-		sessionID, ingest.KindUserPrompt)
+		sessionID, events.KindUserPrompt)
 	if err != nil {
 		return nil, err
 	}
@@ -546,8 +546,8 @@ func toolFailureFloor(toolUseCount, toolFailureCount int) int {
 // (clean activity), then unknown (no real activity), else mixed.
 func deriveOutcomeLabel(o SessionOutcome) OutcomeLabel {
 	endedOnFailure := o.LastEventKind.Valid &&
-		(o.LastEventKind.String == ingest.KindToolFailure ||
-			o.LastEventKind.String == ingest.KindError)
+		(o.LastEventKind.String == events.KindToolFailure ||
+			o.LastEventKind.String == events.KindError)
 
 	failFloor := toolFailureFloor(o.ToolUseCount, o.ToolFailureCount)
 

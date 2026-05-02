@@ -11,7 +11,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/notify"
 	"github.com/toabctl/aichronicles/internal/paths"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
@@ -105,7 +105,7 @@ func RunIngest(stdin io.Reader, stderr io.Writer, socketFlag, agentSlug string) 
 	// must never leave this process unscrubbed. Downstream — daemon,
 	// store, future LLM shim — treats Redaction.Applied as proof that
 	// this step ran.
-	ingest.ApplyRedaction(&env, redact.Default())
+	events.ApplyRedaction(&env, redact.Default())
 
 	sockPath, err := paths.ResolveSocketPath(socketFlag)
 	if err != nil {

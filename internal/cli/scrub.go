@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
@@ -141,13 +141,13 @@ func scrubRawEnvelopes(tx *sql.Tx, scanner redact.Scanner, opts ScrubOptions, re
 			return fmt.Errorf("scan raw row: %w", err)
 		}
 
-		var env ingest.Envelope
+		var env events.Envelope
 		if err := json.Unmarshal([]byte(rawJSON), &env); err != nil {
 			_, _ = fmt.Fprintf(out, "skip %s: malformed envelope_json: %v\n", firstN(eventID, 8), err)
 			continue
 		}
 		originalContent := env.ContentText
-		ingest.ApplyRedaction(&env, scanner)
+		events.ApplyRedaction(&env, scanner)
 
 		if len(env.Redaction.Patterns) == 0 {
 			continue

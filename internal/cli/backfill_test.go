@@ -11,8 +11,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
-	"github.com/toabctl/aichronicles/pkg/ingest/extract"
+	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // silentBackfillLogger discards backfill progress log records so
@@ -27,7 +27,7 @@ func silentBackfillLogger() *slog.Logger {
 // land. Returns the event_id and session_id for assertions.
 func seedSkillIngest(t *testing.T, s *store.Store, sessionKey, skillName string, ts time.Time) (eventID, sessionID string) {
 	t.Helper()
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -35,10 +35,10 @@ func seedSkillIngest(t *testing.T, s *store.Store, sessionKey, skillName string,
 		Kind:            "tool_use",
 		Role:            "assistant",
 		TsSource:        ts,
-		Tool:            &ingest.Tool{Name: "Skill"},
+		Tool:            &events.Tool{Name: "Skill"},
 		ContentText:     "Skill",
 		Payload:         map[string]any{"tool_input": map[string]any{"skill": skillName}},
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	raw, _ := json.Marshal(env)
 	tx, err := s.DB().Begin()
@@ -52,7 +52,7 @@ func seedSkillIngest(t *testing.T, s *store.Store, sessionKey, skillName string,
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	return env.EventID, ingest.DeriveSessionID(env.SourceAgent, env.SourceSessionID)
+	return env.EventID, events.DeriveSessionID(env.SourceAgent, env.SourceSessionID)
 }
 
 func openTempCLIStore(t *testing.T) *store.Store {

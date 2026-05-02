@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
-	"github.com/toabctl/aichronicles/pkg/ingest/extract"
+	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // outcomeFixture seeds one session with a controlled sequence of
@@ -76,7 +76,7 @@ func (f *outcomeFixture) addEvent(kind, content string) string {
 // extractor output.
 func (f *outcomeFixture) addShell(cmd string) {
 	f.t.Helper()
-	eventID := f.addEvent(ingest.KindToolUse, "")
+	eventID := f.addEvent(events.KindToolUse, "")
 	if _, err := f.s.DB().Exec(
 		`INSERT INTO extractions(event_id, session_id, kind, value)
 		 VALUES (?, ?, ?, ?)`,
@@ -89,10 +89,10 @@ func (f *outcomeFixture) addShell(cmd string) {
 func TestComputeSessionOutcome_SuccessLikely(t *testing.T) {
 	t.Parallel()
 	f := newOutcomeFixture(t, "00000000-0000-0000-0000-000000000010")
-	f.addEvent(ingest.KindUserPrompt, "fix the lint error")
-	f.addEvent(ingest.KindToolUse, "")
-	f.addEvent(ingest.KindToolResult, "")
-	f.addEvent(ingest.KindAssistantMessage, "done")
+	f.addEvent(events.KindUserPrompt, "fix the lint error")
+	f.addEvent(events.KindToolUse, "")
+	f.addEvent(events.KindToolResult, "")
+	f.addEvent(events.KindAssistantMessage, "done")
 
 	o, err := ComputeSessionOutcome(context.Background(), f.s.DB(), f.session)
 	if err != nil {
@@ -104,21 +104,21 @@ func TestComputeSessionOutcome_SuccessLikely(t *testing.T) {
 	if o.UserPromptCount != 1 || o.ToolUseCount != 1 || o.ToolFailureCount != 0 {
 		t.Errorf("counts wrong: %+v", o)
 	}
-	if o.LastEventKind.Valid && o.LastEventKind.String != ingest.KindAssistantMessage {
-		t.Errorf("last_event_kind: got %q want %q", o.LastEventKind.String, ingest.KindAssistantMessage)
+	if o.LastEventKind.Valid && o.LastEventKind.String != events.KindAssistantMessage {
+		t.Errorf("last_event_kind: got %q want %q", o.LastEventKind.String, events.KindAssistantMessage)
 	}
 }
 
 func TestComputeSessionOutcome_FailureLikelyByToolFailures(t *testing.T) {
 	t.Parallel()
 	f := newOutcomeFixture(t, "00000000-0000-0000-0000-000000000011")
-	f.addEvent(ingest.KindUserPrompt, "run the migration")
-	f.addEvent(ingest.KindToolUse, "")
-	f.addEvent(ingest.KindToolFailure, "schema_version conflict")
-	f.addEvent(ingest.KindToolUse, "")
-	f.addEvent(ingest.KindToolFailure, "schema_version conflict")
-	f.addEvent(ingest.KindToolUse, "")
-	f.addEvent(ingest.KindToolFailure, "schema_version conflict")
+	f.addEvent(events.KindUserPrompt, "run the migration")
+	f.addEvent(events.KindToolUse, "")
+	f.addEvent(events.KindToolFailure, "schema_version conflict")
+	f.addEvent(events.KindToolUse, "")
+	f.addEvent(events.KindToolFailure, "schema_version conflict")
+	f.addEvent(events.KindToolUse, "")
+	f.addEvent(events.KindToolFailure, "schema_version conflict")
 
 	o, err := ComputeSessionOutcome(context.Background(), f.s.DB(), f.session)
 	if err != nil {
@@ -163,14 +163,14 @@ func TestComputeSessionOutcome_ToolFailureFloorScalesWithSession(t *testing.T) {
 	t.Run("3 failures in 200-tool session is no longer failure_likely",
 		func(t *testing.T) {
 			f := newOutcomeFixture(t, "00000000-0000-0000-0000-000000000111")
-			f.addEvent(ingest.KindUserPrompt, "long session")
+			f.addEvent(events.KindUserPrompt, "long session")
 			for range 197 {
-				f.addEvent(ingest.KindToolUse, "")
+				f.addEvent(events.KindToolUse, "")
 			}
 			for range 3 {
-				f.addEvent(ingest.KindToolFailure, "transient")
+				f.addEvent(events.KindToolFailure, "transient")
 			}
-			f.addEvent(ingest.KindAssistantMessage, "done")
+			f.addEvent(events.KindAssistantMessage, "done")
 			o, err := ComputeSessionOutcome(context.Background(), f.s.DB(), f.session)
 			if err != nil {
 				t.Fatalf("compute: %v", err)
@@ -186,14 +186,14 @@ func TestComputeSessionOutcome_ToolFailureFloorScalesWithSession(t *testing.T) {
 	t.Run("25 failures in 200-tool session is failure_likely",
 		func(t *testing.T) {
 			f := newOutcomeFixture(t, "00000000-0000-0000-0000-000000000112")
-			f.addEvent(ingest.KindUserPrompt, "really broken session")
+			f.addEvent(events.KindUserPrompt, "really broken session")
 			for range 175 {
-				f.addEvent(ingest.KindToolUse, "")
+				f.addEvent(events.KindToolUse, "")
 			}
 			for range 25 {
-				f.addEvent(ingest.KindToolFailure, "broke")
+				f.addEvent(events.KindToolFailure, "broke")
 			}
-			f.addEvent(ingest.KindAssistantMessage, "giving up")
+			f.addEvent(events.KindAssistantMessage, "giving up")
 			o, err := ComputeSessionOutcome(context.Background(), f.s.DB(), f.session)
 			if err != nil {
 				t.Fatalf("compute: %v", err)
@@ -207,7 +207,7 @@ func TestComputeSessionOutcome_ToolFailureFloorScalesWithSession(t *testing.T) {
 func TestComputeSessionOutcome_FailureLikelyByGitUndo(t *testing.T) {
 	t.Parallel()
 	f := newOutcomeFixture(t, "00000000-0000-0000-0000-000000000012")
-	f.addEvent(ingest.KindUserPrompt, "tweak the config")
+	f.addEvent(events.KindUserPrompt, "tweak the config")
 	f.addShell("git status")
 	f.addShell("vim config.toml") // benign
 	f.addShell("git reset --hard HEAD")
@@ -230,7 +230,7 @@ func TestComputeSessionOutcome_GitUndoConservative(t *testing.T) {
 	// "git checkout main" (branch switch, no path) MUST NOT count.
 	// "git reset --hard" inside a chain MUST count.
 	f := newOutcomeFixture(t, "00000000-0000-0000-0000-000000000013")
-	f.addEvent(ingest.KindUserPrompt, "branch hop")
+	f.addEvent(events.KindUserPrompt, "branch hop")
 	f.addShell("git reset HEAD")
 	f.addShell("git checkout main")
 	f.addShell("cd repo && git reset --hard origin/main")
@@ -256,11 +256,11 @@ func TestComputeSessionOutcome_FailureLikelyByPromptRepeat(t *testing.T) {
 	t.Parallel()
 	f := newOutcomeFixture(t, "00000000-0000-0000-0000-000000000014")
 	// Same prompt three times in a row → 2 repeats (n-1 for run length n).
-	f.addEvent(ingest.KindUserPrompt, "fix the build")
-	f.addEvent(ingest.KindAssistantMessage, "trying...")
-	f.addEvent(ingest.KindUserPrompt, "  Fix THE Build")
-	f.addEvent(ingest.KindAssistantMessage, "still trying...")
-	f.addEvent(ingest.KindUserPrompt, "fix the\tbuild")
+	f.addEvent(events.KindUserPrompt, "fix the build")
+	f.addEvent(events.KindAssistantMessage, "trying...")
+	f.addEvent(events.KindUserPrompt, "  Fix THE Build")
+	f.addEvent(events.KindAssistantMessage, "still trying...")
+	f.addEvent(events.KindUserPrompt, "fix the\tbuild")
 
 	o, err := ComputeSessionOutcome(context.Background(), f.s.DB(), f.session)
 	if err != nil {
@@ -277,9 +277,9 @@ func TestComputeSessionOutcome_FailureLikelyByPromptRepeat(t *testing.T) {
 func TestComputeSessionOutcome_FailureLikelyByEndedOnFailure(t *testing.T) {
 	t.Parallel()
 	f := newOutcomeFixture(t, "00000000-0000-0000-0000-000000000015")
-	f.addEvent(ingest.KindUserPrompt, "deploy")
-	f.addEvent(ingest.KindToolUse, "")
-	f.addEvent(ingest.KindToolFailure, "connection refused")
+	f.addEvent(events.KindUserPrompt, "deploy")
+	f.addEvent(events.KindToolUse, "")
+	f.addEvent(events.KindToolFailure, "connection refused")
 
 	o, err := ComputeSessionOutcome(context.Background(), f.s.DB(), f.session)
 	if err != nil {
@@ -291,19 +291,19 @@ func TestComputeSessionOutcome_FailureLikelyByEndedOnFailure(t *testing.T) {
 	if o.Outcome != OutcomeFailureLikely {
 		t.Errorf("outcome: got %q want %q (counts=%+v)", o.Outcome, OutcomeFailureLikely, o)
 	}
-	if !o.LastEventKind.Valid || o.LastEventKind.String != ingest.KindToolFailure {
-		t.Errorf("last_event_kind: got %v want %q", o.LastEventKind, ingest.KindToolFailure)
+	if !o.LastEventKind.Valid || o.LastEventKind.String != events.KindToolFailure {
+		t.Errorf("last_event_kind: got %v want %q", o.LastEventKind, events.KindToolFailure)
 	}
 }
 
 func TestComputeSessionOutcome_Mixed(t *testing.T) {
 	t.Parallel()
 	f := newOutcomeFixture(t, "00000000-0000-0000-0000-000000000016")
-	f.addEvent(ingest.KindUserPrompt, "draft a fix")
-	f.addEvent(ingest.KindToolUse, "")
-	f.addEvent(ingest.KindToolFailure, "transient flake") // single failure, no other markers
-	f.addEvent(ingest.KindToolUse, "")
-	f.addEvent(ingest.KindAssistantMessage, "retried, ok")
+	f.addEvent(events.KindUserPrompt, "draft a fix")
+	f.addEvent(events.KindToolUse, "")
+	f.addEvent(events.KindToolFailure, "transient flake") // single failure, no other markers
+	f.addEvent(events.KindToolUse, "")
+	f.addEvent(events.KindAssistantMessage, "retried, ok")
 
 	o, err := ComputeSessionOutcome(context.Background(), f.s.DB(), f.session)
 	if err != nil {
@@ -320,7 +320,7 @@ func TestComputeSessionOutcome_Unknown(t *testing.T) {
 	t.Parallel()
 	f := newOutcomeFixture(t, "00000000-0000-0000-0000-000000000017")
 	// One prompt, no tool use — too thin to label.
-	f.addEvent(ingest.KindUserPrompt, "/loop")
+	f.addEvent(events.KindUserPrompt, "/loop")
 
 	o, err := ComputeSessionOutcome(context.Background(), f.s.DB(), f.session)
 	if err != nil {
@@ -343,9 +343,9 @@ func TestComputeSessionOutcome_SessionNotFound(t *testing.T) {
 func TestSaveAndLoadSessionOutcome_Roundtrip(t *testing.T) {
 	t.Parallel()
 	f := newOutcomeFixture(t, "00000000-0000-0000-0000-000000000018")
-	f.addEvent(ingest.KindUserPrompt, "do the thing")
-	f.addEvent(ingest.KindToolUse, "")
-	f.addEvent(ingest.KindAssistantMessage, "done")
+	f.addEvent(events.KindUserPrompt, "do the thing")
+	f.addEvent(events.KindToolUse, "")
+	f.addEvent(events.KindAssistantMessage, "done")
 
 	o, err := ComputeSessionOutcome(context.Background(), f.s.DB(), f.session)
 	if err != nil {
@@ -375,8 +375,8 @@ func TestSaveAndLoadSessionOutcome_Roundtrip(t *testing.T) {
 func TestSaveSessionOutcome_RecomputeOverwrites(t *testing.T) {
 	t.Parallel()
 	f := newOutcomeFixture(t, "00000000-0000-0000-0000-000000000019")
-	f.addEvent(ingest.KindUserPrompt, "first prompt")
-	f.addEvent(ingest.KindToolUse, "")
+	f.addEvent(events.KindUserPrompt, "first prompt")
+	f.addEvent(events.KindToolUse, "")
 
 	first, err := ComputeSessionOutcome(context.Background(), f.s.DB(), f.session)
 	if err != nil {
@@ -387,10 +387,10 @@ func TestSaveSessionOutcome_RecomputeOverwrites(t *testing.T) {
 	}
 
 	// Add more events and recompute — outcome label may change.
-	f.addEvent(ingest.KindUserPrompt, "second prompt")
-	f.addEvent(ingest.KindToolFailure, "broke")
-	f.addEvent(ingest.KindToolFailure, "broke")
-	f.addEvent(ingest.KindToolFailure, "broke")
+	f.addEvent(events.KindUserPrompt, "second prompt")
+	f.addEvent(events.KindToolFailure, "broke")
+	f.addEvent(events.KindToolFailure, "broke")
+	f.addEvent(events.KindToolFailure, "broke")
 
 	second, err := ComputeSessionOutcome(context.Background(), f.s.DB(), f.session)
 	if err != nil {
@@ -689,9 +689,9 @@ func TestLoadFailureShapes_ExcludesNullTimestampSessions(t *testing.T) {
 func TestEnsureSessionOutcome_ComputesAndCaches(t *testing.T) {
 	t.Parallel()
 	f := newOutcomeFixture(t, "00000000-0000-0000-0000-00000000001c")
-	f.addEvent(ingest.KindUserPrompt, "do the thing")
-	f.addEvent(ingest.KindToolUse, "")
-	f.addEvent(ingest.KindAssistantMessage, "done")
+	f.addEvent(events.KindUserPrompt, "do the thing")
+	f.addEvent(events.KindToolUse, "")
+	f.addEvent(events.KindAssistantMessage, "done")
 
 	ctx := context.Background()
 

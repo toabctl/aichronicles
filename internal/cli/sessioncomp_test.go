@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
@@ -37,7 +37,7 @@ func seedSessionForCompletion(t *testing.T, dbPath, sourceSession, prompt string
 	}
 	defer func() { _ = s.Close() }()
 
-	env := ingest.Envelope{
+	env := events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -50,7 +50,7 @@ func seedSessionForCompletion(t *testing.T, dbPath, sourceSession, prompt string
 		Payload:         map[string]any{},
 		Transport:       "hook",
 	}
-	ingest.ApplyRedaction(&env, redact.Default())
+	events.ApplyRedaction(&env, redact.Default())
 	raw, _ := json.Marshal(&env)
 	tx, _ := s.DB().Begin()
 	if _, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli()); err != nil {
@@ -58,7 +58,7 @@ func seedSessionForCompletion(t *testing.T, dbPath, sourceSession, prompt string
 		t.Fatalf("IngestEnvelope: %v", err)
 	}
 	_ = tx.Commit()
-	return ingest.DeriveSessionID("claude-code", sourceSession)
+	return events.DeriveSessionID("claude-code", sourceSession)
 }
 
 func TestCompleteSessionID_ReturnsTabSeparatedDescriptions(t *testing.T) {

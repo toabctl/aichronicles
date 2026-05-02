@@ -4,7 +4,7 @@ package redact
 // to an external LLM (Block B: summarize, reflect, propose) is
 // expected to call. It re-runs the default scanner against whatever
 // string is about to leave the process, independent of whether the
-// source event was already scrubbed at ingest.
+// source event was already scrubbed at events.
 //
 // Defense-in-depth reasons to re-scan here:
 //

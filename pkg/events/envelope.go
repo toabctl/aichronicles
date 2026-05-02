@@ -9,7 +9,7 @@
 // building bridges, importers, or alternate clients should import
 // it directly to produce well-formed Envelopes the daemon will
 // accept. aichronicles is a work in progress.
-package ingest
+package events
 
 import (
 	"errors"
@@ -31,7 +31,7 @@ var agentSlugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,31}$`)
 // Stable across rebuilds because NewSHA1 is deterministic.
 var namespace = uuid.NewSHA1(uuid.NameSpaceDNS, []byte("aichronicles.local"))
 
-// Envelope is the wire contract for a single event arriving at /v1/ingest.
+// Envelope is the wire contract for a single event arriving at /v1/events.
 // Fields tagged omitempty are optional; validation enforces only the
 // seven required ones plus format rules.
 type Envelope struct {

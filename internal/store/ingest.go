@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
-	"github.com/toabctl/aichronicles/pkg/ingest/extract"
+	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // ErrRedactionRequired is returned when an envelope reaches the store
@@ -33,7 +33,7 @@ var ErrRedactionRequired = errors.New("IngestEnvelope: envelope.redaction.applie
 // not explicitly true.
 // Cascading trigger work (sessions.event_count, events_fts) is handled
 // by the schema's AFTER INSERT triggers.
-func IngestEnvelope(ctx context.Context, tx *sql.Tx, env *ingest.Envelope, envelopeJSON []byte, tsServerMs int64) (deduped bool, err error) {
+func IngestEnvelope(ctx context.Context, tx *sql.Tx, env *events.Envelope, envelopeJSON []byte, tsServerMs int64) (deduped bool, err error) {
 	if env == nil {
 		return false, errors.New("IngestEnvelope: nil envelope")
 	}
@@ -85,7 +85,7 @@ func IngestEnvelope(ctx context.Context, tx *sql.Tx, env *ingest.Envelope, envel
 		return true, nil
 	}
 
-	sessionID := ingest.DeriveSessionID(env.SourceAgent, env.SourceSessionID)
+	sessionID := events.DeriveSessionID(env.SourceAgent, env.SourceSessionID)
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO sessions(id, source_agent, source_session_id)
 		 VALUES (?, ?, ?)
@@ -149,7 +149,7 @@ func IngestEnvelope(ctx context.Context, tx *sql.Tx, env *ingest.Envelope, envel
 // convenience so callers can pre-compute without importing the ingest
 // package directly.
 func ResolveSessionID(sourceAgent, sourceSessionID string) string {
-	return ingest.DeriveSessionID(sourceAgent, sourceSessionID)
+	return events.DeriveSessionID(sourceAgent, sourceSessionID)
 }
 
 func nullString(s string) sql.NullString {

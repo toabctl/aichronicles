@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // sseFrame is one parsed SSE message — event name + data payload.
@@ -384,7 +384,7 @@ func TestStream_PerSessionFrameStatusEndedForSessionEnd(t *testing.T) {
 
 	// Ingest a session_end envelope — the OOB status span should
 	// flip to status-ended.
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -395,7 +395,7 @@ func TestStream_PerSessionFrameStatusEndedForSessionEnd(t *testing.T) {
 		Cwd:             "/work/sess-finishing",
 		Payload:         map[string]any{"reason": "user-quit"},
 		Transport:       "hook",
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	rawBytes, _ := json.Marshal(env)
 	tx, err := st.DB().Begin()
@@ -409,7 +409,7 @@ func TestStream_PerSessionFrameStatusEndedForSessionEnd(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	expectedID := ingest.DeriveSessionID("claude-code", "sess-finishing")
+	expectedID := events.DeriveSessionID("claude-code", "sess-finishing")
 
 	frames := readSSEEnvelopes(t, ctx, resp, 2)
 	var sess *sseFrame

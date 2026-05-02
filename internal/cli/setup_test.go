@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 func readJSON(t *testing.T, path string) map[string]any {
@@ -41,7 +41,7 @@ func TestInstall_CreatesFreshSettings(t *testing.T) {
 	if !ok {
 		t.Fatalf("hooks missing from settings")
 	}
-	for _, name := range ingest.ClaudeCode.HookEvents {
+	for _, name := range events.ClaudeCode.HookEvents {
 		entries, ok := hooks[name].([]any)
 		if !ok || len(entries) != 1 {
 			t.Errorf("%s: expected 1 entry, got %v", name, hooks[name])

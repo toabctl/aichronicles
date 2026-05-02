@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
-	"github.com/toabctl/aichronicles/pkg/ingest/extract"
+	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // SkillStaleness is the per-skill staleness summary produced by
@@ -230,7 +230,7 @@ SELECT DISTINCT x.session_id
  LIMIT ?`
 	rows, err := db.QueryContext(ctx, q,
 		extract.KindSkillLoad, skill, sinceMs,
-		ingest.KindToolFailure, windowMs, limit,
+		events.KindToolFailure, windowMs, limit,
 	)
 	if err != nil {
 		return nil, err

@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
@@ -105,7 +105,7 @@ func ImportJSONL(ctx context.Context, r io.Reader, s *store.Store) (ImportReport
 			continue
 		}
 
-		var env ingest.Envelope
+		var env events.Envelope
 		if err := json.Unmarshal(line, &env); err != nil {
 			report.Invalid++
 			continue
@@ -120,7 +120,7 @@ func ImportJSONL(ctx context.Context, r io.Reader, s *store.Store) (ImportReport
 		// client — we don't trust Redaction.Applied on the wire.
 		// After scrubbing we re-marshal so the bytes we persist match
 		// the scrubbed in-memory envelope.
-		ingest.ApplyRedaction(&env, redact.Default())
+		events.ApplyRedaction(&env, redact.Default())
 		scrubbed, err := json.Marshal(&env)
 		if err != nil {
 			report.Invalid++

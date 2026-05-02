@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // DefaultEpisodeIdleGapMs is the inter-event gap above which the
@@ -67,8 +67,8 @@ const (
 // behaviour; the function does not re-sort.
 //
 // idleGapMs ≤ 0 falls back to DefaultEpisodeIdleGapMs.
-func SegmentSession(sessionID string, events []EventView, idleGapMs int64) []Episode {
-	if sessionID == "" || len(events) == 0 {
+func SegmentSession(sessionID string, evs []EventView, idleGapMs int64) []Episode {
+	if sessionID == "" || len(evs) == 0 {
 		return nil
 	}
 	if idleGapMs <= 0 {
@@ -97,15 +97,15 @@ func SegmentSession(sessionID string, events []EventView, idleGapMs int64) []Epi
 			Cwd:           run.cwd,
 			IntentSummary: run.intent,
 			EventCount:    run.count,
-			FirstEventID:  events[run.startIdx].EventID,
+			FirstEventID:  evs[run.startIdx].EventID,
 		})
 		ord++
 	}
 
-	for i, e := range events {
-		boundary := classifyBoundary(opened, run.cwd, &e, idleGapMs, prevTsAt(events, i))
+	for i, e := range evs {
+		boundary := classifyBoundary(opened, run.cwd, &e, idleGapMs, prevTsAt(evs, i))
 		if boundary != boundaryNone && opened {
-			flush(events[i-1].TsSourceMs)
+			flush(evs[i-1].TsSourceMs)
 			opened = false
 		}
 		if !opened {
@@ -121,13 +121,13 @@ func SegmentSession(sessionID string, events []EventView, idleGapMs int64) []Epi
 		if !run.cwd.Valid && e.Cwd.Valid {
 			run.cwd = e.Cwd
 		}
-		if run.intent == "" && e.Kind == ingest.KindUserPrompt && e.ContentText.Valid {
+		if run.intent == "" && e.Kind == events.KindUserPrompt && e.ContentText.Valid {
 			run.intent = clipIntentSummary(e.ContentText.String)
 		}
 		run.count++
 	}
 	if opened {
-		last := events[len(events)-1]
+		last := evs[len(evs)-1]
 		flush(last.TsSourceMs)
 	}
 	return out
@@ -160,11 +160,11 @@ func classifyBoundary(opened bool, runCwd sql.NullString, e *EventView, idleGapM
 // prevTsAt returns events[i-1].TsSourceMs when i > 0, else 0.
 // Wrapped as a helper so classifyBoundary stays a pure function
 // over indexable inputs.
-func prevTsAt(events []EventView, i int) int64 {
+func prevTsAt(evs []EventView, i int) int64 {
 	if i <= 0 {
 		return 0
 	}
-	return events[i-1].TsSourceMs
+	return evs[i-1].TsSourceMs
 }
 
 // clipIntentSummary collapses leading/trailing whitespace and

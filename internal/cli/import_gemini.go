@@ -17,7 +17,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
@@ -347,7 +347,7 @@ func geminiCwdForPath(path string, cwdMap map[string]string) string {
 // effect chain in the events table (an assistant turn followed by
 // each tool call's request and response). It mirrors how
 // import-claude splits transcripts of the same shape.
-func geminiMessageToEnvelopes(sess *geminiSession, m *geminiMessage, cwd string) ([]*ingest.Envelope, error) {
+func geminiMessageToEnvelopes(sess *geminiSession, m *geminiMessage, cwd string) ([]*events.Envelope, error) {
 	if m.ID == "" {
 		return nil, errors.New("missing message id")
 	}
@@ -362,14 +362,14 @@ func geminiMessageToEnvelopes(sess *geminiSession, m *geminiMessage, cwd string)
 	switch m.Type {
 	case "user":
 		text := flattenGeminiUserContent(m.Content)
-		return []*ingest.Envelope{
-			redactedEnvelope(&ingest.Envelope{
+		return []*events.Envelope{
+			redactedEnvelope(&events.Envelope{
 				V:               1,
 				EventID:         m.ID,
 				SourceAgent:     geminiSourceAgent,
 				SourceSessionID: sess.SessionID,
-				Kind:            ingest.KindUserPrompt,
-				Role:            ingest.RoleUser,
+				Kind:            events.KindUserPrompt,
+				Role:            events.RoleUser,
 				TsSource:        ts,
 				Cwd:             cwd,
 				ContentText:     text,
@@ -385,19 +385,19 @@ func geminiMessageToEnvelopes(sess *geminiSession, m *geminiMessage, cwd string)
 		}, nil
 
 	case "gemini", "model", "assistant":
-		var envs []*ingest.Envelope
+		var envs []*events.Envelope
 		text := flattenGeminiAssistantContent(m.Content)
 		// One assistant_message envelope when there's actual
 		// reply text. Many tool-only turns have empty content
 		// because the agent answered exclusively via tool_use.
 		if text != "" {
-			envs = append(envs, redactedEnvelope(&ingest.Envelope{
+			envs = append(envs, redactedEnvelope(&events.Envelope{
 				V:               1,
 				EventID:         m.ID,
 				SourceAgent:     geminiSourceAgent,
 				SourceSessionID: sess.SessionID,
-				Kind:            ingest.KindAssistantMessage,
-				Role:            ingest.RoleAssistant,
+				Kind:            events.KindAssistantMessage,
+				Role:            events.RoleAssistant,
 				TsSource:        ts,
 				Cwd:             cwd,
 				ContentText:     text,
@@ -431,7 +431,7 @@ func geminiMessageToEnvelopes(sess *geminiSession, m *geminiMessage, cwd string)
 // gemini toolCall block. event_id =
 // UUIDv5(namespace, parentMessageID + tool_call_id + ":use") so
 // it's stable across re-imports without a real UUID on the source.
-func geminiToolUseEnvelope(sess *geminiSession, parent *geminiMessage, tc *geminiToolCall, idx int, cwd string, parentTs time.Time) *ingest.Envelope {
+func geminiToolUseEnvelope(sess *geminiSession, parent *geminiMessage, tc *geminiToolCall, idx int, cwd string, parentTs time.Time) *events.Envelope {
 	ts := parentTs
 	if tc.Timestamp != "" {
 		if t, err := parseGeminiTime(tc.Timestamp); err == nil {
@@ -442,16 +442,16 @@ func geminiToolUseEnvelope(sess *geminiSession, parent *geminiMessage, tc *gemin
 		[]byte(fmt.Sprintf("%s|%s|%d|use", parent.ID, tc.ID, idx))).String()
 
 	argsJSON, _ := json.Marshal(tc.Args)
-	return redactedEnvelope(&ingest.Envelope{
+	return redactedEnvelope(&events.Envelope{
 		V:               1,
 		EventID:         eid,
 		SourceAgent:     geminiSourceAgent,
 		SourceSessionID: sess.SessionID,
-		Kind:            ingest.KindToolUse,
-		Role:            ingest.RoleAssistant,
+		Kind:            events.KindToolUse,
+		Role:            events.RoleAssistant,
 		TsSource:        ts,
 		Cwd:             cwd,
-		Tool:            &ingest.Tool{Name: tc.Name, CallID: tc.ID},
+		Tool:            &events.Tool{Name: tc.Name, CallID: tc.ID},
 		ContentText:     tc.Name,
 		Payload: map[string]any{
 			"sessionId":  sess.SessionID,
@@ -473,7 +473,7 @@ func geminiToolUseEnvelope(sess *geminiSession, parent *geminiMessage, tc *gemin
 // the corresponding tool_use in `ORDER BY ts_source_ms` queries —
 // the source format has a single timestamp per toolCall, but
 // logically the result is later than the call.
-func geminiToolResultEnvelope(sess *geminiSession, parent *geminiMessage, tc *geminiToolCall, idx int, cwd string, parentTs time.Time) *ingest.Envelope {
+func geminiToolResultEnvelope(sess *geminiSession, parent *geminiMessage, tc *geminiToolCall, idx int, cwd string, parentTs time.Time) *events.Envelope {
 	ts := parentTs
 	if tc.Timestamp != "" {
 		if t, err := parseGeminiTime(tc.Timestamp); err == nil {
@@ -490,20 +490,20 @@ func geminiToolResultEnvelope(sess *geminiSession, parent *geminiMessage, tc *ge
 			text = out
 		}
 	}
-	kind := ingest.KindToolResult
+	kind := events.KindToolResult
 	if tc.Status == "error" || tc.Status == "failure" {
-		kind = ingest.KindToolFailure
+		kind = events.KindToolFailure
 	}
-	return redactedEnvelope(&ingest.Envelope{
+	return redactedEnvelope(&events.Envelope{
 		V:               1,
 		EventID:         eid,
 		SourceAgent:     geminiSourceAgent,
 		SourceSessionID: sess.SessionID,
 		Kind:            kind,
-		Role:            ingest.RoleTool,
+		Role:            events.RoleTool,
 		TsSource:        ts,
 		Cwd:             cwd,
-		Tool:            &ingest.Tool{Name: tc.Name, CallID: tc.ID},
+		Tool:            &events.Tool{Name: tc.Name, CallID: tc.ID},
 		ContentText:     text,
 		Payload: map[string]any{
 			"sessionId": sess.SessionID,
@@ -569,7 +569,7 @@ func parseGeminiTime(s string) (time.Time, error) {
 // envelope. Centralised so every envelope path uses the same
 // scrubber — a pasted API key in a gemini transcript must never
 // reach disk in plain form.
-func redactedEnvelope(env *ingest.Envelope) *ingest.Envelope {
-	ingest.ApplyRedaction(env, redact.Default())
+func redactedEnvelope(env *events.Envelope) *events.Envelope {
+	events.ApplyRedaction(env, redact.Default())
 	return env
 }

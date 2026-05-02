@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
@@ -18,7 +18,7 @@ import (
 func seedSessionInCwd(t *testing.T, st *store.Store, cwd, prompt, topic string, ts time.Time) string {
 	t.Helper()
 	sourceID := "src-" + cwd + "-" + uuid.NewString()
-	env := ingest.Envelope{
+	env := events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -29,7 +29,7 @@ func seedSessionInCwd(t *testing.T, st *store.Store, cwd, prompt, topic string, 
 		Cwd:             cwd,
 		ContentText:     prompt,
 		Payload:         map[string]any{},
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	raw, _ := json.Marshal(env)
 	tx, err := st.DB().Begin()
@@ -43,7 +43,7 @@ func seedSessionInCwd(t *testing.T, st *store.Store, cwd, prompt, topic string, 
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	sessID := ingest.DeriveSessionID("claude-code", sourceID)
+	sessID := events.DeriveSessionID("claude-code", sourceID)
 
 	if topic != "" {
 		body, _ := json.Marshal(prompts.SummaryResult{

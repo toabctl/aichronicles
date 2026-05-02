@@ -14,7 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/llm"
 )
 
@@ -35,7 +35,7 @@ func seedSessionsForMeta(t *testing.T, count int) *store.Store {
 		start := now.Add(-time.Duration(i+1) * time.Hour)
 
 		for off, kind := range []string{"user_prompt", "assistant_message"} {
-			env := ingest.Envelope{
+			env := events.Envelope{
 				V:               1,
 				EventID:         uuid.Must(uuid.NewV7()).String(),
 				SourceAgent:     "claude-code",
@@ -46,7 +46,7 @@ func seedSessionsForMeta(t *testing.T, count int) *store.Store {
 				Cwd:             "/work/x",
 				ContentText:     "content for " + sessNative + " " + kind,
 				Payload:         map[string]any{"i": i, "off": off},
-				Redaction:       &ingest.Redaction{Applied: true},
+				Redaction:       &events.Redaction{Applied: true},
 			}
 			raw, _ := json.Marshal(env)
 			tx, _ := s.DB().Begin()
@@ -60,7 +60,7 @@ func seedSessionsForMeta(t *testing.T, count int) *store.Store {
 		// the mandatory-summary filter introduced in 60a8e7…. Tests
 		// that need to exercise the unsummarized-session path
 		// should clear summaries explicitly after this helper.
-		sessID := ingest.DeriveSessionID("claude-code", sessNative)
+		sessID := events.DeriveSessionID("claude-code", sessNative)
 		tx, _ := s.DB().Begin()
 		if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
 			SessionID:   sql.NullString{String: sessID, Valid: true},

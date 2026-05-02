@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
-	"github.com/toabctl/aichronicles/pkg/ingest/extract"
+	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // mkProposeRow inserts a minimal llm_outputs row of kind=propose for
@@ -374,7 +374,7 @@ func (f *effectivenessFixture) addLoad(failureAfterMs int64) {
 		if _, err := f.s.DB().Exec(
 			`INSERT INTO events(event_id, session_id, source_agent, kind, ts_source_ms)
 			 VALUES (?, ?, ?, ?, ?)`,
-			failEvt, f.session, f.srcAgent, ingest.KindToolFailure, failTs,
+			failEvt, f.session, f.srcAgent, events.KindToolFailure, failTs,
 		); err != nil {
 			f.t.Fatalf("fail event: %v", err)
 		}

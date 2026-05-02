@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
@@ -41,7 +41,7 @@ func openSeededStore(t *testing.T) *store.Store {
 		{"sess-bar", "assistant_message", "LISTEN_FDS + fd 3", 1},
 	}
 	for _, fx := range fixtures {
-		env := ingest.Envelope{
+		env := events.Envelope{
 			V:               1,
 			EventID:         uuid.Must(uuid.NewV7()).String(),
 			SourceAgent:     "claude-code",
@@ -52,7 +52,7 @@ func openSeededStore(t *testing.T) *store.Store {
 			Cwd:             "/work/" + fx.sess,
 			ContentText:     fx.content,
 			Payload:         map[string]any{"k": fx.kind},
-			Redaction:       &ingest.Redaction{Applied: true},
+			Redaction:       &events.Redaction{Applied: true},
 		}
 		raw, _ := json.Marshal(env)
 		tx, _ := s.DB().Begin()
@@ -536,7 +536,7 @@ func TestGetSummary_ReturnsStoredBody(t *testing.T) {
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
 	RegisterAichroniclesTools(s, st)
 
-	sessID := ingest.DeriveSessionID("claude-code", "sess-foo")
+	sessID := events.DeriveSessionID("claude-code", "sess-foo")
 	tx, _ := st.DB().Begin()
 	_, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
 		SessionID:   sql.NullString{String: sessID, Valid: true},
@@ -582,7 +582,7 @@ func TestGetSummary_NoOutputIsUserError(t *testing.T) {
 
 	// A real session that exists but has no stored LLM output yet —
 	// the seeded "sess-foo" has events, no summary row.
-	sessID := ingest.DeriveSessionID("claude-code", "sess-foo")
+	sessID := events.DeriveSessionID("claude-code", "sess-foo")
 	res := callTool(t, s, "get_summary", `{"session_id":"`+sessID+`"}`)
 	if !res.IsError {
 		t.Errorf("expected IsError=true for session with no outputs")
@@ -619,7 +619,7 @@ func TestGetSummary_AcceptsPrefix(t *testing.T) {
 
 	// Stash a summary for sess-foo so the happy-path resolves.
 	tx, _ := st.DB().Begin()
-	sessID := ingest.DeriveSessionID("claude-code", "sess-foo")
+	sessID := events.DeriveSessionID("claude-code", "sess-foo")
 	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
 		SessionID:   sql.NullString{String: sessID, Valid: true},
 		Kind:        store.LLMKindSummary,
@@ -661,7 +661,7 @@ func TestToolsCall_PassesIngestRedactedContentThrough(t *testing.T) {
 	// <redacted:aws_access_key> marker before the row lands in
 	// the store.
 	const planted = "the leak is AKIAIOSFODNN7EXAMPLE right there"
-	env := ingest.Envelope{
+	env := events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -673,7 +673,7 @@ func TestToolsCall_PassesIngestRedactedContentThrough(t *testing.T) {
 		ContentText:     planted,
 		Payload:         map[string]any{"prompt": planted},
 	}
-	ingest.ApplyRedaction(&env, redact.Default())
+	events.ApplyRedaction(&env, redact.Default())
 	if !env.Redaction.Applied {
 		t.Fatalf("ApplyRedaction did not flag the envelope: %+v", env.Redaction)
 	}
@@ -764,9 +764,9 @@ func seedSubagentEvents(t *testing.T) (*store.Store, string) {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 
-	ingestOne := func(sa *ingest.Subagent, content string, tsOffset time.Duration) {
+	ingestOne := func(sa *events.Subagent, content string, tsOffset time.Duration) {
 		t.Helper()
-		env := ingest.Envelope{
+		env := events.Envelope{
 			V:               1,
 			EventID:         uuid.Must(uuid.NewV7()).String(),
 			SourceAgent:     "claude-code",
@@ -778,7 +778,7 @@ func seedSubagentEvents(t *testing.T) (*store.Store, string) {
 			ContentText:     content,
 			Payload:         map[string]any{},
 			Subagent:        sa,
-			Redaction:       &ingest.Redaction{Applied: true},
+			Redaction:       &events.Redaction{Applied: true},
 		}
 		raw, _ := json.Marshal(&env)
 		tx, _ := s.DB().Begin()
@@ -791,8 +791,8 @@ func seedSubagentEvents(t *testing.T) (*store.Store, string) {
 
 	const subagentID = "agent-7"
 	ingestOne(nil, "main agent prompt", 0)
-	ingestOne(&ingest.Subagent{ID: subagentID, Type: "planner"}, "planner step one", time.Second)
-	ingestOne(&ingest.Subagent{ID: subagentID, Type: "planner"}, "planner step two", 2*time.Second)
+	ingestOne(&events.Subagent{ID: subagentID, Type: "planner"}, "planner step one", time.Second)
+	ingestOne(&events.Subagent{ID: subagentID, Type: "planner"}, "planner step two", 2*time.Second)
 	return s, subagentID
 }
 
@@ -919,7 +919,7 @@ func TestGetUnresolvedForCwd_ReturnsItems(t *testing.T) {
 
 	// The seeded "sess-foo" has cwd /work/sess-foo. Plant a
 	// summary with two unresolved items.
-	sessID := ingest.DeriveSessionID("claude-code", "sess-foo")
+	sessID := events.DeriveSessionID("claude-code", "sess-foo")
 	body := `{"topic":"jsonl parsing","what_was_done":["x"],"unresolved":["land the migration","verify the redaction passthrough"],"key_files":[],"links":[]}`
 	tx, _ := st.DB().Begin()
 	_, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{

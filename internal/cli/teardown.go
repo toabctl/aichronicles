@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 func newTeardownCmd() *cobra.Command {
@@ -92,7 +92,7 @@ func RemoveClaudeCodeFull(settingsPath, userConfigPath, hookCommand string, dryR
 	if dryRun {
 		settingsWork = cloneSettings(settings)
 	}
-	hookRemoved := stripAgentHooks(settingsWork, ingest.ClaudeCode.HookEvents, hookCommand)
+	hookRemoved := stripAgentHooks(settingsWork, events.ClaudeCode.HookEvents, hookCommand)
 	if !dryRun && len(hookRemoved) > 0 {
 		if err := writeSettingsAtomic(settingsPath, settingsWork); err != nil {
 			return "", err
@@ -237,12 +237,12 @@ func newTeardownGeminiCLICmd() *cobra.Command {
 			path := settingsPath
 			if path == "" {
 				var err error
-				path, err = ingest.GeminiCLI.DefaultSettingsPath()
+				path, err = events.GeminiCLI.DefaultSettingsPath()
 				if err != nil {
 					return err
 				}
 			}
-			report, err := RemoveAgentHooks(ingest.GeminiCLI, path, hookCommand, !yes)
+			report, err := RemoveAgentHooks(events.GeminiCLI, path, hookCommand, !yes)
 			if err != nil {
 				return err
 			}
@@ -251,7 +251,7 @@ func newTeardownGeminiCLICmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&settingsPath, "settings", "", "path to Gemini settings.json (default: ~/.gemini/settings.json)")
-	cmd.Flags().StringVar(&hookCommand, "command", defaultHookCommandFor(ingest.GeminiCLI), "command to strip from each hook")
+	cmd.Flags().StringVar(&hookCommand, "command", defaultHookCommandFor(events.GeminiCLI), "command to strip from each hook")
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the removal (required to modify the file)")
 	return cmd
 }
@@ -265,10 +265,10 @@ func newTeardownGeminiCLICmd() *cobra.Command {
 // the settings file. The returned report uses "would remove" phrasing
 // so cobra can relay it as a preview.
 //
-// Generic over the agent — call sites pass ingest.ClaudeCode or
-// ingest.Codex and get the same merge / cleanup behaviour. The
+// Generic over the agent — call sites pass events.ClaudeCode or
+// events.Codex and get the same merge / cleanup behaviour. The
 // agent supplies which hook event names to walk.
-func RemoveAgentHooks(agent ingest.Agent, path, command string, dryRun bool) (string, error) {
+func RemoveAgentHooks(agent events.Agent, path, command string, dryRun bool) (string, error) {
 	if command == "" {
 		command = defaultHookCommandFor(agent)
 	}
@@ -319,9 +319,9 @@ func RemoveAgentHooks(agent ingest.Agent, path, command string, dryRun bool) (st
 
 // RemoveClaudeCodeHooks is preserved as a thin alias so existing
 // callers (mainly tests) compile unchanged. New code should call
-// RemoveAgentHooks directly with the desired ingest.Agent.
+// RemoveAgentHooks directly with the desired events.Agent.
 func RemoveClaudeCodeHooks(path, command string, dryRun bool) (string, error) {
-	return RemoveAgentHooks(ingest.ClaudeCode, path, command, dryRun)
+	return RemoveAgentHooks(events.ClaudeCode, path, command, dryRun)
 }
 
 // stripOurEntries returns a copy of entries with every entry whose

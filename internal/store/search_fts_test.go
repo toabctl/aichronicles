@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // ingestText is a shorthand that drops one envelope into the store
@@ -17,7 +17,7 @@ import (
 // triggers fire). Returns the derived session_id for the row.
 func ingestText(t *testing.T, s *Store, sourceSession, content string) string {
 	t.Helper()
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -29,7 +29,7 @@ func ingestText(t *testing.T, s *Store, sourceSession, content string) string {
 		ContentText:     content,
 		Payload:         map[string]any{},
 		Transport:       "hook",
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	raw, err := json.Marshal(env)
 	if err != nil {
@@ -46,7 +46,7 @@ func ingestText(t *testing.T, s *Store, sourceSession, content string) string {
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	return ingest.DeriveSessionID("claude-code", sourceSession)
+	return events.DeriveSessionID("claude-code", sourceSession)
 }
 
 // matchCount returns how many events_fts rows match the given FTS5
@@ -194,7 +194,7 @@ func TestFTSTokenizer_ReopenIsClean(t *testing.T) {
 // to populate the subagent_id / subagent_type columns directly.
 func ingestSubagentEvent(t *testing.T, s *Store, sourceSession, content, subID, subType string, ts time.Time) string {
 	t.Helper()
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -205,9 +205,9 @@ func ingestSubagentEvent(t *testing.T, s *Store, sourceSession, content, subID, 
 		Cwd:             "/work/" + sourceSession,
 		ContentText:     content,
 		Payload:         map[string]any{},
-		Subagent:        &ingest.Subagent{ID: subID, Type: subType},
+		Subagent:        &events.Subagent{ID: subID, Type: subType},
 		Transport:       "hook",
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	raw, err := json.Marshal(env)
 	if err != nil {
@@ -224,7 +224,7 @@ func ingestSubagentEvent(t *testing.T, s *Store, sourceSession, content, subID, 
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	return ingest.DeriveSessionID("claude-code", sourceSession)
+	return events.DeriveSessionID("claude-code", sourceSession)
 }
 
 // TestLoadSubagentSpans_DoesNotFragmentOnTypeChange pins the B2

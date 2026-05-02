@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
-	"github.com/toabctl/aichronicles/pkg/ingest/extract"
+	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // SearchOrder selects how SearchEvents orders its result rows.
@@ -269,7 +269,7 @@ func appendCommonFilters(filter *strings.Builder, args *[]any, opts SearchEventO
 		// Session-level + LIKE %substring% so a partial path
 		// ("migrate.go", "internal/store") matches. file_path
 		// extractions are the canonical source — see
-		// pkg/ingest/extract/FilePathExtractor.
+		// pkg/events/extract/FilePathExtractor.
 		filter.WriteString(` AND e.session_id IN (
 			SELECT session_id FROM extractions WHERE kind = ? AND value LIKE ?
 		)`)
@@ -279,7 +279,7 @@ func appendCommonFilters(filter *strings.Builder, args *[]any, opts SearchEventO
 		filter.WriteString(` AND e.session_id IN (
 			SELECT session_id FROM events WHERE kind = ?
 		)`)
-		*args = append(*args, ingest.KindToolFailure)
+		*args = append(*args, events.KindToolFailure)
 	}
 }
 

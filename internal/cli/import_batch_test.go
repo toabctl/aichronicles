@@ -10,14 +10,14 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // makeEnv builds a redaction-applied envelope that IngestEnvelope
 // will accept. Used by every batcher test that wants a "good" row.
-func makeEnv(t *testing.T, kind string) *ingest.Envelope {
+func makeEnv(t *testing.T, kind string) *events.Envelope {
 	t.Helper()
-	return &ingest.Envelope{
+	return &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -28,7 +28,7 @@ func makeEnv(t *testing.T, kind string) *ingest.Envelope {
 		Cwd:             "/tmp/batch",
 		ContentText:     "content " + kind,
 		Payload:         map[string]any{"k": kind},
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 }
 
@@ -167,7 +167,7 @@ func TestImportBatch_FailsWholeChunkOnBadRow(t *testing.T) {
 
 	good1 := makeEnv(t, "user_prompt")
 	bad := makeEnv(t, "user_prompt")
-	bad.Redaction = &ingest.Redaction{Applied: false} // tickles ErrRedactionRequired
+	bad.Redaction = &events.Redaction{Applied: false} // tickles ErrRedactionRequired
 	good2 := makeEnv(t, "tool_use")
 
 	batch := []pendingEnvelope{
@@ -200,7 +200,7 @@ func TestImportRowByRow_IsolatesBadRowAndCommitsRest(t *testing.T) {
 
 	good1 := makeEnv(t, "user_prompt")
 	bad := makeEnv(t, "user_prompt")
-	bad.Redaction = &ingest.Redaction{Applied: false}
+	bad.Redaction = &events.Redaction{Applied: false}
 	good2 := makeEnv(t, "tool_use")
 
 	batch := []pendingEnvelope{
@@ -236,7 +236,7 @@ func TestBatcher_FallbackPath_PartialFailureCountsAccurate(t *testing.T) {
 	good1 := makeEnv(t, "user_prompt")
 	good2 := makeEnv(t, "tool_use")
 	bad := makeEnv(t, "user_prompt")
-	bad.Redaction = &ingest.Redaction{Applied: false}
+	bad.Redaction = &events.Redaction{Applied: false}
 	good3 := makeEnv(t, "assistant_message") // never reached
 
 	if err := b.Add(t.Context(), good1, mustJSON(t, good1)); err != nil {

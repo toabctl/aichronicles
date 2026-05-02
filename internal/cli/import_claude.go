@@ -18,7 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
@@ -387,7 +387,7 @@ func bytesStripTrailingNewline(line []byte) []byte {
 // assistant_message + tool_use pair. Users wanting that split can
 // run a future re-derive pass; for MVP the 1:1 mapping keeps the
 // event_id = uuid property intact.
-func transcriptEntryToEnvelope(entry *claudeEntry, rawLine []byte) (*ingest.Envelope, []byte, error) {
+func transcriptEntryToEnvelope(entry *claudeEntry, rawLine []byte) (*events.Envelope, []byte, error) {
 	if entry.SessionID == "" {
 		return nil, nil, errors.New("missing sessionId")
 	}
@@ -409,7 +409,7 @@ func transcriptEntryToEnvelope(entry *claudeEntry, rawLine []byte) (*ingest.Enve
 		return nil, nil, fmt.Errorf("reparse line to payload: %w", err)
 	}
 
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		V:                  1,
 		EventID:            entry.UUID,
 		SourceAgent:        "claude-code",
@@ -429,7 +429,7 @@ func transcriptEntryToEnvelope(entry *claudeEntry, rawLine []byte) (*ingest.Enve
 	// in both events.content_text and raw_envelopes.envelope_json, so
 	// a transcript that contains a pasted API key never reaches disk
 	// in plain form. Idempotent on re-import (markers don't match).
-	ingest.ApplyRedaction(env, redact.Default())
+	events.ApplyRedaction(env, redact.Default())
 
 	// Re-marshal deterministically so raw_envelopes.envelope_json is
 	// the *our-canonical-envelope* JSON, not Claude's wire format.
@@ -450,7 +450,7 @@ func transcriptEntryToEnvelope(entry *claudeEntry, rawLine []byte) (*ingest.Enve
 //   - assistant + array w/ tool_use        → tool_use (first block)
 //   - assistant + array (text only)        → assistant_message (concat)
 //   - system                               → system_message
-func classifyClaudeEntry(entry *claudeEntry) (kind, role, contentText string, tool *ingest.Tool) {
+func classifyClaudeEntry(entry *claudeEntry) (kind, role, contentText string, tool *events.Tool) {
 	switch entry.Type {
 	case "system":
 		return "system_message", "system", stringContent(entry.Message), nil
@@ -463,7 +463,7 @@ func classifyClaudeEntry(entry *claudeEntry) (kind, role, contentText string, to
 	return "unknown", "", stringContent(entry.Message), nil
 }
 
-func classifyUserEntry(entry *claudeEntry) (string, string, string, *ingest.Tool) {
+func classifyUserEntry(entry *claudeEntry) (string, string, string, *events.Tool) {
 	if entry.Message == nil || len(entry.Message.Content) == 0 {
 		return "user_prompt", "user", "", nil
 	}
@@ -477,12 +477,12 @@ func classifyUserEntry(entry *claudeEntry) (string, string, string, *ingest.Tool
 	if first, ok := firstBlockOfType(blocks, "tool_result"); ok {
 		callID, _ := first["tool_use_id"].(string)
 		return "tool_result", "tool", flattenToolResultContent(first["content"]),
-			&ingest.Tool{CallID: callID}
+			&events.Tool{CallID: callID}
 	}
 	return "user_prompt", "user", joinTextBlocks(blocks), nil
 }
 
-func classifyAssistantEntry(entry *claudeEntry) (string, string, string, *ingest.Tool) {
+func classifyAssistantEntry(entry *claudeEntry) (string, string, string, *events.Tool) {
 	if entry.Message == nil || len(entry.Message.Content) == 0 {
 		return "assistant_message", "assistant", "", nil
 	}
@@ -491,7 +491,7 @@ func classifyAssistantEntry(entry *claudeEntry) (string, string, string, *ingest
 		name, _ := first["name"].(string)
 		callID, _ := first["id"].(string)
 		return "tool_use", "tool", name,
-			&ingest.Tool{Name: name, CallID: callID}
+			&events.Tool{Name: name, CallID: callID}
 	}
 	return "assistant_message", "assistant", joinTextBlocks(blocks), nil
 }
@@ -515,7 +515,7 @@ func firstBlockOfType(blocks []map[string]any, t string) (map[string]any, bool) 
 
 // joinTextBlocks concatenates "text" and "thinking" blocks' text for
 // FTS indexing. Tool-call structures aren't flattened here — their
-// metadata lives on ingest.Tool.
+// metadata lives on events.Tool.
 func joinTextBlocks(blocks []map[string]any) string {
 	var b strings.Builder
 	for _, block := range blocks {

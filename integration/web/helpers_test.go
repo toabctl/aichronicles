@@ -36,7 +36,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/web"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // chromeBinaries lists the executables we look for on PATH. First
@@ -164,7 +164,7 @@ func (e *testEnv) ingestEvent(t *testing.T, kind, sourceSession, content string,
 	case "assistant_message":
 		role = "assistant"
 	}
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -176,7 +176,7 @@ func (e *testEnv) ingestEvent(t *testing.T, kind, sourceSession, content string,
 		ContentText:     content,
 		Payload:         map[string]any{},
 		Transport:       "hook",
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	raw, _ := json.Marshal(env)
 	tx, err := e.Store.DB().Begin()
@@ -190,7 +190,7 @@ func (e *testEnv) ingestEvent(t *testing.T, kind, sourceSession, content string,
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	return ingest.DeriveSessionID("claude-code", sourceSession)
+	return events.DeriveSessionID("claude-code", sourceSession)
 }
 
 // newBrowser returns a chromedp context backed by a headless Chrome

@@ -18,7 +18,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/daemon"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // spinDaemon wires up a fresh store + UDS listener and returns the
@@ -59,7 +59,7 @@ func TestDaemon_RoundTrip(t *testing.T) {
 	sock, st, shutdown := spinDaemon(t)
 	defer func() { _ = shutdown(context.Background()) }()
 
-	env := ingest.Envelope{
+	env := events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -73,7 +73,7 @@ func TestDaemon_RoundTrip(t *testing.T) {
 			"hook_event_name": "UserPromptSubmit",
 			"prompt":          "hello daemon",
 		},
-		Redaction: &ingest.Redaction{Applied: true},
+		Redaction: &events.Redaction{Applied: true},
 	}
 	body, err := json.Marshal(env)
 	if err != nil {
@@ -89,14 +89,14 @@ func TestDaemon_RoundTrip(t *testing.T) {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
 
-	var ack ingest.Ack
+	var ack events.Ack
 	if err := json.NewDecoder(resp.Body).Decode(&ack); err != nil {
 		t.Fatalf("ack decode: %v", err)
 	}
 	if ack.EventID != env.EventID {
 		t.Fatalf("ack event_id: got %q want %q", ack.EventID, env.EventID)
 	}
-	wantSessionID := ingest.DeriveSessionID(env.SourceAgent, env.SourceSessionID)
+	wantSessionID := events.DeriveSessionID(env.SourceAgent, env.SourceSessionID)
 	if ack.SessionID != wantSessionID {
 		t.Fatalf("ack session_id: got %q want %q", ack.SessionID, wantSessionID)
 	}
@@ -129,7 +129,7 @@ func TestDaemon_DuplicateIsDeduped(t *testing.T) {
 	sock, _, shutdown := spinDaemon(t)
 	defer func() { _ = shutdown(context.Background()) }()
 
-	env := ingest.Envelope{
+	env := events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -138,7 +138,7 @@ func TestDaemon_DuplicateIsDeduped(t *testing.T) {
 		TsSource:        time.Now().UTC(),
 		ContentText:     "dup",
 		Payload:         map[string]any{},
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	body, _ := json.Marshal(env)
 
@@ -148,7 +148,7 @@ func TestDaemon_DuplicateIsDeduped(t *testing.T) {
 		if err != nil {
 			t.Fatalf("POST %d: %v", i, err)
 		}
-		var ack ingest.Ack
+		var ack events.Ack
 		_ = json.NewDecoder(resp.Body).Decode(&ack)
 		_ = resp.Body.Close()
 		if ack.Deduped != wantDeduped {

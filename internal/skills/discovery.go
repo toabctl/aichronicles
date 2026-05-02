@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/toabctl/aichronicles/pkg/ingest/extract"
+	"github.com/toabctl/aichronicles/pkg/events/extract"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 

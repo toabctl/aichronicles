@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // seedEvents inserts n events for one session via the normal ingest
@@ -19,7 +19,7 @@ import (
 func seedEvents(t *testing.T, s *Store, sessionKey string, n int, baseTs time.Time) {
 	t.Helper()
 	for i := range n {
-		env := &ingest.Envelope{
+		env := &events.Envelope{
 			V:               1,
 			EventID:         uuid.Must(uuid.NewV7()).String(),
 			SourceAgent:     "claude-code",
@@ -28,7 +28,7 @@ func seedEvents(t *testing.T, s *Store, sessionKey string, n int, baseTs time.Ti
 			Role:            "user",
 			TsSource:        baseTs.Add(time.Duration(i) * time.Millisecond),
 			Payload:         map[string]any{"i": i},
-			Redaction:       &ingest.Redaction{Applied: true},
+			Redaction:       &events.Redaction{Applied: true},
 		}
 		raw := []byte(`{"v":1}`) // body content does not matter for these tests
 		withTx(t, s, func(tx *sql.Tx) {
@@ -47,7 +47,7 @@ func TestLoadEventsForSession_ClampsToDefaultLimit(t *testing.T) {
 	total := DefaultEventsPerSessionLimit + 5
 	seedEvents(t, s, "big-session", total, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
-	sessionID := ingest.DeriveSessionID("claude-code", "big-session")
+	sessionID := events.DeriveSessionID("claude-code", "big-session")
 	got, err := LoadEventsForSession(t.Context(), s.DB(), sessionID, 0) // 0 → default cap
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -62,7 +62,7 @@ func TestLoadEventsForSession_ExplicitLimitWins(t *testing.T) {
 	s := openTemp(t)
 	seedEvents(t, s, "sess-1", 10, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
-	sessionID := ingest.DeriveSessionID("claude-code", "sess-1")
+	sessionID := events.DeriveSessionID("claude-code", "sess-1")
 	got, err := LoadEventsForSession(t.Context(), s.DB(), sessionID, 3)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -93,7 +93,7 @@ func TestLoadEventsForSession_UnboundedReturnsEverything(t *testing.T) {
 	total := DefaultEventsPerSessionLimit + 25
 	seedEvents(t, s, "unbounded", total, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
-	sessionID := ingest.DeriveSessionID("claude-code", "unbounded")
+	sessionID := events.DeriveSessionID("claude-code", "unbounded")
 	got, err := LoadEventsForSession(t.Context(), s.DB(), sessionID, LoadEventsForSessionUnbounded)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -123,7 +123,7 @@ func TestLoadExtractionsForSession_DedupsAndOrdersByFirstSight(t *testing.T) {
 	// extractions directly — keeps the test focused on the read
 	// path rather than exercising the ingest extractor.
 	seedEvents(t, s, "extract-test", 1, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	sessionID := ingest.DeriveSessionID("claude-code", "extract-test")
+	sessionID := events.DeriveSessionID("claude-code", "extract-test")
 
 	// Grab the event_id we just inserted.
 	var evID string
@@ -195,7 +195,7 @@ func TestResolveSessionIDPrefix_ExactMatch(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
 	seedEvents(t, s, "exact-test", 1, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	want := ingest.DeriveSessionID("claude-code", "exact-test")
+	want := events.DeriveSessionID("claude-code", "exact-test")
 
 	got, err := ResolveSessionIDPrefix(t.Context(), s.DB(), want)
 	if err != nil {
@@ -210,7 +210,7 @@ func TestResolveSessionIDPrefix_UniquePrefixResolves(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
 	seedEvents(t, s, "prefix-test", 1, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	full := ingest.DeriveSessionID("claude-code", "prefix-test")
+	full := events.DeriveSessionID("claude-code", "prefix-test")
 
 	// The 8-char preview is the common case — that's what
 	// `aichronicles sessions` prints.
@@ -279,7 +279,7 @@ func TestResolveSessionIDPrefix_NormalisesCase(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
 	seedEvents(t, s, "case-test", 1, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	full := ingest.DeriveSessionID("claude-code", "case-test")
+	full := events.DeriveSessionID("claude-code", "case-test")
 
 	// Uppercase should resolve the same as lowercase.
 	got, err := ResolveSessionIDPrefix(t.Context(), s.DB(), strings.ToUpper(full[:8]))
@@ -302,7 +302,7 @@ func TestLoadEventsForSession_RespectsCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := LoadEventsForSession(ctx, s.DB(), ingest.DeriveSessionID("claude-code", "cancel-me"), 0)
+	_, err := LoadEventsForSession(ctx, s.DB(), events.DeriveSessionID("claude-code", "cancel-me"), 0)
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
 	}
@@ -377,9 +377,9 @@ func TestLoadLatestEventsIndexedByID_LatestWinsPerSession(t *testing.T) {
 	seedEvents(t, s, "sess-A", 4, base)
 	seedEvents(t, s, "sess-B", 2, base.Add(time.Hour))
 
-	idA := ingest.DeriveSessionID("claude-code", "sess-A")
-	idB := ingest.DeriveSessionID("claude-code", "sess-B")
-	idMissing := ingest.DeriveSessionID("claude-code", "no-events-here")
+	idA := events.DeriveSessionID("claude-code", "sess-A")
+	idB := events.DeriveSessionID("claude-code", "sess-B")
+	idMissing := events.DeriveSessionID("claude-code", "no-events-here")
 
 	got, err := LoadLatestEventsIndexedByID(t.Context(), s.DB(),
 		[]string{idA, idB, idMissing})
@@ -420,7 +420,7 @@ func TestLoadLatestEventsIndexedByID_OneSessionInLargeCohort(t *testing.T) {
 	for i := range 5 {
 		seedEvents(t, s, "sess-"+string(rune('a'+i)), 3, base.Add(time.Duration(i)*time.Hour))
 	}
-	target := ingest.DeriveSessionID("claude-code", "sess-c")
+	target := events.DeriveSessionID("claude-code", "sess-c")
 
 	got, err := LoadLatestEventsIndexedByID(t.Context(), s.DB(), []string{target})
 	if err != nil {
@@ -444,7 +444,7 @@ func TestLoadSessionsMissingSummary_ExcludesSessionsWithSummary(t *testing.T) {
 	seedEvents(t, s, "sess-B", 1, base.Add(time.Hour))
 	seedEvents(t, s, "sess-C", 1, base.Add(2*time.Hour))
 
-	idA := ingest.DeriveSessionID("claude-code", "sess-A")
+	idA := events.DeriveSessionID("claude-code", "sess-A")
 	withTx(t, s, func(tx *sql.Tx) {
 		out := &LLMOutput{
 			SessionID:   sql.NullString{String: idA, Valid: true},
@@ -467,8 +467,8 @@ func TestLoadSessionsMissingSummary_ExcludesSessionsWithSummary(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("expected 2 missing-summary rows, got %d", len(got))
 	}
-	idB := ingest.DeriveSessionID("claude-code", "sess-B")
-	idC := ingest.DeriveSessionID("claude-code", "sess-C")
+	idB := events.DeriveSessionID("claude-code", "sess-B")
+	idC := events.DeriveSessionID("claude-code", "sess-C")
 	ids := map[string]bool{got[0].ID: true, got[1].ID: true}
 	if !ids[idB] || !ids[idC] {
 		t.Errorf("expected sess-B and sess-C in missing set, got %v", ids)
@@ -496,9 +496,9 @@ func TestLoadSessionsMissingSummary_OrderingNewestFirst(t *testing.T) {
 		t.Fatalf("expected 3 rows, got %d", len(got))
 	}
 	wantOrder := []string{
-		ingest.DeriveSessionID("claude-code", "new"),
-		ingest.DeriveSessionID("claude-code", "mid"),
-		ingest.DeriveSessionID("claude-code", "old"),
+		events.DeriveSessionID("claude-code", "new"),
+		events.DeriveSessionID("claude-code", "mid"),
+		events.DeriveSessionID("claude-code", "old"),
 	}
 	for i, want := range wantOrder {
 		if got[i].ID != want {
@@ -517,7 +517,7 @@ func TestLoadSessionsMissingSummary_FilterByCwdAndAgent(t *testing.T) {
 
 	// Tweak the cwd on one session to test the filter — seedEvents
 	// hardcodes "/work/<sessionKey>".
-	idIn := ingest.DeriveSessionID("claude-code", "in-cwd")
+	idIn := events.DeriveSessionID("claude-code", "in-cwd")
 	if _, err := s.DB().Exec(`UPDATE sessions SET cwd = ? WHERE id = ?`,
 		"/devel/target", idIn); err != nil {
 		t.Fatalf("set cwd: %v", err)
@@ -576,7 +576,7 @@ func TestLoadSessionDigest_UnknownSessionReturnsNilNoError(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
 
-	got, err := LoadSessionDigest(t.Context(), s.DB(), ingest.DeriveSessionID("claude-code", "nope"))
+	got, err := LoadSessionDigest(t.Context(), s.DB(), events.DeriveSessionID("claude-code", "nope"))
 	if err != nil {
 		t.Fatalf("LoadSessionDigest: %v", err)
 	}
@@ -597,7 +597,7 @@ func TestLoadSessionStartCwd_AnchorsOnFirstNonNullCwd(t *testing.T) {
 	// First event has cwd=/proj/start. A later event sets cwd=/proj/sub
 	// (the user cd'd mid-session). start_cwd must stick to the first.
 	for i, cwd := range []string{"/proj/start", "/proj/sub"} {
-		env := &ingest.Envelope{
+		env := &events.Envelope{
 			V:               1,
 			EventID:         uuid.Must(uuid.NewV7()).String(),
 			SourceAgent:     "claude-code",
@@ -607,7 +607,7 @@ func TestLoadSessionStartCwd_AnchorsOnFirstNonNullCwd(t *testing.T) {
 			TsSource:        base.Add(time.Duration(i) * time.Minute),
 			Cwd:             cwd,
 			Payload:         map[string]any{"i": i},
-			Redaction:       &ingest.Redaction{Applied: true},
+			Redaction:       &events.Redaction{Applied: true},
 		}
 		raw := []byte(`{"v":1}`)
 		withTx(t, s, func(tx *sql.Tx) {
@@ -617,7 +617,7 @@ func TestLoadSessionStartCwd_AnchorsOnFirstNonNullCwd(t *testing.T) {
 		})
 	}
 
-	sessionID := ingest.DeriveSessionID("claude-code", "sess-cwd-anchor")
+	sessionID := events.DeriveSessionID("claude-code", "sess-cwd-anchor")
 	got, err := LoadSessionStartCwd(t.Context(), s.DB(), sessionID)
 	if err != nil {
 		t.Fatalf("LoadSessionStartCwd: %v", err)
@@ -651,7 +651,7 @@ func TestLoadSessionDigest_FindsSessionRegardlessOfAge(t *testing.T) {
 			time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(i)*time.Hour))
 	}
 
-	wantID := ingest.DeriveSessionID("claude-code", "ancient")
+	wantID := events.DeriveSessionID("claude-code", "ancient")
 	got, err := LoadSessionDigest(t.Context(), s.DB(), wantID)
 	if err != nil {
 		t.Fatalf("LoadSessionDigest: %v", err)

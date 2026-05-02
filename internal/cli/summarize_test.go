@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
@@ -145,7 +145,7 @@ func seedSessionForSummarize(t *testing.T) (*store.Store, string) {
 		{"assistant_message", "net.FileListener(os.NewFile(3, ...))", 3},
 	}
 	for _, fx := range fixtures {
-		env := ingest.Envelope{
+		env := events.Envelope{
 			V:               1,
 			EventID:         uuid.Must(uuid.NewV7()).String(),
 			SourceAgent:     "claude-code",
@@ -156,7 +156,7 @@ func seedSessionForSummarize(t *testing.T) (*store.Store, string) {
 			Cwd:             "/work/systemd",
 			ContentText:     fx.content,
 			Payload:         map[string]any{"i": fx.off},
-			Redaction:       &ingest.Redaction{Applied: true},
+			Redaction:       &events.Redaction{Applied: true},
 		}
 		raw, _ := json.Marshal(env)
 		tx, _ := s.DB().Begin()
@@ -166,7 +166,7 @@ func seedSessionForSummarize(t *testing.T) (*store.Store, string) {
 		}
 		_ = tx.Commit()
 	}
-	return s, ingest.DeriveSessionID("claude-code", "sess-summary")
+	return s, events.DeriveSessionID("claude-code", "sess-summary")
 }
 
 func TestRunSummarize_HappyPathCallsLLMAndPersists(t *testing.T) {

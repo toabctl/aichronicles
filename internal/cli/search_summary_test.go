@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/llm"
 )
 
@@ -20,7 +20,7 @@ import (
 // the test can assert it appears in the summary.
 func seedSearchableEvent(t *testing.T, s *store.Store, sessionKey, prompt string) string {
 	t.Helper()
-	env := &ingest.Envelope{
+	env := &events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -31,7 +31,7 @@ func seedSearchableEvent(t *testing.T, s *store.Store, sessionKey, prompt string
 		ContentText:     prompt,
 		Cwd:             "/work",
 		Payload:         map[string]any{},
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	raw, _ := json.Marshal(env)
 	tx, err := s.DB().Begin()
@@ -45,7 +45,7 @@ func seedSearchableEvent(t *testing.T, s *store.Store, sessionKey, prompt string
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	return ingest.DeriveSessionID("claude-code", sessionKey)
+	return events.DeriveSessionID("claude-code", sessionKey)
 }
 
 func TestRunSearchSummary_NoHitsPrintsEmptyMarker(t *testing.T) {
@@ -81,7 +81,7 @@ func TestRunSearchSummary_PassesGroundedHitsToLLM(t *testing.T) {
 	seedSearchableEvent(t, s, "summary-sess-1", "investigate slow query plan")
 
 	f := &fakeLLM{reply: "Slow queries traced to a missing index [session=" +
-		ingest.DeriveSessionID("claude-code", "summary-sess-1")[:8] + "]."}
+		events.DeriveSessionID("claude-code", "summary-sess-1")[:8] + "]."}
 
 	var buf bytes.Buffer
 	err := RunSearchSummary(context.Background(), s,

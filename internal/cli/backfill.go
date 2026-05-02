@@ -13,8 +13,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
-	"github.com/toabctl/aichronicles/pkg/ingest/extract"
+	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // backfillBatchSize caps how many envelopes we re-process in one
@@ -213,14 +213,14 @@ func rewriteBatch(ctx context.Context, db *sql.DB, batch []rawEnvelopeRow, onlyK
 
 	for _, row := range batch {
 		report.EnvelopesScanned++
-		var env ingest.Envelope
+		var env events.Envelope
 		if err := json.Unmarshal(row.envelopeJSON, &env); err != nil {
 			report.Invalid++
 			continue
 		}
 		report.EnvelopesParsed++
 
-		sessionID := ingest.DeriveSessionID(env.SourceAgent, env.SourceSessionID)
+		sessionID := events.DeriveSessionID(env.SourceAgent, env.SourceSessionID)
 
 		var del sql.Result
 		if onlyKind != "" {

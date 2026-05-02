@@ -12,13 +12,13 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 // seedStore opens a Store and inserts a handful of envelopes covering
 // multiple kinds, sessions, and timestamps for search tests.
-func seedStore(t *testing.T) (*store.Store, []ingest.Envelope) {
+func seedStore(t *testing.T) (*store.Store, []events.Envelope) {
 	t.Helper()
 	s, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
@@ -27,7 +27,7 @@ func seedStore(t *testing.T) (*store.Store, []ingest.Envelope) {
 	t.Cleanup(func() { _ = s.Close() })
 
 	now := time.Now().UTC()
-	envs := []ingest.Envelope{
+	envs := []events.Envelope{
 		{
 			V: 1, EventID: uuid.Must(uuid.NewV7()).String(),
 			SourceAgent: "claude-code", SourceSessionID: "sess-foo",
@@ -54,13 +54,13 @@ func seedStore(t *testing.T) (*store.Store, []ingest.Envelope) {
 			SourceAgent: "claude-code", SourceSessionID: "sess-bar",
 			Kind: "tool_use", TsSource: now.Add(-1 * time.Hour),
 			Cwd: "/work/bar", ContentText: "Bash",
-			Tool:    &ingest.Tool{Name: "Bash"},
+			Tool:    &events.Tool{Name: "Bash"},
 			Payload: map[string]any{"tool_input": map[string]any{"command": "systemctl --user status"}},
 		},
 	}
 
 	for _, e := range envs {
-		ingest.ApplyRedaction(&e, redact.Default())
+		events.ApplyRedaction(&e, redact.Default())
 		raw, err := json.Marshal(e)
 		if err != nil {
 			t.Fatalf("marshal: %v", err)
@@ -130,7 +130,7 @@ func TestRunSearch_RespectsSessionFilter(t *testing.T) {
 	s, _ := seedStore(t)
 	var out bytes.Buffer
 
-	sessFooID := ingest.DeriveSessionID("claude-code", "sess-foo")
+	sessFooID := events.DeriveSessionID("claude-code", "sess-foo")
 	if err := RunSearch(s, SearchOptions{Query: "is", SessionID: sessFooID}, &out); err != nil {
 		t.Fatalf("RunSearch: %v", err)
 	}
@@ -174,14 +174,14 @@ func TestRunSearch_RespectsLimit(t *testing.T) {
 	// per iteration so the default dedup doesn't collapse them into
 	// one partition — this test is about --limit, not about dedupe.
 	for i := 0; i < 15; i++ {
-		env := ingest.Envelope{
+		env := events.Envelope{
 			V: 1, EventID: uuid.Must(uuid.NewV7()).String(),
 			SourceAgent: "claude-code", SourceSessionID: "sess-bulk",
 			Kind: "user_prompt", TsSource: time.Now().UTC(),
 			ContentText: fmt.Sprintf("limittest marker %d", i),
 			Payload:     map[string]any{},
 		}
-		ingest.ApplyRedaction(&env, redact.Default())
+		events.ApplyRedaction(&env, redact.Default())
 		raw, _ := json.Marshal(env)
 		tx, _ := s.DB().Begin()
 		_, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli())
@@ -262,7 +262,7 @@ func TestRunSearch_UnclosedQuoteIsParseError(t *testing.T) {
 // dedup logic has to use content equality rather than timestamp match.
 func seedDuplicateTurn(t *testing.T, s *store.Store) (sessionID, hookEventID, importEventID string) {
 	t.Helper()
-	hookEnv := ingest.Envelope{
+	hookEnv := events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -281,8 +281,8 @@ func seedDuplicateTurn(t *testing.T, s *store.Store) (sessionID, hookEventID, im
 	importEnv.Payload = map[string]any{"from": "import"}
 	importEnv.Transport = "import"
 
-	for _, e := range []ingest.Envelope{hookEnv, importEnv} {
-		ingest.ApplyRedaction(&e, redact.Default())
+	for _, e := range []events.Envelope{hookEnv, importEnv} {
+		events.ApplyRedaction(&e, redact.Default())
 		raw, err := json.Marshal(e)
 		if err != nil {
 			t.Fatalf("marshal: %v", err)
@@ -299,7 +299,7 @@ func seedDuplicateTurn(t *testing.T, s *store.Store) (sessionID, hookEventID, im
 			t.Fatalf("commit: %v", err)
 		}
 	}
-	return ingest.DeriveSessionID("claude-code", "sess-dup"), hookEnv.EventID, importEnv.EventID
+	return events.DeriveSessionID("claude-code", "sess-dup"), hookEnv.EventID, importEnv.EventID
 }
 
 func TestRunSearch_DedupeCollapsesDuplicateTurn(t *testing.T) {
@@ -377,7 +377,7 @@ func TestRunSearch_DedupeDoesNotCollapseDistinctContent(t *testing.T) {
 
 	// Two events in same session, same role, same kind — but different
 	// content. Must NOT be deduped.
-	base := ingest.Envelope{
+	base := events.Envelope{
 		V:               1,
 		SourceAgent:     "claude-code",
 		SourceSessionID: "sess-distinct",
@@ -391,7 +391,7 @@ func TestRunSearch_DedupeDoesNotCollapseDistinctContent(t *testing.T) {
 		env := base
 		env.EventID = uuid.Must(uuid.NewV7()).String()
 		env.ContentText = txt
-		ingest.ApplyRedaction(&env, redact.Default())
+		events.ApplyRedaction(&env, redact.Default())
 		raw, _ := json.Marshal(env)
 		tx, _ := s.DB().Begin()
 		_, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli())

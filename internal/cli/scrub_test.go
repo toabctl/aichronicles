@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
@@ -33,7 +33,7 @@ func seedScrubStore(t *testing.T) *store.Store {
 		{"user_prompt", "nothing to see here"},
 	}
 	for i, fx := range fixtures {
-		env := ingest.Envelope{
+		env := events.Envelope{
 			V:               1,
 			EventID:         uuid.Must(uuid.NewV7()).String(),
 			SourceAgent:     "claude-code",
@@ -43,7 +43,7 @@ func seedScrubStore(t *testing.T) *store.Store {
 			TsSource:        now.Add(time.Duration(i) * time.Second),
 			ContentText:     fx.content,
 			Payload:         map[string]any{"original": fx.content},
-			Redaction:       &ingest.Redaction{Applied: true},
+			Redaction:       &events.Redaction{Applied: true},
 		}
 		raw, _ := json.Marshal(env)
 		tx, _ := s.DB().Begin()
@@ -232,7 +232,7 @@ func TestRunScrub_AtomicOnError(t *testing.T) {
 	s := testStore(t)
 
 	// Plant one envelope that scrub WOULD rewrite.
-	env := ingest.Envelope{
+	env := events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -243,7 +243,7 @@ func TestRunScrub_AtomicOnError(t *testing.T) {
 		Cwd:             "/work",
 		ContentText:     "leak AKIAIOSFODNN7EXAMPLE here",
 		Payload:         map[string]any{},
-		Redaction:       &ingest.Redaction{Applied: true, Patterns: []string{}},
+		Redaction:       &events.Redaction{Applied: true, Patterns: []string{}},
 	}
 	raw, _ := json.Marshal(&env)
 	tx, _ := s.DB().Begin()

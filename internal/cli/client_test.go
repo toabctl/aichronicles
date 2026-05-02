@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // startUDSTestServer runs handler on a temp UDS and returns the socket
@@ -34,9 +34,9 @@ func startUDSTestServer(t *testing.T, handler http.Handler) (string, func()) {
 	}
 }
 
-func validEnvelope(t *testing.T) ingest.Envelope {
+func validEnvelope(t *testing.T) events.Envelope {
 	t.Helper()
-	return ingest.Envelope{
+	return events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -51,13 +51,13 @@ func TestClient_Post_Success(t *testing.T) {
 	t.Parallel()
 
 	var gotPath, gotCT string
-	var gotEnv ingest.Envelope
+	var gotEnv events.Envelope
 	sock, teardown := startUDSTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotCT = r.Header.Get("Content-Type")
 		_ = json.NewDecoder(r.Body).Decode(&gotEnv)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(ingest.Ack{
+		_ = json.NewEncoder(w).Encode(events.Ack{
 			EventID:   gotEnv.EventID,
 			SessionID: "derived-session",
 			Deduped:   false,

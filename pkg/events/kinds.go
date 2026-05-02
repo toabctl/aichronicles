@@ -1,4 +1,4 @@
-package ingest
+package events
 
 // Canonical event kinds — the closed vocabulary stored in
 // events.kind. Source of truth for the wire schema; api/openapi.yaml

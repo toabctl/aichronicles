@@ -17,7 +17,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/daemon"
 	"github.com/toabctl/aichronicles/internal/mcp"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // TestE2E_IngestSummarizeFetchViaMCP exercises Block A → B → C in a
@@ -69,7 +69,7 @@ func TestE2E_IngestSummarizeFetchViaMCP(t *testing.T) {
 		t.Fatalf("RunIngest: %v", err)
 	}
 
-	sessID := ingest.DeriveSessionID("claude-code", "e2e-pipeline")
+	sessID := events.DeriveSessionID("claude-code", "e2e-pipeline")
 
 	// Sanity: the ingested event is scrubbed.
 	var content string

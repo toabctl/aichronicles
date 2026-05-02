@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
@@ -25,7 +25,7 @@ func seedSummariesFixtures(t *testing.T) (*store.Store, string) {
 
 	// One ingest-shaped event so the session exists for the summary
 	// row's foreign key.
-	env := ingest.Envelope{
+	env := events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -34,7 +34,7 @@ func seedSummariesFixtures(t *testing.T) (*store.Store, string) {
 		Role:            "user",
 		TsSource:        time.Now().UTC(),
 		Payload:         map[string]any{"x": 1},
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	raw, _ := json.Marshal(env)
 	tx, _ := s.DB().Begin()
@@ -43,7 +43,7 @@ func seedSummariesFixtures(t *testing.T) (*store.Store, string) {
 		t.Fatalf("seed event: %v", err)
 	}
 	_ = tx.Commit()
-	sessID := ingest.DeriveSessionID("claude-code", "sum-fixture")
+	sessID := events.DeriveSessionID("claude-code", "sum-fixture")
 
 	// Store one summary, one reflection, one proposal. Body is the
 	// proper JSON a real tool_use would produce so extractTopic
@@ -313,7 +313,7 @@ func dbPathFromStore(t *testing.T, s *store.Store) string {
 // summary on the session call SaveLLMOutput separately.
 func seedSessionForMissing(t *testing.T, s *store.Store, sourceSession string, ts time.Time) string {
 	t.Helper()
-	env := ingest.Envelope{
+	env := events.Envelope{
 		V:               1,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
 		SourceAgent:     "claude-code",
@@ -324,7 +324,7 @@ func seedSessionForMissing(t *testing.T, s *store.Store, sourceSession string, t
 		Cwd:             "/work/" + sourceSession,
 		ContentText:     "first prompt for " + sourceSession,
 		Payload:         map[string]any{},
-		Redaction:       &ingest.Redaction{Applied: true},
+		Redaction:       &events.Redaction{Applied: true},
 	}
 	raw, _ := json.Marshal(env)
 	tx, _ := s.DB().Begin()
@@ -333,7 +333,7 @@ func seedSessionForMissing(t *testing.T, s *store.Store, sourceSession string, t
 		t.Fatalf("seed: %v", err)
 	}
 	_ = tx.Commit()
-	return ingest.DeriveSessionID("claude-code", sourceSession)
+	return events.DeriveSessionID("claude-code", sourceSession)
 }
 
 func TestSummariesMissing_OnlyUnsummarizedRowsAppear(t *testing.T) {

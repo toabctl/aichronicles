@@ -15,8 +15,8 @@ import (
 	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/timefmt"
-	"github.com/toabctl/aichronicles/pkg/ingest"
-	"github.com/toabctl/aichronicles/pkg/ingest/extract"
+	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/pkg/events/extract"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
@@ -286,7 +286,7 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int, f sess
 	}
 	if f.Skill != "" {
 		// extractions kind=skill_load value=<name> is the canonical
-		// signal — see pkg/ingest/extract/SkillLoadExtractor.
+		// signal — see pkg/events/extract/SkillLoadExtractor.
 		conds = append(conds, `EXISTS (
 			SELECT 1 FROM extractions x
 			 WHERE x.session_id = s.id AND x.kind = ? AND x.value = ?
@@ -308,7 +308,7 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int, f sess
 			SELECT 1 FROM events e
 			 WHERE e.session_id = s.id AND e.kind = ?
 		)`)
-		args = append(args, ingest.KindToolFailure)
+		args = append(args, events.KindToolFailure)
 	}
 	if f.NoSummary {
 		// NOT EXISTS over llm_outputs(kind=summary). NOT EXISTS

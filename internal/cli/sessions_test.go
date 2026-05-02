@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/ingest"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
@@ -37,7 +37,7 @@ func seedStoreForSessions(t *testing.T) *store.Store {
 	for _, f := range fixtures {
 		// user_prompt first, then assistant_message — first_prompt
 		// subquery picks the user_prompt.
-		envs := []ingest.Envelope{
+		envs := []events.Envelope{
 			{
 				V: 1, EventID: uuid.Must(uuid.NewV7()).String(),
 				SourceAgent: "claude-code", SourceSessionID: f.sessID,
@@ -56,7 +56,7 @@ func seedStoreForSessions(t *testing.T) *store.Store {
 			},
 		}
 		for _, e := range envs {
-			ingest.ApplyRedaction(&e, redact.Default())
+			events.ApplyRedaction(&e, redact.Default())
 			raw, _ := json.Marshal(e)
 			tx, err := s.DB().Begin()
 			if err != nil {

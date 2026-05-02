@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/toabctl/aichronicles/pkg/ingest"
-	"github.com/toabctl/aichronicles/pkg/ingest/extract"
+	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // InsightsReport is the full output of LoadInsights — the data the
@@ -185,17 +185,17 @@ func loadInsightsOverview(ctx context.Context, db *sql.DB, sinceMs int64) (Insig
 		{
 			dst:   &o.ToolUses,
 			query: `SELECT COUNT(*) FROM events WHERE ts_source_ms >= ? AND kind = ?`,
-			args:  []any{sinceMs, ingest.KindToolUse},
+			args:  []any{sinceMs, events.KindToolUse},
 		},
 		{
 			dst:   &o.UserPrompts,
 			query: `SELECT COUNT(*) FROM events WHERE ts_source_ms >= ? AND kind = ?`,
-			args:  []any{sinceMs, ingest.KindUserPrompt},
+			args:  []any{sinceMs, events.KindUserPrompt},
 		},
 		{
 			dst:   &o.DistinctTools,
 			query: `SELECT COUNT(DISTINCT tool_name) FROM events WHERE ts_source_ms >= ? AND kind = ? AND tool_name IS NOT NULL`,
-			args:  []any{sinceMs, ingest.KindToolUse},
+			args:  []any{sinceMs, events.KindToolUse},
 		},
 		{
 			dst: &o.DistinctSkills,
@@ -220,7 +220,7 @@ func loadTopTools(ctx context.Context, db *sql.DB, sinceMs int64, limit int) ([]
 		  GROUP BY tool_name
 		  ORDER BY c DESC, tool_name ASC
 		  LIMIT ?`,
-		sinceMs, ingest.KindToolUse, limit,
+		sinceMs, events.KindToolUse, limit,
 	)
 	if err != nil {
 		return nil, err
