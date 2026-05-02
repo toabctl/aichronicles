@@ -92,8 +92,7 @@ func (p *Pipeline) Run(ctx context.Context, src Source) (Stats, error) {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return stats, ctxErr
 		}
-		result, err := p.Process(ctx, evt)
-		if err != nil {
+		if _, err := p.Process(ctx, evt); err != nil {
 			stats.Errors++
 			if p.Logger != nil {
 				eventID := ""
@@ -104,13 +103,16 @@ func (p *Pipeline) Run(ctx context.Context, src Source) (Stats, error) {
 			}
 			continue
 		}
-		stats.Processed++
-		if result.Deduped {
-			stats.Deduped++
-		}
 	}
 	if err := p.Sink.Flush(ctx); err != nil {
 		return stats, fmt.Errorf("sink flush: %w", err)
 	}
+	// Read final committed counts from the Sink. This is the only
+	// reliable path for buffered sinks where per-Write Result is
+	// synthetic pre-flush. Single-tx sinks are also fine here
+	// because they update on every Write.
+	sinkStats := p.Sink.Stats()
+	stats.Processed = sinkStats.Imported + sinkStats.Deduped
+	stats.Deduped = sinkStats.Deduped
 	return stats, nil
 }

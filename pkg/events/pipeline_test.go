@@ -16,6 +16,7 @@ type fakeSink struct {
 	closed   int
 	writeErr error
 	flushErr error
+	stats    SinkStats
 }
 
 func (s *fakeSink) Write(_ context.Context, e Event) (Result, error) {
@@ -23,6 +24,7 @@ func (s *fakeSink) Write(_ context.Context, e Event) (Result, error) {
 		return Result{}, s.writeErr
 	}
 	s.written = append(s.written, e)
+	s.stats.Imported++
 	id := ""
 	if e.Envelope != nil {
 		id = e.Envelope.EventID
@@ -39,6 +41,8 @@ func (s *fakeSink) Close() error {
 	s.closed++
 	return nil
 }
+
+func (s *fakeSink) Stats() SinkStats { return s.stats }
 
 // staticSource yields a fixed slice of (Event, err) pairs and then
 // stops. Used to drive Pipeline.Run without filesystem or HTTP I/O.

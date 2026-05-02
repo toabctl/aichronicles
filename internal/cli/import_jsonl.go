@@ -134,28 +134,29 @@ func ImportJSONL(ctx context.Context, r io.Reader, s *store.Store) (ImportReport
 			Extractions: registry.Run(&envCopy),
 		}); err != nil {
 			report.DurationMS = time.Since(start).Milliseconds()
-			report.Imported = sink.Imported()
-			report.Deduped = sink.Deduped()
+			report.applySinkStats(sink.Stats())
 			return report, fmt.Errorf("import line %d (%s): %w", report.LinesRead, env.EventID, err)
 		}
 	}
 	if err := sc.Err(); err != nil {
 		report.DurationMS = time.Since(start).Milliseconds()
-		report.Imported = sink.Imported()
-		report.Deduped = sink.Deduped()
+		report.applySinkStats(sink.Stats())
 		return report, fmt.Errorf("scan: %w", err)
 	}
 	if err := sink.Flush(ctx); err != nil {
 		report.DurationMS = time.Since(start).Milliseconds()
-		report.Imported = sink.Imported()
-		report.Deduped = sink.Deduped()
+		report.applySinkStats(sink.Stats())
 		return report, fmt.Errorf("flush: %w", err)
 	}
 
-	report.Imported = sink.Imported()
-	report.Deduped = sink.Deduped()
+	report.applySinkStats(sink.Stats())
 	report.DurationMS = time.Since(start).Milliseconds()
 	return report, nil
+}
+
+func (r *ImportReport) applySinkStats(s events.SinkStats) {
+	r.Imported = s.Imported
+	r.Deduped = s.Deduped
 }
 
 // bytesTrimSpace avoids the strings.TrimSpace copy for empty-line

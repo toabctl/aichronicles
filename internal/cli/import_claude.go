@@ -143,16 +143,13 @@ func ImportClaudeTranscripts(ctx context.Context, target string, s *store.Store,
 		Logger:           log,
 	}
 
-	_, err := pipeline.Run(ctx, src)
+	stats, err := pipeline.Run(ctx, src)
 	report.FilesRead = src.Stats.FilesRead
 	report.LinesRead = src.Stats.LinesRead
 	report.SkippedMissingUUID = src.Stats.SkippedMissingUUID
 	report.Invalid = src.Stats.Invalid
-	// Imported/Deduped come from the BufferedSink's running totals
-	// (Pipeline.Stats can't track dedup for buffered sinks since
-	// Write returns synthetic Result values pre-flush).
-	report.Imported = sink.Imported()
-	report.Deduped = sink.Deduped()
+	report.Imported = stats.Processed - stats.Deduped
+	report.Deduped = stats.Deduped
 	report.DurationMS = time.Since(start).Milliseconds()
 	return report, err
 }

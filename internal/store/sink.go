@@ -20,10 +20,14 @@ import (
 // HTTP 5xx).
 //
 // Flush is a no-op; Close is a no-op (the *Store is owned by the
-// caller).
+// caller). Stats accumulates Imported / Deduped counts across all
+// Writes so the Pipeline can report them at end-of-run.
 type Sink struct {
 	store *Store
 	now   func() time.Time
+
+	imported int
+	deduped  int
 }
 
 // NewSink wraps a *Store as an events.Sink with one-tx-per-Write
@@ -63,6 +67,11 @@ func (s *Sink) Write(ctx context.Context, e events.Event) (events.Result, error)
 	if err := tx.Commit(); err != nil {
 		return events.Result{}, fmt.Errorf("commit: %w", err)
 	}
+	if deduped {
+		s.deduped++
+	} else {
+		s.imported++
+	}
 	return events.Result{
 		EventID:   e.Envelope.EventID,
 		SessionID: events.DeriveSessionID(e.Envelope.SourceAgent, e.Envelope.SourceSessionID),
@@ -75,6 +84,12 @@ func (s *Sink) Flush(_ context.Context) error { return nil }
 
 // Close is a no-op; the *Store is owned by the caller.
 func (s *Sink) Close() error { return nil }
+
+// Stats returns the running totals. Single-tx sinks update on every
+// successful Write.
+func (s *Sink) Stats() events.SinkStats {
+	return events.SinkStats{Imported: s.imported, Deduped: s.deduped}
+}
 
 // BufferedSinkOpts tunes when BufferedSink auto-flushes. Both caps
 // are inclusive: hitting either triggers a flush. Zero values fall
@@ -215,14 +230,12 @@ func (b *BufferedSink) Close() error {
 	return b.Flush(context.Background())
 }
 
-// Imported returns the running total of envelopes successfully
-// inserted (excluding dedup). Updated by Flush.
-func (b *BufferedSink) Imported() int { return b.imported }
-
-// Deduped returns the running total of envelopes that hit an
-// existing event_id and resulted in no-op INSERT OR IGNORE.
-// Updated by Flush.
-func (b *BufferedSink) Deduped() int { return b.deduped }
+// Stats returns the running totals. Buffered sinks update on each
+// Flush (not on Write); callers that need authoritative counts
+// must Flush before reading.
+func (b *BufferedSink) Stats() events.SinkStats {
+	return events.SinkStats{Imported: b.imported, Deduped: b.deduped}
+}
 
 // flushBatch attempts the entire chunk in one tx. Returns the first
 // error encountered; the caller falls back to flushRowByRow.
