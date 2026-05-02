@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"time"
@@ -12,6 +13,8 @@ import (
 	"github.com/toabctl/aichronicles/internal/notify"
 	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/pkg/events/sources/claude"
+	"github.com/toabctl/aichronicles/pkg/events/sources/gemini"
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
@@ -79,11 +82,6 @@ func RunIngest(stdin io.Reader, stderr io.Writer, socketFlag, agentSlug string) 
 	if agentSlug == "" {
 		agentSlug = defaultIngestAgent
 	}
-	env, err := AssembleByAgent(agentSlug, raw, time.Now().UTC())
-	if err != nil {
-		log.Error("assemble envelope", "agent", agentSlug, "err", err)
-		return nil
-	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -92,20 +90,24 @@ func RunIngest(stdin io.Reader, stderr io.Writer, socketFlag, agentSlug string) 
 		cfg = &d
 	}
 
+	// Translate hook payload to canonical Envelope. Each source's
+	// HookTranslator owns redaction (the source IS the edge), so by
+	// the time Translate returns, env.Redaction.Applied is true.
+	env, err := translateHook(agentSlug, raw)
+	if err != nil {
+		log.Error("translate hook payload", "agent", agentSlug, "err", err)
+		return nil
+	}
+
 	// Coarse denylist: drop the whole envelope if its cwd falls under
-	// a user-configured deny_paths entry. Runs BEFORE redaction so no
-	// bytes from a denied directory enter further processing.
+	// a user-configured deny_paths entry. Runs after translation so
+	// the cwd is canonical, but the envelope is already redacted —
+	// nothing useful is logged here either way.
 	if cfg.Capture.IsDenied(env.Cwd) {
 		log.Info("envelope dropped by capture.deny_paths",
 			"cwd", env.Cwd, "source_session_id", env.SourceSessionID)
 		return nil
 	}
-
-	// Redact at the edge: secrets present in the original hook payload
-	// must never leave this process unscrubbed. Downstream — daemon,
-	// store, future LLM shim — treats Redaction.Applied as proof that
-	// this step ran.
-	events.ApplyRedaction(&env, redact.Default())
 
 	sockPath, err := paths.ResolveSocketPath(socketFlag)
 	if err != nil {
@@ -134,6 +136,26 @@ func RunIngest(stdin io.Reader, stderr io.Writer, socketFlag, agentSlug string) 
 		}
 	}
 	return nil
+}
+
+// translateHook dispatches to the per-agent HookTranslator under
+// pkg/events/sources/. Each Translator applies edge redaction
+// internally, so the returned envelope's Redaction.Applied=true.
+// Unknown agent slugs return an error so a typo in --agent surfaces
+// immediately rather than producing a malformed envelope.
+func translateHook(agentSlug string, raw []byte) (events.Envelope, error) {
+	redactor := events.NewScannerRedactor(redact.Default())
+	now := func() time.Time { return time.Now().UTC() }
+	switch agentSlug {
+	case "claude-code":
+		tr := &claude.HookTranslator{Redactor: redactor, Now: now}
+		return tr.Translate(raw)
+	case "gemini-cli":
+		tr := &gemini.HookTranslator{Redactor: redactor, Now: now}
+		return tr.Translate(raw)
+	default:
+		return events.Envelope{}, fmt.Errorf("unknown agent slug %q", agentSlug)
+	}
 }
 
 // outageTracker resolves the outage flag path and returns a tracker, or
