@@ -54,12 +54,24 @@ func newMCPServeCmd() *cobra.Command {
 			log := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(),
 				&slog.HandlerOptions{Level: slog.LevelInfo})).With("cmd", "aichronicles mcp-serve")
 
+			// MCP migration: tools that have moved off direct
+			// *store.Store access read through the apiclient
+			// against aichronicles-api over its UDS. Construct
+			// the client unconditionally so the catalog is
+			// complete; it costs nothing when no migrated tool
+			// is actually called.
+			apiC, err := openAPIClient("")
+			if err != nil {
+				return err
+			}
+
 			srv := mcp.New(mcp.ServerInfo{
 				Name:    mcpServerName,
 				Version: mcpServerVersion,
 			}, log)
 			mcp.RegisterAichroniclesTools(srv, s)
 			mcp.RegisterAichroniclesAnalyticsTools(srv, s)
+			mcp.RegisterAichroniclesAPITools(srv, apiC)
 
 			// Register LLM-backed tools (search_with_summary) only
 			// when the user has an API key configured — otherwise

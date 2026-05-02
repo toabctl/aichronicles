@@ -85,7 +85,7 @@ func TestRegisterAichroniclesTools_InstallsAllFive(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	for _, want := range []string{
 		"search_events", "list_sessions", "find_episodes", "get_summary",
@@ -213,7 +213,7 @@ func TestGetFactsForSubject_RendersFacts(t *testing.T) {
 	}
 
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "get_facts_for_subject", `{"subject":"/work/aichronicles"}`)
 	if res == nil || len(res.Content) == 0 {
@@ -237,7 +237,7 @@ func TestGetFactsForSubject_EmptyResultIsHelpful(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "get_facts_for_subject", `{"subject":"/no-such-project"}`)
 	body := res.Content[0].Text
@@ -250,7 +250,7 @@ func TestGetFactsForSubject_RejectsEmptySubject(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "get_facts_for_subject", `{"subject":"  "}`)
 	if !strings.Contains(res.Content[0].Text, "subject is required") {
@@ -280,7 +280,7 @@ func TestFindFactSubjects_CaseInsensitiveSubstring(t *testing.T) {
 	}
 
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "find_fact_subjects", `{"contains":"aichronicles"}`)
 	body := res.Content[0].Text
@@ -296,7 +296,7 @@ func TestFindFactSubjects_RejectsEmptyNeedle(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "find_fact_subjects", `{"contains":"  "}`)
 	if !strings.Contains(res.Content[0].Text, "contains is required") {
@@ -308,7 +308,7 @@ func TestFindFactSubjects_NoMatchesIsHelpful(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "find_fact_subjects", `{"contains":"absolutely-nothing"}`)
 	if !strings.Contains(res.Content[0].Text, "no fact subjects matched") {
@@ -325,7 +325,7 @@ func TestListWorkflows_ReturnsFoundWorkflowsWithProcedure(t *testing.T) {
 		"investigate a failing CI run", "extracted from session", true)
 
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "list_workflows", `{}`)
 	if res == nil || len(res.Content) == 0 {
@@ -355,7 +355,7 @@ func TestListWorkflows_FiltersByTaskShapeContains(t *testing.T) {
 		"investigate a failing CI run", "x", true)
 
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "list_workflows", `{"task_shape_contains":"deploy"}`)
 	body := res.Content[0].Text
@@ -376,7 +376,7 @@ func TestListWorkflows_DefaultsExcludeNotFound(t *testing.T) {
 		"deploy something", "extracted", true)
 
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	// Default omits found=false rows.
 	res := callTool(t, s, "list_workflows", `{}`)
@@ -400,7 +400,7 @@ func TestListWorkflows_EmptyResultIsHelpful(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "list_workflows", `{}`)
 	body := res.Content[0].Text
@@ -413,7 +413,7 @@ func TestSearchEvents_FindsMatchingRow(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "search_events", `{"query":"jsonl"}`)
 	if res.IsError {
@@ -429,7 +429,7 @@ func TestSearchEvents_MissingQueryReturnsUserFacingError(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "search_events", `{}`)
 	if !res.IsError {
@@ -444,7 +444,7 @@ func TestSearchEvents_PrefixMatchFromBareToken(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "search_events", `{"query":"json"}`)
 	if res.IsError {
@@ -463,7 +463,7 @@ func TestSearchEvents_PunctuationDoesNotError(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	for _, q := range []string{
 		`{"query":"foo*bar"}`,
@@ -487,7 +487,7 @@ func TestSearchEvents_UnclosedQuoteIsUserError(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "search_events", `{"query":"find \"this without close"}`)
 	if !res.IsError {
@@ -502,7 +502,7 @@ func TestListSessions_ReturnsSessionRows(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "list_sessions", `{}`)
 	text := res.Content[0].Text
@@ -518,7 +518,7 @@ func TestListSessions_CwdFilterNarrows(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "list_sessions", `{"cwd":"/work/sess-foo"}`)
 	text := res.Content[0].Text
@@ -534,7 +534,7 @@ func TestGetSummary_ReturnsStoredBody(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	sessID := events.DeriveSessionID("claude-code", "sess-foo")
 	tx, _ := st.DB().Begin()
@@ -566,7 +566,7 @@ func TestGetSummary_MissingSessionIDIsUserError(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "get_summary", `{}`)
 	if !res.IsError {
@@ -578,7 +578,7 @@ func TestGetSummary_NoOutputIsUserError(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	// A real session that exists but has no stored LLM output yet —
 	// the seeded "sess-foo" has events, no summary row.
@@ -596,7 +596,7 @@ func TestGetSummary_UnknownSessionIsUserError(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	// A syntactically valid session id that doesn't exist in the
 	// store resolves through the prefix path and comes back as
@@ -615,7 +615,7 @@ func TestGetSummary_AcceptsPrefix(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	// Stash a summary for sess-foo so the happy-path resolves.
 	tx, _ := st.DB().Begin()
@@ -686,7 +686,7 @@ func TestToolsCall_PassesIngestRedactedContentThrough(t *testing.T) {
 	_ = tx.Commit()
 
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	// Exercise via the JSON-RPC dispatcher — search_events would
 	// route every byte through the old egress wrapper if it still
@@ -800,7 +800,7 @@ func TestListSubagents_AggregatesSpan(t *testing.T) {
 	t.Parallel()
 	st, subID := seedSubagentEvents(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "list_subagents", `{}`)
 	if res.IsError {
@@ -824,7 +824,7 @@ func TestListSubagents_EmptyStore(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "list_subagents", `{}`)
 	if res.IsError {
@@ -844,7 +844,7 @@ func TestSearchEvents_UnknownSubagentIDIsClearError(t *testing.T) {
 	t.Parallel()
 	st, _ := seedSubagentEvents(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "search_events",
 		`{"query":"step","subagent_id":"agent-does-not-exist"}`)
@@ -860,7 +860,7 @@ func TestSearchEvents_SubagentIDFilterNarrows(t *testing.T) {
 	t.Parallel()
 	st, subID := seedSubagentEvents(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	// Without filter: matches the main-agent and the two
 	// subagent rows when query is broad enough.
@@ -888,7 +888,7 @@ func TestGetUnresolvedForCwd_RequiresCwd(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "get_unresolved_for_cwd", `{}`)
 	if !res.IsError {
@@ -900,7 +900,7 @@ func TestGetUnresolvedForCwd_EmptyCwdReturnsFriendlyMessage(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "get_unresolved_for_cwd", `{"cwd":"/no/such/dir"}`)
 	if res.IsError {
@@ -915,7 +915,7 @@ func TestGetUnresolvedForCwd_ReturnsItems(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	// The seeded "sess-foo" has cwd /work/sess-foo. Plant a
 	// summary with two unresolved items.
@@ -1001,7 +1001,7 @@ func TestFindEpisodesTool_FiltersAndRendersRows(t *testing.T) {
 	seedEpisodeForTool(t, st, sessB, 1, now-1800_000, now-1200_000, "/repo/y", "explore the new module")
 
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	// Bare call returns both rows, newest first.
 	all := callTool(t, s, "find_episodes", `{}`)
@@ -1052,7 +1052,7 @@ func TestFindEpisodesTool_AcceptsSessionIDPrefix(t *testing.T) {
 	seedEpisodeForTool(t, st, sessID, 1, now-3600_000, now-3000_000, "/repo/x", "prefix-resolved hit")
 
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	// Pass the 8-char prefix the tool itself emits.
 	res := callTool(t, s, "find_episodes", `{"session_id":"00000000"}`)
@@ -1068,7 +1068,7 @@ func TestFindEpisodesTool_NoEpisodesReturnsClearMessage(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "find_episodes", `{}`)
 	if res.IsError {
@@ -1083,7 +1083,7 @@ func TestFindEpisodesTool_BadArgsReturnsProtocolError(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	tool := s.tools["find_episodes"]
 	_, mcpErr := tool.Handler(context.Background(), json.RawMessage(`{"limit":"oops"}`))
@@ -1099,7 +1099,7 @@ func TestToolsList_IncludesInputSchema(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	in, inW := io.Pipe()
 	out := &bytes.Buffer{}
@@ -1117,8 +1117,14 @@ func TestToolsList_IncludesInputSchema(t *testing.T) {
 	}
 	result := resp["result"].(map[string]any)
 	tools := result["tools"].([]any)
-	if len(tools) != 10 {
-		t.Errorf("expected 10 tools, got %d", len(tools))
+	// Tool count = RegisterAichroniclesTools (9 after the
+	// get_unresolved_for_cwd migration) + RegisterAichronicles-
+	// AnalyticsTools (3: list_skills, get_skill_staleness,
+	// get_insights) + RegisterAichroniclesAPITools (1:
+	// get_unresolved_for_cwd) = 13. Update this when tools migrate
+	// across registrars or get added/removed.
+	if len(tools) != 13 {
+		t.Errorf("expected 13 tools, got %d", len(tools))
 	}
 	for _, t0 := range tools {
 		tool := t0.(map[string]any)

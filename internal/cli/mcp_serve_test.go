@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/toabctl/aichronicles/internal/api"
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/mcp"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/events"
@@ -54,8 +57,17 @@ func TestMCPServe_EndToEnd(t *testing.T) {
 	}
 	_ = tx.Commit()
 
+	// Mirror production wiring (cli/mcp_serve.go): register all
+	// three tool sets so tools/list returns the catalog the
+	// daemon actually exposes.
+	apiSrv := httptest.NewServer(api.NewServer(s, nil).Handler())
+	defer apiSrv.Close()
+	apiC := apiclient.NewClientForTesting(apiSrv.Client(), apiSrv.URL)
+
 	srv := mcp.New(mcp.ServerInfo{Name: mcpServerName, Version: mcpServerVersion}, nil)
 	mcp.RegisterAichroniclesTools(srv, s)
+	mcp.RegisterAichroniclesAnalyticsTools(srv, s)
+	mcp.RegisterAichroniclesAPITools(srv, apiC)
 
 	in, inW := io.Pipe()
 	out := &bytes.Buffer{}
@@ -90,10 +102,13 @@ func TestMCPServe_EndToEnd(t *testing.T) {
 	if initResp["result"].(map[string]any)["serverInfo"].(map[string]any)["name"] != mcpServerName {
 		t.Errorf("serverInfo.name: got %+v", initResp["result"])
 	}
-	// Sanity: tools/list returns the aichronicles set (currently 10).
+	// Sanity: tools/list returns the union of the three
+	// registrars (9 from RegisterAichroniclesTools + 3 from
+	// AnalyticsTools + 1 from APITools = 13). Update when tools
+	// migrate across registrars or get added/removed.
 	tools := listResp["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 10 {
-		t.Errorf("tools/list returned %d tools, want 10", len(tools))
+	if len(tools) != 13 {
+		t.Errorf("tools/list returned %d tools, want 13", len(tools))
 	}
 	// Sanity: tools/call search_events finds our seeded event.
 	content := callResp["result"].(map[string]any)["content"].([]any)

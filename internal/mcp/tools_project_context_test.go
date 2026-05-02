@@ -70,7 +70,7 @@ func TestGetProjectContext_RequiresCwd(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "get_project_context", `{"cwd":"  "}`)
 	if !strings.Contains(res.Content[0].Text, "cwd is required") {
@@ -82,7 +82,7 @@ func TestGetProjectContext_EmptyProjectShowsAllSectionsWithEmptyStateMessages(t 
 	t.Parallel()
 	st := openSeededStore(t) // uses cwds /work/sess-foo, /work/sess-bar
 	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(s, st)
+	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "get_project_context", `{"cwd":"/no-such-project"}`)
 	body := res.Content[0].Text
@@ -196,7 +196,7 @@ func TestGetProjectContext_PopulatedProjectRendersEverySection(t *testing.T) {
 	}
 
 	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(srv, st)
+	registerAllTools(t, srv, st)
 
 	res := callTool(t, srv, "get_project_context", `{"cwd":"/work/myproj","since_days":30}`)
 	out := res.Content[0].Text
@@ -241,7 +241,7 @@ func TestGetProjectContext_RespectsMaxPerSection(t *testing.T) {
 	}
 
 	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(srv, st)
+	registerAllTools(t, srv, st)
 
 	// max_per_section=3 should cap recent sessions at 3.
 	res := callTool(t, srv, "get_project_context", `{"cwd":"/work/manysessions","max_per_section":3}`)
@@ -299,7 +299,7 @@ func TestGetProjectContext_FiltersWorkflowsToFoundOnly(t *testing.T) {
 	}
 
 	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesTools(srv, st)
+	registerAllTools(t, srv, st)
 	res := callTool(t, srv, "get_project_context", `{"cwd":"/some/cwd"}`)
 	out := res.Content[0].Text
 	if !strings.Contains(out, "ship a feature") {
