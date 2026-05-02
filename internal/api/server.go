@@ -134,6 +134,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/facts", s.handleFactsSave)
 	mux.HandleFunc("POST /v1/session-outcomes", s.handleSessionOutcomeSave)
 	mux.HandleFunc("POST /v1/session-links", s.handleSessionLinksSave)
+	mux.HandleFunc("POST /v1/import", s.handleImport)
 	mux.HandleFunc("GET /v1/stream", s.handleStream)
 	return mux
 }
