@@ -72,21 +72,39 @@ func runServer(srv *http.Server, l net.Listener) {
 
 // Server implements the aichronicles ingest HTTP surface backed by
 // the SQLite store. Transport-agnostic — wire it to a net.Listener
-// of any kind (UDS locally, HTTPS later).
+// of any kind (UDS locally, HTTPS later). The Server holds an
+// events.Pipeline at construction; per-request handlers call
+// pipeline.Process to validate, gate-check redaction, run the
+// extractor registry, and persist via the SQLite Sink.
 type Server struct {
 	store            *store.Store
 	slog             *slog.Logger
 	maxEnvelopeBytes int
+	pipeline         events.Pipeline
 }
 
 // NewServer returns a Server that persists accepted envelopes through
 // the store. If log is nil, a default slog.Logger to stderr is used.
-// If maxEnvelopeBytes <= 0, DefaultMaxEnvelopeBytes is used.
+// If maxEnvelopeBytes <= 0, DefaultMaxEnvelopeBytes is used. The
+// constructed Pipeline uses the SQLite Sink, the default extractor
+// registry, and RequireRedaction=true (defense-in-depth — the CLI
+// client is the primary redactor; this gate catches a forgetful
+// third-party client).
 func NewServer(s *store.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
-	return &Server{store: s, slog: log, maxEnvelopeBytes: DefaultMaxEnvelopeBytes}
+	return &Server{
+		store:            s,
+		slog:             log,
+		maxEnvelopeBytes: DefaultMaxEnvelopeBytes,
+		pipeline: events.Pipeline{
+			Sink:             store.NewSink(s),
+			Extractors:       events.DefaultExtractors(),
+			RequireRedaction: true,
+			Logger:           log,
+		},
+	}
 }
 
 // WithMaxEnvelopeBytes overrides the body cap on the receiver.
@@ -196,48 +214,28 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Defense-in-depth: the client CLI is responsible for redaction,
-	// but a forgetful or third-party client might skip it. Refuse to
-	// persist anything that hasn't been explicitly marked as scrubbed.
-	// We never silently re-scrub server-side — that would hide a
-	// broken client from operator view.
-	if env.Redaction == nil || !env.Redaction.Applied {
-		s.slog.Warn("rejecting unredacted envelope",
-			"event_id", env.EventID,
-			"source_agent", env.SourceAgent,
-		)
-		writeProblem(w, http.StatusBadRequest,
-			"Redaction required",
-			"envelope.redaction.applied must be true; run the client's redactor before POSTing")
-		return
-	}
-
-	tx, err := s.store.DB().BeginTx(r.Context(), nil)
+	// Pipeline.Process: gates redaction, runs the extractor registry,
+	// and writes through the SQLite Sink in one transaction. The
+	// gate is RequireRedaction=true — the CLI client is the primary
+	// redactor; this catches a forgetful third-party client.
+	result, err := s.pipeline.Process(r.Context(), events.Event{Envelope: &env, Raw: body})
 	if err != nil {
-		s.slog.Error("begin tx", "event_id", env.EventID, "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
-		return
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	tsServer := time.Now().UTC().UnixMilli()
-	deduped, err := store.IngestEnvelope(r.Context(), tx, &env, body, tsServer)
-	if err != nil {
-		s.slog.Error("store.IngestEnvelope", "event_id", env.EventID, "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
-		return
-	}
-	if err := tx.Commit(); err != nil {
-		s.slog.Error("commit", "event_id", env.EventID, "err", err)
+		if errors.Is(err, events.ErrRedactionRequired) {
+			s.slog.Warn("rejecting unredacted envelope",
+				"event_id", env.EventID,
+				"source_agent", env.SourceAgent,
+			)
+			writeProblem(w, http.StatusBadRequest,
+				"Redaction required",
+				"envelope.redaction.applied must be true; run the client's redactor before POSTing")
+			return
+		}
+		s.slog.Error("pipeline process", "event_id", env.EventID, "err", err)
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, events.Ack{
-		EventID:   env.EventID,
-		SessionID: store.ResolveSessionID(env.SourceAgent, env.SourceSessionID),
-		Deduped:   deduped,
-	})
+	writeJSON(w, http.StatusOK, events.Ack(result))
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
