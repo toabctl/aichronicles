@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 )
 
 // defaultPruneAge is the lower bound the CLI applies when
@@ -21,7 +22,7 @@ func newPruneCmd() *cobra.Command {
 		olderThan      time.Duration
 		yes            bool
 		includeLLMOuts bool
-		dbPath         string
+		sockFlag       string
 	)
 	cmd := &cobra.Command{
 		Use:   "prune",
@@ -37,20 +38,17 @@ func newPruneCmd() *cobra.Command {
 			"Default is dry-run: nothing is written until you pass --yes. Run\n" +
 			"`aichronicles vacuum` afterwards to reclaim freelist pages on disk.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, err := openStore(dbPath)
+			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
-
 			window := olderThan
 			if window <= 0 {
 				window = defaultPruneAge
 			}
 			cutoff := time.Now().Add(-window).UnixMilli()
 
-			before, _ := store.QueryPageInfo(cmd.Context(), s.DB())
-			report, err := store.Prune(cmd.Context(), s.DB(), store.PruneOptions{
+			resp, err := c.Prune(cmd.Context(), api.PruneRequest{
 				CutoffMs:          cutoff,
 				IncludeLLMOutputs: includeLLMOuts,
 				DryRun:            !yes,
@@ -58,7 +56,7 @@ func newPruneCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("prune: %w", err)
 			}
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), formatPruneReport(report, before, window))
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), formatPruneResponse(resp, window))
 			return nil
 		},
 	}
@@ -68,15 +66,16 @@ func newPruneCmd() *cobra.Command {
 		"actually delete; without --yes the command runs as dry-run")
 	cmd.Flags().BoolVar(&includeLLMOuts, "include-llm-outputs", false,
 		"also delete llm_outputs rows older than the cutoff (summaries, reflections)")
-	cmd.Flags().StringVar(&dbPath, "db", "",
-		"SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	return cmd
 }
 
-// formatPruneReport renders the human-readable text the CLI prints
-// after a (dry-)prune. Uses "would delete" / "deleted" depending
-// on DryRun so the same call site produces the right tense.
-func formatPruneReport(r store.PruneReport, before store.DBPageInfo, window time.Duration) string {
+// formatPruneResponse renders the human-readable text the CLI
+// prints after a (dry-)prune. Same shape as the legacy
+// formatPruneReport but driven by the wire api.PruneResponse so
+// the renderer stays internal/store-free.
+func formatPruneResponse(r api.PruneResponse, window time.Duration) string {
 	var b strings.Builder
 	verb := "deleted"
 	if r.DryRun {
@@ -91,12 +90,8 @@ func formatPruneReport(r store.PruneReport, before store.DBPageInfo, window time
 	if r.LLMOutputs > 0 {
 		fmt.Fprintf(&b, "  llm_outputs:    %d  (--include-llm-outputs)\n", r.LLMOutputs)
 	}
-	if before.PageCount > 0 {
-		fmt.Fprintf(&b, "\nDB before prune: %s (%d pages × %d bytes)\n",
-			humanBytes(before.Bytes()), before.PageCount, before.PageSize)
-		if !r.DryRun {
-			fmt.Fprintln(&b, "Run `aichronicles vacuum` to reclaim freelist pages on disk.")
-		}
+	if !r.DryRun {
+		fmt.Fprintln(&b, "Run `aichronicles vacuum` to reclaim freelist pages on disk.")
 	}
 	return b.String()
 }

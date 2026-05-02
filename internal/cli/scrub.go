@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"fmt"
 	"io"
+	"sort"
 
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
@@ -24,17 +27,13 @@ func RunScrub(s *store.Store, scanner redact.Scanner, opts ScrubOptions, out io.
 	if out != nil {
 		opts.Out = out
 	}
-	// Tests rely on cancellation via the standard context API;
-	// pass the legacy callers' best fallback. Scrub honors ctx
-	// for query cancellation; callers that need a real context
-	// should switch to store.Scrub.
 	return store.Scrub(legacyScrubCtx(), s.DB(), scanner, opts)
 }
 
 func newScrubCmd() *cobra.Command {
 	var (
-		yes    bool
-		dbPath string
+		yes      bool
+		sockFlag string
 	)
 	cmd := &cobra.Command{
 		Use:   "scrub",
@@ -46,22 +45,45 @@ func newScrubCmd() *cobra.Command {
 			"without touching the database. Pass --yes to actually write.\n\n" +
 			"This is IRREVERSIBLE. raw_envelopes is aichronicles' source-of-\n" +
 			"truth layer; once rewritten, the original bytes are gone. Take a\n" +
-			"backup of the DB file first if you care about forensics.",
+			"backup of the DB file first if you care about forensics.\n\n" +
+			"Talks to aichronicles-api over its UDS so the scrub holds the\n" +
+			"single SQLite writer lock cleanly (no contention with the live\n" +
+			"ingest path).",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, err := openStore(dbPath)
+			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
-
-			_, err = store.Scrub(cmd.Context(), s.DB(), redact.Default(), store.ScrubOptions{
-				DryRun: !yes,
-				Out:    cmd.OutOrStdout(),
-			})
-			return err
+			resp, err := c.Scrub(cmd.Context(), api.ScrubRequest{DryRun: !yes})
+			if err != nil {
+				return fmt.Errorf("scrub: %w", err)
+			}
+			renderScrubResponse(cmd.OutOrStdout(), resp)
+			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm irreversible writes (required to mutate the DB)")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	return cmd
+}
+
+// renderScrubResponse prints the api.ScrubResponse in the same
+// summary shape store.Scrub used to emit through its Out writer
+// — one summary line plus a sorted pattern-hit table. Same shape
+// keeps existing operator habits and any wrapping scripts intact.
+func renderScrubResponse(out io.Writer, r api.ScrubResponse) {
+	_, _ = fmt.Fprintf(out,
+		"scanned=%d envelopes_rewritten=%d events_content_rewritten=%d "+
+			"llm_outputs_scanned=%d llm_outputs_rewritten=%d dry_run=%t\n",
+		r.EventsScanned, r.EnvelopesRewritten, r.EventsRewritten,
+		r.LLMOutputsScanned, r.LLMOutputsRewritten, r.DryRun)
+	keys := make([]string, 0, len(r.PatternHits))
+	for k := range r.PatternHits {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, p := range keys {
+		_, _ = fmt.Fprintf(out, "  %-24s %d\n", p, r.PatternHits[p])
+	}
 }
