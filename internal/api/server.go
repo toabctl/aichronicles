@@ -135,6 +135,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/session-outcomes", s.handleSessionOutcomeSave)
 	mux.HandleFunc("POST /v1/session-links", s.handleSessionLinksSave)
 	mux.HandleFunc("POST /v1/import", s.handleImport)
+	mux.HandleFunc("POST /v1/scrub", s.handleScrub)
+	mux.HandleFunc("POST /v1/prune", s.handlePrune)
 	mux.HandleFunc("GET /v1/stream", s.handleStream)
 	return mux
 }
