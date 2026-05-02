@@ -19,9 +19,30 @@ import (
 var ErrRedactionRequired = errors.New("IngestEnvelope: envelope.redaction.applied must be true")
 
 // IngestEnvelope writes a validated envelope through all three layers
-// in the provided transaction. The caller is responsible for Validate(),
-// supplying the original envelope bytes (so raw_envelopes holds the
-// source of truth verbatim), and the server-side receipt timestamp.
+// in the provided transaction, computing extractions internally via
+// events.DefaultExtractors(). Backward-compatible thin wrapper around
+// IngestEnvelopeWithExtractions for callers that don't pre-compute
+// the extraction set themselves.
+//
+// New code (the events.Sink in sink.go) should call
+// IngestEnvelopeWithExtractions with the Pipeline-computed
+// extractions so the dispatch policy lives in one place
+// (events.Pipeline) rather than being implicitly re-run here.
+func IngestEnvelope(ctx context.Context, tx *sql.Tx, env *events.Envelope, envelopeJSON []byte, tsServerMs int64) (deduped bool, err error) {
+	if env == nil {
+		return false, errors.New("IngestEnvelope: nil envelope")
+	}
+	return IngestEnvelopeWithExtractions(ctx, tx, env, envelopeJSON, tsServerMs,
+		events.DefaultExtractors().Run(env))
+}
+
+// IngestEnvelopeWithExtractions writes a validated envelope through
+// raw_envelopes / sessions / events / extractions in one transaction.
+// The caller is responsible for Validate(), supplying the original
+// envelope bytes (so raw_envelopes holds the source of truth
+// verbatim), the server-side receipt timestamp, and the pre-computed
+// extraction set (typically from events.Pipeline running its
+// ExtractorRegistry).
 //
 // ctx is propagated to every SQL call so an HTTP request cancellation
 // or a daemon shutdown can abort a long write cleanly.
@@ -32,9 +53,16 @@ var ErrRedactionRequired = errors.New("IngestEnvelope: envelope.redaction.applie
 // not explicitly true.
 // Cascading trigger work (sessions.event_count, events_fts) is handled
 // by the schema's AFTER INSERT triggers.
-func IngestEnvelope(ctx context.Context, tx *sql.Tx, env *events.Envelope, envelopeJSON []byte, tsServerMs int64) (deduped bool, err error) {
+func IngestEnvelopeWithExtractions(
+	ctx context.Context,
+	tx *sql.Tx,
+	env *events.Envelope,
+	envelopeJSON []byte,
+	tsServerMs int64,
+	extractions []events.Extraction,
+) (deduped bool, err error) {
 	if env == nil {
-		return false, errors.New("IngestEnvelope: nil envelope")
+		return false, errors.New("IngestEnvelopeWithExtractions: nil envelope")
 	}
 	if env.Redaction == nil || !env.Redaction.Applied {
 		return false, ErrRedactionRequired
@@ -125,7 +153,7 @@ func IngestEnvelope(ctx context.Context, tx *sql.Tx, env *events.Envelope, envel
 	// ingest, so a malformed extra_json falls back to NULL rather
 	// than aborting; but a SQL insert error is structural and does
 	// propagate up to the caller.
-	for _, ex := range events.DefaultExtractors().Run(env) {
+	for _, ex := range extractions {
 		var extraJSON sql.NullString
 		if len(ex.Extra) > 0 {
 			if b, err := json.Marshal(ex.Extra); err == nil {

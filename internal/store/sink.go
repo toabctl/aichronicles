@@ -1,0 +1,249 @@
+// SQLite implementations of events.Sink. Sink (single-tx-per-call)
+// powers the daemon's HTTP path; BufferedSink (chunked commits with
+// row-by-row fallback) powers importers. Both share
+// IngestEnvelopeWithExtractions for the actual SQL.
+package store
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/toabctl/aichronicles/pkg/events"
+)
+
+// Sink writes one envelope per call in its own SQLite transaction.
+// Designed for the daemon HTTP path where one request = one event
+// and per-request atomicity matches the request lifecycle. Tx
+// failures bubble up to the caller (typically translated to
+// HTTP 5xx).
+//
+// Flush is a no-op; Close is a no-op (the *Store is owned by the
+// caller).
+type Sink struct {
+	store *Store
+	now   func() time.Time
+}
+
+// NewSink wraps a *Store as an events.Sink with one-tx-per-Write
+// semantics. now is injectable for tests; nil falls back to
+// time.Now (UTC).
+func NewSink(s *Store) *Sink {
+	return &Sink{store: s, now: defaultNow}
+}
+
+// WithNow overrides the time source. Returns the receiver for
+// chaining. Tests use this to pin ts_server_ms; production never
+// overrides.
+func (s *Sink) WithNow(now func() time.Time) *Sink {
+	s.now = now
+	return s
+}
+
+// Write implements events.Sink. Begins a transaction, calls
+// IngestEnvelopeWithExtractions with the Event's pre-computed
+// extractions, commits. Returns Result with EventID + derived
+// SessionID + Deduped flag.
+func (s *Sink) Write(ctx context.Context, e events.Event) (events.Result, error) {
+	if e.Envelope == nil {
+		return events.Result{}, errors.New("Sink.Write: nil envelope")
+	}
+	tx, err := s.store.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return events.Result{}, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	tsMs := s.now().UnixMilli()
+	deduped, err := IngestEnvelopeWithExtractions(ctx, tx, e.Envelope, e.Raw, tsMs, e.Extractions)
+	if err != nil {
+		return events.Result{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return events.Result{}, fmt.Errorf("commit: %w", err)
+	}
+	return events.Result{
+		EventID:   e.Envelope.EventID,
+		SessionID: events.DeriveSessionID(e.Envelope.SourceAgent, e.Envelope.SourceSessionID),
+		Deduped:   deduped,
+	}, nil
+}
+
+// Flush is a no-op for the single-tx Sink.
+func (s *Sink) Flush(_ context.Context) error { return nil }
+
+// Close is a no-op; the *Store is owned by the caller.
+func (s *Sink) Close() error { return nil }
+
+// BufferedSinkOpts tunes when BufferedSink auto-flushes. Both caps
+// are inclusive: hitting either triggers a flush. Zero values fall
+// back to the package defaults (DefaultBufferedSinkRows /
+// DefaultBufferedSinkBytes), the same thresholds the previous
+// envelopeBatcher used.
+type BufferedSinkOpts struct {
+	MaxRows  int
+	MaxBytes int
+}
+
+// DefaultBufferedSinkRows caps how many envelopes ride a single
+// import transaction. SQLite's per-commit fsync was the dominant
+// cost in the pre-batching importer (~410 envelopes/sec on a real-
+// world transcript dump); amortising one fsync over ~1000 rows
+// brings throughput into the 5-15K/sec range.
+const DefaultBufferedSinkRows = 1000
+
+// DefaultBufferedSinkBytes caps the cumulative envelope_json size
+// per transaction. Claude transcripts can carry the occasional
+// multi-tens-of-MB tool-result line; 32 MB keeps a steady-state
+// importer's RAM bounded.
+const DefaultBufferedSinkBytes = 32 << 20
+
+// BufferedSink is an events.Sink that amortises SQLite fsync cost
+// across many envelopes by holding up to MaxRows / MaxBytes events
+// in memory and committing them in one transaction.
+//
+// Two-phase semantics — preserves the contract envelopeBatcher had:
+//
+//   - fast path: a chunk of buffered envelopes commits in a single
+//     tx; one fsync for the whole batch.
+//   - fallback: if the chunk tx errors anywhere (FK violation, an
+//     unredacted envelope sneaking in, a SQLite-level fault), the
+//     chunk is rolled back and replayed row-by-row in individual
+//     transactions. A single broken envelope still aborts the
+//     remaining work — same as pre-batching — but only after
+//     surrounding rows have had their own chance.
+//
+// Not safe for concurrent Write — one BufferedSink per import
+// goroutine.
+type BufferedSink struct {
+	store    *Store
+	maxRows  int
+	maxBytes int
+	now      func() time.Time
+
+	buf      []pendingWrite
+	bufBytes int
+}
+
+type pendingWrite struct {
+	event events.Event
+	tsMs  int64
+}
+
+// NewBufferedSink returns a BufferedSink with the provided thresholds
+// or the package defaults when a field is zero.
+func NewBufferedSink(s *Store, opts BufferedSinkOpts) *BufferedSink {
+	rows := opts.MaxRows
+	if rows <= 0 {
+		rows = DefaultBufferedSinkRows
+	}
+	bytes := opts.MaxBytes
+	if bytes <= 0 {
+		bytes = DefaultBufferedSinkBytes
+	}
+	return &BufferedSink{
+		store:    s,
+		maxRows:  rows,
+		maxBytes: bytes,
+		now:      defaultNow,
+	}
+}
+
+// WithNow overrides the time source for tests.
+func (b *BufferedSink) WithNow(now func() time.Time) *BufferedSink {
+	b.now = now
+	return b
+}
+
+// Write buffers the event. Auto-flushes when the row or byte
+// threshold is hit; otherwise returns a synthetic Result with
+// EventID + derived SessionID and Deduped=false (the actual dedup
+// outcome isn't known until the buffered batch commits, but
+// callers of BufferedSink only consume aggregate Stats from
+// Pipeline.Run which derives counts from Flush's running totals).
+func (b *BufferedSink) Write(ctx context.Context, e events.Event) (events.Result, error) {
+	if e.Envelope == nil {
+		return events.Result{}, errors.New("BufferedSink.Write: nil envelope")
+	}
+	b.buf = append(b.buf, pendingWrite{
+		event: e,
+		tsMs:  b.now().UnixMilli(),
+	})
+	b.bufBytes += len(e.Raw)
+	result := events.Result{
+		EventID:   e.Envelope.EventID,
+		SessionID: events.DeriveSessionID(e.Envelope.SourceAgent, e.Envelope.SourceSessionID),
+	}
+	if len(b.buf) >= b.maxRows || b.bufBytes >= b.maxBytes {
+		if err := b.Flush(ctx); err != nil {
+			return events.Result{}, err
+		}
+	}
+	return result, nil
+}
+
+// Flush commits the buffered batch with row-by-row fallback on
+// transaction failure. Idempotent on an empty buffer.
+func (b *BufferedSink) Flush(ctx context.Context) error {
+	if len(b.buf) == 0 {
+		return nil
+	}
+	pending := b.buf
+	b.buf = nil
+	b.bufBytes = 0
+
+	if err := b.flushBatch(ctx, pending); err != nil {
+		// Fallback: replay one envelope per tx so a single bad
+		// row does not reject the rest of the chunk. Per-row
+		// failures still propagate (matches envelopeBatcher).
+		return b.flushRowByRow(ctx, pending)
+	}
+	return nil
+}
+
+// Close flushes any remaining buffered events.
+func (b *BufferedSink) Close() error {
+	return b.Flush(context.Background())
+}
+
+// flushBatch attempts the entire chunk in one tx. Returns the first
+// error encountered; the caller falls back to flushRowByRow.
+func (b *BufferedSink) flushBatch(ctx context.Context, pending []pendingWrite) error {
+	tx, err := b.store.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, p := range pending {
+		if _, err := IngestEnvelopeWithExtractions(ctx, tx, p.event.Envelope, p.event.Raw, p.tsMs, p.event.Extractions); err != nil {
+			return fmt.Errorf("ingest %s: %w", p.event.Envelope.EventID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// flushRowByRow replays a chunk one envelope per transaction. Used
+// as the batch fallback so a single bad envelope does not take down
+// the others. Returns the first per-row error encountered.
+func (b *BufferedSink) flushRowByRow(ctx context.Context, pending []pendingWrite) error {
+	for _, p := range pending {
+		tx, err := b.store.DB().BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin: %w", err)
+		}
+		if _, err := IngestEnvelopeWithExtractions(ctx, tx, p.event.Envelope, p.event.Raw, p.tsMs, p.event.Extractions); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit: %w", err)
+		}
+	}
+	return nil
+}
+
+func defaultNow() time.Time { return time.Now().UTC() }
