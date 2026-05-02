@@ -25,13 +25,28 @@ func RuntimeDir() (string, error) {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("aichronicles-%d", uid)), nil
 }
 
-// Socket returns the Unix domain socket path for the ingest API.
+// Socket returns the Unix domain socket path for the legacy
+// aichroniclesd ingest daemon. Kept for backward compatibility
+// during the aichronicles-api transition; the new daemon uses
+// APISocket().
 func Socket() (string, error) {
 	d, err := RuntimeDir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(d, "sock"), nil
+}
+
+// APISocket returns the Unix domain socket path for the unified
+// aichronicles-api daemon (reads + writes + SSE + web HTML). Kept
+// distinct from Socket() so the old and new daemons can coexist
+// during the rollout window.
+func APISocket() (string, error) {
+	d, err := RuntimeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "api.sock"), nil
 }
 
 // OutageFlag is the marker file the ingest CLI touches when it has
@@ -94,6 +109,12 @@ func PricesFile() (string, error) {
 // subcommand and by [paths.ResolveStorePath].
 const EnvStore = "AICHRONICLES_DB"
 
+// EnvAPISocket is the environment variable that overrides the
+// aichronicles-api daemon socket path. Distinct from EnvSocket
+// (legacy aichroniclesd) so both can coexist during the
+// transition.
+const EnvAPISocket = "AICHRONICLES_API_SOCKET"
+
 // EnvSocket is the environment variable that overrides the daemon
 // Unix-socket path when --socket isn't given on the command line.
 const EnvSocket = "AICHRONICLES_SOCKET"
@@ -121,6 +142,19 @@ func ResolveSocketPath(flag string) (string, error) {
 		return env, nil
 	}
 	return Socket()
+}
+
+// ResolveAPISocketPath mirrors ResolveSocketPath for the
+// aichronicles-api daemon. Resolution order: --socket flag,
+// $AICHRONICLES_API_SOCKET, then APISocket() default.
+func ResolveAPISocketPath(flag string) (string, error) {
+	if flag != "" {
+		return flag, nil
+	}
+	if env := os.Getenv(EnvAPISocket); env != "" {
+		return env, nil
+	}
+	return APISocket()
 }
 
 // StorePath returns the SQLite database path. Persistent state belongs
