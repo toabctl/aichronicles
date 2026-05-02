@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/toabctl/aichronicles/internal/agents"
 	"github.com/toabctl/aichronicles/pkg/events"
 )
 
@@ -16,7 +17,7 @@ import (
 // into our canonical Envelope.Kind. Gemini's hook surface is
 // documented at https://geminicli.com/docs/hooks/reference; the
 // subset here matches what aichronicles subscribes to via
-// events.GeminiCLI.HookEvents.
+// agents.GeminiCLI.HookEvents.
 //
 // AfterTool maps to tool_use as a default; AssembleGemini
 // promotes it to tool_failure when the response indicates an
@@ -66,7 +67,7 @@ func AssembleGemini(raw []byte, now time.Time) (events.Envelope, error) {
 	env := events.Envelope{
 		V:               events.CurrentSchemaVersion,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
-		SourceAgent:     events.GeminiCLI.Slug,
+		SourceAgent:     agents.GeminiCLI.Slug,
 		SourceSessionID: sourceSessionID,
 		Kind:            kind,
 		Role:            roleForKind(kind),

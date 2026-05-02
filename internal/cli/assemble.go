@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/toabctl/aichronicles/internal/agents"
 	"github.com/toabctl/aichronicles/pkg/events"
 )
 
@@ -94,7 +95,7 @@ func Assemble(raw []byte, now time.Time) (events.Envelope, error) {
 	env := events.Envelope{
 		V:               events.CurrentSchemaVersion,
 		EventID:         uuid.Must(uuid.NewV7()).String(),
-		SourceAgent:     events.ClaudeCode.Slug,
+		SourceAgent:     agents.ClaudeCode.Slug,
 		SourceSessionID: sourceSessionID,
 		Kind:            kind,
 		Role:            roleForKind(kind),

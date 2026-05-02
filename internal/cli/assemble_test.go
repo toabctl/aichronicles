@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/toabctl/aichronicles/internal/agents"
 	"github.com/toabctl/aichronicles/pkg/events"
 )
 
@@ -485,7 +486,7 @@ func TestRoleForKind(t *testing.T) {
 
 func TestHookKindMap_CoversInstalledHooks(t *testing.T) {
 	t.Parallel()
-	for _, name := range events.ClaudeCode.HookEvents {
+	for _, name := range agents.ClaudeCode.HookEvents {
 		if _, ok := hookKindMap[name]; !ok {
 			t.Errorf("installed hook %q has no kind mapping", name)
 		}
