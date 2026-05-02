@@ -40,11 +40,10 @@ var toolEventNamespace = uuid.Must(uuid.Parse("9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dc
 // CwdMap can be supplied directly by tests; nil falls back to
 // reading ~/.gemini/projects.json at iteration time.
 type TranscriptSource struct {
-	Root     string
-	Redactor events.Redactor
-	Logger   *slog.Logger
-	CwdMap   map[string]string
-	Now      func() time.Time
+	Root   string
+	Logger *slog.Logger
+	CwdMap map[string]string
+	Now    func() time.Time
 
 	Stats TranscriptStats
 }
@@ -141,7 +140,7 @@ func (s *TranscriptSource) iterateFile(
 			return yield(events.Event{}, ctx.Err())
 		}
 		s.Stats.MessagesRead++
-		envs, err := messageToEnvelopes(&sess, &m, cwd, s.Redactor)
+		envs, err := messageToEnvelopes(&sess, &m, cwd)
 		if err != nil {
 			s.Stats.Invalid++
 			logger.Warn("convert message",
@@ -250,13 +249,13 @@ func cwdForPath(path string, cwdMap map[string]string) string {
 }
 
 // messageToEnvelopes turns ONE gemini-cli message into one or more
-// canonical envelopes. Redaction is applied per envelope before
-// returning. Fan-out:
+// canonical envelopes. Translation is pure; the consuming Pipeline
+// applies redaction before passing envelopes to the Sink. Fan-out:
 //   - type=user                 → 1 user_prompt
 //   - type=gemini, no toolCalls → 1 assistant_message
 //   - type=gemini, N toolCalls  → 1 assistant_message (if content
 //     non-empty) + N tool_use + N tool_result envelopes
-func messageToEnvelopes(sess *geminiSession, m *geminiMessage, cwd string, redactor events.Redactor) ([]*events.Envelope, error) {
+func messageToEnvelopes(sess *geminiSession, m *geminiMessage, cwd string) ([]*events.Envelope, error) {
 	if m.ID == "" {
 		return nil, errors.New("missing message id")
 	}
@@ -290,7 +289,6 @@ func messageToEnvelopes(sess *geminiSession, m *geminiMessage, cwd string, redac
 			},
 			Transport: "import",
 		}
-		applyRedaction(env, redactor)
 		return []*events.Envelope{env}, nil
 
 	case "gemini", "model", "assistant":
@@ -317,13 +315,12 @@ func messageToEnvelopes(sess *geminiSession, m *geminiMessage, cwd string, redac
 				},
 				Transport: "import",
 			}
-			applyRedaction(env, redactor)
 			envs = append(envs, env)
 		}
 		for i, tc := range m.ToolCalls {
-			envs = append(envs, toolUseEnvelope(sess, m, &tc, i, cwd, ts, redactor))
+			envs = append(envs, toolUseEnvelope(sess, m, &tc, i, cwd, ts))
 			if len(tc.Result) > 0 {
-				envs = append(envs, toolResultEnvelope(sess, m, &tc, i, cwd, ts, redactor))
+				envs = append(envs, toolResultEnvelope(sess, m, &tc, i, cwd, ts))
 			}
 		}
 		return envs, nil
@@ -333,7 +330,7 @@ func messageToEnvelopes(sess *geminiSession, m *geminiMessage, cwd string, redac
 	}
 }
 
-func toolUseEnvelope(sess *geminiSession, parent *geminiMessage, tc *geminiToolCall, idx int, cwd string, parentTs time.Time, redactor events.Redactor) *events.Envelope {
+func toolUseEnvelope(sess *geminiSession, parent *geminiMessage, tc *geminiToolCall, idx int, cwd string, parentTs time.Time) *events.Envelope {
 	ts := parentTs
 	if tc.Timestamp != "" {
 		if t, err := parseTime(tc.Timestamp); err == nil {
@@ -363,11 +360,10 @@ func toolUseEnvelope(sess *geminiSession, parent *geminiMessage, tc *geminiToolC
 		},
 		Transport: "import",
 	}
-	applyRedaction(env, redactor)
 	return env
 }
 
-func toolResultEnvelope(sess *geminiSession, parent *geminiMessage, tc *geminiToolCall, idx int, cwd string, parentTs time.Time, redactor events.Redactor) *events.Envelope {
+func toolResultEnvelope(sess *geminiSession, parent *geminiMessage, tc *geminiToolCall, idx int, cwd string, parentTs time.Time) *events.Envelope {
 	ts := parentTs
 	if tc.Timestamp != "" {
 		if t, err := parseTime(tc.Timestamp); err == nil {
@@ -407,7 +403,6 @@ func toolResultEnvelope(sess *geminiSession, parent *geminiMessage, tc *geminiTo
 		},
 		Transport: "import",
 	}
-	applyRedaction(env, redactor)
 	return env
 }
 
@@ -458,14 +453,4 @@ func parseTime(s string) (time.Time, error) {
 		return t, nil
 	}
 	return time.Parse(time.RFC3339, s)
-}
-
-// applyRedaction is a small wrapper that no-ops on a nil Redactor
-// (test fixtures) and otherwise calls Apply, populating
-// env.Redaction.Applied.
-func applyRedaction(env *events.Envelope, redactor events.Redactor) {
-	if redactor == nil {
-		return
-	}
-	redactor.Apply(env)
 }

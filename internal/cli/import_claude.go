@@ -129,18 +129,17 @@ func ImportClaudeTranscripts(ctx context.Context, target string, s *store.Store,
 	report := ClaudeImportReport{}
 
 	src := &claude.JSONLSource{
-		Root:     target,
-		Redactor: events.NewScannerRedactor(redact.Default()),
-		Logger:   log,
+		Root:   target,
+		Logger: log,
 	}
 	sink := store.NewBufferedSink(s, store.BufferedSinkOpts{})
 	defer func() { _ = sink.Close() }()
 
 	pipeline := events.Pipeline{
-		Sink:             sink,
-		Extractors:       events.DefaultExtractors(),
-		RequireRedaction: true,
-		Logger:           log,
+		Sink:       sink,
+		Extractors: events.DefaultExtractors(),
+		Redactor:   events.NewScannerRedactor(redact.Default()),
+		Logger:     log,
 	}
 
 	stats, err := pipeline.Run(ctx, src)

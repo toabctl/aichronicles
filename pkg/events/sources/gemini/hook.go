@@ -29,19 +29,19 @@ var hookKindMap = map[string]string{
 }
 
 // HookTranslator parses a Gemini CLI hook payload (JSON on stdin)
-// into a canonical Envelope, applies redaction, and returns it
-// ready to POST. Mirrors the Claude HookTranslator's contract;
-// the Gemini-specific quirks live in hookKindMap and
-// extractContentText.
+// into a canonical Envelope and returns it ready to POST. Mirrors
+// the Claude HookTranslator's contract; the Gemini-specific quirks
+// live in hookKindMap and extractContentText. Translation is pure;
+// redaction is performed server-side by the daemon's
+// events.Pipeline.
 type HookTranslator struct {
-	Redactor events.Redactor
-	Now      func() time.Time
+	Now func() time.Time
 }
 
-// Translate parses raw and returns a fully-populated Envelope with
-// redaction applied. AfterTool is promoted to tool_failure when the
-// tool_response carries an error indicator (Gemini reports failures
-// via tool_response.error rather than via a dedicated event).
+// Translate parses raw and returns a fully-populated Envelope.
+// AfterTool is promoted to tool_failure when the tool_response
+// carries an error indicator (Gemini reports failures via
+// tool_response.error rather than via a dedicated event).
 func (t *HookTranslator) Translate(raw []byte) (events.Envelope, error) {
 	var hook map[string]any
 	if err := json.Unmarshal(raw, &hook); err != nil {
@@ -87,9 +87,6 @@ func (t *HookTranslator) Translate(raw []byte) (events.Envelope, error) {
 		env.ContentText = content
 	}
 
-	if t.Redactor != nil {
-		t.Redactor.Apply(&env)
-	}
 	return env, nil
 }
 

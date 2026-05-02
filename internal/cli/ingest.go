@@ -15,7 +15,6 @@ import (
 	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/events/sources/claude"
 	"github.com/toabctl/aichronicles/pkg/events/sources/gemini"
-	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 // defaultIngestTimeout caps the daemon round-trip so a wedged daemon
@@ -139,19 +138,19 @@ func RunIngest(stdin io.Reader, stderr io.Writer, socketFlag, agentSlug string) 
 }
 
 // translateHook dispatches to the per-agent HookTranslator under
-// pkg/events/sources/. Each Translator applies edge redaction
-// internally, so the returned envelope's Redaction.Applied=true.
-// Unknown agent slugs return an error so a typo in --agent surfaces
+// pkg/events/sources/. Translators are pure: they parse the hook
+// payload and produce a canonical Envelope. Redaction is applied
+// server-side by the receiving daemon's events.Pipeline. Unknown
+// agent slugs return an error so a typo in --agent surfaces
 // immediately rather than producing a malformed envelope.
 func translateHook(agentSlug string, raw []byte) (events.Envelope, error) {
-	redactor := events.NewScannerRedactor(redact.Default())
 	now := func() time.Time { return time.Now().UTC() }
 	switch agentSlug {
 	case "claude-code":
-		tr := &claude.HookTranslator{Redactor: redactor, Now: now}
+		tr := &claude.HookTranslator{Now: now}
 		return tr.Translate(raw)
 	case "gemini-cli":
-		tr := &gemini.HookTranslator{Redactor: redactor, Now: now}
+		tr := &gemini.HookTranslator{Now: now}
 		return tr.Translate(raw)
 	default:
 		return events.Envelope{}, fmt.Errorf("unknown agent slug %q", agentSlug)

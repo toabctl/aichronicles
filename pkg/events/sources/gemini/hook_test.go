@@ -12,7 +12,7 @@ var testNow = func() time.Time { return time.Date(2026, 5, 2, 12, 0, 0, 0, time.
 func TestHookTranslator_BeforeAgentMapsToUserPrompt(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{"session_id":"s","hook_event_name":"BeforeAgent","prompt":"hi"}`)
-	tr := &HookTranslator{Now: testNow, Redactor: events.NewScannerRedactor(nil)}
+	tr := &HookTranslator{Now: testNow}
 	env, err := tr.Translate(raw)
 	if err != nil {
 		t.Fatalf("Translate: %v", err)
@@ -31,7 +31,7 @@ func TestHookTranslator_BeforeAgentMapsToUserPrompt(t *testing.T) {
 func TestHookTranslator_AfterModelExtractsResponseString(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{"session_id":"s","hook_event_name":"AfterModel","response":"plain text"}`)
-	tr := &HookTranslator{Now: testNow, Redactor: events.NewScannerRedactor(nil)}
+	tr := &HookTranslator{Now: testNow}
 	env, err := tr.Translate(raw)
 	if err != nil {
 		t.Fatalf("Translate: %v", err)
@@ -47,7 +47,7 @@ func TestHookTranslator_AfterModelExtractsResponseString(t *testing.T) {
 func TestHookTranslator_AfterModelExtractsResponseWrapped(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{"session_id":"s","hook_event_name":"AfterModel","response":{"text":"wrapped"}}`)
-	tr := &HookTranslator{Now: testNow, Redactor: events.NewScannerRedactor(nil)}
+	tr := &HookTranslator{Now: testNow}
 	env, err := tr.Translate(raw)
 	if err != nil {
 		t.Fatalf("Translate: %v", err)
@@ -66,7 +66,7 @@ func TestHookTranslator_AfterToolWithErrorBecomesToolFailure(t *testing.T) {
 		"tool_input":{"command":"false"},
 		"tool_response":{"error":"exit 1"}
 	}`)
-	tr := &HookTranslator{Now: testNow, Redactor: events.NewScannerRedactor(nil)}
+	tr := &HookTranslator{Now: testNow}
 	env, err := tr.Translate(raw)
 	if err != nil {
 		t.Fatalf("Translate: %v", err)
@@ -85,7 +85,7 @@ func TestHookTranslator_AfterToolNoErrorStaysToolUse(t *testing.T) {
 		"tool_input":{"command":"echo ok"},
 		"tool_response":{}
 	}`)
-	tr := &HookTranslator{Now: testNow, Redactor: events.NewScannerRedactor(nil)}
+	tr := &HookTranslator{Now: testNow}
 	env, err := tr.Translate(raw)
 	if err != nil {
 		t.Fatalf("Translate: %v", err)

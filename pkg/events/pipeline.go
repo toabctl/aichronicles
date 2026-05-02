@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,9 +16,10 @@ import (
 // Construction is value-typed (no NewPipeline constructor) because
 // every field has a sensible zero meaning: nil Sink panics on
 // first Write (caller error), nil Extractors skips extraction,
-// nil Logger silences error logs, RequireRedaction defaults to
-// false BUT production callers always set it to true. Callers
-// build a Pipeline literal at server-init time and reuse it.
+// nil Logger silences error logs. Redactor is required in
+// production: a Pipeline with nil Redactor returns
+// ErrRedactionRequired from Process — fail loud rather than
+// silently storing unredacted bytes.
 type Pipeline struct {
 	// Sink is required. Pipeline.Process / Run will panic if nil
 	// — there's no graceful behaviour to fall back to.
@@ -29,11 +31,20 @@ type Pipeline struct {
 	// field is nil.
 	Extractors *ExtractorRegistry
 
-	// RequireRedaction enforces env.Redaction.Applied=true on
-	// every event. Always true in production; tests that feed
-	// synthetic envelopes set it false and trust their own
-	// fixtures.
-	RequireRedaction bool
+	// Redactor scrubs the envelope in place before extractor
+	// dispatch and Sink.Write. The Pipeline is the single point
+	// of redaction enforcement: Sources ship raw envelopes and
+	// trust the Pipeline to scrub. Redactor.Apply sets
+	// env.Redaction.Applied=true, and the Pipeline re-marshals
+	// e.Raw with the post-redaction Envelope so the Sink stores
+	// scrubbed bytes.
+	//
+	// Required. A nil Redactor causes Process to return
+	// ErrRedactionRequired without calling the Sink — that is
+	// safer than the alternative ("forgot to wire a Redactor →
+	// secrets land in storage"). Tests that genuinely want a
+	// no-op Redactor pass NewScannerRedactor(nil).
+	Redactor Redactor
 
 	// Logger receives per-event errors during Run. nil silences
 	// all logging — Run still counts errors in Stats.Errors so
@@ -53,11 +64,26 @@ func (p *Pipeline) Process(ctx context.Context, e Event) (Result, error) {
 	if e.Envelope == nil {
 		return Result{}, errors.New("Pipeline.Process: nil envelope")
 	}
-	if p.RequireRedaction {
-		if e.Envelope.Redaction == nil || !e.Envelope.Redaction.Applied {
-			return Result{}, ErrRedactionRequired
-		}
+	if p.Redactor == nil {
+		// Fail loud rather than silently store unredacted bytes.
+		// This is a programmer error — production wiring always
+		// supplies a Redactor; tests that genuinely want a no-op
+		// pass NewScannerRedactor(nil).
+		return Result{}, ErrRedactionRequired
 	}
+	p.Redactor.Apply(e.Envelope)
+	// After redaction, the canonical bytes for raw_envelopes are
+	// the re-marshaled post-redaction Envelope. The original
+	// e.Raw came from the wire (POST body) or transcript line
+	// before the server scrubbed it; storing those bytes would
+	// re-introduce the secret we just removed. Re-marshal once
+	// here so every Sink sees redacted Raw automatically.
+	marshaled, err := json.Marshal(e.Envelope)
+	if err != nil {
+		return Result{}, fmt.Errorf("Pipeline.Process: marshal post-redaction envelope: %w", err)
+	}
+	e.Raw = marshaled
+
 	if p.Extractors != nil && len(e.Extractions) == 0 {
 		e.Extractions = p.Extractors.Run(e.Envelope)
 	}

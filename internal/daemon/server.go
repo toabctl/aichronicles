@@ -16,6 +16,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 // DefaultMaxEnvelopeBytes is the body cap NewServer applies when the
@@ -87,9 +88,12 @@ type Server struct {
 // the store. If log is nil, a default slog.Logger to stderr is used.
 // If maxEnvelopeBytes <= 0, DefaultMaxEnvelopeBytes is used. The
 // constructed Pipeline uses the SQLite Sink, the default extractor
-// registry, and RequireRedaction=true (defense-in-depth — the CLI
-// client is the primary redactor; this gate catches a forgetful
-// third-party client).
+// registry, and a Redactor wrapping the production scanner — the
+// daemon is now the single point of redaction enforcement. Clients
+// MAY send pre-redacted envelopes; the server runs the redactor
+// regardless (idempotent on already-redacted content), so a
+// forgetful or malicious client cannot smuggle secrets past the
+// gate by claiming Redaction.Applied=true.
 func NewServer(s *store.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -99,10 +103,10 @@ func NewServer(s *store.Store, log *slog.Logger) *Server {
 		slog:             log,
 		maxEnvelopeBytes: DefaultMaxEnvelopeBytes,
 		pipeline: events.Pipeline{
-			Sink:             store.NewSink(s),
-			Extractors:       events.DefaultExtractors(),
-			RequireRedaction: true,
-			Logger:           log,
+			Sink:       store.NewSink(s),
+			Extractors: events.DefaultExtractors(),
+			Redactor:   events.NewScannerRedactor(redact.Default()),
+			Logger:     log,
 		},
 	}
 }
@@ -214,22 +218,14 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pipeline.Process: gates redaction, runs the extractor registry,
-	// and writes through the SQLite Sink in one transaction. The
-	// gate is RequireRedaction=true — the CLI client is the primary
-	// redactor; this catches a forgetful third-party client.
+	// Pipeline.Process redacts the envelope (server-side, always —
+	// the Pipeline owns the single point of enforcement), runs the
+	// extractor registry, and writes through the SQLite Sink in
+	// one transaction. ErrRedactionRequired from the Pipeline is a
+	// programmer error (nil Redactor at construction); from the
+	// Sink it's a defense-in-depth assertion. Either way: 500.
 	result, err := s.pipeline.Process(r.Context(), events.Event{Envelope: &env, Raw: body})
 	if err != nil {
-		if errors.Is(err, events.ErrRedactionRequired) {
-			s.slog.Warn("rejecting unredacted envelope",
-				"event_id", env.EventID,
-				"source_agent", env.SourceAgent,
-			)
-			writeProblem(w, http.StatusBadRequest,
-				"Redaction required",
-				"envelope.redaction.applied must be true; run the client's redactor before POSTing")
-			return
-		}
 		s.slog.Error("pipeline process", "event_id", env.EventID, "err", err)
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return

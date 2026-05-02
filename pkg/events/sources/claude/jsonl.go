@@ -51,15 +51,17 @@ var claudeCanonicalTypes = map[string]struct{}{
 //
 //   - Root: file path (one .jsonl) or directory (recursively
 //     walked). Empty Root yields no events.
-//   - Redactor: applied per-envelope before yielding. nil skips
-//     redaction — useful only in tests; production wiring always
-//     supplies a real Redactor.
 //   - Logger: receives Warn records for skipped lines (missing
 //     uuid, malformed JSON, oversize); nil silences. Skips do NOT
 //     halt iteration.
 //   - Now: injectable time source for tests. Unused for envelope
 //     timestamps (those come from the transcript line's own
 //     `timestamp` field), but reserved for future use.
+//
+// Translation is pure — redaction is performed by the consuming
+// events.Pipeline (single point of enforcement). The Source emits
+// raw envelopes; the Pipeline scrubs and re-marshals before the
+// Sink sees them.
 //
 // After Events() has been fully consumed, Stats holds counters the
 // caller can read: FilesRead, LinesRead, SkippedMissingUUID,
@@ -68,10 +70,9 @@ var claudeCanonicalTypes = map[string]struct{}{
 // CLI subcommand can copy them onto its report after Pipeline.Run
 // returns.
 type JSONLSource struct {
-	Root     string
-	Redactor events.Redactor
-	Logger   *slog.Logger
-	Now      func() time.Time
+	Root   string
+	Logger *slog.Logger
+	Now    func() time.Time
 
 	Stats JSONLStats
 }
@@ -301,14 +302,12 @@ func (s *JSONLSource) transcriptEntryToEnvelope(entry *claudeEntry, rawLine []by
 		Transport:          "import",
 	}
 
-	if s.Redactor != nil {
-		s.Redactor.Apply(env)
-	}
-
-	// Re-marshal deterministically so raw_envelopes.envelope_json
-	// is the *our-canonical-envelope* JSON, not Claude's wire
-	// format. Matches the hook path (daemon stores what the CLI
-	// sent).
+	// Re-marshal deterministically so the bytes the Pipeline sees
+	// (and re-redacts before Sink.Write) are our canonical envelope
+	// JSON, not Claude's wire format. The Pipeline owns redaction
+	// and will re-marshal the post-redaction envelope, so this
+	// initial marshal is just to populate Event.Raw with a
+	// well-formed pre-redaction shape.
 	out, err := json.Marshal(env)
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal envelope: %w", err)

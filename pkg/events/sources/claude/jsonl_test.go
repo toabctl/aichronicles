@@ -53,7 +53,7 @@ func collect(t *testing.T, src *JSONLSource) []events.Event {
 func TestJSONLSource_YieldsCanonicalEntries(t *testing.T) {
 	t.Parallel()
 	path := writeJSONL(t, userEntryFixture, assistantEntryFixture)
-	src := &JSONLSource{Root: path, Redactor: events.NewScannerRedactor(nil)}
+	src := &JSONLSource{Root: path}
 
 	got := collect(t, src)
 	if len(got) != 2 {
@@ -79,7 +79,7 @@ func TestJSONLSource_YieldsCanonicalEntries(t *testing.T) {
 func TestJSONLSource_SkipsInternalEntryTypes(t *testing.T) {
 	t.Parallel()
 	path := writeJSONL(t, userEntryFixture, internalEntryFixture, assistantEntryFixture)
-	src := &JSONLSource{Root: path, Redactor: events.NewScannerRedactor(nil)}
+	src := &JSONLSource{Root: path}
 
 	got := collect(t, src)
 	if len(got) != 2 {
@@ -93,7 +93,7 @@ func TestJSONLSource_SkipsInternalEntryTypes(t *testing.T) {
 func TestJSONLSource_CountsMalformedAsInvalid(t *testing.T) {
 	t.Parallel()
 	path := writeJSONL(t, userEntryFixture, malformedFixture, assistantEntryFixture)
-	src := &JSONLSource{Root: path, Redactor: events.NewScannerRedactor(nil)}
+	src := &JSONLSource{Root: path}
 
 	got := collect(t, src)
 	if len(got) != 2 {
@@ -107,7 +107,7 @@ func TestJSONLSource_CountsMalformedAsInvalid(t *testing.T) {
 func TestJSONLSource_CountsMissingUUID(t *testing.T) {
 	t.Parallel()
 	path := writeJSONL(t, missingUUIDFixture)
-	src := &JSONLSource{Root: path, Redactor: events.NewScannerRedactor(nil)}
+	src := &JSONLSource{Root: path}
 
 	got := collect(t, src)
 	if len(got) != 0 {
@@ -131,7 +131,7 @@ func TestJSONLSource_RootDirectoryWalksJSONLFiles(t *testing.T) {
 		}
 		_ = f.Close()
 	}
-	src := &JSONLSource{Root: dir, Redactor: events.NewScannerRedactor(nil)}
+	src := &JSONLSource{Root: dir}
 
 	got := collect(t, src)
 	if len(got) != 2 {
@@ -144,23 +144,29 @@ func TestJSONLSource_RootDirectoryWalksJSONLFiles(t *testing.T) {
 
 func TestJSONLSource_EmptyRootYieldsNothing(t *testing.T) {
 	t.Parallel()
-	src := &JSONLSource{Redactor: events.NewScannerRedactor(nil)}
+	src := &JSONLSource{}
 	got := collect(t, src)
 	if len(got) != 0 {
 		t.Errorf("empty root: got %d events, want 0", len(got))
 	}
 }
 
-func TestJSONLSource_RedactionAppliedSetsFlag(t *testing.T) {
+// TestJSONLSource_EmitsUnredactedEnvelopes guards against a
+// regression where the Source re-acquires its own Redactor.
+// Translation is pure; redaction is the consuming Pipeline's job.
+// If a future change adds edge redaction back to the Source, this
+// test fails and forces the discussion.
+func TestJSONLSource_EmitsUnredactedEnvelopes(t *testing.T) {
 	t.Parallel()
 	path := writeJSONL(t, userEntryFixture)
-	src := &JSONLSource{Root: path, Redactor: events.NewScannerRedactor(nil)}
+	src := &JSONLSource{Root: path}
 
 	got := collect(t, src)
 	if len(got) != 1 {
 		t.Fatalf("got %d events, want 1", len(got))
 	}
-	if got[0].Envelope.Redaction == nil || !got[0].Envelope.Redaction.Applied {
-		t.Errorf("Redaction.Applied not set")
+	if got[0].Envelope.Redaction != nil {
+		t.Errorf("Source must emit unredacted envelopes; got Redaction=%+v",
+			got[0].Envelope.Redaction)
 	}
 }

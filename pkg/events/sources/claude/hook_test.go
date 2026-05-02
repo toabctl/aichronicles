@@ -20,7 +20,7 @@ func TestHookTranslator_UserPromptShape(t *testing.T) {
 		"prompt": "what changed in main.go?",
 		"cwd": "/tmp/proj"
 	}`)
-	tr := &HookTranslator{Now: testNow, Redactor: events.NewScannerRedactor(nil)}
+	tr := &HookTranslator{Now: testNow}
 	env, err := tr.Translate(raw)
 	if err != nil {
 		t.Fatalf("Translate: %v", err)
@@ -43,8 +43,11 @@ func TestHookTranslator_UserPromptShape(t *testing.T) {
 	if env.Transport != "hook" {
 		t.Errorf("Transport: got %q", env.Transport)
 	}
-	if env.Redaction == nil || !env.Redaction.Applied {
-		t.Errorf("Redaction.Applied not set: %+v", env.Redaction)
+	// Translator is now pure — Redaction is left for the receiving
+	// daemon's Pipeline to populate. Assert it's not pre-set so a
+	// future regression that re-adds edge redaction is caught.
+	if env.Redaction != nil {
+		t.Errorf("Redaction must be nil from a pure translator; got %+v", env.Redaction)
 	}
 }
 
@@ -56,7 +59,7 @@ func TestHookTranslator_ToolUseRendersContent(t *testing.T) {
 		"tool_name": "Bash",
 		"tool_input": {"command": "ls -la", "description": "list files"}
 	}`)
-	tr := &HookTranslator{Now: testNow, Redactor: events.NewScannerRedactor(nil)}
+	tr := &HookTranslator{Now: testNow}
 	env, err := tr.Translate(raw)
 	if err != nil {
 		t.Fatalf("Translate: %v", err)
@@ -85,7 +88,7 @@ func TestHookTranslator_MissingSessionIDErrors(t *testing.T) {
 func TestHookTranslator_UnknownHookEventBecomesKindUnknown(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{"session_id": "x", "hook_event_name": "FrobNitz"}`)
-	tr := &HookTranslator{Now: testNow, Redactor: events.NewScannerRedactor(nil)}
+	tr := &HookTranslator{Now: testNow}
 	env, err := tr.Translate(raw)
 	if err != nil {
 		t.Fatalf("Translate: %v", err)
@@ -103,7 +106,7 @@ func TestHookTranslator_SubagentExtractedWhenAgentIDPresent(t *testing.T) {
 		"agent_id": "sub-7",
 		"agent_type": "planner"
 	}`)
-	tr := &HookTranslator{Now: testNow, Redactor: events.NewScannerRedactor(nil)}
+	tr := &HookTranslator{Now: testNow}
 	env, err := tr.Translate(raw)
 	if err != nil {
 		t.Fatalf("Translate: %v", err)
@@ -116,7 +119,7 @@ func TestHookTranslator_SubagentExtractedWhenAgentIDPresent(t *testing.T) {
 func TestHookTranslator_EventIDIsValidUUID(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{"session_id": "x", "hook_event_name": "UserPromptSubmit", "prompt": "hi"}`)
-	tr := &HookTranslator{Now: testNow, Redactor: events.NewScannerRedactor(nil)}
+	tr := &HookTranslator{Now: testNow}
 	env, err := tr.Translate(raw)
 	if err != nil {
 		t.Fatalf("Translate: %v", err)
@@ -142,7 +145,7 @@ func TestHookTranslator_FullPayloadRoundTrips(t *testing.T) {
 		"cwd": "/p",
 		"some_unknown_field": "preserved"
 	}`)
-	tr := &HookTranslator{Now: testNow, Redactor: events.NewScannerRedactor(nil)}
+	tr := &HookTranslator{Now: testNow}
 	env, err := tr.Translate(raw)
 	if err != nil {
 		t.Fatalf("Translate: %v", err)

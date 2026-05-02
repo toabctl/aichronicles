@@ -69,7 +69,7 @@ func collect(t *testing.T, src *TranscriptSource) []events.Event {
 func TestTranscriptSource_UserMessage(t *testing.T) {
 	t.Parallel()
 	path := writeJSON(t, userMessageFixture)
-	src := &TranscriptSource{Root: path, Redactor: events.NewScannerRedactor(nil), CwdMap: map[string]string{}}
+	src := &TranscriptSource{Root: path, CwdMap: map[string]string{}}
 
 	got := collect(t, src)
 	if len(got) != 1 {
@@ -90,7 +90,7 @@ func TestTranscriptSource_UserMessage(t *testing.T) {
 func TestTranscriptSource_AssistantWithToolCallFansOut(t *testing.T) {
 	t.Parallel()
 	path := writeJSON(t, assistantWithToolCallFixture)
-	src := &TranscriptSource{Root: path, Redactor: events.NewScannerRedactor(nil), CwdMap: map[string]string{}}
+	src := &TranscriptSource{Root: path, CwdMap: map[string]string{}}
 
 	got := collect(t, src)
 	// Expect 3 envelopes: assistant_message, tool_use, tool_result
@@ -124,7 +124,7 @@ func TestTranscriptSource_ToolFailureWhenStatusError(t *testing.T) {
 		}]
 	}]}`
 	path := writeJSON(t, body)
-	src := &TranscriptSource{Root: path, Redactor: events.NewScannerRedactor(nil), CwdMap: map[string]string{}}
+	src := &TranscriptSource{Root: path, CwdMap: map[string]string{}}
 
 	got := collect(t, src)
 	if len(got) != 2 {
@@ -138,7 +138,7 @@ func TestTranscriptSource_ToolFailureWhenStatusError(t *testing.T) {
 func TestTranscriptSource_StatsCounting(t *testing.T) {
 	t.Parallel()
 	path := writeJSON(t, userMessageFixture)
-	src := &TranscriptSource{Root: path, Redactor: events.NewScannerRedactor(nil), CwdMap: map[string]string{}}
+	src := &TranscriptSource{Root: path, CwdMap: map[string]string{}}
 	_ = collect(t, src)
 	if src.Stats.FilesRead != 1 || src.Stats.MessagesRead != 1 {
 		t.Errorf("stats: got %+v", src.Stats)
@@ -148,7 +148,7 @@ func TestTranscriptSource_StatsCounting(t *testing.T) {
 func TestTranscriptSource_MalformedSessionCountedInvalid(t *testing.T) {
 	t.Parallel()
 	path := writeJSON(t, "not json")
-	src := &TranscriptSource{Root: path, Redactor: events.NewScannerRedactor(nil), CwdMap: map[string]string{}}
+	src := &TranscriptSource{Root: path, CwdMap: map[string]string{}}
 	_ = collect(t, src)
 	if src.Stats.Invalid != 1 {
 		t.Errorf("Invalid count: got %d, want 1", src.Stats.Invalid)

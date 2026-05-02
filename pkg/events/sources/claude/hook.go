@@ -40,23 +40,23 @@ var hookKindMap = map[string]string{
 }
 
 // HookTranslator parses a Claude Code hook payload (JSON on stdin)
-// into a canonical Envelope, applies redaction, and returns it
-// ready to POST. Single-shot — the `aichronicles ingest`
-// subprocess uses one HookTranslator per hook firing. For
-// streaming over a transcript file, see JSONLSource.
+// into a canonical Envelope and returns it ready to POST.
+// Single-shot — the `aichronicles hook` subprocess uses one
+// HookTranslator per hook firing. For streaming over a transcript
+// file, see JSONLSource.
 //
-// Holds a Redactor so redaction is enforced as part of translation
-// (sources are the edge — the Pipeline's RequireRedaction gate is
-// defense-in-depth, not the primary enforcement). Now is injectable
-// for tests; nil falls back to time.Now (UTC).
+// Translation is pure: redaction is performed server-side by the
+// receiving daemon's events.Pipeline (the single point of
+// enforcement). Now is injectable for tests; nil falls back to
+// time.Now (UTC).
 type HookTranslator struct {
-	Redactor events.Redactor
-	Now      func() time.Time
+	Now func() time.Time
 }
 
-// Translate parses raw and returns a fully-populated Envelope with
-// redaction applied. The returned Envelope's TsSource is captured
-// from t.Now() (or time.Now().UTC() when nil) at translation time.
+// Translate parses raw and returns a fully-populated Envelope.
+// The returned Envelope's TsSource is captured from t.Now() (or
+// time.Now().UTC() when nil) at translation time. Redaction is
+// not applied here — the receiving daemon redacts server-side.
 func (t *HookTranslator) Translate(raw []byte) (events.Envelope, error) {
 	var hook map[string]any
 	if err := json.Unmarshal(raw, &hook); err != nil {
@@ -102,9 +102,6 @@ func (t *HookTranslator) Translate(raw []byte) (events.Envelope, error) {
 		env.Subagent = sa
 	}
 
-	if t.Redactor != nil {
-		t.Redactor.Apply(&env)
-	}
 	return env, nil
 }
 

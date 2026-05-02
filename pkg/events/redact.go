@@ -6,17 +6,17 @@ import (
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
-// Redactor is the interface Sources call to scrub secrets from an
-// envelope before yielding. Apply mutates env: text-bearing fields
-// are scrubbed in place and env.Redaction.Applied is set to true.
+// Redactor is the interface the Pipeline uses to scrub secrets
+// from an envelope before extractor dispatch and Sink.Write. Apply
+// mutates env: text-bearing fields are scrubbed in place and
+// env.Redaction.Applied is set to true.
 //
-// Sources hold a Redactor at construction (NewClaudeJSONLSource,
-// NewGeminiTranscriptSource, etc.) and call Apply during their
-// translation step. The Pipeline's RequireRedaction gate verifies
-// env.Redaction.Applied=true and rejects otherwise — three layers
-// of defense (Source applies, Pipeline checks, Sink double-checks)
-// keep the "no unredacted secrets in storage" invariant honest
-// even if a future Source forgets to wire a Redactor.
+// The Pipeline owns redaction end-to-end (Sources are pure
+// translators; the Pipeline is the single point of enforcement).
+// The Pipeline holds the Redactor at construction and calls Apply
+// once per Process invocation; the SQLite Sink also enforces
+// "Applied=true" as a defense-in-depth assertion against a
+// programmer error that bypasses the Pipeline.
 type Redactor interface {
 	Apply(env *Envelope)
 }
@@ -48,7 +48,7 @@ func (r *ScannerRedactor) Apply(env *Envelope) {
 	}
 	if r.Scanner == nil {
 		// No catalog: no scrubbing, but the "scrubber ran" signal
-		// still gets set so the Pipeline's RequireRedaction gate
+		// still gets set so the Sink's Applied=true assertion
 		// passes. Useful in tests with synthetic envelopes that
 		// don't carry credentials anyway.
 		env.Redaction = &Redaction{Applied: true}

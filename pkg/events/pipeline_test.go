@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"strings"
 	"testing"
 )
 
@@ -65,31 +66,27 @@ func (s *staticSource) Events(_ context.Context) iter.Seq2[Event, error] {
 	}
 }
 
-func redactedEnv(id string) *Envelope {
-	return &Envelope{
-		EventID:   id,
-		Redaction: &Redaction{Applied: true},
-	}
-}
+// noopRedactor is the standard Redactor for pipeline tests that don't
+// care about redaction content — it just sets Applied=true so Pipeline
+// invariants are satisfied. NewScannerRedactor(nil) gives the same
+// behavior; we use the helper for readability at call sites.
+func noopRedactor() Redactor { return NewScannerRedactor(nil) }
 
-func TestPipeline_Process_RejectsUnredactedWhenRequired(t *testing.T) {
+func envWithID(id string) *Envelope { return &Envelope{EventID: id} }
+
+func TestPipeline_Process_NilRedactorReturnsErr(t *testing.T) {
 	t.Parallel()
-	p := Pipeline{Sink: &fakeSink{}, RequireRedaction: true}
-	_, err := p.Process(context.Background(), Event{Envelope: &Envelope{}})
+	// A Pipeline without a Redactor is a programmer error in
+	// production — fail loud. Tests that genuinely want a no-op
+	// pass NewScannerRedactor(nil) instead.
+	sink := &fakeSink{}
+	p := Pipeline{Sink: sink}
+	_, err := p.Process(context.Background(), Event{Envelope: envWithID("abc")})
 	if !errors.Is(err, ErrRedactionRequired) {
 		t.Errorf("got %v, want ErrRedactionRequired", err)
 	}
-}
-
-func TestPipeline_Process_AllowsUnredactedWhenNotRequired(t *testing.T) {
-	t.Parallel()
-	sink := &fakeSink{}
-	p := Pipeline{Sink: sink, RequireRedaction: false}
-	if _, err := p.Process(context.Background(), Event{Envelope: &Envelope{EventID: "abc"}}); err != nil {
-		t.Errorf("unexpected err: %v", err)
-	}
-	if len(sink.written) != 1 {
-		t.Errorf("Sink.Write call count: got %d, want 1", len(sink.written))
+	if len(sink.written) != 0 {
+		t.Errorf("Sink must not be called when Redactor is nil; got %d writes", len(sink.written))
 	}
 }
 
@@ -101,8 +98,8 @@ func TestPipeline_Process_RunsExtractorsWhenEmpty(t *testing.T) {
 			return []Extraction{{Kind: "fake", Value: "x"}}
 		}},
 	}
-	p := Pipeline{Sink: sink, Extractors: registry, RequireRedaction: true}
-	if _, err := p.Process(context.Background(), Event{Envelope: redactedEnv("abc")}); err != nil {
+	p := Pipeline{Sink: sink, Extractors: registry, Redactor: noopRedactor()}
+	if _, err := p.Process(context.Background(), Event{Envelope: envWithID("abc")}); err != nil {
 		t.Fatalf("Process: %v", err)
 	}
 	if len(sink.written) != 1 || len(sink.written[0].Extractions) != 1 {
@@ -121,10 +118,10 @@ func TestPipeline_Process_PreservesPreAttachedExtractions(t *testing.T) {
 			return []Extraction{{Kind: "from_registry"}}
 		}},
 	}
-	p := Pipeline{Sink: sink, Extractors: registry, RequireRedaction: true}
+	p := Pipeline{Sink: sink, Extractors: registry, Redactor: noopRedactor()}
 	pre := []Extraction{{Kind: "from_source", Value: "preset"}}
 	_, err := p.Process(context.Background(), Event{
-		Envelope:    redactedEnv("abc"),
+		Envelope:    envWithID("abc"),
 		Extractions: pre,
 	})
 	if err != nil {
@@ -140,11 +137,11 @@ func TestPipeline_Run_AccumulatesStatsAcrossEvents(t *testing.T) {
 	t.Parallel()
 	sink := &fakeSink{}
 	src := &staticSource{events: []Event{
-		{Envelope: redactedEnv("a")},
-		{Envelope: redactedEnv("b")},
-		{Envelope: redactedEnv("c")},
+		{Envelope: envWithID("a")},
+		{Envelope: envWithID("b")},
+		{Envelope: envWithID("c")},
 	}}
-	p := Pipeline{Sink: sink, RequireRedaction: true}
+	p := Pipeline{Sink: sink, Redactor: noopRedactor()}
 	stats, err := p.Run(context.Background(), src)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -160,14 +157,14 @@ func TestPipeline_Run_AccumulatesStatsAcrossEvents(t *testing.T) {
 func TestPipeline_Run_PerEventErrorsCounted_NotAborted(t *testing.T) {
 	t.Parallel()
 	sink := &fakeSink{}
-	// Middle event is unredacted → Process returns ErrRedactionRequired.
-	// Pipeline must log + count, then continue.
+	// Middle event has a nil envelope → Process returns "nil
+	// envelope" error. Pipeline must log + count, then continue.
 	src := &staticSource{events: []Event{
-		{Envelope: redactedEnv("a")},
-		{Envelope: &Envelope{EventID: "bad"}}, // missing Redaction
-		{Envelope: redactedEnv("c")},
+		{Envelope: envWithID("a")},
+		{Envelope: nil},
+		{Envelope: envWithID("c")},
 	}}
-	p := Pipeline{Sink: sink, RequireRedaction: true}
+	p := Pipeline{Sink: sink, Redactor: noopRedactor()}
 	stats, err := p.Run(context.Background(), src)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -182,13 +179,13 @@ func TestPipeline_Run_SourceErrorCountedThenContinues(t *testing.T) {
 	sink := &fakeSink{}
 	src := &staticSource{
 		events: []Event{
-			{Envelope: redactedEnv("a")},
+			{Envelope: envWithID("a")},
 			{}, // ignored when err != nil
-			{Envelope: redactedEnv("c")},
+			{Envelope: envWithID("c")},
 		},
 		errs: []error{nil, errors.New("source bork"), nil},
 	}
-	p := Pipeline{Sink: sink, RequireRedaction: true}
+	p := Pipeline{Sink: sink, Redactor: noopRedactor()}
 	stats, _ := p.Run(context.Background(), src)
 	if stats.Processed != 2 || stats.Errors != 1 {
 		t.Errorf("stats=%+v, want Processed=2 Errors=1", stats)
@@ -198,8 +195,8 @@ func TestPipeline_Run_SourceErrorCountedThenContinues(t *testing.T) {
 func TestPipeline_Run_FlushErrorPropagates(t *testing.T) {
 	t.Parallel()
 	sink := &fakeSink{flushErr: errors.New("disk full")}
-	src := &staticSource{events: []Event{{Envelope: redactedEnv("a")}}}
-	p := Pipeline{Sink: sink, RequireRedaction: true}
+	src := &staticSource{events: []Event{{Envelope: envWithID("a")}}}
+	p := Pipeline{Sink: sink, Redactor: noopRedactor()}
 	_, err := p.Run(context.Background(), src)
 	if err == nil || !errors.Is(err, sink.flushErr) {
 		t.Errorf("expected wrapped flush error, got %v", err)
@@ -210,15 +207,161 @@ func TestPipeline_Run_CtxCanceledHaltsImmediately(t *testing.T) {
 	t.Parallel()
 	sink := &fakeSink{}
 	src := &staticSource{events: []Event{
-		{Envelope: redactedEnv("a")},
-		{Envelope: redactedEnv("b")},
+		{Envelope: envWithID("a")},
+		{Envelope: envWithID("b")},
 	}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already canceled
-	p := Pipeline{Sink: sink, RequireRedaction: true}
+	p := Pipeline{Sink: sink, Redactor: noopRedactor()}
 	_, err := p.Run(ctx, src)
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got %v", err)
+	}
+}
+
+// fakeRedactor records calls and prepends a tag to ContentText so
+// tests can assert "redactor ran before Sink.Write." Apply is
+// idempotent: it skips the rewrite once env.Redaction.Applied=true
+// is set, mirroring the contract a real scanner-backed redactor
+// satisfies via stable replacement tokens.
+type fakeRedactor struct {
+	calls int
+	tag   string
+}
+
+func (r *fakeRedactor) Apply(env *Envelope) {
+	r.calls++
+	if env == nil {
+		return
+	}
+	if env.Redaction != nil && env.Redaction.Applied {
+		return
+	}
+	if env.ContentText != "" {
+		env.ContentText = r.tag + ":" + env.ContentText
+	}
+	env.Redaction = &Redaction{Applied: true}
+}
+
+func TestPipeline_Process_RunsRedactorBeforeSink(t *testing.T) {
+	t.Parallel()
+	sink := &fakeSink{}
+	red := &fakeRedactor{tag: "REDACTED"}
+	p := Pipeline{Sink: sink, Redactor: red}
+	env := &Envelope{EventID: "abc", ContentText: "hello"}
+	if _, err := p.Process(context.Background(), Event{Envelope: env}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if red.calls != 1 {
+		t.Errorf("Redactor.Apply calls: got %d, want 1", red.calls)
+	}
+	if len(sink.written) != 1 {
+		t.Fatalf("Sink wrote %d, want 1", len(sink.written))
+	}
+	if got := sink.written[0].Envelope.ContentText; got != "REDACTED:hello" {
+		t.Errorf("Sink saw content %q; expected redactor to have run before Sink.Write", got)
+	}
+	if sink.written[0].Envelope.Redaction == nil || !sink.written[0].Envelope.Redaction.Applied {
+		t.Errorf("Applied flag not set on envelope reaching Sink: %+v", sink.written[0].Envelope.Redaction)
+	}
+}
+
+func TestPipeline_Process_RedactorSetsAppliedFlag(t *testing.T) {
+	t.Parallel()
+	// Server-side redaction is the single point of enforcement;
+	// the Redactor sets Redaction.Applied=true on the envelope
+	// reaching the Sink, regardless of what the client claimed.
+	sink := &fakeSink{}
+	red := &fakeRedactor{tag: "REDACTED"}
+	p := Pipeline{Sink: sink, Redactor: red}
+	env := &Envelope{EventID: "abc"}
+	if _, err := p.Process(context.Background(), Event{Envelope: env}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if len(sink.written) != 1 {
+		t.Fatalf("expected one Sink.Write; got %d", len(sink.written))
+	}
+	got := sink.written[0].Envelope.Redaction
+	if got == nil || !got.Applied {
+		t.Errorf("Sink saw envelope without Applied=true: %+v", got)
+	}
+}
+
+func TestPipeline_Process_RedactorRemarshalsRawBytes(t *testing.T) {
+	t.Parallel()
+	// Pipeline must replace Event.Raw with the re-marshaled
+	// post-redaction envelope. Storing the original POST body
+	// would re-introduce the very secret the redactor just
+	// scrubbed. The Sink sees the redacted bytes.
+	sink := &fakeSink{}
+	red := &fakeRedactor{tag: "REDACTED"}
+	p := Pipeline{Sink: sink, Redactor: red}
+	original := []byte(`{"event_id":"abc","content_text":"hello"}`)
+	env := &Envelope{EventID: "abc", ContentText: "hello"}
+
+	if _, err := p.Process(context.Background(), Event{Envelope: env, Raw: original}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if len(sink.written) != 1 {
+		t.Fatalf("Sink wrote %d events", len(sink.written))
+	}
+	got := string(sink.written[0].Raw)
+	if got == string(original) {
+		t.Errorf("Sink saw the unredacted POST body; expected re-marshaled redacted bytes. got=%s", got)
+	}
+	if !strings.Contains(got, "REDACTED:hello") {
+		t.Errorf("re-marshaled Raw does not contain redacted content: %s", got)
+	}
+}
+
+func TestPipeline_Process_RedactorIdempotentAcrossDoubleProcess(t *testing.T) {
+	t.Parallel()
+	// Running the Pipeline twice on the same envelope (e.g. a
+	// Source applied edge redaction and the Pipeline applies it
+	// again) yields stable output. Required for the migration
+	// window where both layers run.
+	sink := &fakeSink{}
+	red := &fakeRedactor{tag: "REDACTED"}
+	p := Pipeline{Sink: sink, Redactor: red}
+	env := &Envelope{EventID: "abc", ContentText: "hello"}
+
+	if _, err := p.Process(context.Background(), Event{Envelope: env}); err != nil {
+		t.Fatalf("first Process: %v", err)
+	}
+	first := env.ContentText
+	if first != "REDACTED:hello" {
+		t.Fatalf("first pass content %q; want REDACTED:hello", first)
+	}
+
+	// Re-process the same (now-redacted) envelope. Redactor must
+	// see Applied=true and short-circuit.
+	if _, err := p.Process(context.Background(), Event{Envelope: env}); err != nil {
+		t.Fatalf("second Process: %v", err)
+	}
+	if env.ContentText != first {
+		t.Errorf("second pass mutated content: %q != %q", env.ContentText, first)
+	}
+	if red.calls != 2 {
+		t.Errorf("Apply was called %d times; want 2 (idempotent, but still entered)", red.calls)
+	}
+}
+
+func TestPipeline_Process_NilEnvelopeIsRejected(t *testing.T) {
+	t.Parallel()
+	// Defensive: nil envelope must not reach the redactor or the
+	// Sink. Same guard before and after the redactor change.
+	sink := &fakeSink{}
+	red := &fakeRedactor{tag: "REDACTED"}
+	p := Pipeline{Sink: sink, Redactor: red}
+	_, err := p.Process(context.Background(), Event{Envelope: nil})
+	if err == nil {
+		t.Fatal("expected error for nil envelope")
+	}
+	if red.calls != 0 {
+		t.Errorf("Redactor.Apply must not be called for nil envelope; got %d calls", red.calls)
+	}
+	if len(sink.written) != 0 {
+		t.Errorf("Sink must not be called for nil envelope; got %d writes", len(sink.written))
 	}
 }
 
