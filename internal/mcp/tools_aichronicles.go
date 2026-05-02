@@ -164,49 +164,8 @@ func RegisterAichroniclesTools(s *Server, st *store.Store) {
 		Handler: listWorkflowsHandler(st),
 	})
 
-	s.RegisterTool(Tool{
-		Name: "get_facts_for_subject",
-		Description: "Retrieve typed semantic facts known about one subject (typically a cwd " +
-			"path of a project the user has worked in). Returns the (predicate, object, " +
-			"confidence) triples derived from past sessions: build/test/deploy contracts, " +
-			"language version, key directories, dependencies. " +
-			"Use at the START of a session in a project the user has touched before — before " +
-			"running shell commands to discover go.mod / package.json / pytest config, " +
-			"check whether facts have already been induced. This is the SEMANTIC layer of " +
-			"memory (distinct from skills/workflows/episodic search): the answer to 'what " +
-			"do I know about this project?'. " +
-			"Empty result is normal — facts only exist after `aichronicles facts induce " +
-			"--session <id>` has run on a relevant past session.",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"subject": {"type": "string", "description": "The subject to load facts for. Typically the project's cwd path."},
-				"limit":   {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}
-			},
-			"required": ["subject"]
-		}`),
-		Handler: getFactsForSubjectHandler(st),
-	})
-
-	s.RegisterTool(Tool{
-		Name: "find_fact_subjects",
-		Description: "Search the SUBJECTS in the semantic facts store by case-insensitive " +
-			"substring. Returns distinct subject strings — useful when the agent has a " +
-			"fuzzy idea of which project the user means ('that aichronicles fork') and " +
-			"wants to discover the canonical subject string before calling " +
-			"get_facts_for_subject. " +
-			"Empty result means no semantic facts have been recorded under any subject " +
-			"matching the needle.",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"contains": {"type": "string", "description": "Case-insensitive substring to match against subject."},
-				"limit":    {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}
-			},
-			"required": ["contains"]
-		}`),
-		Handler: findFactSubjectsHandler(st),
-	})
+	// get_facts_for_subject and find_fact_subjects are registered
+	// by RegisterAichroniclesAPITools (tools_apiclient.go).
 
 	s.RegisterTool(Tool{
 		Name: "get_project_context",
@@ -765,73 +724,8 @@ func renderSkillsSection(b *strings.Builder, skills []prompts.InstalledSkill, li
 	}
 }
 
-// --- get_facts_for_subject ---
-
-func getFactsForSubjectHandler(st *store.Store) ToolHandler {
-	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
-		var req struct {
-			Subject string `json:"subject"`
-			Limit   int    `json:"limit"`
-		}
-		if err := json.Unmarshal(args, &req); err != nil {
-			return nil, &Error{Code: InvalidParams, Message: "get_facts_for_subject: bad args: " + err.Error()}
-		}
-		if strings.TrimSpace(req.Subject) == "" {
-			return TextError("get_facts_for_subject: subject is required"), nil
-		}
-		if req.Limit <= 0 || req.Limit > 200 {
-			req.Limit = 50
-		}
-		facts, err := store.LoadFactsForSubject(ctx, st.DB(), req.Subject, req.Limit)
-		if err != nil {
-			return nil, &Error{Code: InternalError, Message: "get_facts_for_subject: load: " + err.Error()}
-		}
-		if len(facts) == 0 {
-			return TextResult(fmt.Sprintf(
-				"(no facts known for %q yet — try `aichronicles facts induce --session <id>` on a past session in this project)",
-				req.Subject)), nil
-		}
-		var b strings.Builder
-		fmt.Fprintf(&b, "subject: %s\n", req.Subject)
-		for _, f := range facts {
-			fmt.Fprintf(&b, "%s\t%s\t%.2f\t%s\n",
-				f.Predicate, f.Object, f.Confidence,
-				formatTS(f.AssertedAtMs))
-			if f.EvidenceQuote.Valid && f.EvidenceQuote.String != "" {
-				fmt.Fprintf(&b, "  quote: %s\n", f.EvidenceQuote.String)
-			}
-		}
-		return TextResult(strings.TrimRight(b.String(), "\n")), nil
-	}
-}
-
-// --- find_fact_subjects ---
-
-func findFactSubjectsHandler(st *store.Store) ToolHandler {
-	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
-		var req struct {
-			Contains string `json:"contains"`
-			Limit    int    `json:"limit"`
-		}
-		if err := json.Unmarshal(args, &req); err != nil {
-			return nil, &Error{Code: InvalidParams, Message: "find_fact_subjects: bad args: " + err.Error()}
-		}
-		if strings.TrimSpace(req.Contains) == "" {
-			return TextError("find_fact_subjects: contains is required"), nil
-		}
-		if req.Limit <= 0 || req.Limit > 100 {
-			req.Limit = 30
-		}
-		subjects, err := store.FactSubjectsLike(ctx, st.DB(), req.Contains, req.Limit)
-		if err != nil {
-			return nil, &Error{Code: InternalError, Message: "find_fact_subjects: load: " + err.Error()}
-		}
-		if len(subjects) == 0 {
-			return TextResult("(no fact subjects matched)"), nil
-		}
-		return TextResult(strings.Join(subjects, "\n")), nil
-	}
-}
+// get_facts_for_subject and find_fact_subjects are now in
+// tools_apiclient.go (registered by RegisterAichroniclesAPITools).
 
 // --- list_workflows ---
 

@@ -42,7 +42,7 @@ func TestRegisterAnalyticsTools_RegistersAll(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesAnalyticsTools(srv, st)
+	registerAllTools(t, srv, st)
 
 	for _, want := range []string{"get_insights", "list_skills", "get_skill_staleness"} {
 		if _, ok := srv.tools[want]; !ok {
@@ -60,7 +60,7 @@ func TestGetInsights_RendersOverviewAndTopTools(t *testing.T) {
 	seedToolUseForAnalytics(t, st, "ses-x", "Read", now.Add(2*time.Minute))
 
 	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesAnalyticsTools(srv, st)
+	registerAllTools(t, srv, st)
 	res := callTool(t, srv, "get_insights", `{"since_days": 30}`)
 	if res == nil || len(res.Content) == 0 {
 		t.Fatal("empty result")
@@ -84,7 +84,7 @@ func TestGetInsights_EmptyWindowSaysSo(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesAnalyticsTools(srv, st)
+	registerAllTools(t, srv, st)
 	res := callTool(t, srv, "get_insights", `{"since_days": 1}`)
 	body := res.Content[0].Text
 	// openSeededStore plants events at "now" so a 1-day window
@@ -100,7 +100,7 @@ func TestListSkills_SectionsAreLabeled(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesAnalyticsTools(srv, st)
+	registerAllTools(t, srv, st)
 	res := callTool(t, srv, "list_skills", `{"since_days": 30}`)
 	body := res.Content[0].Text
 	for _, want := range []string{
@@ -158,7 +158,7 @@ func TestGetSkillStaleness_ReportsCorrelations(t *testing.T) {
 	_ = tx2.Commit()
 
 	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesAnalyticsTools(srv, st)
+	registerAllTools(t, srv, st)
 	res := callTool(t, srv, "get_skill_staleness", `{"since_days": 14}`)
 	body := res.Content[0].Text
 	if !strings.Contains(body, "build-test") {
@@ -173,7 +173,7 @@ func TestGetSkillStaleness_NoCorrelationsMessage(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesAnalyticsTools(srv, st)
+	registerAllTools(t, srv, st)
 	res := callTool(t, srv, "get_skill_staleness", `{"since_days": 14}`)
 	if !strings.Contains(res.Content[0].Text, "No stale-correlated skills") {
 		t.Errorf("clean state should report no correlations:\n%s", res.Content[0].Text)
