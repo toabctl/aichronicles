@@ -54,14 +54,16 @@ const (
 )
 
 // Server is the HTTP-facing surface of aichronicles-api. Owns the
-// store handle and an events.Pipeline configured for server-side
-// redaction. Per-feature handlers live in handler_*.go and are
-// methods on *Server.
+// store handle, an events.Pipeline configured for server-side
+// redaction, and an in-process SSE bus that fan-outs every
+// accepted ingest to live /v1/stream subscribers. Per-feature
+// handlers live in handler_*.go and are methods on *Server.
 type Server struct {
 	store            *store.Store
 	slog             *slog.Logger
 	maxEnvelopeBytes int
 	pipeline         events.Pipeline
+	sseBus           *sseBus
 }
 
 // NewServer returns a Server backed by s. log nil falls back to a
@@ -83,7 +85,15 @@ func NewServer(s *store.Store, log *slog.Logger) *Server {
 			Redactor:   events.NewScannerRedactor(redact.Default()),
 			Logger:     log,
 		},
+		sseBus: newSSEBus(),
 	}
+}
+
+// Close terminates server-owned background subscribers (currently
+// the SSE bus). Called by daemon main on shutdown so SSE
+// goroutines exit before the listener closes.
+func (s *Server) Close() {
+	s.sseBus.Close()
 }
 
 // WithMaxEnvelopeBytes overrides the body cap. Returns the
@@ -123,6 +133,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/facts", s.handleFactsSave)
 	mux.HandleFunc("POST /v1/session-outcomes", s.handleSessionOutcomeSave)
 	mux.HandleFunc("POST /v1/session-links", s.handleSessionLinksSave)
+	mux.HandleFunc("GET /v1/stream", s.handleStream)
 	return mux
 }
 
@@ -252,6 +263,19 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		s.slog.Error("pipeline process", "event_id", env.EventID, "err", err)
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
+	}
+
+	// Publish to live SSE subscribers AFTER the write committed.
+	// Dedup'd ingests don't fire — Result.Deduped means no new
+	// row was written, so there's nothing live consumers haven't
+	// already seen.
+	if !result.Deduped {
+		s.sseBus.Publish(api.StreamEvent{
+			EventID:    result.EventID,
+			SessionID:  result.SessionID,
+			Kind:       env.Kind,
+			TsServerMs: time.Now().UnixMilli(),
+		})
 	}
 
 	writeJSON(w, http.StatusOK, events.Ack(result))

@@ -93,6 +93,7 @@ func run(sockFlag, dbFlag string) error {
 	st.SetMaxOpenConns(cfg.Limits.SQLiteMaxOpenConns)
 
 	srv := api.NewServer(st, logger).WithMaxEnvelopeBytes(cfg.Limits.MaxEnvelopeBytes)
+	defer srv.Close()
 
 	var shutdown func(context.Context) error
 	activationListener, err := api.ListenFromSystemd()
