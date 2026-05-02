@@ -103,6 +103,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/ingest", s.handleIngest)
 	mux.HandleFunc("GET /v1/healthz", s.handleHealthz)
+	mux.HandleFunc("GET /v1/events", s.handleEventsList)
 	return mux
 }
 
