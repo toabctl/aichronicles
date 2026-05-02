@@ -118,6 +118,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/aggregates", s.handleProjectsAggregates)
 	mux.HandleFunc("GET /v1/subagents", s.handleSubagentSpans)
 	mux.HandleFunc("GET /v1/insights", s.handleInsights)
+	mux.HandleFunc("POST /v1/llm-outputs", s.handleLLMOutputSave)
+	mux.HandleFunc("POST /v1/episodes", s.handleEpisodesSave)
+	mux.HandleFunc("POST /v1/facts", s.handleFactsSave)
+	mux.HandleFunc("POST /v1/session-outcomes", s.handleSessionOutcomeSave)
+	mux.HandleFunc("POST /v1/session-links", s.handleSessionLinksSave)
 	return mux
 }
 
