@@ -14,6 +14,18 @@ import (
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
+// mustJSON is a small test helper for marshaling fixture values.
+// Was previously defined in import_batch_test.go (deleted alongside
+// envelopeBatcher); lives here now as the only remaining consumer.
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
+}
+
 // plantSummary writes a minimal kind='summary' row attributed to
 // sessionID. Required for RunInductionForSession because the
 // digest-from-rows path skips sessions without a summary.

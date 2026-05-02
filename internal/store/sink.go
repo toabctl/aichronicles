@@ -124,6 +124,14 @@ type BufferedSink struct {
 
 	buf      []pendingWrite
 	bufBytes int
+
+	// Running totals updated during Flush. The Pipeline cannot
+	// derive dedup counts from per-Write Results (the sink buffers
+	// the actual SQL until Flush, so Write returns Deduped=false
+	// even when the row would dedupe on commit). Callers reading
+	// final import stats use Imported() / Deduped() instead.
+	imported int
+	deduped  int
 }
 
 type pendingWrite struct {
@@ -207,6 +215,15 @@ func (b *BufferedSink) Close() error {
 	return b.Flush(context.Background())
 }
 
+// Imported returns the running total of envelopes successfully
+// inserted (excluding dedup). Updated by Flush.
+func (b *BufferedSink) Imported() int { return b.imported }
+
+// Deduped returns the running total of envelopes that hit an
+// existing event_id and resulted in no-op INSERT OR IGNORE.
+// Updated by Flush.
+func (b *BufferedSink) Deduped() int { return b.deduped }
+
 // flushBatch attempts the entire chunk in one tx. Returns the first
 // error encountered; the caller falls back to flushRowByRow.
 func (b *BufferedSink) flushBatch(ctx context.Context, pending []pendingWrite) error {
@@ -215,32 +232,48 @@ func (b *BufferedSink) flushBatch(ctx context.Context, pending []pendingWrite) e
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	var imported, deduped int
 	for _, p := range pending {
-		if _, err := IngestEnvelopeWithExtractions(ctx, tx, p.event.Envelope, p.event.Raw, p.tsMs, p.event.Extractions); err != nil {
+		d, err := IngestEnvelopeWithExtractions(ctx, tx, p.event.Envelope, p.event.Raw, p.tsMs, p.event.Extractions)
+		if err != nil {
 			return fmt.Errorf("ingest %s: %w", p.event.Envelope.EventID, err)
+		}
+		if d {
+			deduped++
+		} else {
+			imported++
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
+	b.imported += imported
+	b.deduped += deduped
 	return nil
 }
 
 // flushRowByRow replays a chunk one envelope per transaction. Used
 // as the batch fallback so a single bad envelope does not take down
-// the others. Returns the first per-row error encountered.
+// the others. Updates running totals row-by-row so callers see what
+// landed before a per-row error stopped the rest.
 func (b *BufferedSink) flushRowByRow(ctx context.Context, pending []pendingWrite) error {
 	for _, p := range pending {
 		tx, err := b.store.DB().BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("begin: %w", err)
 		}
-		if _, err := IngestEnvelopeWithExtractions(ctx, tx, p.event.Envelope, p.event.Raw, p.tsMs, p.event.Extractions); err != nil {
+		d, err := IngestEnvelopeWithExtractions(ctx, tx, p.event.Envelope, p.event.Raw, p.tsMs, p.event.Extractions)
+		if err != nil {
 			_ = tx.Rollback()
 			return err
 		}
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("commit: %w", err)
+		}
+		if d {
+			b.deduped++
+		} else {
+			b.imported++
 		}
 	}
 	return nil
