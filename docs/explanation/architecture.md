@@ -14,94 +14,128 @@ parts" — not duplicated here so the two can't drift.
 ## Layered architecture
 
 aichronicles is organised as a hexagonal / ports-and-adapters
-shape: a public domain core (`pkg/events`) at the center,
-infrastructure adapters around it (`internal/store` for SQLite,
-`internal/daemon` for HTTP, `internal/web`, `internal/mcp`),
-and application orchestration on top (`internal/cli`).
+shape with three rings:
+
+  - **Public domain core** (`pkg/events`) at the center.
+  - **Public wire layer** (`pkg/api`) one ring out — typed
+    request/response shapes for the HTTP API, transport-agnostic.
+  - **Infrastructure adapters** (`internal/store` for SQLite,
+    `internal/api` for the HTTP daemon, `internal/apiclient`
+    for Go clients of the daemon, `internal/web`, `internal/mcp`).
+  - **Application orchestration** on top (`internal/cli`,
+    `cmd/*`).
 
 ```
-                ┌────────────────────────────────────────┐
- Entry points   │ cmd/aichronicles    cmd/aichroniclesd  │
-                └────────┬─────────────────────┬─────────┘
-                         │                     │
-                ┌────────▼─────┐       ┌───────▼────────┐
- Application    │ internal/cli │       │ internal/daemon│
- (orchestration)│ (~50 files)  │       │ (HTTP + UDS)   │
-                └────┬───────┬─┘       └────────┬───────┘
-                     │       │                  │
-              ┌──────▼─┐ ┌───▼──────┐  ┌────────▼──────┐
- Adapters     │internal│ │internal/ │  │ internal/web  │
-              │/agents │ │   mcp    │  │   (HTML+SSE)  │
-              └────────┘ └──────────┘  └───────────────┘
-                              │   │           │
-                              └───┴───────────┘
-                                      │
-                              ┌───────▼──────────┐
- Storage adapter              │  internal/store  │  ← SQLite-bound
- (SQL implementation)         │   monolithic;    │     events.Sink
-                              │   ~25 files      │     lives here
-                              └───────┬──────────┘
-                                      │
-                                      ▼
-                              ┌──────────────────┐
- Domain core                  │   pkg/events     │  ← public, no SQL,
- (event model + pipeline)     │                  │     no HTTP, no I/O
-                              │  envelope, kinds,│
-                              │  views, episode, │  ← types
-                              │  redact, role,   │
-                              │  nullable        │
-                              │                  │
-                              │  source, sink,   │  ← interfaces
-                              │  extractor,      │
-                              │  pipeline        │
-                              │                  │
-                              │  sources/        │  ← concrete sources
-                              │    claude/       │
-                              │    gemini/       │
-                              └──────────────────┘
+                ┌─────────────────────────────────────────────┐
+ Entry points   │ cmd/aichronicles    cmd/aichronicles-api    │
+                └────────┬─────────────────────────┬──────────┘
+                         │                         │
+                ┌────────▼──────┐         ┌────────▼─────────┐
+ Application    │ internal/cli  │  HTTP   │  internal/api    │
+ (orchestration)│ (cobra cmds)  │◀───────▶│  (HTTP + UDS,    │
+                │               │  /v1/*  │   SSE bus, web)  │
+                └──┬────────────┘         └──────┬───────────┘
+                   │                             │
+              ┌────▼───────────┐         ┌───────▼────────┐
+ Client       │internal/       │         │ internal/store │  ← SQLite-bound
+ adapter      │ apiclient      │         │   events.Sink  │     events.Sink
+              │ (typed, UDS)   │         │   lives here   │
+              └────────────────┘         └───────┬────────┘
+                                                 │
+                                                 ▼
+              ┌──────────────────┐    ┌──────────────────┐
+ Wire layer   │   pkg/api        │    │   pkg/events     │  ← Domain core
+ (public)     │ Problem, Cursor, │    │   envelope, kind,│     public, no SQL,
+              │ EventList,       │    │   episode, view, │     no HTTP, no I/O
+              │ SessionDigest,   │    │   redact, role,  │
+              │ SearchHit,       │    │   nullable       │
+              │ ... (per-feature)│    │                  │
+              │ JSON tags only,  │    │   source, sink,  │  ← interfaces
+              │ no sql, no http  │    │   extractor,     │
+              └──────────────────┘    │   pipeline       │
+                                      │                  │
+                                      │   sources/       │  ← concrete sources
+                                      │     claude/      │
+                                      │     gemini/      │
+                                      └──────────────────┘
 ```
 
 ## Process model
 
-Two binaries, plus systemd timers for periodic work.
+One daemon, plus systemd timers for periodic work. (Pre-2026-05
+the system shipped two daemons — `aichroniclesd` for ingest only,
+plus the read-side opening SQLite directly. The api
+rearchitecture collapsed that into a single store-owning process.)
 
 | Binary | Process kind | Lifecycle | Owns |
 |---|---|---|---|
-| `aichroniclesd` | Long-running daemon | systemd `--user` unit, socket-activated | The HTTP ingest API. **Only this.** |
-| `aichronicles ingest` | Short-lived hook subprocess | Forked per Claude Code / Gemini CLI hook event | One envelope's worth of translation, edge redaction, and POST to the daemon |
+| `aichronicles-api` | Long-running daemon | systemd `--user` unit, socket-activated | The single SQLite-handling process. Serves `/v1/*` JSON read+write API, `/v1/stream` SSE live activity, `/` web HTML (folded in once `internal/web` migration completes). Server-side redaction; the only point of "no unredacted bytes in storage" enforcement. |
+| `aichronicles hook` | Short-lived hook subprocess | Forked per Claude Code / Gemini CLI hook event | One envelope's worth of translation + POST to `aichronicles-api`. Translation is pure (post-Phase 0); the api applies redaction. Fire-and-forget: every error path logs and exits 0 so the hook never breaks the agent's prompt loop. |
 | `aichronicles induction sweep` | Short-lived periodic | `aichronicles-cron-induction.timer` (15min default) | Single-session induction across idle sessions |
 | `aichronicles meta sweep` | Short-lived periodic | `aichronicles-cron-meta-analysis.timer` (1h poll, per-kind cadences in SQLite) | Cadence-gated meta-analyses (propose / reflect / challenge / digest_weekly / skill_revision) |
 | `aichronicles digest weekly` | Short-lived periodic | `aichronicles-cron-weekly-digest.timer` (`OnCalendar=Mon 06:00:00`) | Weekly retrospective digest |
 | `aichronicles <other>` | Short-lived user CLI | Forked per command | Read paths, imports, summarize, MCP server (`mcp serve`), web (`web serve`) |
 
-Why this split:
+Why this shape:
 
-- **The daemon owns the write path** to SQLite. Centralising
-  writes in one process means we don't need cross-process
-  coordination for the `ingest_seq` counter or the FTS5 trigger
-  machinery — SQLite's WAL handles concurrency, but the daemon
-  serialises the writes that matter.
-- **The ingest CLI is fire-and-forget by design.** A wedged daemon
-  can never block a hook; the CLI exits 0 even on POST failures,
-  logging structured warnings to stderr.
-- **Periodic work used to live in the daemon as goroutines.** It
-  doesn't anymore — sweepers are systemd-timer-driven CLI
-  subcommands. Failure isolation, per-run journal logs, and
-  suspend catch-up via `Persistent=true` are properties the
+- **The api is the only SQLite-handling process.** Reads, writes,
+  ingest, and SSE all share one open handle. No cross-process
+  notification needed for live activity (the in-process SSE bus
+  fans out from the same goroutine that committed the write).
+- **The hook subprocess is fire-and-forget by design.** A wedged
+  api can never block a hook; the CLI exits 0 even on POST
+  failures and flips a transport-error outage flag (HTTP 4xx/5xx
+  do NOT flip it — those mean the api is up but the envelope
+  was rejected, and treating that as "daemon unreachable" would
+  produce false positives on validation drift).
+- **Server-side redaction is the only redaction.** Sources are
+  pure translators; the api's `events.Pipeline` runs the
+  Redactor inline before the Sink, and stores the
+  re-marshaled post-redaction bytes in `raw_envelopes`. A
+  client that lies about `redaction.applied=true` cannot
+  smuggle secrets past the gate.
+- **Periodic work runs as systemd-timer CLI subcommands.**
+  Failure isolation, per-run journal logs, and suspend
+  catch-up via `Persistent=true` are properties the
   in-process ticker couldn't give.
-- **The other CLIs are read-mostly.** They open the same SQLite
-  file (with a few exceptions like `import-*`, `scrub`,
-  `summarize`'s `llm_outputs` write). WAL mode tolerates concurrent
-  readers during writes.
+
+### Phase B transition status
+
+Several CLI subcommands and the MCP server still open SQLite
+directly. They will migrate to `internal/apiclient` over time;
+the property "every read goes through the api" is not yet a
+hard invariant. The order so far:
+
+- `aichronicles hook` — migrated.
+- `aichronicles unresolved` — migrated.
+- Everything else — open store directly. WAL mode tolerates
+  the concurrent readers; the api is unaffected.
+
+The CI dependency-direction guard (Phase D) will enforce that
+no NEW CLI subcommand or MCP tool reaches into `internal/store`
+once it's in place.
 
 ## Package map
 
 ```
 cmd/
   aichronicles/         CLI multiplexer entrypoint
-  aichroniclesd/        daemon entrypoint (UDS HTTP server only)
+  aichronicles-api/     unified daemon entrypoint (UDS HTTP server:
+                        /v1/* JSON, /v1/stream SSE, web HTML)
 
 pkg/                    public, no stability promise
+  api/                  wire types — request/response shapes for the
+                        HTTP API, transport-agnostic. JSON tags on
+                        every exported field; *string / *int64 for
+                        nullable columns (no sql.NullString); RFC
+                        7807 Problem error shape; Cursor/PageRequest/
+                        PageResponse pagination contract; per-feature
+                        types live in events.go, sessions.go,
+                        episodes.go, search.go, facts.go, insights.go,
+                        skills.go, llm_outputs.go, projects.go,
+                        unresolved.go, subagents.go, writes.go,
+                        stream.go. CI guard (Phase D): pkg/api does
+                        not import database/sql or net/http.
   events/               domain core
     envelope.go         Envelope, Tool, Subagent, Redaction, Ack,
                         Validate, ValidationError, ErrInvalid,
@@ -149,17 +183,58 @@ internal/               private; only this binary imports
   agents/               Claude Code / Gemini CLI integration metadata
                         (slug, hook event names, settings.json paths
                         — consumed only by `setup` / `teardown`)
-  cli/                  cobra subcommands; ~50 files
-    ingest.go           hook subprocess body (translates via
-                        pkg/events/sources/{claude,gemini}.HookTranslator)
-    setup*.go,          systemd + agent-hook wiring
-    teardown*.go
+  api/                  HTTP daemon: server, mux, handlers per feature,
+                        SSE bus, redaction-server-side ingest path.
+                        Replaces and absorbs the legacy internal/daemon.
+                        Files:
+                          server.go         Server, NewServer, mux,
+                                            timeouts, ListenAndServe,
+                                            Serve, gracefulShutdown,
+                                            handleIngest+handleHealthz,
+                                            writeProblem/writeJSON
+                          systemd.go        ListenFromSystemd
+                          watchdog.go       WATCHDOG_USEC handling
+                          sse_bus.go        in-process pub/sub
+                          handler_events.go         GET /v1/events
+                          handler_sessions.go       GET /v1/sessions{,/{id},/{id}/related}
+                          handler_episodes.go       GET /v1/episodes
+                          handler_search.go         GET /v1/search
+                          handler_facts.go          GET /v1/facts{,/subjects}
+                          handler_skills.go         GET /v1/skills/staleness
+                          handler_misc.go           GET /v1/{summaries,llm-outputs,unresolved,
+                                                     subagents,insights,projects/aggregates}
+                          handler_writes.go         POST /v1/{llm-outputs,episodes,facts,
+                                                      session-outcomes,session-links}
+                          handler_stream.go         GET /v1/stream (SSE)
+
+  apiclient/            typed Go client for aichronicles-api.
+                        UDS-dialing http.Client, RFC 7807 problem
+                        decoding, sentinel errors (ErrSocketUnavailable
+                        / ErrNotFound / ErrTooLarge / ErrConflict /
+                        ErrServer) + structural HTTPError. One file
+                        per feature: client.go, errors.go, ingest.go,
+                        events.go, sessions.go, episodes.go, search.go,
+                        facts.go, skills.go, misc.go, writes.go.
+                        CI guard (Phase D): apiclient does not import
+                        internal/store.
+
+  cli/                  cobra subcommands. Phase B in-progress: each
+                        command is being migrated from direct
+                        *store.Store access to internal/apiclient.
+    apiclient.go        openAPIClient(sockFlag) shared helper
+    hook.go             hook subprocess body (was ingest.go);
+                        translators are pure, daemon redacts
+    setup*.go,          systemd + agent-hook wiring (defaultHookCommand
+    teardown*.go        is "aichronicles hook"; teardown also removes
+                        legacy aichronicles.{service,socket})
     import_claude.go,   backfill paths — each builds an
     import_gemini.go,   events.Pipeline + events.Source +
-    import_jsonl.go     store.BufferedSink and calls Pipeline.Run
-    summarize.go,       LLM-using subcommands; consume
-    reflect.go,         events.EventView etc. via store loaders
-    propose*.go,
+    import_jsonl.go     store.BufferedSink and calls Pipeline.Run.
+                        Will move to POST /v1/import streaming once
+                        that endpoint lands.
+    summarize.go,       LLM-using subcommands; some still consume
+    reflect.go,         events.EventView etc. via store loaders.
+    propose*.go,        Phase B will switch them to apiclient.
     induction.go,
     facts.go,
     digest.go,
@@ -168,15 +243,14 @@ internal/               private; only this binary imports
     audit.go, scrub.go  redaction inspection
     search.go           FTS5 search
     sessions.go         session listing
+    unresolved.go       MIGRATED: talks to /v1/unresolved via apiclient
     mcp_serve.go        MCP host (cobra wrapper around internal/mcp)
     meta_sweep.go       cadence-gated meta-analyses dispatcher
     assets/             embedded systemd unit files
-
-  daemon/               HTTP server, UDS listener, watchdog
-    server.go           Server holds events.Pipeline, handler shrinks
-                        to read body → Validate → Pipeline.Process
-    systemd.go          notify-socket integration, socket activation
-    watchdog.go         WATCHDOG_USEC handling
+                        (aichronicles-api.{service,socket} for the
+                        unified daemon, aichronicles-web.{...} for the
+                        legacy web UI, aichronicles-cron-*.{service,timer}
+                        for periodic work)
 
   store/                SQLite layer; ~25 files
     store.go            Open, Close
@@ -232,7 +306,7 @@ integration/            //go:build integration tests
 
 - **Sources are sub-packaged by agent.** `pkg/events/sources/claude`
   and `pkg/events/sources/gemini` each export a `HookTranslator`
-  (single-shot, used by `aichronicles ingest`) and a `JSONLSource`
+  (single-shot, used by `aichronicles hook`) and a `JSONLSource`
   / `TranscriptSource` (streaming, used by importers). Adding a
   third agent = one new sub-package; nothing in `pkg/events`
   changes.
@@ -273,19 +347,25 @@ to fix. The migration was done in commits `7062490` (rename) and
 The arrow is "imports":
 
 ```
-cmd/*                ──▶ internal/cli, internal/daemon
+cmd/aichronicles-api ──▶ internal/api
+cmd/aichronicles     ──▶ internal/cli
 internal/cli         ──▶ pkg/events, pkg/events/sources/{claude,gemini},
-                         internal/store, internal/daemon, internal/agents,
-                         internal/mcp, pkg/llm, pkg/llm/prompts, pkg/redact,
+                         internal/store, internal/apiclient, pkg/api,
+                         internal/agents, internal/mcp, pkg/llm,
+                         pkg/llm/prompts, pkg/redact,
                          internal/{config,paths,notify,nullable,preview,...}
-internal/daemon      ──▶ pkg/events, internal/store
+internal/api         ──▶ pkg/api, pkg/events, internal/store, pkg/redact
+internal/apiclient   ──▶ pkg/api, pkg/events
 internal/agents      ──▶ (no internal deps)
 internal/mcp         ──▶ pkg/events, internal/store, pkg/redact
+                         (Phase B: will switch to internal/apiclient)
 internal/web         ──▶ pkg/events, internal/store, pkg/llm/prompts
+                         (Phase B: will fold into internal/api)
 internal/store       ──▶ pkg/events
 pkg/llm/prompts      ──▶ pkg/events, pkg/llm, pkg/redact, internal/store
 pkg/llm              ──▶ pkg/redact (egress scrub)
 pkg/events/sources/* ──▶ pkg/events, internal/agents (slug only)
+pkg/api              ──▶ (stdlib only)
 pkg/events           ──▶ pkg/redact (for ScannerRedactor adapter)
 pkg/redact           ──▶ (no aichronicles deps)
 ```
@@ -297,8 +377,15 @@ Enforced rules:
 | `pkg/events` does not import `database/sql` | ✅ |
 | `pkg/events` does not import `net/http` | ✅ |
 | `pkg/events` does not import `internal/*` | ✅ |
+| `pkg/api` does not import `database/sql` | ✅ |
+| `pkg/api` does not import `net/http` | ✅ |
+| `pkg/api` does not import `internal/*` | ✅ |
 | `internal/store` is the only SQL-aware package | ✅ |
+| `internal/apiclient` does not import `internal/store` | ✅ |
 | No import cycles | ✅ |
+
+Phase D will lift these from "asserted in this doc" to
+"checked in CI" via a small dependency-direction guard.
 
 Mixed read-side discipline (currently): some types are
 domain-clean (`EventView`, `Episode` in `pkg/events`); most
@@ -314,33 +401,35 @@ lives where.
 `pkg/events.Pipeline` is the orchestrator. Three call sites use
 it:
 
-- **Daemon HTTP handler** (`internal/daemon/server.go`): one
+- **API HTTP handler** (`internal/api/server.go`): one
   request, one event. Calls `Pipeline.Process(ctx, Event)` per
   request. Backed by the single-tx `store.Sink`.
 - **Importers** (`internal/cli/import_{claude,gemini,jsonl}.go`):
   many events, one Pipeline.Run. Backed by `store.BufferedSink`
   with chunked commits.
-- **Hook subprocess** (`internal/cli/ingest.go`): does NOT use
-  Pipeline.Run — it uses just the Source's `HookTranslator` to
-  produce one Envelope, then POSTs to the daemon. The Pipeline
-  runs on the daemon side.
+- **Hook subprocess** (`internal/cli/hook.go`): does NOT use
+  Pipeline.Run — it uses just the Source's `HookTranslator`
+  to produce one Envelope, then POSTs to aichronicles-api via
+  `apiclient.Client.Ingest`. The Pipeline runs on the api side.
 
 The Pipeline is stateless beyond its config fields:
 
 ```go
 Pipeline{
-    Sink:             store.NewSink(s),         // or NewBufferedSink
-    Extractors:       events.DefaultExtractors(),
-    RequireRedaction: true,                     // defense-in-depth
-    Logger:           slog.Default(),
+    Sink:       store.NewSink(s),                            // or NewBufferedSink
+    Extractors: events.DefaultExtractors(),
+    Redactor:   events.NewScannerRedactor(redact.Default()), // required
+    Logger:     slog.Default(),
 }
 ```
 
-`Pipeline.Process` validates redaction, runs the extractor
-registry, calls `Sink.Write`. `Pipeline.Run` consumes a Source
-stream, calls Process per event with per-event error isolation,
-calls `Sink.Flush` at the end, and reads `Sink.Stats()` for
-final aggregates.
+`Pipeline.Process` runs the Redactor in place (re-marshaling
+`e.Raw` so post-redaction bytes are what the Sink stores),
+runs the extractor registry, and calls `Sink.Write`. A nil
+Redactor returns `events.ErrRedactionRequired`. `Pipeline.Run`
+consumes a Source stream, calls Process per event with
+per-event error isolation, calls `Sink.Flush` at the end, and
+reads `Sink.Stats()` for final aggregates.
 
 ## Schema
 
@@ -442,22 +531,29 @@ matches the rest of the tree's tight dependency posture.
 The threat model page describes trust boundaries narratively.
 Where they're enforced in code:
 
-- **Edge redaction (hook write path):**
-  `pkg/events/sources/claude/hook.go::HookTranslator.Translate`
-  and the equivalent in `gemini/hook.go`. Both apply their
-  configured `events.Redactor` to the freshly-translated
-  envelope, setting `Redaction.Applied=true` before returning.
-- **Pipeline gate (any write path):**
-  `pkg/events/pipeline.go::Pipeline.Process` rejects envelopes
-  with `RequireRedaction=true` and missing/false `Redaction.Applied`.
-  The daemon and importers both use `RequireRedaction=true`.
-- **Daemon refusal (defense in depth):**
-  `internal/daemon/server.go::handleIngest` translates
-  `events.ErrRedactionRequired` into HTTP 400.
+- **Server-side redaction (THE enforcement point):**
+  `pkg/events/pipeline.go::Pipeline.Process` runs the
+  configured `events.Redactor` on every envelope before
+  extractor dispatch and Sink.Write, then re-marshals
+  `e.Raw` from the post-redaction Envelope so the SQLite
+  Sink stores scrubbed bytes. A `nil` Redactor returns
+  `events.ErrRedactionRequired` — fail loud rather than
+  silently store unredacted bytes. The api daemon's
+  `internal/api/server.go::NewServer` configures the
+  Pipeline with `redact.Default()` unconditionally.
+- **No client trust:** the hook subprocess and the
+  importers ship raw envelopes; the api applies redaction
+  regardless of any `redaction.applied` claim on the wire.
+  A buggy or malicious client cannot smuggle secrets past
+  the gate by lying about pre-redaction.
+- **Sources are pure translators:** `pkg/events/sources/{claude,
+  gemini}/{hook,jsonl,transcript}.go` no longer hold a Redactor
+  field. Translation produces an unredacted envelope; the
+  consuming Pipeline scrubs.
 - **Store enforcement (last line of defense):**
   `internal/store/ingest.go::IngestEnvelopeWithExtractions`
-  returns `ErrRedactionRequired` even for callers that bypass
-  the Pipeline.
+  returns `ErrRedactionRequired` even for callers that
+  somehow reach the Sink without going through the Pipeline.
 - **LLM-output write:**
   `internal/store/llm_outputs.go::SaveLLMOutput` scrubs the
   body through `redact.Outbound` before insertion. The edge

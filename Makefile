@@ -4,7 +4,7 @@
 # commands, promote it to a Go program under tools/.
 
 # Where binaries land. ~/.local/bin matches the path the systemd unit
-# expects (assets/aichronicles.service ExecStart=%h/.local/bin/...).
+# expects (assets/aichronicles-api.service ExecStart=%h/.local/bin/...).
 PREFIX ?= $(HOME)/.local
 BINDIR := $(PREFIX)/bin
 
@@ -24,7 +24,7 @@ LDFLAGS ?= -X 'github.com/toabctl/aichronicles/internal/cli.Version=$(GIT_DESCRI
 # rebuild + restart in one keystroke.
 .DEFAULT_GOAL := all
 
-.PHONY: all build install clean docs docs-cli docs-schema docs-detectors docs-check
+.PHONY: all build install clean docs docs-cli docs-schema docs-detectors docs-check depcheck
 
 # Build then install. Restart of the systemd --user service is part
 # of `install`, so `make` end-to-end gets the running daemon onto the
@@ -35,8 +35,8 @@ all: build install
 # running it on a tree with uncommitted changes is safe.
 build:
 	@mkdir -p ./bin
-	go build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o ./bin/aichronicles  ./cmd/aichronicles
-	go build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o ./bin/aichroniclesd ./cmd/aichroniclesd
+	go build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o ./bin/aichronicles      ./cmd/aichronicles
+	go build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o ./bin/aichronicles-api  ./cmd/aichronicles-api
 
 # Copy both binaries into $(BINDIR) (default ~/.local/bin) and bounce
 # the systemd --user service so the running daemon picks up the new
@@ -45,13 +45,13 @@ build:
 # `aichronicles setup systemd`.
 install: build
 	@install -d $(BINDIR)
-	install -m 0755 ./bin/aichronicles  $(BINDIR)/aichronicles
-	install -m 0755 ./bin/aichroniclesd $(BINDIR)/aichroniclesd
-	@if systemctl --user is-enabled aichronicles.socket >/dev/null 2>&1; then \
-	  echo "restarting aichronicles.service (systemd --user)"; \
-	  systemctl --user restart aichronicles.service; \
+	install -m 0755 ./bin/aichronicles      $(BINDIR)/aichronicles
+	install -m 0755 ./bin/aichronicles-api  $(BINDIR)/aichronicles-api
+	@if systemctl --user is-enabled aichronicles-api.socket >/dev/null 2>&1; then \
+	  echo "restarting aichronicles-api.service (systemd --user)"; \
+	  systemctl --user restart aichronicles-api.service; \
 	else \
-	  echo "aichronicles.socket not installed — skipping restart."; \
+	  echo "aichronicles-api.socket not installed — skipping restart."; \
 	  echo "  run \`aichronicles setup systemd\` to wire up the socket."; \
 	fi
 	@# `try-restart` only bounces aichronicles-web.service when it's
@@ -101,3 +101,10 @@ docs-check:
 		$(MAKE) -s docs && \
 		diff -ruN $$tmp/before docs/reference || \
 		(echo "docs are stale — run 'make docs' and commit the result" && exit 1)
+
+# Dependency-direction guard. Verifies the layering invariants
+# the architecture relies on (pkg/api has no SQL/HTTP imports;
+# internal/apiclient does not reach into internal/store; etc).
+# CI should run this on every PR before review.
+depcheck:
+	go run ./tools/depcheck
