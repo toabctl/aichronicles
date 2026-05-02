@@ -48,17 +48,18 @@ sequenceDiagram
     participant SQ as SQLite<br/>(store.db)
 
     CC->>IC: spawn + pipe hook JSON to stdin
-    IC->>IC: redact.Default() — edge scrub
-    IC->>IC: build Envelope (UUID, ts, redaction.applied=true)
+    IC->>IC: claude.HookTranslator (or gemini.HookTranslator).Translate
+    Note over IC: builds Envelope, applies Redactor.<br/>redaction.applied=true on return
     IC->>D: POST /v1/ingest (UDS, 250ms ctx deadline)
     D->>D: validate envelope (V==1, slug, UUID)
-    D->>D: refuse if redaction.applied != true
-    D->>SQ: BeginTx
+    D->>D: events.Pipeline.Process: redaction-required gate
+    D->>D: events.Pipeline: run ExtractorRegistry (URL / Bash / FilePath / WebFetch / Skill)
+    D->>SQ: store.Sink.Write — BeginTx
     D->>SQ: INSERT raw_envelopes (verbatim JSON)
     SQ->>SQ: trigger: update sessions agg
     D->>SQ: INSERT events (typed projection)
     SQ->>SQ: trigger: events_fts insert
-    D->>SQ: INSERT extractions (URLs, paths, shells)
+    D->>SQ: INSERT extractions (per-event Extractions slice)
     D->>SQ: Commit
     D-->>IC: 200 + Ack {event_id, session_id, deduped}
     IC-->>CC: exit 0
@@ -83,7 +84,7 @@ A few non-obvious properties of this flow:
 - **`raw_envelopes` is sacred** — the bytes stored at step 9 are
   the literal POST body, not a re-marshal. If the schema changes
   later, we replay from `raw_envelopes`. See
-  [architecture.md#why-these-five-tables](architecture.md#why-these-five-tables).
+  [architecture.md#schema](architecture.md#schema).
 - **Dedupe happens at the unique index level.** If `event_id`
   already exists in `raw_envelopes`, the `INSERT` is a no-op and
   we skip steps 11-13. The ack comes back with `deduped: true`.
