@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/pkg/events"
-	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // mkProposeRow inserts a minimal llm_outputs row of kind=propose for
@@ -355,7 +354,7 @@ func (f *effectivenessFixture) addLoad(failureAfterMs int64) {
 	if _, err := f.s.DB().Exec(
 		`INSERT INTO extractions(event_id, session_id, kind, value)
 		 VALUES (?, ?, ?, ?)`,
-		loadEvt, f.session, extract.KindSkillLoad, f.skill,
+		loadEvt, f.session, events.ExtractionKindSkillLoad, f.skill,
 	); err != nil {
 		f.t.Fatalf("extraction: %v", err)
 	}

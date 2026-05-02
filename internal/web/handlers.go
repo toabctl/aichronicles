@@ -16,7 +16,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/timefmt"
 	"github.com/toabctl/aichronicles/pkg/events"
-	"github.com/toabctl/aichronicles/pkg/events/extract"
+
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
@@ -286,12 +286,12 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int, f sess
 	}
 	if f.Skill != "" {
 		// extractions kind=skill_load value=<name> is the canonical
-		// signal — see pkg/events/extract/SkillLoadExtractor.
+		// signal — see pkg/events/SkillLoadExtractor.
 		conds = append(conds, `EXISTS (
 			SELECT 1 FROM extractions x
 			 WHERE x.session_id = s.id AND x.kind = ? AND x.value = ?
 		)`)
-		args = append(args, extract.KindSkillLoad, f.Skill)
+		args = append(args, events.ExtractionKindSkillLoad, f.Skill)
 	}
 	if f.File != "" {
 		// Substring LIKE so a partial path ("migrate.go",
@@ -301,7 +301,7 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int, f sess
 			SELECT 1 FROM extractions x
 			 WHERE x.session_id = s.id AND x.kind = ? AND x.value LIKE ?
 		)`)
-		args = append(args, extract.KindFilePath, "%"+f.File+"%")
+		args = append(args, events.ExtractionKindFilePath, "%"+f.File+"%")
 	}
 	if f.WithFailures {
 		conds = append(conds, `EXISTS (

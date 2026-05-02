@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/toabctl/aichronicles/pkg/events"
-	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // SkillFailureContext is one (session_id, ts, body, nearby) tuple
@@ -63,7 +62,7 @@ SELECT x.session_id,
 
 	rows, err := db.QueryContext(ctx, pairsQuery,
 		events.KindToolFailure, windowMs,
-		extract.KindSkillLoad, skill, sinceMs, limit,
+		events.ExtractionKindSkillLoad, skill, sinceMs, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query skill failures: %w", err)

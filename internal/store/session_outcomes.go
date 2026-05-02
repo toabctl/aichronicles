@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/pkg/events"
-	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // OutcomeLabel is the coarse derived verdict for a session. The
@@ -416,7 +415,7 @@ func loadShellCommands(ctx context.Context, db *sql.DB, sessionID string) ([]str
 		   JOIN events e ON e.event_id = x.event_id
 		  WHERE x.session_id = ? AND x.kind = ?
 		  ORDER BY e.ts_source_ms ASC, e.rowid ASC`,
-		sessionID, extract.KindShellCommand)
+		sessionID, events.ExtractionKindShellCommand)
 	if err != nil {
 		return nil, err
 	}

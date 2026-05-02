@@ -7,7 +7,7 @@ package events
 //
 // String constants rather than a typed alias to keep call sites
 // terse: SQL bind args, fmt.Sprintf, and map keys all consume them
-// directly. The same pattern extract.Kind* uses for extraction
+// directly. The same pattern ExtractionKind* uses for extraction
 // values.
 const (
 	KindUserPrompt         = "user_prompt"

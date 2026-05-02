@@ -8,7 +8,6 @@ import (
 	"fmt"
 
 	"github.com/toabctl/aichronicles/pkg/events"
-	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // ErrRedactionRequired is returned when an envelope reaches the store
@@ -126,7 +125,7 @@ func IngestEnvelope(ctx context.Context, tx *sql.Tx, env *events.Envelope, envel
 	// ingest, so a malformed extra_json falls back to NULL rather
 	// than aborting; but a SQL insert error is structural and does
 	// propagate up to the caller.
-	for _, ex := range extract.FromEnvelope(env) {
+	for _, ex := range events.DefaultExtractors().Run(env) {
 		var extraJSON sql.NullString
 		if len(ex.Extra) > 0 {
 			if b, err := json.Marshal(ex.Extra); err == nil {

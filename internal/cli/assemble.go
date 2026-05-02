@@ -186,7 +186,7 @@ func renderToolContent(hook map[string]any) string {
 // tool's tool_input. Returns empty for unknown tools, which makes
 // renderToolContent fall back to the bare tool name. Adding a new
 // tool here should be paired with a matching extractor in
-// pkg/events/extract so the typed-fact tier can also reach it.
+// pkg/events so the typed-fact tier can also reach it.
 //
 // Both Claude Code's tool naming (PascalCase: Bash, Read, …) and
 // Gemini CLI's equivalents (snake_case: run_shell_command,

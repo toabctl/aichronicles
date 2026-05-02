@@ -14,7 +14,6 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/events"
-	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // backfillBatchSize caps how many envelopes we re-process in one
@@ -241,7 +240,7 @@ func rewriteBatch(ctx context.Context, db *sql.DB, batch []rawEnvelopeRow, onlyK
 			report.Deleted += int(n)
 		}
 
-		for _, ex := range extract.FromEnvelope(&env) {
+		for _, ex := range events.DefaultExtractors().Run(&env) {
 			if onlyKind != "" && ex.Kind != onlyKind {
 				continue
 			}

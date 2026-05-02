@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/toabctl/aichronicles/pkg/events"
-	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // outcomeFixture seeds one session with a controlled sequence of
@@ -80,7 +79,7 @@ func (f *outcomeFixture) addShell(cmd string) {
 	if _, err := f.s.DB().Exec(
 		`INSERT INTO extractions(event_id, session_id, kind, value)
 		 VALUES (?, ?, ?, ?)`,
-		eventID, f.session, extract.KindShellCommand, cmd,
+		eventID, f.session, events.ExtractionKindShellCommand, cmd,
 	); err != nil {
 		f.t.Fatalf("shell extraction: %v", err)
 	}

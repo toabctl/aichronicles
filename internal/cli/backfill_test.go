@@ -12,7 +12,6 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/events"
-	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // silentBackfillLogger discards backfill progress log records so
@@ -92,14 +91,14 @@ func TestRunBackfillExtractions_RebuildsFromRawEnvelopes(t *testing.T) {
 	if report.Inserted != 1 {
 		t.Errorf("inserted: got %d, want 1", report.Inserted)
 	}
-	if report.ByKind[extract.KindSkillLoad] != 1 {
-		t.Errorf("ByKind[skill_load]: got %d, want 1", report.ByKind[extract.KindSkillLoad])
+	if report.ByKind[events.ExtractionKindSkillLoad] != 1 {
+		t.Errorf("ByKind[skill_load]: got %d, want 1", report.ByKind[events.ExtractionKindSkillLoad])
 	}
 
 	var got string
 	if err := s.DB().QueryRow(
 		`SELECT value FROM extractions WHERE event_id = ? AND kind = ?`,
-		eventID, extract.KindSkillLoad,
+		eventID, events.ExtractionKindSkillLoad,
 	).Scan(&got); err != nil {
 		t.Fatalf("verify row: %v", err)
 	}
@@ -121,12 +120,12 @@ func TestRunBackfillExtractions_OnlyKindIsTargeted(t *testing.T) {
 	// run backfill --only=skill_load. The url row must survive.
 	if _, err := s.DB().Exec(
 		`INSERT INTO extractions(event_id, session_id, kind, value) VALUES (?, ?, ?, ?)`,
-		eventID, sessionID, extract.KindURL, "https://example.com/manual",
+		eventID, sessionID, events.ExtractionKindURL, "https://example.com/manual",
 	); err != nil {
 		t.Fatalf("seed url: %v", err)
 	}
 
-	if _, err := RunBackfillExtractions(t.Context(), s, extract.KindSkillLoad, silentBackfillLogger()); err != nil {
+	if _, err := RunBackfillExtractions(t.Context(), s, events.ExtractionKindSkillLoad, silentBackfillLogger()); err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
 
@@ -134,7 +133,7 @@ func TestRunBackfillExtractions_OnlyKindIsTargeted(t *testing.T) {
 	var n int
 	if err := s.DB().QueryRow(
 		`SELECT COUNT(*) FROM extractions WHERE event_id = ? AND kind = ? AND value = ?`,
-		eventID, extract.KindURL, "https://example.com/manual",
+		eventID, events.ExtractionKindURL, "https://example.com/manual",
 	).Scan(&n); err != nil {
 		t.Fatalf("count url: %v", err)
 	}
@@ -161,7 +160,7 @@ func TestRunBackfillExtractions_IsIdempotent(t *testing.T) {
 	var n int
 	if err := s.DB().QueryRow(
 		`SELECT COUNT(*) FROM extractions WHERE kind = ?`,
-		extract.KindSkillLoad,
+		events.ExtractionKindSkillLoad,
 	).Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}

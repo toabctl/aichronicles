@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/pkg/events"
-	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // InsightsReport is the full output of LoadInsights — the data the
@@ -201,7 +200,7 @@ func loadInsightsOverview(ctx context.Context, db *sql.DB, sinceMs int64) (Insig
 			dst: &o.DistinctSkills,
 			query: `SELECT COUNT(DISTINCT value) FROM extractions WHERE kind = ?
 				    AND session_id IN (SELECT id FROM sessions WHERE COALESCE(ended_at_ms, started_at_ms) >= ?)`,
-			args: []any{extract.KindSkillLoad, sinceMs},
+			args: []any{events.ExtractionKindSkillLoad, sinceMs},
 		},
 	}
 	for i, s := range scalars {
@@ -248,7 +247,7 @@ func loadTopSkills(ctx context.Context, db *sql.DB, sinceMs int64, limit int) ([
 		  GROUP BY x.value
 		  ORDER BY c DESC, x.value ASC
 		  LIMIT ?`,
-		extract.KindSkillLoad, sinceMs, limit,
+		events.ExtractionKindSkillLoad, sinceMs, limit,
 	)
 	if err != nil {
 		return nil, err

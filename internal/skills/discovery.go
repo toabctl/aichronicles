@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/toabctl/aichronicles/pkg/events/extract"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
@@ -278,7 +278,7 @@ SELECT x.value, COUNT(*) AS c
  WHERE x.kind = ? AND s.ended_at_ms >= ?
  GROUP BY x.value
  ORDER BY c DESC, x.value ASC`
-	rows, err := db.QueryContext(ctx, q, extract.KindSkillLoad, sinceMs)
+	rows, err := db.QueryContext(ctx, q, events.ExtractionKindSkillLoad, sinceMs)
 	if err != nil {
 		return nil, fmt.Errorf("query invoked skills: %w", err)
 	}

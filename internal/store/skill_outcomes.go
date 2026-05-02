@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/toabctl/aichronicles/pkg/events"
-	"github.com/toabctl/aichronicles/pkg/events/extract"
 )
 
 // SkillImpact is one row of a skill-impact aggregation: how often
@@ -86,7 +85,7 @@ SELECT skill,
  LIMIT ?`
 
 	rows, err := db.QueryContext(ctx, aggQuery,
-		extract.KindSkillLoad, sinceMs,
+		events.ExtractionKindSkillLoad, sinceMs,
 		events.KindToolFailure, windowMs, lim.MaxSkills,
 	)
 	if err != nil {
