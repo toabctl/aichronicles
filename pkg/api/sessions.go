@@ -51,3 +51,11 @@ type CandidateSession struct {
 type CandidateSessionListResponse struct {
 	Candidates []CandidateSession `json:"candidates"`
 }
+
+// ResolveSessionResponse is the body shape for
+// GET /v1/sessions/resolve?prefix=. Returns the canonical
+// session id matching the supplied prefix; the endpoint replies
+// 404 on no match and 409 on ambiguous prefix.
+type ResolveSessionResponse struct {
+	ID string `json:"id"`
+}

@@ -41,6 +41,21 @@ func (c *Client) Session(ctx context.Context, id string) (api.SessionDigest, err
 	return out, nil
 }
 
+// ResolveSession queries GET /v1/sessions/resolve?prefix=. Maps
+// an 8-or-more-character hex prefix to a canonical session_id;
+// ErrNotFound when no session matches and ErrConflict when the
+// prefix is ambiguous (multiple matches). Used by CLIs and the
+// MCP server to accept short prefixes from humans.
+func (c *Client) ResolveSession(ctx context.Context, prefix string) (string, error) {
+	q := url.Values{}
+	q.Set("prefix", prefix)
+	var out api.ResolveSessionResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/sessions/resolve?"+q.Encode(), nil, &out); err != nil {
+		return "", err
+	}
+	return out.ID, nil
+}
+
 // RelatedSessions queries GET /v1/sessions/{id}/related.
 func (c *Client) RelatedSessions(ctx context.Context, id string, limit int) (api.CandidateSessionListResponse, error) {
 	path := "/v1/sessions/" + url.PathEscape(id) + "/related"

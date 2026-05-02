@@ -126,6 +126,70 @@ func TestHandleSessionsRelated_ReturnsEmptyForUnknown(t *testing.T) {
 	}
 }
 
+func TestHandleSessionsResolve_RequiresPrefix(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/sessions/resolve", nil))
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status=%d, want 400", rr.Code)
+	}
+}
+
+func TestHandleSessionsResolve_NotFound(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr,
+		httptest.NewRequest(http.MethodGet, "/v1/sessions/resolve?prefix=00000000", nil))
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status=%d, want 404", rr.Code)
+	}
+}
+
+func TestHandleSessionsResolve_FoundReturnsCanonicalID(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	env := validEnvelope(t)
+	env.SourceSessionID = "sess-resolve"
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr,
+		httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(mustJSON(t, env))))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("seed: %d %s", rr.Code, rr.Body.String())
+	}
+
+	full := events.DeriveSessionID("claude-code", "sess-resolve")
+	// Take the leading 8 chars (DeriveSessionID is "claude-code-..." for
+	// claude — so "claude-c" is hex-or-hyphen and unique by construction
+	// in this test). Use the FIRST 8 chars of the id.
+	prefix := full[:8]
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr,
+		httptest.NewRequest(http.MethodGet, "/v1/sessions/resolve?prefix="+prefix, nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var got api.ResolveSessionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ID != full {
+		t.Errorf("ID: got %q, want %q", got.ID, full)
+	}
+}
+
+func TestHandleSessionsResolve_BadPrefixIs400(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr,
+		httptest.NewRequest(http.MethodGet, "/v1/sessions/resolve?prefix=zzz!@#", nil))
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status=%d, want 400 (non-hex prefix)", rr.Code)
+	}
+}
+
 // Sanity: errors.As against the apiclient HTTPError works against
 // a 404 from this server. Tested here so a regression in handler-
 // side error wiring is caught before the apiclient stripe.

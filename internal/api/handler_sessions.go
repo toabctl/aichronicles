@@ -2,6 +2,7 @@ package api
 
 import (
 	"database/sql"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -94,6 +95,37 @@ func (s *Server) handleSessionsGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, sessionDigestRowToWire(*row))
+}
+
+// handleSessionsResolve serves GET /v1/sessions/resolve?prefix=...
+//
+// Resolves an 8-or-more-character hex prefix to a full session_id.
+// Returns 404 when no session matches and 409 when the prefix is
+// ambiguous (multiple matches). MCP tools and CLIs that accept
+// short prefixes use this to convert them to canonical ids.
+func (s *Server) handleSessionsResolve(w http.ResponseWriter, r *http.Request) {
+	prefix := r.URL.Query().Get("prefix")
+	if prefix == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing prefix",
+			"prefix is required")
+		return
+	}
+	id, err := store.ResolveSessionIDPrefix(r.Context(), s.store.DB(), prefix)
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrNoSuchSession):
+			writeProblem(w, http.StatusNotFound, "Session not found", prefix)
+		case errors.Is(err, store.ErrAmbiguousSessionPrefix):
+			writeProblem(w, http.StatusConflict, "Ambiguous prefix", err.Error())
+		default:
+			// Validation errors (non-hex chars) come back as
+			// plain errors with no sentinel — treat as 400 since
+			// the caller's input is to blame.
+			writeProblem(w, http.StatusBadRequest, "Invalid prefix", err.Error())
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, api.ResolveSessionResponse{ID: id})
 }
 
 // handleSessionsRelated serves GET /v1/sessions/{id}/related.
