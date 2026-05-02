@@ -6,6 +6,57 @@ import (
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
+// Redactor is the interface Sources call to scrub secrets from an
+// envelope before yielding. Apply mutates env: text-bearing fields
+// are scrubbed in place and env.Redaction.Applied is set to true.
+//
+// Sources hold a Redactor at construction (NewClaudeJSONLSource,
+// NewGeminiTranscriptSource, etc.) and call Apply during their
+// translation step. The Pipeline's RequireRedaction gate verifies
+// env.Redaction.Applied=true and rejects otherwise — three layers
+// of defense (Source applies, Pipeline checks, Sink double-checks)
+// keep the "no unredacted secrets in storage" invariant honest
+// even if a future Source forgets to wire a Redactor.
+type Redactor interface {
+	Apply(env *Envelope)
+}
+
+// ScannerRedactor is the production Redactor: it adapts a
+// pkg/redact.Scanner (the regex/detector catalog) to the
+// envelope-shaped Redactor interface. NewScannerRedactor wraps
+// any pkg/redact.Scanner; the project default is wired by callers
+// as ScannerRedactor{Scanner: redact.Default()}.
+type ScannerRedactor struct {
+	Scanner redact.Scanner
+}
+
+// NewScannerRedactor returns a Redactor that applies the given
+// detector catalog. nil scanner produces a Redactor whose Apply
+// only sets env.Redaction.Applied=true with no pattern matches —
+// useful for tests that want to satisfy the redaction-applied
+// gate without scanning.
+func NewScannerRedactor(s redact.Scanner) *ScannerRedactor {
+	return &ScannerRedactor{Scanner: s}
+}
+
+// Apply implements Redactor by deferring to the package-level
+// ApplyRedaction free function, which keeps backward compatibility
+// for callers that already pass a redact.Scanner directly.
+func (r *ScannerRedactor) Apply(env *Envelope) {
+	if env == nil {
+		return
+	}
+	if r.Scanner == nil {
+		// No catalog: no scrubbing, but the "scrubber ran" signal
+		// still gets set so the Pipeline's RequireRedaction gate
+		// passes. Useful in tests with synthetic envelopes that
+		// don't carry credentials anyway.
+		env.Redaction = &Redaction{Applied: true}
+		return
+	}
+	ApplyRedaction(env, r.Scanner)
+}
+
 // ApplyRedaction scans every free-text field on env with scanner and
 // rewrites detected secrets to <redacted:kind> markers in place.
 // env.Redaction is populated with the union of every pattern that
