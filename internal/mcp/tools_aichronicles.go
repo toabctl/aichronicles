@@ -15,6 +15,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/timefmt"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
@@ -463,7 +464,7 @@ func findEpisodesHandler(st *store.Store) ToolHandler {
 				ep.Ordinal,
 				formatTS(ep.StartedAtMs),
 				formatTS(ep.EndedAtMs),
-				nullOrDash(ep.Cwd),
+				nullOrDashEvents(ep.Cwd),
 				oneLineSnippet(sql.NullString{String: ep.IntentSummary, Valid: ep.IntentSummary != ""}),
 			)
 		}
@@ -1037,6 +1038,15 @@ func formatTSNullable(n sql.NullInt64) string {
 }
 
 func nullOrDash(s sql.NullString) string { return nullable.OrDash(s) }
+
+// nullOrDashEvents is the events.NullString variant of nullOrDash.
+// Same render: empty/null → "-", populated → string.
+func nullOrDashEvents(s events.NullString) string {
+	if !s.Valid || s.String == "" {
+		return "-"
+	}
+	return s.String
+}
 
 // oneLineSnippet flattens whitespace and caps a content preview so
 // each tool row stays on a single terminal line. Wraps

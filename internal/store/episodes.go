@@ -27,22 +27,6 @@ const DefaultEpisodeIdleGapMs int64 = 10 * 60 * 1000
 // blowing the table's storage footprint.
 const MaxEpisodeIntentSummaryRunes = 200
 
-// Episode is one row of the episodes table — a bounded,
-// contextually-coherent run of events within one session. See
-// migration 025 for the schema and the rationale; the Go struct
-// mirrors it 1:1.
-type Episode struct {
-	ID            int64
-	SessionID     string
-	Ordinal       int
-	StartedAtMs   int64
-	EndedAtMs     int64
-	Cwd           sql.NullString
-	IntentSummary string
-	EventCount    int
-	FirstEventID  string
-}
-
 // episodeBoundary describes a segmenter decision point — a reason
 // to close the current episode and start a new one. Documented as
 // a small enum so the test suite can assert which trigger fired
@@ -67,7 +51,7 @@ const (
 // behaviour; the function does not re-sort.
 //
 // idleGapMs ≤ 0 falls back to DefaultEpisodeIdleGapMs.
-func SegmentSession(sessionID string, evs []events.EventView, idleGapMs int64) []Episode {
+func SegmentSession(sessionID string, evs []events.EventView, idleGapMs int64) []events.Episode {
 	if sessionID == "" || len(evs) == 0 {
 		return nil
 	}
@@ -83,18 +67,18 @@ func SegmentSession(sessionID string, evs []events.EventView, idleGapMs int64) [
 		count    int
 	}
 	var (
-		out    []Episode
+		out    []events.Episode
 		ord    = 1
 		run    runState
 		opened bool
 	)
 	flush := func(endMs int64) {
-		out = append(out, Episode{
+		out = append(out, events.Episode{
 			SessionID:     sessionID,
 			Ordinal:       ord,
 			StartedAtMs:   run.startMs,
 			EndedAtMs:     endMs,
-			Cwd:           sql.NullString{String: run.cwd.String, Valid: run.cwd.Valid},
+			Cwd:           run.cwd,
 			IntentSummary: run.intent,
 			EventCount:    run.count,
 			FirstEventID:  evs[run.startIdx].EventID,
@@ -188,7 +172,7 @@ func clipIntentSummary(s string) string {
 // converges by replacing the tail episodes.
 //
 // Returns the number of inserted rows.
-func SaveEpisodes(ctx context.Context, db *sql.DB, sessionID string, episodes []Episode) (int, error) {
+func SaveEpisodes(ctx context.Context, db *sql.DB, sessionID string, episodes []events.Episode) (int, error) {
 	if sessionID == "" {
 		return 0, errors.New("SaveEpisodes: session_id is required")
 	}
@@ -209,7 +193,8 @@ func SaveEpisodes(ctx context.Context, db *sql.DB, sessionID string, episodes []
 				cwd, intent_summary, event_count, first_event_id
 			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			sessionID, ep.Ordinal, ep.StartedAtMs, ep.EndedAtMs,
-			ep.Cwd, ep.IntentSummary, ep.EventCount, ep.FirstEventID,
+			sql.NullString{String: ep.Cwd.String, Valid: ep.Cwd.Valid},
+			ep.IntentSummary, ep.EventCount, ep.FirstEventID,
 		); err != nil {
 			return 0, fmt.Errorf("insert episode %d: %w", ep.Ordinal, err)
 		}
@@ -264,7 +249,7 @@ const DefaultFindEpisodesLimit = 50
 // matching rows ordered by ended_at_ms DESC (most-recent first). An
 // empty result is NOT an error — it's the normal "no episodes match
 // this filter" outcome.
-func FindEpisodes(ctx context.Context, db *sql.DB, opts FindEpisodesOpts) ([]Episode, error) {
+func FindEpisodes(ctx context.Context, db *sql.DB, opts FindEpisodesOpts) ([]events.Episode, error) {
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = DefaultFindEpisodesLimit
@@ -311,14 +296,18 @@ func FindEpisodes(ctx context.Context, db *sql.DB, opts FindEpisodesOpts) ([]Epi
 		return nil, fmt.Errorf("query episodes: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var out []Episode
+	var out []events.Episode
 	for rows.Next() {
-		var ep Episode
+		var (
+			ep  events.Episode
+			cwd sql.NullString
+		)
 		if err := rows.Scan(&ep.ID, &ep.SessionID, &ep.Ordinal,
-			&ep.StartedAtMs, &ep.EndedAtMs, &ep.Cwd, &ep.IntentSummary,
+			&ep.StartedAtMs, &ep.EndedAtMs, &cwd, &ep.IntentSummary,
 			&ep.EventCount, &ep.FirstEventID); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
+		ep.Cwd = nullStringToEvents(cwd)
 		out = append(out, ep)
 	}
 	return out, rows.Err()
@@ -394,7 +383,7 @@ SELECT s.id
 // LoadEpisodesBySession returns every episode for the given
 // session in ordinal order. Empty slice (not error) when the
 // session hasn't been segmented yet.
-func LoadEpisodesBySession(ctx context.Context, db *sql.DB, sessionID string) ([]Episode, error) {
+func LoadEpisodesBySession(ctx context.Context, db *sql.DB, sessionID string) ([]events.Episode, error) {
 	if sessionID == "" {
 		return nil, errors.New("LoadEpisodesBySession: session_id is required")
 	}
@@ -410,14 +399,18 @@ func LoadEpisodesBySession(ctx context.Context, db *sql.DB, sessionID string) ([
 		return nil, fmt.Errorf("query episodes: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var out []Episode
+	var out []events.Episode
 	for rows.Next() {
-		var ep Episode
+		var (
+			ep  events.Episode
+			cwd sql.NullString
+		)
 		if err := rows.Scan(&ep.ID, &ep.SessionID, &ep.Ordinal,
-			&ep.StartedAtMs, &ep.EndedAtMs, &ep.Cwd, &ep.IntentSummary,
+			&ep.StartedAtMs, &ep.EndedAtMs, &cwd, &ep.IntentSummary,
 			&ep.EventCount, &ep.FirstEventID); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
+		ep.Cwd = nullStringToEvents(cwd)
 		out = append(out, ep)
 	}
 	return out, rows.Err()

@@ -11,7 +11,7 @@ import (
 
 // nullS is a tiny events.NullString constructor for table-driven
 // tests that need to populate Cwd / Role values on events.EventView
-// fixtures. Episode.Cwd uses sql.NullString — for those tests, see
+// fixtures. events.Episode.Cwd uses sql.NullString — for those tests, see
 // nullSQL.
 func nullS(s string) events.NullString {
 	return events.NullString{String: s, Valid: s != ""}
@@ -507,7 +507,7 @@ func seedSessionWithEvents(t *testing.T, s *Store, sessionID string, count int, 
 
 // TestSaveAndLoadEpisodes covers the round-trip via a real session.
 // The fixture seeds raw_envelopes + events for one session, runs
-// the segmenter, persists, and reloads — every Episode field must
+// the segmenter, persists, and reloads — every events.Episode field must
 // round-trip exactly.
 func TestSaveAndLoadEpisodes(t *testing.T) {
 	t.Parallel()
