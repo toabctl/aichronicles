@@ -20,7 +20,7 @@
     
     
       
-        <title>Aichronicles embed - aichronicles</title>
+        <title>Aichronicles facts show - aichronicles</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#aichronicles-embed" class="md-skip">
+        <a href="#aichronicles-facts-show" class="md-skip">
           Skip to content
         </a>
       
@@ -108,7 +108,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Aichronicles embed
+              Aichronicles facts show
             
           </span>
         </div>
@@ -600,13 +600,13 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#aichronicles-embed" class="md-nav__link">
+  <a href="#aichronicles-facts-show" class="md-nav__link">
     <span class="md-ellipsis">
-      aichronicles embed
+      aichronicles facts show
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="aichronicles embed">
+    <nav class="md-nav" aria-label="aichronicles facts show">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -656,7 +656,7 @@
                   
 
   
-    <a href="https://github.com/toabctl/aichronicles/edit/main/docs/reference/cli/aichronicles_embed.md" title="Edit this page" class="md-content__button md-icon">
+    <a href="https://github.com/toabctl/aichronicles/edit/main/docs/reference/cli/aichronicles_facts_show.md" title="Edit this page" class="md-content__button md-icon">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -664,41 +664,27 @@
   
 
 
-  <h1>Aichronicles embed</h1>
+  <h1>Aichronicles facts show</h1>
 
-<h2 id="aichronicles-embed">aichronicles embed<a class="headerlink" href="#aichronicles-embed" title="Permanent link">&para;</a></h2>
-<p>Compute and store vector embeddings for events lacking them</p>
+<h2 id="aichronicles-facts-show">aichronicles facts show<a class="headerlink" href="#aichronicles-facts-show" title="Permanent link">&para;</a></h2>
+<p>Show every typed fact known about one subject</p>
 <h3 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h3>
-<p>Walks the events table, finds rows with no embedding for the
-target model, and posts batched requests to the OpenAI
-embeddings endpoint. The resulting float32 vectors land in
-the event_embeddings table for <code>aichronicles search
---semantic</code> to score against.</p>
-<p>Idempotent: re-running picks up where a previous run left
-off (no row → embed; existing row for the same model →
-skip). A model upgrade (text-embedding-3-small → -3-large)
-can be done with <code>--model</code> set to the new id; old rows for
-the previous model are left in place until you re-embed
-or prune.</p>
-<p>Requires OpenAI configured under [llm] (provider=openai).
-Anthropic does not expose a hosted embeddings endpoint, so
-this command refuses under provider=anthropic rather than
-silently downgrading to a different vector space.</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>aichronicles embed [flags]
+<p>Loads every semantic_facts row for the given subject. Use
+the cwd path of a project to get its build/test/deploy
+contract — this is the v1 retrieval surface for typed
+semantic memory.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>aichronicles facts show --subject &lt;cwd|name&gt; [flags]
 </span></code></pre></div>
 <h3 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>      --batch int        how many inputs per OpenAI embeddings request (default 64)
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>      --db string        SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>      --dry-run          print the work plan and exit without calling the API
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>  -h, --help             help for embed
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>      --kind strings     limit to event kinds (default: user_prompt, assistant_message, tool_use; pass empty to embed all) (default [user_prompt,assistant_message,tool_use])
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>      --limit int        cap the number of events embedded this run (0 = no cap; resume on next run)
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>      --model string     embedding model id (default: text-embedding-3-small)
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>      --since duration   only embed events from the last N (e.g. 7d, 24h) (default 0s)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>      --db string        SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>      --format string    output format: table (human-readable) or json (for jq / scripts) (default &quot;table&quot;)
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>  -h, --help             help for show
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>      --limit int        max facts to return (default 100)
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>      --subject string   subject (cwd path or other anchor) to load facts for
 </span></code></pre></div>
 <h3 id="see-also">SEE ALSO<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h3>
 <ul>
-<li><a href="../aichronicles/">aichronicles</a>  - Capture AI coding agent session events</li>
+<li><a href="../aichronicles_facts/">aichronicles facts</a>  - Typed semantic-fact memory induced from sessions (MIRIX semantic layer)</li>
 </ul>
 
 

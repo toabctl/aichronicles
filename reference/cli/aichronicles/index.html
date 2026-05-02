@@ -679,13 +679,15 @@
 <li><a href="../aichronicles_backfill-extractions/">aichronicles backfill-extractions</a>    - Re-run extractors over every raw envelope and rewrite the extractions table</li>
 <li><a href="../aichronicles_digest/">aichronicles digest</a>    - Periodic LLM-driven digests stored as queryable artefacts</li>
 <li><a href="../aichronicles_doctor/">aichronicles doctor</a>    - Probe the running daemon and report whether it is accepting events</li>
-<li><a href="../aichronicles_embed/">aichronicles embed</a>  - Compute and store vector embeddings for events lacking them</li>
+<li><a href="../aichronicles_facts/">aichronicles facts</a>  - Typed semantic-fact memory induced from sessions (MIRIX semantic layer)</li>
 <li><a href="../aichronicles_import-claude/">aichronicles import-claude</a>  - Import Claude Code's own ~/.claude transcripts into the store</li>
 <li><a href="../aichronicles_import-gemini/">aichronicles import-gemini</a>  - Import gemini-cli session JSON files into the store</li>
 <li><a href="../aichronicles_import-jsonl/">aichronicles import-jsonl</a>    - Replay events.jsonl into the SQLite store</li>
+<li><a href="../aichronicles_induction/">aichronicles induction</a>  - Online single-session induction (AWM-style auto-skill-extraction)</li>
 <li><a href="../aichronicles_ingest/">aichronicles ingest</a>    - Read a hook payload on stdin and forward as an envelope</li>
 <li><a href="../aichronicles_insights/">aichronicles insights</a>    - Cross-session usage digest (sessions, top tools, top skills, activity-by-hour)</li>
 <li><a href="../aichronicles_mcp-serve/">aichronicles mcp-serve</a>  - Run an MCP server over stdio exposing the user's session history</li>
+<li><a href="../aichronicles_meta/">aichronicles meta</a>    - Cadence-gated meta-analyses (propose / reflect / challenge / reflect_weekly / skill_revision)</li>
 <li><a href="../aichronicles_propose/">aichronicles propose</a>  - LLM-suggested skills / CLAUDE.md entries / scripts from recent sessions</li>
 <li><a href="../aichronicles_prune/">aichronicles prune</a>  - Delete sessions (and everything they own) older than --older-than</li>
 <li><a href="../aichronicles_reflect/">aichronicles reflect</a>  - LLM-derived meta-analysis of recent sessions</li>
@@ -697,6 +699,8 @@
 <li><a href="../aichronicles_summaries/">aichronicles summaries</a>  - Inspect stored LLM outputs (summaries, reflections, proposals)</li>
 <li><a href="../aichronicles_summarize/">aichronicles summarize</a>  - Generate an LLM summary for one session</li>
 <li><a href="../aichronicles_teardown/">aichronicles teardown</a>    - Remove aichronicles integration from an AI coding agent or the OS</li>
+<li><a href="../aichronicles_unresolved/">aichronicles unresolved</a>    - Print unresolved items from prior sessions in this cwd</li>
+<li><a href="../aichronicles_usage/">aichronicles usage</a>  - Per-day LLM token totals (input/output) by kind and model</li>
 <li><a href="../aichronicles_vacuum/">aichronicles vacuum</a>    - Compact the SQLite store and truncate the WAL</li>
 <li><a href="../aichronicles_web/">aichronicles web</a>  - Serve a local web UI for browsing sessions and summaries</li>
 </ul>

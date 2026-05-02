@@ -20,7 +20,7 @@
     
     
       
-        <title>Aichronicles propose apply - aichronicles</title>
+        <title>Aichronicles meta - aichronicles</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#aichronicles-propose-apply" class="md-skip">
+        <a href="#aichronicles-meta" class="md-skip">
           Skip to content
         </a>
       
@@ -108,7 +108,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Aichronicles propose apply
+              Aichronicles meta
             
           </span>
         </div>
@@ -600,13 +600,13 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#aichronicles-propose-apply" class="md-nav__link">
+  <a href="#aichronicles-meta" class="md-nav__link">
     <span class="md-ellipsis">
-      aichronicles propose apply
+      aichronicles meta
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="aichronicles propose apply">
+    <nav class="md-nav" aria-label="aichronicles meta">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -656,7 +656,7 @@
                   
 
   
-    <a href="https://github.com/toabctl/aichronicles/edit/main/docs/reference/cli/aichronicles_propose_apply.md" title="Edit this page" class="md-content__button md-icon">
+    <a href="https://github.com/toabctl/aichronicles/edit/main/docs/reference/cli/aichronicles_meta.md" title="Edit this page" class="md-content__button md-icon">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -664,48 +664,25 @@
   
 
 
-  <h1>Aichronicles propose apply</h1>
+  <h1>Aichronicles meta</h1>
 
-<h2 id="aichronicles-propose-apply">aichronicles propose apply<a class="headerlink" href="#aichronicles-propose-apply" title="Permanent link">&para;</a></h2>
-<p>Materialise a proposed skill (SKILL.md + scripts) on disk</p>
+<h2 id="aichronicles-meta">aichronicles meta<a class="headerlink" href="#aichronicles-meta" title="Permanent link">&para;</a></h2>
+<p>Cadence-gated meta-analyses (propose / reflect / challenge / reflect_weekly / skill_revision)</p>
 <h3 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h3>
-<p>Loads the latest cached <code>propose</code> output (or the one
-identified by --output-id) and writes the named skill to
-~/.claude/skills/<name>/. Includes:</p>
-<ul>
-<li>SKILL.md with frontmatter (name, description) and a
-    scaffolded body (When to apply, Why, Steps/Pitfalls/
-    Verification with TODO markers).</li>
-<li>scripts/<name> for each helper script the proposal
-    listed under the skill (chmod 0755, with shebang and
-    purpose-comment header).</li>
-</ul>
-<p>Verification gate (Voyager-style critic): before writing,
-a second LLM pass evaluates the proposed skill against its
-cited evidence and your installed skills. On a refusal
-(near-duplicate of an installed skill, evidence too thin,
-generic when_to_use, or fabricated steps) the apply is
-aborted with the critic's concern + recommendation. Pass
---no-verify to bypass the gate. The verification result is
-cached as kind=propose_verify so re-running on the same
-proposal is free.</p>
-<p>All targets are refused if they already exist unless
---force is passed. Use <code>aichronicles propose list</code> to see
-what's in the cached proposal.</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>aichronicles propose apply --skill &lt;name&gt; [flags]
-</span></code></pre></div>
+<p>meta is the umbrella for time-driven analyses that fire
+on a per-kind cadence rather than per-session. The cadence
+gate runs against the persisted last-fired timestamp in
+SQLite (kind=propose, kind=reflect, etc.), so a missed
+timer firing is automatically picked up on the next run.</p>
+<p>Subcommands:
+  sweep — fire every overdue kind in one pass</p>
 <h3 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>      --db string           SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>      --force               overwrite existing target files
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>  -h, --help                help for apply
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>      --no-verify           skip the critic-LLM verification gate (writes the SKILL without checking for duplicates / weak evidence)
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>      --output-id int       specific llm_outputs row id (default: latest propose row)
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>      --skill string        name of a skill from the proposal to materialise
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>      --skills-dir string   override target directory (default: ~/.claude/skills)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>  -h, --help   help for meta
 </span></code></pre></div>
 <h3 id="see-also">SEE ALSO<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h3>
 <ul>
-<li><a href="../aichronicles_propose/">aichronicles propose</a>  - LLM-suggested skills / CLAUDE.md entries / scripts from recent sessions</li>
+<li><a href="../aichronicles/">aichronicles</a>  - Capture AI coding agent session events</li>
+<li><a href="../aichronicles_meta_sweep/">aichronicles meta sweep</a>    - Fire every overdue meta-analysis kind in one pass</li>
 </ul>
 
 

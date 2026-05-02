@@ -855,6 +855,10 @@ context from past work, and generates structured summaries on demand.</p>
 optional / on-demand (only fires for summarize/reflect/propose). The
 <code>local</code> box is the trust boundary — everything inside runs as your
 user, on your local disk. Cylinder is persistent state.</p>
+<p>The diagram above is the static view (where things run). For the
+<em>dynamic</em> view — what fires automatically vs. what you trigger,
+and what happens step-by-step inside each flow — see
+<a href="explanation/data-flow/"><code>docs/explanation/data-flow.md</code></a>.</p>
 <h2 id="what-you-get">What you get<a class="headerlink" href="#what-you-get" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Searchable corpus.</strong> Every prompt, tool call, and response from

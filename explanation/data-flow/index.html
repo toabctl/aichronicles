@@ -585,6 +585,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#what-runs-when-quick-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      What runs when (quick reference)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#a-capturing-one-hook-event" class="md-nav__link">
     <span class="md-ellipsis">
       A. Capturing one hook event
@@ -636,6 +645,24 @@
   <a href="#c-reading-via-mcp-very-short" class="md-nav__link">
     <span class="md-ellipsis">
       C. Reading via MCP (very short)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#d-the-induction-sweep-automatic-when-the-timer-is-enabled" class="md-nav__link">
+    <span class="md-ellipsis">
+      D. The induction sweep (automatic, when the timer is enabled)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#e-the-propose-lifecycle-manual" class="md-nav__link">
+    <span class="md-ellipsis">
+      E. The propose lifecycle (manual)
     </span>
   </a>
   
@@ -723,6 +750,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#what-runs-when-quick-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      What runs when (quick reference)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#a-capturing-one-hook-event" class="md-nav__link">
     <span class="md-ellipsis">
       A. Capturing one hook event
@@ -780,6 +816,24 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#d-the-induction-sweep-automatic-when-the-timer-is-enabled" class="md-nav__link">
+    <span class="md-ellipsis">
+      D. The induction sweep (automatic, when the timer is enabled)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#e-the-propose-lifecycle-manual" class="md-nav__link">
+    <span class="md-ellipsis">
+      E. The propose lifecycle (manual)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#whats-not-shown" class="md-nav__link">
     <span class="md-ellipsis">
       What's NOT shown
@@ -821,13 +875,78 @@
 
 
 <h1 id="data-flow">Data flow<a class="headerlink" href="#data-flow" title="Permanent link">&para;</a></h1>
-<p>This page is the dynamic view: what happens, in order, when one
-of two key things occurs — a Claude Code hook fires, or you run
-<code>aichronicles summarize</code>. Read this when you're trying to figure
+<p>This page is the dynamic view: what happens, in order, when each
+of the system's flows runs. Read this when you're trying to figure
 out where to add a log line, where to put a new check, or why an
 outage feels the way it does.</p>
-<p>For the static view (what packages exist, schema, dependencies),
-see <a href="../architecture/">architecture.md</a>.</p>
+<p>For the static view, two complementary docs:</p>
+<ul>
+<li>The trust-boundary architecture diagram on the
+  <a href="../../">project homepage</a> shows <em>where</em> components run
+  (ingest subprocess, daemon, db, mcp-serve, cli, external API).</li>
+<li><a href="../architecture/">architecture.md</a> covers the package map, SQL
+  schema (with ER diagram), migrations, and the LLM provider
+  abstraction.</li>
+</ul>
+<h2 id="what-runs-when-quick-reference">What runs when (quick reference)<a class="headerlink" href="#what-runs-when-quick-reference" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Trigger</th>
+<th>What runs</th>
+<th>Cadence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude Code / Gemini CLI hook fires</td>
+<td><code>aichronicles ingest</code> → daemon → <code>raw_envelopes</code> + <code>events</code> (+ FTS / extractions / sessions aggregates)</td>
+<td>Every event (prompt, tool call, response, …)</td>
+</tr>
+<tr>
+<td><code>aichronicles-cron-induction.timer</code> fires</td>
+<td>One sweep: phase 0 (segment stale episodes) → 1 (summarize) → 2 (induction) → 3 (facts), per candidate</td>
+<td><code>OnUnitInactiveSec=15min</code> (configurable in the unit)</td>
+</tr>
+<tr>
+<td><code>aichronicles-cron-meta-analysis.timer</code> fires</td>
+<td>Cadence-gated dispatch of overdue propose / reflect / challenge / reflect_weekly / skill_revision</td>
+<td><code>OnUnitInactiveSec=1h</code> (configurable in the unit)</td>
+</tr>
+<tr>
+<td><code>aichronicles summarize --session &lt;id&gt;</code></td>
+<td>One summarize LLM call → <code>llm_outputs(kind=summary)</code></td>
+<td>Manual, on demand</td>
+</tr>
+<tr>
+<td><code>aichronicles reflect</code> / <code>propose</code></td>
+<td>Multi-session digest → reflect/propose LLM call → <code>llm_outputs(kind=reflection / propose)</code></td>
+<td>Manual, on demand</td>
+</tr>
+<tr>
+<td><code>aichronicles propose add</code> / <code>merge</code> / <code>discard --skill X</code></td>
+<td>One <code>skill_candidates</code> lifecycle transition; <code>add</code>/<code>merge</code> also write <code>&lt;skills&gt;/&lt;name&gt;/SKILL.md</code> to disk</td>
+<td>Manual, per skill</td>
+</tr>
+<tr>
+<td><code>aichronicles induction sweep</code> (manual)</td>
+<td>One-shot of the timer-driven sweep; useful when the timer is off or you want per-session output on stdout</td>
+<td>Manual, on demand</td>
+</tr>
+<tr>
+<td><code>aichronicles meta sweep</code> (manual)</td>
+<td>One-shot of the cadence-gated meta dispatch; same gating as the timer-driven run</td>
+<td>Manual, on demand</td>
+</tr>
+<tr>
+<td>MCP tool call from Claude Code (<code>search_events</code>, <code>find_episodes</code>, <code>get_summary</code>, …)</td>
+<td>Read-only SQL against the store; no writes</td>
+<td>Per agent tool-use, while a session is active</td>
+</tr>
+</tbody>
+</table>
+<p>The sections below detail each automatic flow (A, D) and each
+manual flow (B, E), plus the read-only MCP path (C).</p>
 <h2 id="a-capturing-one-hook-event">A. Capturing one hook event<a class="headerlink" href="#a-capturing-one-hook-event" title="Permanent link">&para;</a></h2>
 <p>Claude Code fires a hook subprocess for each interesting event
 (<code>UserPromptSubmit</code>, <code>PostToolUse</code>, etc.). The subprocess is
@@ -842,17 +961,18 @@ the daemon over UDS.</p>
     participant SQ as SQLite&lt;br/&gt;(store.db)
 
     CC-&gt;&gt;IC: spawn + pipe hook JSON to stdin
-    IC-&gt;&gt;IC: redact.Default() — edge scrub
-    IC-&gt;&gt;IC: build Envelope (UUID, ts, redaction.applied=true)
+    IC-&gt;&gt;IC: claude.HookTranslator (or gemini.HookTranslator).Translate
+    Note over IC: builds Envelope, applies Redactor.&lt;br/&gt;redaction.applied=true on return
     IC-&gt;&gt;D: POST /v1/ingest (UDS, 250ms ctx deadline)
     D-&gt;&gt;D: validate envelope (V==1, slug, UUID)
-    D-&gt;&gt;D: refuse if redaction.applied != true
-    D-&gt;&gt;SQ: BeginTx
+    D-&gt;&gt;D: events.Pipeline.Process: redaction-required gate
+    D-&gt;&gt;D: events.Pipeline: run ExtractorRegistry (URL / Bash / FilePath / WebFetch / Skill)
+    D-&gt;&gt;SQ: store.Sink.Write — BeginTx
     D-&gt;&gt;SQ: INSERT raw_envelopes (verbatim JSON)
     SQ-&gt;&gt;SQ: trigger: update sessions agg
     D-&gt;&gt;SQ: INSERT events (typed projection)
     SQ-&gt;&gt;SQ: trigger: events_fts insert
-    D-&gt;&gt;SQ: INSERT extractions (URLs, paths, shells)
+    D-&gt;&gt;SQ: INSERT extractions (per-event Extractions slice)
     D-&gt;&gt;SQ: Commit
     D--&gt;&gt;IC: 200 + Ack {event_id, session_id, deduped}
     IC--&gt;&gt;CC: exit 0</code></pre>
@@ -875,7 +995,7 @@ the daemon over UDS.</p>
 <li><strong><code>raw_envelopes</code> is sacred</strong> — the bytes stored at step 9 are
   the literal POST body, not a re-marshal. If the schema changes
   later, we replay from <code>raw_envelopes</code>. See
-  <a href="../architecture/#why-these-five-tables">architecture.md#why-these-five-tables</a>.</li>
+  <a href="../architecture/#schema">architecture.md#schema</a>.</li>
 <li><strong>Dedupe happens at the unique index level.</strong> If <code>event_id</code>
   already exists in <code>raw_envelopes</code>, the <code>INSERT</code> is a no-op and
   we skip steps 11-13. The ack comes back with <code>deduped: true</code>.
@@ -1024,6 +1144,146 @@ unchanged.</p>
 <p>This is why the README diagram shows the <code>mcp-serve</code> arrow as
 <em>read-only SQL</em> — there is no insert path through MCP. An
 adversarial MCP client can't pollute the corpus.</p>
+<h2 id="d-the-induction-sweep-automatic-when-the-timer-is-enabled">D. The induction sweep (automatic, when the timer is enabled)<a class="headerlink" href="#d-the-induction-sweep-automatic-when-the-timer-is-enabled" title="Permanent link">&para;</a></h2>
+<p>Section A handles capture; this is the automatic <em>processing</em> layer.
+A systemd <code>--user</code> timer
+(<code>aichronicles-cron-induction.timer</code>) drives <code>aichronicles induction
+sweep</code> on the configured cadence (<code>OnUnitInactiveSec=15min</code> by
+default). <code>Persistent=true</code> on the timer means a missed window
+after suspend is caught up on next wake — better than the previous
+in-process ticker, which silently dropped firings while the laptop
+was asleep. Disabled by default; opt in via
+<code>systemctl --user enable --now aichronicles-cron-induction.timer</code>
+(installed by <code>aichronicles setup cron</code>).</p>
+<pre class="mermaid"><code>flowchart TB
+    Tick["timer fires every OnUnitInactiveSec&lt;br/&gt;(systemd catches up missed runs after suspend)"] --&gt; P0
+    P0["Phase 0 (sweep-wide):&lt;br/&gt;LoadSessionsNeedingSegmentation"] --&gt; P0Loop
+    P0Loop["for each stale session:&lt;br/&gt;SegmentSession + SaveEpisodes&lt;br/&gt;(local, no LLM)"] --&gt; CL
+    CL[LoadInductionCandidates&lt;br/&gt;idle + min_events +&lt;br/&gt;NOT EXISTS llm_outputs.kind=induction] --&gt; Loop{any candidates?}
+    Loop -- no --&gt; Done[wait for next tick]
+    Loop -- yes --&gt; P1
+    P1[Phase 1: summarize&lt;br/&gt;LLM · skipped if cached] --&gt; P1OK{summary available?}
+    P1OK -- no --&gt; NextSkip[skip phases 2+3&lt;br/&gt;for this session]
+    NextSkip --&gt; Loop
+    P1OK -- yes --&gt; P2
+    P2[Phase 2: induction&lt;br/&gt;LLM → Skill + Workflow] --&gt; P3
+    P3[Phase 3: facts&lt;br/&gt;LLM → semantic_facts rows] --&gt; Loop</code></pre>
+<p>A few non-obvious properties:</p>
+<ul>
+<li><strong>Phase 0 is sweep-wide, not per-candidate.</strong> It runs over every
+  session whose <code>episodes</code> table lags behind its <code>events</code> table —
+  either no episodes at all, or <code>MAX(episodes.ended_at_ms) &lt;</code> the
+  newest event. Pre-fix it lived inside the per-candidate loop,
+  which meant once a session had an <code>llm_outputs.kind=induction</code>
+  row it permanently dropped out — and any late events arriving
+  afterwards were never segmented. See
+  <code>internal/store/episodes.go:LoadSessionsNeedingSegmentation</code>.</li>
+<li><strong>Each phase has its own per-call timeout</strong> derived from the
+  parent <code>ctx</code>. Without that, a single slow LLM call would burn
+  the whole sweep's deadline budget and starve every later
+  session — the bug session 9ec75b11's facts phase originally
+  tripped (see <code>internal/cli/induction.go:RunInductionSweep</code>).</li>
+<li><strong>Phase 1 failure skips phases 2+3 for <em>that session only</em>.</strong>
+  Induction and facts both gate on a summary being present;
+  they'd just log "no summary" errors of their own, so we
+  short-circuit. The next tick retries.</li>
+<li><strong>One panic per tick is recovered.</strong> The <code>tick()</code> method has a
+  <code>defer recover()</code> so a malformed prompt or LLM hiccup doesn't
+  strand the goroutine. The next tick fires regardless.</li>
+<li><strong>Manual one-shot:</strong> <code>aichronicles induction sweep</code> runs the
+  same <code>RunInductionSweep</code> function with <code>io.Stdout</code> for
+  rendering — useful when the daemon is off or you want to see
+  the per-session output.</li>
+</ul>
+<h2 id="e-the-propose-lifecycle-manual">E. The propose lifecycle (manual)<a class="headerlink" href="#e-the-propose-lifecycle-manual" title="Permanent link">&para;</a></h2>
+<p><code>aichronicles propose</code> is the suggestion-generating cousin of
+summarize. Same <code>runCachedLLM</code> orchestration, but the digest
+spans many recent sessions and the model emits <code>record_proposal</code>
+with up to 5 skill candidates. Per-candidate, the user then picks
+one of three maintenance actions (AutoSkill vocabulary: <code>add</code> /
+<code>merge</code> / <code>discard</code>).</p>
+<pre class="mermaid"><code>flowchart LR
+    Run["aichronicles propose"] --&gt; LLM[propose LLM call]
+    LLM --&gt; Cache[(llm_outputs&lt;br/&gt;kind=propose)]
+    Cache --&gt; List["propose list&lt;br/&gt;(read-only review)"]
+    Cache --&gt; Web["/propose&lt;br/&gt;web UI"]
+    Cache --&gt; Add["propose add --skill X"]
+    Cache --&gt; Mrg["propose merge --skill X"]
+    Cache --&gt; Dsc["propose discard --skill X"]
+
+    Add --&gt; AddGuards{name not on disk?&lt;br/&gt;name not previously discarded?}
+    AddGuards -- yes --&gt; AddDo[write SKILL.md + scripts&lt;br/&gt;+ provenance footer&lt;br/&gt;row: decision='add']
+    AddGuards -- no --&gt; AddRefuse[refuse;&lt;br/&gt;--force to override]
+
+    Mrg --&gt; MrgGuards{not self-merge?}
+    MrgGuards -- yes --&gt; MrgDo["merge LLM call&lt;br/&gt;→ rewrite SKILL.md (in place)&lt;br/&gt;→ refresh add_body_sha256&lt;br/&gt;→ refresh kind if flipped&lt;br/&gt;→ row: decision='merge'"]
+    MrgGuards -- no --&gt; MrgRefuse[refuse; pick a different&lt;br/&gt;--output-id]
+
+    Dsc --&gt; DscDo[no file change&lt;br/&gt;row: decision='discard'&lt;br/&gt;NULL-clears add_path /&lt;br/&gt;hash / merged_into_id]</code></pre>
+<p>Each decision flips the <code>skill_candidates</code> row keyed by
+<code>(llm_output_id, skill_name)</code> — the row was inserted at extract
+time and starts in <code>pending</code>. The state machine:</p>
+<pre class="mermaid"><code>stateDiagram-v2
+    [*] --&gt; pending: RecordSkillCandidate
+    pending --&gt; add: MarkAdded
+    pending --&gt; merge: MarkMerged
+    pending --&gt; discard: MarkDiscarded
+
+    add --&gt; merge: MarkMerged&lt;br/&gt;(clears add_body_sha256)
+    add --&gt; discard: MarkDiscarded&lt;br/&gt;(clears add_path, hash)
+    add --&gt; add: re-add&lt;br/&gt;(refresh path+hash,&lt;br/&gt;clears merged_into_id)
+
+    merge --&gt; add: MarkAdded&lt;br/&gt;(clears merged_into_id)
+    merge --&gt; discard: MarkDiscarded&lt;br/&gt;(clears all)
+
+    discard --&gt; add: --force only
+    discard --&gt; merge: MarkMerged
+
+    note right of merge
+        merged_into_id can be NULL
+        ("merged into hand-authored skill")
+    end note</code></pre>
+<p>Non-obvious properties:</p>
+<ul>
+<li><strong>The state machine is per-row, but two guards are cross-row.</strong>
+  <code>propose add --skill X</code> consults <em>every</em> <code>skill_candidates</code>
+  row with <code>skill_name=X</code> and refuses if any has
+  <code>decision='discard'</code> (unless <code>--force</code>) — the discard signal
+  was being undermined by next-output re-adds otherwise. The
+  on-disk dedup check is the other cross-row guard.</li>
+<li><strong>Self-merge is refused before the LLM call.</strong> If the user
+  ran <code>propose add</code> on this output and is now running
+  <code>propose merge</code> against the same <code>(output_id, skill_name)</code>,
+  <code>LoadAddedSkillCandidate</code> (which filters by skill_name only)
+  would return that very row — the schema's <code>merged_into_id
+  REFERENCES skill_candidates(id)</code> doesn't reject self-FKs, so
+  without the guard the row would point at itself. The
+  fast-path refusal lives in
+  <code>internal/cli/propose_merge.go:mergeProposedSkill</code>.</li>
+<li><strong>Every transition NULL-clears fields that don't apply.</strong>
+  Pre-fix, <code>add → discard</code> kept <code>add_path</code> populated (a
+  "rejected" row still claiming to own a SKILL.md);
+  <code>merge → add</code> kept <code>merged_into_id</code> stale; <code>add → merge</code>
+  kept the prior body hash. Each <code>Mark*</code> helper now writes
+  the right NULLs in its UPDATE list.</li>
+<li><strong>After merge, both the source row AND the target row get
+  updated.</strong> The source (<code>(outputID, skillName)</code>) flips to
+  <code>decision='merge'</code>. The target (<code>existingCandidate.ID</code> from
+  <code>LoadAddedSkillCandidate</code>) keeps <code>decision='add'</code> but its
+  <code>add_body_sha256</code> is refreshed via
+  <code>UpdateSkillCandidateAddBodyHash</code> and its <code>kind</code> via
+  <code>UpdateSkillCandidateKind</code> (so a <code>pattern</code> skill that
+  absorbed a <code>pitfall</code> candidate ends up labelled <code>pitfall</code>).
+  Without these refreshes the next <code>skills verify</code> would flag
+  every merged skill as drifted.</li>
+<li><strong>Hand-authored merges use <code>merged_into_id = NULL</code>.</strong> When
+  the user runs <code>propose merge</code> against a SKILL.md that
+  predates aichronicles (no candidate row owns it),
+  <code>MarkSkillCandidateMerged</code> accepts a sentinel <code>0</code> →
+  writes NULL. Without this, the candidate stayed <code>pending</code>
+  and future propose runs misread that as "user ignored",
+  biasing away from a useful suggestion.</li>
+</ul>
 <h2 id="whats-not-shown">What's NOT shown<a class="headerlink" href="#whats-not-shown" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>The retry loop.</strong> The SDKs handle 429/5xx with exponential

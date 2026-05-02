@@ -20,7 +20,7 @@
     
     
       
-        <title>Aichronicles propose - aichronicles</title>
+        <title>Aichronicles facts induce - aichronicles</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#aichronicles-propose" class="md-skip">
+        <a href="#aichronicles-facts-induce" class="md-skip">
           Skip to content
         </a>
       
@@ -108,7 +108,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Aichronicles propose
+              Aichronicles facts induce
             
           </span>
         </div>
@@ -600,13 +600,13 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#aichronicles-propose" class="md-nav__link">
+  <a href="#aichronicles-facts-induce" class="md-nav__link">
     <span class="md-ellipsis">
-      aichronicles propose
+      aichronicles facts induce
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="aichronicles propose">
+    <nav class="md-nav" aria-label="aichronicles facts induce">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -656,7 +656,7 @@
                   
 
   
-    <a href="https://github.com/toabctl/aichronicles/edit/main/docs/reference/cli/aichronicles_propose.md" title="Edit this page" class="md-content__button md-icon">
+    <a href="https://github.com/toabctl/aichronicles/edit/main/docs/reference/cli/aichronicles_facts_induce.md" title="Edit this page" class="md-content__button md-icon">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -664,44 +664,35 @@
   
 
 
-  <h1>Aichronicles propose</h1>
+  <h1>Aichronicles facts induce</h1>
 
-<h2 id="aichronicles-propose">aichronicles propose<a class="headerlink" href="#aichronicles-propose" title="Permanent link">&para;</a></h2>
-<p>LLM-suggested skills / CLAUDE.md entries / scripts from recent sessions</p>
+<h2 id="aichronicles-facts-induce">aichronicles facts induce<a class="headerlink" href="#aichronicles-facts-induce" title="Permanent link">&para;</a></h2>
+<p>Induce typed facts from one specific session</p>
 <h3 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h3>
-<p>Reads recent sessions (same window semantics as <code>reflect</code>) and,
-via the record_proposal tool, asks the LLM to propose concrete
-reusable capabilities: new slash-commands, CLAUDE.md rules, and
-scripts to pre-build. The system prompt forbids generic advice —
-every suggestion must cite at least one session as evidence.</p>
-<p>Cached on prompt_hash in llm_outputs with kind=propose. Use
---force to re-call. Use --format=json to emit the raw JSON body.</p>
-<p>Pass --challenge to swap the prompt for forward-looking next-
-problem mode (Voyager-style automatic curriculum). The same
-digests are fed to a different system prompt that asks 'what
-should the user tackle NEXT given their current state?' rather
-than 'what patterns recur?'. Output is cached under
-kind=challenge so it doesn't collide with the propose cache.</p>
-<p>Requires ANTHROPIC_API_KEY unless the cache hits.</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>aichronicles propose [flags]
+<p>Asks the LLM to extract typed (subject, predicate, object)
+triples from the named session — project-level facts the
+future agent benefits from knowing without re-discovery.</p>
+<p>Persists the LLM reply in llm_outputs(kind=facts) AND each
+individual fact in semantic_facts (the typed retrieval
+surface). Re-running on the same session hits the cache;
+--force re-calls the LLM. Re-asserting the same fact
+upserts in place; conflicting fact objects coexist as
+separate rows.</p>
+<p>The session must have been summarized first.
+Requires ANTHROPIC_API_KEY unless the cache hits.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>aichronicles facts induce --session &lt;id&gt; [flags]
 </span></code></pre></div>
 <h3 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>      --challenge        forward-looking mode: propose what to tackle NEXT (Voyager-style curriculum)
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>      --db string        SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>      --force            bypass the llm_outputs cache and re-call the LLM
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>      --format string    output format: table (human-readable) or json (for jq / scripts) (default &quot;table&quot;)
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>  -h, --help             help for propose
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>      --limit int        max sessions to feed the LLM, newest first (default 25)
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>      --model string     LLM model id (default: provider&#39;s default)
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>      --since duration   only consider sessions whose ended_at is within this window (e.g. 24h, 7d) (default 168h0m0s)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>      --db string        SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>      --force            bypass the cache and re-call the LLM
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>      --format string    output format: table (human-readable) or json (for jq / scripts) (default &quot;table&quot;)
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>  -h, --help             help for induce
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>      --model string     LLM model id (default: provider&#39;s default)
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>      --session string   session id (full or unique prefix) to induce facts from
 </span></code></pre></div>
 <h3 id="see-also">SEE ALSO<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h3>
 <ul>
-<li><a href="../aichronicles/">aichronicles</a>  - Capture AI coding agent session events</li>
-<li><a href="../aichronicles_propose_add/">aichronicles propose add</a>  - Add a proposed skill (SKILL.md + scripts) to disk (AutoSkill action 'add')</li>
-<li><a href="../aichronicles_propose_discard/">aichronicles propose discard</a>  - Mark a proposed skill as discarded (AutoSkill action 'discard')</li>
-<li><a href="../aichronicles_propose_list/">aichronicles propose list</a>    - List skills in the latest cached propose output</li>
-<li><a href="../aichronicles_propose_merge/">aichronicles propose merge</a>  - Merge a proposed skill into the existing on-disk SKILL.md (AutoSkill action 'merge')</li>
+<li><a href="../aichronicles_facts/">aichronicles facts</a>  - Typed semantic-fact memory induced from sessions (MIRIX semantic layer)</li>
 </ul>
 
 

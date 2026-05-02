@@ -564,6 +564,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#layered-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layered architecture
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#process-model" class="md-nav__link">
     <span class="md-ellipsis">
       Process model
@@ -583,6 +592,24 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#non-obvious-choices" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-obvious choices
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#events-vs-ingest" class="md-nav__link">
+    <span class="md-ellipsis">
+      events vs ingest
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#dependency-direction" class="md-nav__link">
     <span class="md-ellipsis">
       Dependency direction
@@ -597,35 +624,20 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-events-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      The events Pipeline
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#schema" class="md-nav__link">
     <span class="md-ellipsis">
       Schema
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Schema">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#why-these-five-tables" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why these five tables
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cascade-rules-in-plain-language" class="md-nav__link">
-    <span class="md-ellipsis">
-      Cascade rules, in plain language
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -759,6 +771,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#layered-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layered architecture
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#process-model" class="md-nav__link">
     <span class="md-ellipsis">
       Process model
@@ -778,6 +799,24 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#non-obvious-choices" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-obvious choices
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#events-vs-ingest" class="md-nav__link">
+    <span class="md-ellipsis">
+      events vs ingest
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#dependency-direction" class="md-nav__link">
     <span class="md-ellipsis">
       Dependency direction
@@ -792,35 +831,20 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-events-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      The events Pipeline
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#schema" class="md-nav__link">
     <span class="md-ellipsis">
       Schema
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Schema">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#why-these-five-tables" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why these five tables
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cascade-rules-in-plain-language" class="md-nav__link">
-    <span class="md-ellipsis">
-      Cascade rules, in plain language
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -893,20 +917,63 @@
 
 
 <h1 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h1>
-<p>This page is the map you read when you're about to change code, or
-when something doesn't make sense and you want to understand why
-it's shaped the way it is. It complements
-<a href="../data-flow/">data-flow.md</a> (the dynamic view) with the static
-view: what packages exist, what they depend on, what the schema
-looks like, and which design decisions are load-bearing.</p>
-<p>For the high-level system overview (the Mermaid component diagram
-showing process boundaries), see the <a href="../../README.md">README</a>. It's
-linked here intentionally — that diagram is the canonical "what are
-the moving parts," and duplicating it here would just guarantee
-they drift.</p>
+<p>The map you read when you're about to change code, or when something
+doesn't make sense and you want to understand why it's shaped the
+way it is. Complements <a href="../data-flow/">data-flow.md</a> (the dynamic
+view) with the static view: what packages exist, what depends on
+what, what the schema looks like, and which design decisions are
+load-bearing.</p>
+<p>For the high-level system overview (component diagram), see the
+<a href="../../README.md">README</a>. It's the canonical "what are the moving
+parts" — not duplicated here so the two can't drift.</p>
+<h2 id="layered-architecture">Layered architecture<a class="headerlink" href="#layered-architecture" title="Permanent link">&para;</a></h2>
+<p>aichronicles is organised as a hexagonal / ports-and-adapters
+shape: a public domain core (<code>pkg/events</code>) at the center,
+infrastructure adapters around it (<code>internal/store</code> for SQLite,
+<code>internal/daemon</code> for HTTP, <code>internal/web</code>, <code>internal/mcp</code>),
+and application orchestration on top (<code>internal/cli</code>).</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>                ┌────────────────────────────────────────┐
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a> Entry points   │ cmd/aichronicles    cmd/aichroniclesd  │
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>                └────────┬─────────────────────┬─────────┘
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>                         │                     │
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>                ┌────────▼─────┐       ┌───────▼────────┐
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a> Application    │ internal/cli │       │ internal/daemon│
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a> (orchestration)│ (~50 files)  │       │ (HTTP + UDS)   │
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>                └────┬───────┬─┘       └────────┬───────┘
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>                     │       │                  │
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>              ┌──────▼─┐ ┌───▼──────┐  ┌────────▼──────┐
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a> Adapters     │internal│ │internal/ │  │ internal/web  │
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>              │/agents │ │   mcp    │  │   (HTML+SSE)  │
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>              └────────┘ └──────────┘  └───────────────┘
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>                              │   │           │
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>                              └───┴───────────┘
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>                                      │
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>                              ┌───────▼──────────┐
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a> Storage adapter              │  internal/store  │  ← SQLite-bound
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a> (SQL implementation)         │   monolithic;    │     events.Sink
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>                              │   ~25 files      │     lives here
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>                              └───────┬──────────┘
+</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>                                      │
+</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>                                      ▼
+</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>                              ┌──────────────────┐
+</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a> Domain core                  │   pkg/events     │  ← public, no SQL,
+</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a> (event model + pipeline)     │                  │     no HTTP, no I/O
+</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>                              │  envelope, kinds,│
+</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>                              │  views, episode, │  ← types
+</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>                              │  redact, role,   │
+</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>                              │  nullable        │
+</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>                              │                  │
+</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>                              │  source, sink,   │  ← interfaces
+</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>                              │  extractor,      │
+</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>                              │  pipeline        │
+</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>                              │                  │
+</span><span id="__span-0-36"><a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>                              │  sources/        │  ← concrete sources
+</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>                              │    claude/       │
+</span><span id="__span-0-38"><a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a>                              │    gemini/       │
+</span><span id="__span-0-39"><a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a>                              └──────────────────┘
+</span></code></pre></div>
 <h2 id="process-model">Process model<a class="headerlink" href="#process-model" title="Permanent link">&para;</a></h2>
-<p>aichronicles ships <strong>two binaries plus one CLI multiplexer</strong>, each
-mapping to a distinct lifecycle:</p>
+<p>Two binaries, plus systemd timers for periodic work.</p>
 <table>
 <thead>
 <tr>
@@ -921,234 +988,365 @@ mapping to a distinct lifecycle:</p>
 <td><code>aichroniclesd</code></td>
 <td>Long-running daemon</td>
 <td>systemd <code>--user</code> unit, socket-activated</td>
-<td>The HTTP server, the writeable handle to the SQLite store</td>
+<td>The HTTP ingest API. <strong>Only this.</strong></td>
 </tr>
 <tr>
 <td><code>aichronicles ingest</code></td>
-<td>Short-lived subprocess</td>
-<td>Forked per Claude Code hook event</td>
-<td>One envelope's worth of edge redaction + one POST to the daemon</td>
+<td>Short-lived hook subprocess</td>
+<td>Forked per Claude Code / Gemini CLI hook event</td>
+<td>One envelope's worth of translation, edge redaction, and POST to the daemon</td>
+</tr>
+<tr>
+<td><code>aichronicles induction sweep</code></td>
+<td>Short-lived periodic</td>
+<td><code>aichronicles-cron-induction.timer</code> (15min default)</td>
+<td>Single-session induction across idle sessions</td>
+</tr>
+<tr>
+<td><code>aichronicles meta sweep</code></td>
+<td>Short-lived periodic</td>
+<td><code>aichronicles-cron-meta-analysis.timer</code> (1h poll, per-kind cadences in SQLite)</td>
+<td>Cadence-gated meta-analyses (propose / reflect / challenge / digest_weekly / skill_revision)</td>
+</tr>
+<tr>
+<td><code>aichronicles digest weekly</code></td>
+<td>Short-lived periodic</td>
+<td><code>aichronicles-cron-weekly-digest.timer</code> (<code>OnCalendar=Mon 06:00:00</code>)</td>
+<td>Weekly retrospective digest</td>
 </tr>
 <tr>
 <td><code>aichronicles &lt;other&gt;</code></td>
-<td>Short-lived subprocess</td>
-<td>Forked per user command</td>
-<td>Read paths (<code>sessions</code>, <code>search</code>, <code>summaries</code>), import paths, summarize/reflect/propose, MCP server (<code>mcp-serve</code>)</td>
+<td>Short-lived user CLI</td>
+<td>Forked per command</td>
+<td>Read paths, imports, summarize, MCP server (<code>mcp serve</code>), web (<code>web serve</code>)</td>
 </tr>
 </tbody>
 </table>
-<p>Why the split:</p>
+<p>Why this split:</p>
 <ul>
-<li>The daemon owns the <strong>write path</strong> to SQLite. Centralizing writes
-  in one process means we don't need cross-process coordination for
-  the <code>ingest_seq</code> counter or the FTS5 trigger machinery — SQLite's
-  WAL handles concurrency, but the daemon serializes the writes
-  that matter.</li>
-<li>The ingest CLI is <strong>fire-and-forget</strong> by design. A wedged daemon
-  can never block a Claude Code hook; the CLI exits 0 even on
-  POST failures, logging structured warnings to stderr. The hook
-  contract demands this.</li>
-<li>The other CLIs are <strong>read-mostly</strong>. They open the same SQLite
-  file in read mode (with a few exceptions like <code>import-*</code>,
-  <code>scrub</code>, <code>summarize</code>'s <code>llm_outputs</code> write). WAL mode tolerates
-  concurrent readers during writes, so they don't conflict with
-  the live daemon.</li>
+<li><strong>The daemon owns the write path</strong> to SQLite. Centralising
+  writes in one process means we don't need cross-process
+  coordination for the <code>ingest_seq</code> counter or the FTS5 trigger
+  machinery — SQLite's WAL handles concurrency, but the daemon
+  serialises the writes that matter.</li>
+<li><strong>The ingest CLI is fire-and-forget by design.</strong> A wedged daemon
+  can never block a hook; the CLI exits 0 even on POST failures,
+  logging structured warnings to stderr.</li>
+<li><strong>Periodic work used to live in the daemon as goroutines.</strong> It
+  doesn't anymore — sweepers are systemd-timer-driven CLI
+  subcommands. Failure isolation, per-run journal logs, and
+  suspend catch-up via <code>Persistent=true</code> are properties the
+  in-process ticker couldn't give.</li>
+<li><strong>The other CLIs are read-mostly.</strong> They open the same SQLite
+  file (with a few exceptions like <code>import-*</code>, <code>scrub</code>,
+  <code>summarize</code>'s <code>llm_outputs</code> write). WAL mode tolerates concurrent
+  readers during writes.</li>
 </ul>
 <h2 id="package-map">Package map<a class="headerlink" href="#package-map" title="Permanent link">&para;</a></h2>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>cmd/
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  aichronicles/         CLI multiplexer entrypoint
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  aichroniclesd/        daemon entrypoint
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>internal/
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>  cli/                  cobra subcommands (the user-facing surface)
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    summarize.go        ┐ each subcommand a small file; tests
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    reflect.go          ├ alongside; llm_render.go shared by all
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    propose.go          │ three for terminal vs --json output
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    summaries.go        ┘
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    ingest.go           the hook subprocess body
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    setup.go, teardown.go         systemd + Claude Code wiring
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    import_claude.go, import_jsonl.go    backfill paths
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    audit.go, scrub.go            redaction inspection
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    search.go, sessions.go        FTS + listing
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    mcp_serve.go                  the MCP host
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>  daemon/               HTTP server + UDS listener
-</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>  store/                SQLite layer (one file per concern)
-</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>    migrations/         embedded *.sql, ordered by NNN_ prefix
-</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>  ingest/               on-the-wire Envelope schema; validation
-</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    extract/            URL/file-path/shell-command pullers
-</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>  redact/               detector library + scanner combinators
-</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>  llm/                  provider-neutral interface
-</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>    config.go           Provider / Config / FromConfig switchboard
-</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>    anthropic.go        adapter using anthropic-sdk-go
-</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>    openai.go           adapter using openai-go
-</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>    prompts/            BuildSummary / BuildReflect / BuildPropose
-</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>  mcp/                  MCP JSON-RPC server + tools_aichronicles
-</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>  config/               TOML config (Notifications, Capture, LLM)
-</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>  paths/                XDG resolution (StorePath, Socket, ConfigFile)
-</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>  notify/               freedesktop notifications via dbus
-</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>
-</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>api/
-</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>  openapi.yaml          authoritative spec for /v1/ingest, /v1/healthz
-</span><span id="__span-0-36"><a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>
-</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>integration/            //go:build integration tests
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>cmd/
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  aichronicles/         CLI multiplexer entrypoint
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>  aichroniclesd/        daemon entrypoint (UDS HTTP server only)
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>pkg/                    public, no stability promise
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>  events/               domain core
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    envelope.go         Envelope, Tool, Subagent, Redaction, Ack,
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>                        Validate, ValidationError, ErrInvalid,
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>                        DeriveSessionID, agentSlugPattern
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    kinds.go            Kind* / Role* enum + IsValidKind / IsValidRole
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    nullable.go         NullString / NullInt64 (sql-free)
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    redact.go           Redactor interface + ScannerRedactor +
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>                        ApplyRedaction free function
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    role.go             RoleForKind helper
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>    tool_rendering.go   RenderToolContent + tool-input field-mapping
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>                        (shared between Claude and Gemini hooks)
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>    views.go            EventView (read shape for prompt builders)
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>    episode.go          Episode (episodic-memory unit)
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>    event.go            Event{Envelope, Raw, Extractions},
+</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>                        Result, Stats, ErrRedactionRequired
+</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>    extractor.go        Extractor func type, Extraction value,
+</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>                        ExtractorRegistry, ExtractionKind*
+</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>                        constants, DefaultExtractors()
+</span><span id="__span-1-24"><a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>    extractors_builtin.go   URL / Bash / FilePath / WebFetch / Skill
+</span><span id="__span-1-25"><a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>    source.go           Source interface (iter.Seq2 stream)
+</span><span id="__span-1-26"><a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>    sink.go             Sink interface + SinkStats
+</span><span id="__span-1-27"><a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>    pipeline.go         Pipeline value type, Run + Process methods
+</span><span id="__span-1-28"><a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>    sources/            concrete Source implementations
+</span><span id="__span-1-29"><a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>      claude/
+</span><span id="__span-1-30"><a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a>        hook.go         HookTranslator (single-shot)
+</span><span id="__span-1-31"><a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>        jsonl.go        JSONLSource (streaming)
+</span><span id="__span-1-32"><a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a>      gemini/
+</span><span id="__span-1-33"><a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a>        hook.go         HookTranslator
+</span><span id="__span-1-34"><a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a>        transcript.go   TranscriptSource
+</span><span id="__span-1-35"><a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a>
+</span><span id="__span-1-36"><a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a>  redact/               detector library + scanner combinators
+</span><span id="__span-1-37"><a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a>                        (no aichronicles-internal deps)
+</span><span id="__span-1-38"><a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a>  llm/                  provider-neutral interface
+</span><span id="__span-1-39"><a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a>    config.go           Provider / Config / FromConfig switchboard
+</span><span id="__span-1-40"><a id="__codelineno-1-40" name="__codelineno-1-40" href="#__codelineno-1-40"></a>    anthropic.go        adapter using anthropic-sdk-go
+</span><span id="__span-1-41"><a id="__codelineno-1-41" name="__codelineno-1-41" href="#__codelineno-1-41"></a>    openai.go           adapter using openai-go
+</span><span id="__span-1-42"><a id="__codelineno-1-42" name="__codelineno-1-42" href="#__codelineno-1-42"></a>    prompts/            BuildSummary / BuildReflect / BuildPropose
+</span><span id="__span-1-43"><a id="__codelineno-1-43" name="__codelineno-1-43" href="#__codelineno-1-43"></a>
+</span><span id="__span-1-44"><a id="__codelineno-1-44" name="__codelineno-1-44" href="#__codelineno-1-44"></a>  ingest/               wire schema (legacy alias kept for backward
+</span><span id="__span-1-45"><a id="__codelineno-1-45" name="__codelineno-1-45" href="#__codelineno-1-45"></a>                        import paths; canonical home is pkg/events
+</span><span id="__span-1-46"><a id="__codelineno-1-46" name="__codelineno-1-46" href="#__codelineno-1-46"></a>                        — see &quot;events vs ingest&quot; below if you find
+</span><span id="__span-1-47"><a id="__codelineno-1-47" name="__codelineno-1-47" href="#__codelineno-1-47"></a>                        the alias still in use anywhere)
+</span><span id="__span-1-48"><a id="__codelineno-1-48" name="__codelineno-1-48" href="#__codelineno-1-48"></a>
+</span><span id="__span-1-49"><a id="__codelineno-1-49" name="__codelineno-1-49" href="#__codelineno-1-49"></a>internal/               private; only this binary imports
+</span><span id="__span-1-50"><a id="__codelineno-1-50" name="__codelineno-1-50" href="#__codelineno-1-50"></a>  agents/               Claude Code / Gemini CLI integration metadata
+</span><span id="__span-1-51"><a id="__codelineno-1-51" name="__codelineno-1-51" href="#__codelineno-1-51"></a>                        (slug, hook event names, settings.json paths
+</span><span id="__span-1-52"><a id="__codelineno-1-52" name="__codelineno-1-52" href="#__codelineno-1-52"></a>                        — consumed only by `setup` / `teardown`)
+</span><span id="__span-1-53"><a id="__codelineno-1-53" name="__codelineno-1-53" href="#__codelineno-1-53"></a>  cli/                  cobra subcommands; ~50 files
+</span><span id="__span-1-54"><a id="__codelineno-1-54" name="__codelineno-1-54" href="#__codelineno-1-54"></a>    ingest.go           hook subprocess body (translates via
+</span><span id="__span-1-55"><a id="__codelineno-1-55" name="__codelineno-1-55" href="#__codelineno-1-55"></a>                        pkg/events/sources/{claude,gemini}.HookTranslator)
+</span><span id="__span-1-56"><a id="__codelineno-1-56" name="__codelineno-1-56" href="#__codelineno-1-56"></a>    setup*.go,          systemd + agent-hook wiring
+</span><span id="__span-1-57"><a id="__codelineno-1-57" name="__codelineno-1-57" href="#__codelineno-1-57"></a>    teardown*.go
+</span><span id="__span-1-58"><a id="__codelineno-1-58" name="__codelineno-1-58" href="#__codelineno-1-58"></a>    import_claude.go,   backfill paths — each builds an
+</span><span id="__span-1-59"><a id="__codelineno-1-59" name="__codelineno-1-59" href="#__codelineno-1-59"></a>    import_gemini.go,   events.Pipeline + events.Source +
+</span><span id="__span-1-60"><a id="__codelineno-1-60" name="__codelineno-1-60" href="#__codelineno-1-60"></a>    import_jsonl.go     store.BufferedSink and calls Pipeline.Run
+</span><span id="__span-1-61"><a id="__codelineno-1-61" name="__codelineno-1-61" href="#__codelineno-1-61"></a>    summarize.go,       LLM-using subcommands; consume
+</span><span id="__span-1-62"><a id="__codelineno-1-62" name="__codelineno-1-62" href="#__codelineno-1-62"></a>    reflect.go,         events.EventView etc. via store loaders
+</span><span id="__span-1-63"><a id="__codelineno-1-63" name="__codelineno-1-63" href="#__codelineno-1-63"></a>    propose*.go,
+</span><span id="__span-1-64"><a id="__codelineno-1-64" name="__codelineno-1-64" href="#__codelineno-1-64"></a>    induction.go,
+</span><span id="__span-1-65"><a id="__codelineno-1-65" name="__codelineno-1-65" href="#__codelineno-1-65"></a>    facts.go,
+</span><span id="__span-1-66"><a id="__codelineno-1-66" name="__codelineno-1-66" href="#__codelineno-1-66"></a>    digest.go,
+</span><span id="__span-1-67"><a id="__codelineno-1-67" name="__codelineno-1-67" href="#__codelineno-1-67"></a>    insights.go,
+</span><span id="__span-1-68"><a id="__codelineno-1-68" name="__codelineno-1-68" href="#__codelineno-1-68"></a>    skills_*.go
+</span><span id="__span-1-69"><a id="__codelineno-1-69" name="__codelineno-1-69" href="#__codelineno-1-69"></a>    audit.go, scrub.go  redaction inspection
+</span><span id="__span-1-70"><a id="__codelineno-1-70" name="__codelineno-1-70" href="#__codelineno-1-70"></a>    search.go           FTS5 search
+</span><span id="__span-1-71"><a id="__codelineno-1-71" name="__codelineno-1-71" href="#__codelineno-1-71"></a>    sessions.go         session listing
+</span><span id="__span-1-72"><a id="__codelineno-1-72" name="__codelineno-1-72" href="#__codelineno-1-72"></a>    mcp_serve.go        MCP host (cobra wrapper around internal/mcp)
+</span><span id="__span-1-73"><a id="__codelineno-1-73" name="__codelineno-1-73" href="#__codelineno-1-73"></a>    meta_sweep.go       cadence-gated meta-analyses dispatcher
+</span><span id="__span-1-74"><a id="__codelineno-1-74" name="__codelineno-1-74" href="#__codelineno-1-74"></a>    assets/             embedded systemd unit files
+</span><span id="__span-1-75"><a id="__codelineno-1-75" name="__codelineno-1-75" href="#__codelineno-1-75"></a>
+</span><span id="__span-1-76"><a id="__codelineno-1-76" name="__codelineno-1-76" href="#__codelineno-1-76"></a>  daemon/               HTTP server, UDS listener, watchdog
+</span><span id="__span-1-77"><a id="__codelineno-1-77" name="__codelineno-1-77" href="#__codelineno-1-77"></a>    server.go           Server holds events.Pipeline, handler shrinks
+</span><span id="__span-1-78"><a id="__codelineno-1-78" name="__codelineno-1-78" href="#__codelineno-1-78"></a>                        to read body → Validate → Pipeline.Process
+</span><span id="__span-1-79"><a id="__codelineno-1-79" name="__codelineno-1-79" href="#__codelineno-1-79"></a>    systemd.go          notify-socket integration, socket activation
+</span><span id="__span-1-80"><a id="__codelineno-1-80" name="__codelineno-1-80" href="#__codelineno-1-80"></a>    watchdog.go         WATCHDOG_USEC handling
+</span><span id="__span-1-81"><a id="__codelineno-1-81" name="__codelineno-1-81" href="#__codelineno-1-81"></a>
+</span><span id="__span-1-82"><a id="__codelineno-1-82" name="__codelineno-1-82" href="#__codelineno-1-82"></a>  store/                SQLite layer; ~25 files
+</span><span id="__span-1-83"><a id="__codelineno-1-83" name="__codelineno-1-83" href="#__codelineno-1-83"></a>    store.go            Open, Close
+</span><span id="__span-1-84"><a id="__codelineno-1-84" name="__codelineno-1-84" href="#__codelineno-1-84"></a>    sink.go             events.Sink implementations: Sink (single-tx)
+</span><span id="__span-1-85"><a id="__codelineno-1-85" name="__codelineno-1-85" href="#__codelineno-1-85"></a>                        and BufferedSink (chunked + row-by-row fallback)
+</span><span id="__span-1-86"><a id="__codelineno-1-86" name="__codelineno-1-86" href="#__codelineno-1-86"></a>    ingest.go           IngestEnvelope + IngestEnvelopeWithExtractions
+</span><span id="__span-1-87"><a id="__codelineno-1-87" name="__codelineno-1-87" href="#__codelineno-1-87"></a>    events.go           LoadEvents* (returns []events.EventView),
+</span><span id="__span-1-88"><a id="__codelineno-1-88" name="__codelineno-1-88" href="#__codelineno-1-88"></a>                        session-completion, FTS read paths
+</span><span id="__span-1-89"><a id="__codelineno-1-89" name="__codelineno-1-89" href="#__codelineno-1-89"></a>    episodes.go         SegmentSession (operates on events.EventView),
+</span><span id="__span-1-90"><a id="__codelineno-1-90" name="__codelineno-1-90" href="#__codelineno-1-90"></a>                        SaveEpisodes, FindEpisodes
+</span><span id="__span-1-91"><a id="__codelineno-1-91" name="__codelineno-1-91" href="#__codelineno-1-91"></a>    sessions.go         session aggregates
+</span><span id="__span-1-92"><a id="__codelineno-1-92" name="__codelineno-1-92" href="#__codelineno-1-92"></a>    session_links.go    cross-session links (Zettelkasten-style)
+</span><span id="__span-1-93"><a id="__codelineno-1-93" name="__codelineno-1-93" href="#__codelineno-1-93"></a>    session_outcomes.go session outcome tracking
+</span><span id="__span-1-94"><a id="__codelineno-1-94" name="__codelineno-1-94" href="#__codelineno-1-94"></a>    skill_*.go          skill staleness, candidates, failures, outcomes
+</span><span id="__span-1-95"><a id="__codelineno-1-95" name="__codelineno-1-95" href="#__codelineno-1-95"></a>    facts.go            semantic facts
+</span><span id="__span-1-96"><a id="__codelineno-1-96" name="__codelineno-1-96" href="#__codelineno-1-96"></a>    induction.go        induction outputs
+</span><span id="__span-1-97"><a id="__codelineno-1-97" name="__codelineno-1-97" href="#__codelineno-1-97"></a>    insights.go         aggregations
+</span><span id="__span-1-98"><a id="__codelineno-1-98" name="__codelineno-1-98" href="#__codelineno-1-98"></a>    llm_outputs.go      LLM output cache
+</span><span id="__span-1-99"><a id="__codelineno-1-99" name="__codelineno-1-99" href="#__codelineno-1-99"></a>    search.go           FTS5 query builder
+</span><span id="__span-1-100"><a id="__codelineno-1-100" name="__codelineno-1-100" href="#__codelineno-1-100"></a>    token_usage.go, prune.go, unresolved.go, projects.go
+</span><span id="__span-1-101"><a id="__codelineno-1-101" name="__codelineno-1-101" href="#__codelineno-1-101"></a>    migrations/         embedded *.sql, ordered by NNN_ prefix
+</span><span id="__span-1-102"><a id="__codelineno-1-102" name="__codelineno-1-102" href="#__codelineno-1-102"></a>    migrate.go          migration runner
+</span><span id="__span-1-103"><a id="__codelineno-1-103" name="__codelineno-1-103" href="#__codelineno-1-103"></a>
+</span><span id="__span-1-104"><a id="__codelineno-1-104" name="__codelineno-1-104" href="#__codelineno-1-104"></a>  mcp/                  MCP JSON-RPC server + tools_aichronicles
+</span><span id="__span-1-105"><a id="__codelineno-1-105" name="__codelineno-1-105" href="#__codelineno-1-105"></a>  web/                  HTML browser + SSE live activity
+</span><span id="__span-1-106"><a id="__codelineno-1-106" name="__codelineno-1-106" href="#__codelineno-1-106"></a>  config/               TOML config (Notifications, Capture, LLM,
+</span><span id="__span-1-107"><a id="__codelineno-1-107" name="__codelineno-1-107" href="#__codelineno-1-107"></a>                        Induction, MetaAnalysis, Limits)
+</span><span id="__span-1-108"><a id="__codelineno-1-108" name="__codelineno-1-108" href="#__codelineno-1-108"></a>  paths/                XDG resolution
+</span><span id="__span-1-109"><a id="__codelineno-1-109" name="__codelineno-1-109" href="#__codelineno-1-109"></a>  notify/               freedesktop notifications via dbus
+</span><span id="__span-1-110"><a id="__codelineno-1-110" name="__codelineno-1-110" href="#__codelineno-1-110"></a>  nullable/             sql.NullString → render-string helpers
+</span><span id="__span-1-111"><a id="__codelineno-1-111" name="__codelineno-1-111" href="#__codelineno-1-111"></a>                        (read-side only; write-side wrappers stay
+</span><span id="__span-1-112"><a id="__codelineno-1-112" name="__codelineno-1-112" href="#__codelineno-1-112"></a>                        in store/events.go)
+</span><span id="__span-1-113"><a id="__codelineno-1-113" name="__codelineno-1-113" href="#__codelineno-1-113"></a>  preview/              one-line snippet helper (CLI / web / MCP)
+</span><span id="__span-1-114"><a id="__codelineno-1-114" name="__codelineno-1-114" href="#__codelineno-1-114"></a>  pricing/              token-cost calculation per model
+</span><span id="__span-1-115"><a id="__codelineno-1-115" name="__codelineno-1-115" href="#__codelineno-1-115"></a>  searchquery/          search-query parser
+</span><span id="__span-1-116"><a id="__codelineno-1-116" name="__codelineno-1-116" href="#__codelineno-1-116"></a>  skills/               skill discovery from ~/.claude/skills
+</span><span id="__span-1-117"><a id="__codelineno-1-117" name="__codelineno-1-117" href="#__codelineno-1-117"></a>  timefmt/              time formatting
+</span><span id="__span-1-118"><a id="__codelineno-1-118" name="__codelineno-1-118" href="#__codelineno-1-118"></a>
+</span><span id="__span-1-119"><a id="__codelineno-1-119" name="__codelineno-1-119" href="#__codelineno-1-119"></a>api/
+</span><span id="__span-1-120"><a id="__codelineno-1-120" name="__codelineno-1-120" href="#__codelineno-1-120"></a>  openapi.yaml          authoritative spec for /v1/ingest, /v1/healthz
+</span><span id="__span-1-121"><a id="__codelineno-1-121" name="__codelineno-1-121" href="#__codelineno-1-121"></a>
+</span><span id="__span-1-122"><a id="__codelineno-1-122" name="__codelineno-1-122" href="#__codelineno-1-122"></a>integration/            //go:build integration tests
 </span></code></pre></div>
-<p>A few non-obvious choices:</p>
+<h3 id="non-obvious-choices">Non-obvious choices<a class="headerlink" href="#non-obvious-choices" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong><code>internal/ingest</code> (the envelope) is separate from <code>internal/cli/
-  ingest.go</code> (the hook subprocess body).</strong> The first is the on-the-
-  wire schema shared by every importer and the daemon; the second
-  is the cobra command. They couple at the type level but live in
-  different layers.</li>
-<li><strong><code>internal/llm/prompts</code> lives under <code>llm/</code>.</strong> It's tightly
-  coupled to <code>llm.Tool</code> and <code>llm.Request</code>; promoting it to a
-  sibling would create an import cycle.</li>
-<li><strong><code>api/openapi.yaml</code> is the source of truth, not the Go types.</strong>
-  The daemon enforces field constraints via <code>ingest.Envelope.Validate</code>
-  in Go, but third-party agents reading the contract should target
-  the YAML. The two are kept in lockstep; the test suite has a
-  parser that catches drift.</li>
+<li>
+<p><strong><code>pkg/events</code> is the domain core.</strong> It imports nothing from
+  <code>internal/*</code>, no <code>database/sql</code>, no <code>net/http</code>. It owns the event
+  model end-to-end: shape, validation, pipeline, sources, sinks,
+  extractors, and the read-side primitives (<code>EventView</code>, <code>Episode</code>).
+  The package has no stability promise but is intentionally
+  embeddable.</p>
+</li>
+<li>
+<p><strong>Sources are sub-packaged by agent.</strong> <code>pkg/events/sources/claude</code>
+  and <code>pkg/events/sources/gemini</code> each export a <code>HookTranslator</code>
+  (single-shot, used by <code>aichronicles ingest</code>) and a <code>JSONLSource</code>
+  / <code>TranscriptSource</code> (streaming, used by importers). Adding a
+  third agent = one new sub-package; nothing in <code>pkg/events</code>
+  changes.</p>
+</li>
+<li>
+<p><strong>The Sink interface lives in <code>pkg/events</code>; the SQLite implementation
+  lives in <code>internal/store</code>.</strong> Two implementations: <code>Sink</code> (one tx
+  per Write — for the daemon's HTTP path) and <code>BufferedSink</code> (chunked
+  commits with row-by-row fallback — for batch importers). Both
+  satisfy <code>events.Sink</code>; consumers depend on the interface.</p>
+</li>
+<li>
+<p><strong>Extractors are dispatched by an explicit registry.</strong> Reading
+  <code>events.DefaultExtractors()</code> tells you the full mapping of
+  "Bash → ShellCommandExtractor, Read/Write/Edit/NotebookEdit →
+  FilePathExtractor, WebFetch → WebFetchExtractor,
+  Skill → SkillLoadExtractor". Each extractor body is field-mapping
+  only; tool-name guards live in the registry.</p>
+</li>
+<li>
+<p><strong><code>internal/agents</code> holds integration metadata, not event handling.</strong>
+  The <code>Agent</code> struct describes where on disk to install hooks and
+  which hook events to subscribe to. Only <code>setup</code> / <code>teardown</code>
+  CLIs consume it.</p>
+</li>
+<li>
+<p><strong><code>api/openapi.yaml</code> is the source of truth for the wire</strong>, not the
+  Go types. The daemon enforces field constraints via
+  <code>events.Envelope.Validate</code> in Go, but third-party agents reading
+  the contract should target the YAML. The two are kept in lockstep.</p>
+</li>
 </ul>
+<h3 id="events-vs-ingest">events vs ingest<a class="headerlink" href="#events-vs-ingest" title="Permanent link">&para;</a></h3>
+<p><code>pkg/ingest</code> no longer exists; everything that used to live there
+lives under <code>pkg/events</code> (with the same canonical type names). If
+you find a stale reference in a doc or comment, treat it as drift
+to fix. The migration was done in commits <code>7062490</code> (rename) and
+<code>c1e4717</code> (flatten).</p>
 <h3 id="dependency-direction">Dependency direction<a class="headerlink" href="#dependency-direction" title="Permanent link">&para;</a></h3>
 <p>The arrow is "imports":</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>cli  ──▶  daemon, store, ingest, redact, llm, llm/prompts, mcp, config, paths, notify
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>daemon  ──▶  store, ingest
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>mcp  ──▶  store, redact
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>llm  ──▶  redact (egress scrub)
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>llm/prompts  ──▶  llm, redact, store
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>store  ──▶  ingest, ingest/extract
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>ingest  ──▶  (no internal deps)
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>redact  ──▶  (no internal deps)
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>config  ──▶  paths
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>paths, notify  ──▶  (no internal deps)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>cmd/*                ──▶ internal/cli, internal/daemon
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>internal/cli         ──▶ pkg/events, pkg/events/sources/{claude,gemini},
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>                         internal/store, internal/daemon, internal/agents,
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>                         internal/mcp, pkg/llm, pkg/llm/prompts, pkg/redact,
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>                         internal/{config,paths,notify,nullable,preview,...}
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>internal/daemon      ──▶ pkg/events, internal/store
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>internal/agents      ──▶ (no internal deps)
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>internal/mcp         ──▶ pkg/events, internal/store, pkg/redact
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>internal/web         ──▶ pkg/events, internal/store, pkg/llm/prompts
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>internal/store       ──▶ pkg/events
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>pkg/llm/prompts      ──▶ pkg/events, pkg/llm, pkg/redact, internal/store
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>pkg/llm              ──▶ pkg/redact (egress scrub)
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>pkg/events/sources/* ──▶ pkg/events, internal/agents (slug only)
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>pkg/events           ──▶ pkg/redact (for ScannerRedactor adapter)
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>pkg/redact           ──▶ (no aichronicles deps)
 </span></code></pre></div>
-<p><code>cli</code> is the heaviest importer; everything that ends in user-facing
-output flows through it. <code>redact</code> is at the bottom — provider-
-neutral, dependency-free, used by everyone who handles user content.</p>
-<p>The strict directionality is enforced by Go's package rules; there
-are no cycles, no exceptions.</p>
+<p>Enforced rules:</p>
+<table>
+<thead>
+<tr>
+<th>Rule</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pkg/events</code> does not import <code>database/sql</code></td>
+<td>✅</td>
+</tr>
+<tr>
+<td><code>pkg/events</code> does not import <code>net/http</code></td>
+<td>✅</td>
+</tr>
+<tr>
+<td><code>pkg/events</code> does not import <code>internal/*</code></td>
+<td>✅</td>
+</tr>
+<tr>
+<td><code>internal/store</code> is the only SQL-aware package</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>No import cycles</td>
+<td>✅</td>
+</tr>
+</tbody>
+</table>
+<p>Mixed read-side discipline (currently): some types are
+domain-clean (<code>EventView</code>, <code>Episode</code> in <code>pkg/events</code>); most
+read-side types (<code>SessionDigestRow</code>, <code>LiveEvent</code>, <code>SubagentSpan</code>,
+<code>SkillStaleness</code>, …) still live in <code>internal/store</code> with
+<code>sql.NullString</code> fields. Consumers reach into <code>internal/store</code> for
+those. Not broken, just inconsistent — see the "events vs store
+read-side" comment in <a href="../data-flow/">data-flow.md</a> for which type
+lives where.</p>
+<h2 id="the-events-pipeline">The events Pipeline<a class="headerlink" href="#the-events-pipeline" title="Permanent link">&para;</a></h2>
+<p><code>pkg/events.Pipeline</code> is the orchestrator. Three call sites use
+it:</p>
+<ul>
+<li><strong>Daemon HTTP handler</strong> (<code>internal/daemon/server.go</code>): one
+  request, one event. Calls <code>Pipeline.Process(ctx, Event)</code> per
+  request. Backed by the single-tx <code>store.Sink</code>.</li>
+<li><strong>Importers</strong> (<code>internal/cli/import_{claude,gemini,jsonl}.go</code>):
+  many events, one Pipeline.Run. Backed by <code>store.BufferedSink</code>
+  with chunked commits.</li>
+<li><strong>Hook subprocess</strong> (<code>internal/cli/ingest.go</code>): does NOT use
+  Pipeline.Run — it uses just the Source's <code>HookTranslator</code> to
+  produce one Envelope, then POSTs to the daemon. The Pipeline
+  runs on the daemon side.</li>
+</ul>
+<p>The Pipeline is stateless beyond its config fields:</p>
+<div class="language-go highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nx">Pipeline</span><span class="p">{</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">    </span><span class="nx">Sink</span><span class="p">:</span><span class="w">             </span><span class="nx">store</span><span class="p">.</span><span class="nx">NewSink</span><span class="p">(</span><span class="nx">s</span><span class="p">),</span><span class="w">         </span><span class="c1">// or NewBufferedSink</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nx">Extractors</span><span class="p">:</span><span class="w">       </span><span class="nx">events</span><span class="p">.</span><span class="nx">DefaultExtractors</span><span class="p">(),</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="nx">RequireRedaction</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w">                     </span><span class="c1">// defense-in-depth</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="nx">Logger</span><span class="p">:</span><span class="w">           </span><span class="nx">slog</span><span class="p">.</span><span class="nx">Default</span><span class="p">(),</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="p">}</span>
+</span></code></pre></div>
+<p><code>Pipeline.Process</code> validates redaction, runs the extractor
+registry, calls <code>Sink.Write</code>. <code>Pipeline.Run</code> consumes a Source
+stream, calls Process per event with per-event error isolation,
+calls <code>Sink.Flush</code> at the end, and reads <code>Sink.Stats()</code> for
+final aggregates.</p>
 <h2 id="schema">Schema<a class="headerlink" href="#schema" title="Permanent link">&para;</a></h2>
-<p>Five tables plus one FTS5 virtual table, all in a single SQLite file
-at <code>$XDG_STATE_HOME/aichronicles/store.db</code>.</p>
-<pre class="mermaid"><code>erDiagram
-    raw_envelopes ||--o{ events : "PK = event_id, ON DELETE CASCADE"
-    sessions      ||--o{ events : "session_id, ON DELETE CASCADE"
-    events        ||--o{ extractions : "event_id, ON DELETE CASCADE"
-    sessions      ||--o{ extractions : "session_id, ON DELETE CASCADE"
-    sessions      ||--o{ llm_outputs : "session_id, ON DELETE SET NULL"
-
-    raw_envelopes {
-        TEXT    event_id PK
-        INTEGER ingest_seq UK
-        TEXT    source_agent
-        TEXT    source_session_id
-        INTEGER ts_source_ms
-        INTEGER ts_server_ms
-        TEXT    envelope_json
-    }
-    sessions {
-        TEXT    id PK
-        TEXT    source_agent
-        TEXT    source_session_id
-        TEXT    cwd
-        INTEGER started_at_ms
-        INTEGER ended_at_ms
-        INTEGER event_count
-    }
-    events {
-        TEXT    event_id PK
-        TEXT    session_id FK
-        TEXT    source_agent
-        TEXT    kind
-        TEXT    role
-        INTEGER ts_source_ms
-        TEXT    cwd
-        TEXT    tool_name
-        TEXT    tool_call_id
-        TEXT    content_text
-    }
-    extractions {
-        INTEGER id PK
-        TEXT    event_id FK
-        TEXT    session_id FK
-        TEXT    kind
-        TEXT    value
-        TEXT    extra_json
-    }
-    llm_outputs {
-        INTEGER id PK
-        TEXT    session_id FK
-        TEXT    kind
-        TEXT    model
-        TEXT    prompt_hash
-        INTEGER input_tokens
-        INTEGER output_tokens
-        TEXT    body
-        INTEGER created_at_ms
-    }</code></pre>
-<p>Plus an FTS5 virtual table <code>events_fts</code> indexing
-<code>events.content_text</code>, with <code>AFTER INSERT/UPDATE/DELETE</code> triggers
-keeping it in sync. Source: <code>internal/store/migrations/001_initial.sql:62-78</code>.</p>
-<h3 id="why-these-five-tables">Why these five tables<a class="headerlink" href="#why-these-five-tables" title="Permanent link">&para;</a></h3>
+<p>Six tables (plus FTS5 + episodes), all in a single SQLite file at
+<code>$XDG_STATE_HOME/aichronicles/store.db</code>. The schema diagram and
+per-table rationale lives in
+<a href="../../reference/schema/"><code>docs/reference/schema.md</code></a> (auto-
+regenerated from the embedded migrations); not duplicated here so
+the two can't drift.</p>
+<p>Load-bearing invariants:</p>
 <ul>
 <li><strong><code>raw_envelopes</code> is sacred.</strong> Every accepted envelope is stored
-  byte-for-byte in <code>envelope_json</code> <em>before</em> any projection. If our
-  schema or extraction logic ever changes, we replay from
-  <code>raw_envelopes</code> rather than re-asking Claude Code for the data.
-  This is the source-of-truth invariant; tests in
-  <code>store/ingest_test.go</code> enforce that the stored bytes equal the
-  POST body.</li>
+  byte-for-byte in <code>envelope_json</code> <em>before</em> any projection.
+  Replay-from-source is always possible; tests in
+  <code>store/ingest_test.go</code> enforce stored bytes == POST body.</li>
 <li><strong><code>sessions</code> is a derived rollup.</strong> Created on first event for a
-  session, then maintained by an <code>AFTER INSERT ON events</code> trigger
-  that bumps <code>event_count</code>, <code>started_at_ms</code> (min), <code>ended_at_ms</code>
-  (max), and <code>cwd</code> (last-write-wins). Listed by <code>aichronicles
-  sessions</code>.</li>
+  session, then maintained by <code>AFTER INSERT ON events</code> triggers.</li>
 <li><strong><code>events</code> is the queryable projection.</strong> Typed columns extracted
-  from the envelope JSON: <code>kind</code>, <code>role</code>, <code>tool_name</code>,
-  <code>content_text</code>. FTS5 indexes <code>content_text</code>. This is what
-  <code>aichronicles search</code> queries against.</li>
-<li><strong><code>extractions</code> is the typed-fact layer.</strong> URLs, file paths, and
-  shell commands pulled out of envelope content at ingest time by
-  <code>internal/ingest/extract</code>. Discriminated by <code>kind</code>. The Block-B
-  features feed <code>kind='url'</code> rows back into prompts so the LLM
-  annotates real links rather than hallucinating new ones.</li>
+  from the envelope JSON; FTS5 indexes <code>content_text</code>.</li>
+<li><strong><code>extractions</code> is the typed-fact layer.</strong> URLs, file paths,
+  shell commands, skill loads. Computed by the <code>events.ExtractorRegistry</code>
+  inside the SQLite Sink; written in the same transaction as the
+  event. Discriminated by <code>kind</code> (<code>url</code>, <code>file_path</code>,
+  <code>shell_command</code>, <code>skill_load</code>).</li>
+<li><strong><code>episodes</code> is the segmenter's output.</strong> Bounded session slices
+  produced by <code>store.SegmentSession</code>, persisted via
+  <code>SaveEpisodes</code>. Re-segmentable: DELETE-then-INSERT on each
+  save, idempotent on the same input.</li>
 <li><strong><code>llm_outputs</code> is the LLM-output cache.</strong> Indexed by
-  <code>(kind, prompt_hash)</code> — same prompt = cache hit, no API call,
-  no token charge. <code>session_id</code> is <code>ON DELETE SET NULL</code> so
-  deleting a session preserves the summary as a historical record
-  (just detached).</li>
+  <code>(kind, prompt_hash)</code> — same prompt = cache hit, no API call.</li>
 </ul>
-<h3 id="cascade-rules-in-plain-language">Cascade rules, in plain language<a class="headerlink" href="#cascade-rules-in-plain-language" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Delete a <code>raw_envelope</code> → its <code>event</code> cascades, which cascades to
-  its <code>extractions</code>. Clean.</li>
-<li>Delete a <code>session</code> → all its events, extractions, AND raw
-  envelopes (via the events FK back to raw) cascade. The session's
-  LLM outputs get <code>session_id</code> nulled but otherwise survive.</li>
-<li>Delete an LLM output → standalone; nothing else cares.</li>
-</ul>
-<p>The "delete a session removes everything" path matters because
-<code>aichronicles teardown</code> and <code>aichronicles scrub</code> both rely on it.</p>
 <h2 id="migrations">Migrations<a class="headerlink" href="#migrations" title="Permanent link">&para;</a></h2>
-<p>Schema migrations are embedded SQL files under
-<code>internal/store/migrations/NNN_description.sql</code>. Versioned via the
-<code>meta</code> table's <code>schema_version</code> row. Each migration runs in a single
-transaction; partial application is impossible. Migration runner
-lives in <code>internal/store/migrate.go</code>.</p>
-<p>Three migrations live in the tree today:
-- <code>001_initial.sql</code> — the five tables + FTS5.
-- <code>002_llm_outputs.sql</code> — adds the <code>llm_outputs</code> table.
-- <code>003_sessions_effective_ts_index.sql</code> — expression index on
-  <code>COALESCE(ended_at_ms, started_at_ms, 0) DESC</code> for the
-  time-window queries in <code>sessions</code> and <code>summaries list</code>.</p>
-<p>Adding a new migration: drop a <code>004_*.sql</code> file, bump the meta
-update at the bottom (<code>UPDATE meta SET value='4' WHERE
+<p>Embedded SQL files under <code>internal/store/migrations/NNN_description.sql</code>,
+versioned via the <code>meta</code> table's <code>schema_version</code> row. Each
+migration runs in a single transaction; partial application is
+impossible. Runner: <code>internal/store/migrate.go</code>.</p>
+<p>Adding a new migration: drop a <code>NNN_*.sql</code> file, bump the meta
+update at the bottom (<code>UPDATE meta SET value='N' WHERE
 key='schema_version'</code>), update the <code>TestOpen_FreshCreatesSchema</code>
-expectation. The runner handles the rest.</p>
+expectation. Then <code>make docs</code> regenerates
+<code>docs/reference/schema.md</code>.</p>
 <h2 id="llm-provider-abstraction">LLM provider abstraction<a class="headerlink" href="#llm-provider-abstraction" title="Permanent link">&para;</a></h2>
-<p>Two adapters — <code>internal/llm/anthropic.go</code> and <code>internal/llm/openai.go</code>
-— behind one provider-neutral interface (<code>Client.Complete(ctx, Request)
-*Response</code>). Both wrap official vendor SDKs:</p>
+<p>Two adapters — <code>pkg/llm/anthropic.go</code> and <code>pkg/llm/openai.go</code> —
+behind one provider-neutral interface
+(<code>Client.Complete(ctx, Request) *Response</code>). Both wrap official
+vendor SDKs:</p>
 <table>
 <thead>
 <tr>
@@ -1192,88 +1390,75 @@ expectation. The runner handles the rest.</p>
 </table>
 <p>The adapters translate <code>llm.Request</code> ↔ SDK params on the way in,
 and SDK response ↔ <code>llm.Response</code> on the way out. Tool input
-schemas (raw <code>json.RawMessage</code> on our side) are mapped into typed
-SDK structs. Tool-call output (typed object on Anthropic, JSON
-string on OpenAI) is normalized to <code>json.RawMessage</code> so callers
-unmarshal into the same <code>*Result</code> types either way.</p>
-<p>The <code>prompt_hash</code> used for the <code>llm_outputs</code> cache is computed on
-the provider-neutral <code>Request</code>, so switching providers does not
-invalidate the cache for prompts that haven't actually changed.</p>
-<p>For the why-and-how of switching providers, see
+schemas (raw <code>json.RawMessage</code> on our side) are mapped into
+typed SDK structs. Tool-call output (typed object on Anthropic,
+JSON string on OpenAI) is normalised to <code>json.RawMessage</code> so
+callers unmarshal into the same <code>*Result</code> types either way.</p>
+<p>The <code>prompt_hash</code> used for the <code>llm_outputs</code> cache is computed
+on the provider-neutral <code>Request</code>, so switching providers does
+not invalidate the cache for prompts that haven't actually
+changed.</p>
+<p>For switching providers in practice, see
 <a href="../how-to/switch-providers.md">../how-to/switch-providers.md</a>.</p>
 <h2 id="mcp-server">MCP server<a class="headerlink" href="#mcp-server" title="Permanent link">&para;</a></h2>
-<p><code>aichronicles mcp-serve</code> is a stdio-attached JSON-RPC 2.0 server
-implementing a minimal subset of the <a href="https://modelcontextprotocol.io">Model Context
-Protocol</a>. It registers three
-read-only tools:</p>
-<table>
-<thead>
-<tr>
-<th>Tool</th>
-<th>What it does</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>search_events</code></td>
-<td>FTS5 query against <code>events.content_text</code>, deduped by (session, role, kind, content)</td>
-</tr>
-<tr>
-<td><code>list_sessions</code></td>
-<td>Recent sessions filtered by cwd / time window</td>
-</tr>
-<tr>
-<td><code>get_summary</code></td>
-<td>Latest <code>llm_outputs</code> body for a (session, kind) pair</td>
-</tr>
-</tbody>
-</table>
-<p>All three accept session-id prefixes (resolved via
-<code>store.ResolveSessionIDPrefix</code>). Output is rendered verbatim from
-the store: ingest is the single point of redaction truth, and
-re-scanning every byte on every read was removed in favour of
-the explicit <code>aichronicles scrub</code> operational primitive when the
-detector set changes. See the "Ingest is the single point of
-redaction truth" section in
-<a href="../threat-model/"><code>threat-model.md</code></a> for the full rationale.</p>
+<p><code>aichronicles mcp serve</code> is a stdio-attached JSON-RPC 2.0
+server implementing a minimal subset of the
+<a href="https://modelcontextprotocol.io">Model Context Protocol</a>. It
+registers a set of read-only tools (<code>search_events</code>,
+<code>list_sessions</code>, <code>find_episodes</code>, <code>get_summary</code>,
+<code>list_subagents</code>, <code>get_unresolved_for_cwd</code>, <code>get_facts_for_subject</code>,
+<code>search_with_summary</code>, <code>get_skill_staleness</code>, <code>get_project_context</code>,
+<code>get_insights</code>, <code>list_skills</code>, <code>list_subagents</code>, <code>list_workflows</code>,
+<code>find_fact_subjects</code>).</p>
+<p>All tools read through <code>*store.Store</code> — no privileged writes. An
+MCP client that compromises its sandbox still only reads stored
+events, already scrubbed at ingest. Tool registration: <code>internal/mcp/tools_aichronicles.go</code>.</p>
 <p>We deliberately do not depend on an external MCP SDK. The
-protocol surface we use is small and stable, and keeping it
-self-contained matches the rest of the tree's tight dependency
-posture. Source: <code>internal/mcp/mcp.go:1-13</code> for the rationale.</p>
+protocol surface we use is small and stable, and self-contained
+matches the rest of the tree's tight dependency posture.</p>
 <h2 id="trust-boundaries-in-code-terms">Trust boundaries (in code terms)<a class="headerlink" href="#trust-boundaries-in-code-terms" title="Permanent link">&para;</a></h2>
-<p>The threat model page describes trust boundaries narratively. Here's
-where they're enforced in code:</p>
+<p>The threat model page describes trust boundaries narratively.
+Where they're enforced in code:</p>
 <ul>
-<li><strong>Edge redaction (hook write path):</strong> <code>internal/cli/ingest.go:94</code>,
-  <code>ingest.ApplyRedaction(&amp;env, redact.Default())</code>.</li>
-<li><strong>Daemon refusal (hook write path):</strong> <code>internal/daemon/server.go:123</code>,
-  rejects envelopes where <code>Redaction.Applied != true</code> with HTTP 400.</li>
-<li><strong>Store enforcement, envelopes (hook write path):</strong>
-  <code>internal/store/ingest.go:36-38</code>, returns <code>ErrRedactionRequired</code>
-  even for callers that bypass the daemon.</li>
-<li><strong>Store enforcement, LLM outputs (LLM-response write path):</strong>
-  <code>internal/store/llm_outputs.go:SaveLLMOutput</code>, scrubs the body
-  through <code>redact.Outbound</code> before insertion. The edge redactor
-  never sees an LLM response — it doesn't go through /v1/ingest
-  — so the store is the enforcement point.</li>
-<li><strong>LLM-egress redaction (outbound network):</strong> prompt builders in
-  <code>pkg/llm/prompts/prompts.go</code> route every user-content string
-  through <code>redact.Outbound</code> before composing the user message.
-  Different threat model from the local read paths (MCP, CLI,
-  web): this layer protects content crossing to a third-party LLM
-  provider over HTTPS.</li>
-<li><strong>API error scrub:</strong> <code>pkg/llm/anthropic.go:scrubAnthropicError</code>
-  and <code>pkg/llm/openai.go:scrubOpenAIError</code>.</li>
-<li><strong>Config-file mode check:</strong> <code>internal/config/config.go:LoadFrom</code>,
+<li><strong>Edge redaction (hook write path):</strong>
+  <code>pkg/events/sources/claude/hook.go::HookTranslator.Translate</code>
+  and the equivalent in <code>gemini/hook.go</code>. Both apply their
+  configured <code>events.Redactor</code> to the freshly-translated
+  envelope, setting <code>Redaction.Applied=true</code> before returning.</li>
+<li><strong>Pipeline gate (any write path):</strong>
+  <code>pkg/events/pipeline.go::Pipeline.Process</code> rejects envelopes
+  with <code>RequireRedaction=true</code> and missing/false <code>Redaction.Applied</code>.
+  The daemon and importers both use <code>RequireRedaction=true</code>.</li>
+<li><strong>Daemon refusal (defense in depth):</strong>
+  <code>internal/daemon/server.go::handleIngest</code> translates
+  <code>events.ErrRedactionRequired</code> into HTTP 400.</li>
+<li><strong>Store enforcement (last line of defense):</strong>
+  <code>internal/store/ingest.go::IngestEnvelopeWithExtractions</code>
+  returns <code>ErrRedactionRequired</code> even for callers that bypass
+  the Pipeline.</li>
+<li><strong>LLM-output write:</strong>
+  <code>internal/store/llm_outputs.go::SaveLLMOutput</code> scrubs the
+  body through <code>redact.Outbound</code> before insertion. The edge
+  redactor never sees an LLM response, so the store is the
+  enforcement point for LLM-egress data.</li>
+<li><strong>LLM-egress redaction (outbound network):</strong> prompt builders
+  in <code>pkg/llm/prompts/prompts.go</code> route every user-content
+  string through <code>redact.Outbound</code> before composing the user
+  message.</li>
+<li><strong>API error scrub:</strong> <code>pkg/llm/anthropic.go::scrubAnthropicError</code>
+  and <code>pkg/llm/openai.go::scrubOpenAIError</code>.</li>
+<li><strong>Config-file mode check:</strong> <code>internal/config/config.go::LoadFrom</code>
   refuses 0644-or-permissive files when any provider has
   <code>api_key_command</code> set.</li>
 </ul>
+<p>Note: line numbers were intentionally removed from this list —
+they drift constantly. Use <code>grep</code> against the function names
+above; they're stable.</p>
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="../data-flow/">Data flow</a> — sequence diagrams for ingest and summarize.</li>
-<li><a href="../threat-model/">Threat model</a> — what this all defends and what it doesn't.</li>
-<li><a href="redaction-design.md">Redaction design</a> — TODO; the why behind credentials-only,
-  the layering rationale, the regex choices.</li>
+<li><a href="../data-flow/">Data flow</a> — sequence diagrams for ingest, summarize, induction, meta sweep.</li>
+<li><a href="../threat-model/">Threat model</a> — what this defends and what it doesn't.</li>
+<li><a href="../../reference/schema/">Schema reference</a> — auto-generated table definitions.</li>
 </ul>
 
 
