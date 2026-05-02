@@ -15,7 +15,6 @@ import (
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/timefmt"
-	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
@@ -66,32 +65,7 @@ func RegisterAichroniclesTools(s *Server, st *store.Store) {
 		Handler: listSessionsHandler(st),
 	})
 
-	s.RegisterTool(Tool{
-		Name: "find_episodes",
-		Description: "Find episodic memories — bounded, contextually-coherent slices of past " +
-			"sessions where the user (or agent) pursued one intent. Each episode is keyed by its " +
-			"intent_summary, the first user prompt that opened it. " +
-			"Use when the user asks 'when did I last try to X', 'show me the time we worked on Y', " +
-			"or wants to recall a SPECIFIC PAST ATTEMPT rather than a session as a whole. " +
-			"Distinct from list_sessions (whole sessions) and search_events (raw event hits): " +
-			"episodes are the substrate for instance-specific recall — Pink et al. (2026) frame " +
-			"this as the episodic layer agents need to retrieve concrete prior trajectories. " +
-			"Pass `query` to filter by case-insensitive substring on the intent summary; pass " +
-			"`cwd` to scope to one project; pair with get_summary on the returned session_id " +
-			"for the full session context. Empty result is normal — sessions only generate " +
-			"episodes after the daemon's induction sweep has run on them.",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"query":      {"type": "string",  "description": "Case-insensitive substring to match against the episode's intent summary (the first user prompt that opened it)."},
-				"cwd":        {"type": "string",  "description": "Exact-match working directory; narrows to episodes whose first event was in this cwd."},
-				"session_id": {"type": "string",  "description": "Narrow to episodes within one session (full UUID; use list_sessions to discover ids)."},
-				"since_days": {"type": "integer", "minimum": 1, "maximum": 365, "description": "Only return episodes that ended within this many days."},
-				"limit":      {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}
-			}
-		}`),
-		Handler: findEpisodesHandler(st),
-	})
+	// find_episodes is registered by RegisterAichroniclesAPITools.
 
 	s.RegisterTool(Tool{
 		Name: "get_summary",
@@ -113,29 +87,12 @@ func RegisterAichroniclesTools(s *Server, st *store.Store) {
 		Handler: getSummaryHandler(st),
 	})
 
-	s.RegisterTool(Tool{
-		Name: "list_subagents",
-		Description: "List sub-agent threads from past Claude Code sessions — useful when an Agent or Task " +
-			"tool delegated work to a side conversation and the user wants to see what each subagent did. " +
-			"Each row is one sub-agent span (started, ended, event count, parent session). " +
-			"Use the returned subagent_id as a filter on search_events to read everything that ran inside " +
-			"one thread. Only meaningful for sessions that used delegation; most sessions will return zero rows.",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"session_id": {"type": "string", "description": "narrow to one session (full UUID or unique prefix)"},
-				"limit":      {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}
-			}
-		}`),
-		Handler: listSubagentsHandler(st),
-	})
-
-	// get_unresolved_for_cwd is registered by
-	// RegisterAichroniclesAPITools (tools_apiclient.go) — that
-	// handler reads through internal/apiclient instead of opening
-	// the store directly. Production wiring calls both
-	// registrars; tests that need this tool spin up the api side
-	// alongside the store via mcptest.NewMCPTestEnv.
+	// list_subagents and get_unresolved_for_cwd are registered by
+	// RegisterAichroniclesAPITools (tools_apiclient.go) — those
+	// handlers read through internal/apiclient instead of opening
+	// the store directly. Production wiring calls both registrars;
+	// tests that need either tool spin up the api side via
+	// registerAllTools.
 
 	s.RegisterTool(Tool{
 		Name: "list_workflows",
@@ -348,121 +305,7 @@ func listSessionsHandler(st *store.Store) ToolHandler {
 	}
 }
 
-// --- find_episodes ---
-
-func findEpisodesHandler(st *store.Store) ToolHandler {
-	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
-		var req struct {
-			Query     string `json:"query"`
-			Cwd       string `json:"cwd"`
-			SessionID string `json:"session_id"`
-			SinceDays int    `json:"since_days"`
-			Limit     int    `json:"limit"`
-		}
-		if len(args) > 0 {
-			if err := json.Unmarshal(args, &req); err != nil {
-				return nil, &Error{Code: InvalidParams, Message: "find_episodes: bad args: " + err.Error()}
-			}
-		}
-		if req.Limit <= 0 || req.Limit > 100 {
-			req.Limit = store.DefaultFindEpisodesLimit
-		}
-		var sinceMs int64
-		if req.SinceDays > 0 {
-			sinceMs = time.Now().Add(-time.Duration(req.SinceDays) * 24 * time.Hour).UnixMilli()
-		}
-
-		// Resolve a session-id prefix to its full UUID so callers
-		// can pass the 8-char preview the tool itself emits below.
-		// Mirrors list_subagents — without this, a model that copies
-		// the short id back in as session_id silently gets (no
-		// episodes).
-		sessionID := req.SessionID
-		if sessionID != "" {
-			full, rerr := store.ResolveSessionIDPrefix(ctx, st.DB(), sessionID)
-			if rerr != nil {
-				return TextError("find_episodes: %v", rerr), nil
-			}
-			sessionID = full
-		}
-
-		hits, err := store.FindEpisodes(ctx, st.DB(), store.FindEpisodesOpts{
-			SessionID:     sessionID,
-			Cwd:           req.Cwd,
-			QueryContains: req.Query,
-			SinceMs:       sinceMs,
-			Limit:         req.Limit,
-		})
-		if err != nil {
-			return nil, &Error{Code: InternalError, Message: "find_episodes: query: " + err.Error()}
-		}
-		if len(hits) == 0 {
-			return TextResult("(no episodes)"), nil
-		}
-		var b strings.Builder
-		for _, ep := range hits {
-			fmt.Fprintf(&b, "%s\t%d\t%s\t%s\t%s\t%s\n",
-				first8(ep.SessionID),
-				ep.Ordinal,
-				formatTS(ep.StartedAtMs),
-				formatTS(ep.EndedAtMs),
-				nullOrDashEvents(ep.Cwd),
-				oneLineSnippet(sql.NullString{String: ep.IntentSummary, Valid: ep.IntentSummary != ""}),
-			)
-		}
-		return TextResult(b.String()), nil
-	}
-}
-
-// --- list_subagents ---
-
-func listSubagentsHandler(st *store.Store) ToolHandler {
-	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
-		var req struct {
-			SessionID string `json:"session_id"`
-			Limit     int    `json:"limit"`
-		}
-		if len(args) > 0 {
-			if err := json.Unmarshal(args, &req); err != nil {
-				return nil, &Error{Code: InvalidParams, Message: "list_subagents: bad args: " + err.Error()}
-			}
-		}
-		if req.Limit <= 0 || req.Limit > 100 {
-			req.Limit = 50
-		}
-
-		// Resolve a session-id prefix to its full UUID so callers
-		// can pass the 8-char preview list_sessions emits.
-		sessionID := req.SessionID
-		if sessionID != "" {
-			full, err := store.ResolveSessionIDPrefix(ctx, st.DB(), sessionID)
-			if err != nil {
-				return TextError("list_subagents: %v", err), nil
-			}
-			sessionID = full
-		}
-
-		spans, err := store.LoadSubagentSpans(ctx, st.DB(), sessionID, req.Limit)
-		if err != nil {
-			return nil, &Error{Code: InternalError, Message: "list_subagents: query: " + err.Error()}
-		}
-		if len(spans) == 0 {
-			return TextResult("(no subagent threads)"), nil
-		}
-		var b strings.Builder
-		for _, s := range spans {
-			fmt.Fprintf(&b, "%s\t%s\t%s\t%s\t%s\t%d\n",
-				first8(s.SessionID),
-				s.SubagentID,
-				nullOrDash(s.SubagentType),
-				formatTS(s.StartedAtMs),
-				formatTS(s.EndedAtMs),
-				s.EventCount,
-			)
-		}
-		return TextResult(b.String()), nil
-	}
-}
+// find_episodes and list_subagents migrated to tools_apiclient.go.
 
 // --- get_summary ---
 
@@ -856,15 +699,6 @@ func formatTSNullable(n sql.NullInt64) string {
 }
 
 func nullOrDash(s sql.NullString) string { return nullable.OrDash(s) }
-
-// nullOrDashEvents is the events.NullString variant of nullOrDash.
-// Same render: empty/null → "-", populated → string.
-func nullOrDashEvents(s events.NullString) string {
-	if !s.Valid || s.String == "" {
-		return "-"
-	}
-	return s.String
-}
 
 // oneLineSnippet flattens whitespace and caps a content preview so
 // each tool row stays on a single terminal line. Wraps

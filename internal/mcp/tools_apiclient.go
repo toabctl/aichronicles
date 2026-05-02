@@ -30,6 +30,8 @@ func RegisterAichroniclesAPITools(s *Server, c *apiclient.Client) {
 	registerFindFactSubjects(s, c)
 	registerGetSkillStaleness(s, c)
 	registerGetInsights(s, c)
+	registerFindEpisodes(s, c)
+	registerListSubagents(s, c)
 }
 
 func registerGetUnresolvedForCwd(s *Server, c *apiclient.Client) {
@@ -413,4 +415,181 @@ func formatInsightsAPI(r *api.Insights, days int) string {
 		}
 	}
 	return b.String()
+}
+
+// --- find_episodes ---
+
+func registerFindEpisodes(s *Server, c *apiclient.Client) {
+	s.RegisterTool(Tool{
+		Name: "find_episodes",
+		Description: "Find episodic memories — bounded, contextually-coherent slices of past " +
+			"sessions where the user (or agent) pursued one intent. Each episode is keyed by its " +
+			"intent_summary, the first user prompt that opened it. " +
+			"Use when the user asks 'when did I last try to X', 'show me the time we worked on Y', " +
+			"or wants concrete prior trajectories rather than aggregate stats.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"query":      {"type": "string",  "description": "case-insensitive substring of the intent_summary"},
+				"cwd":        {"type": "string",  "description": "exact cwd match"},
+				"session_id": {"type": "string",  "description": "narrow to one session; accepts an 8+ char prefix"},
+				"since_days": {"type": "integer", "minimum": 1, "maximum": 365},
+				"limit":      {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}
+			}
+		}`),
+		Handler: findEpisodesAPIHandler(c),
+	})
+}
+
+func findEpisodesAPIHandler(c *apiclient.Client) ToolHandler {
+	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
+		var req struct {
+			Query     string `json:"query"`
+			Cwd       string `json:"cwd"`
+			SessionID string `json:"session_id"`
+			SinceDays int    `json:"since_days"`
+			Limit     int    `json:"limit"`
+		}
+		if len(args) > 0 {
+			if err := json.Unmarshal(args, &req); err != nil {
+				return nil, &Error{Code: InvalidParams, Message: "find_episodes: bad args: " + err.Error()}
+			}
+		}
+		if req.Limit <= 0 || req.Limit > 100 {
+			req.Limit = 50
+		}
+		var sinceMs int64
+		if req.SinceDays > 0 {
+			sinceMs = time.Now().Add(-time.Duration(req.SinceDays) * 24 * time.Hour).UnixMilli()
+		}
+
+		// Accept short prefixes for session_id like list_sessions
+		// emits. Resolve to canonical id via the api so the
+		// underlying Episodes filter matches.
+		sessionID := req.SessionID
+		if sessionID != "" {
+			full, err := c.ResolveSession(ctx, sessionID)
+			if err != nil {
+				if errors.Is(err, apiclient.ErrSocketUnavailable) {
+					return TextError("aichronicles-api unreachable; is the daemon running?"), nil
+				}
+				return TextError("find_episodes: %v", err), nil
+			}
+			sessionID = full
+		}
+
+		resp, err := c.Episodes(ctx, api.EpisodeListRequest{
+			SessionID:     sessionID,
+			Cwd:           req.Cwd,
+			QueryContains: req.Query,
+			SinceMs:       sinceMs,
+			Limit:         req.Limit,
+		})
+		if err != nil {
+			if errors.Is(err, apiclient.ErrSocketUnavailable) {
+				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
+			}
+			return nil, &Error{Code: InternalError, Message: "find_episodes: query: " + err.Error()}
+		}
+		if len(resp.Episodes) == 0 {
+			return TextResult("(no episodes)"), nil
+		}
+		var b strings.Builder
+		for _, ep := range resp.Episodes {
+			cwd := "-"
+			if ep.Cwd != nil && *ep.Cwd != "" {
+				cwd = *ep.Cwd
+			}
+			intent := ep.IntentSummary
+			if intent == "" {
+				intent = "-"
+			}
+			short := ep.SessionID
+			if len(short) > 8 {
+				short = short[:8]
+			}
+			fmt.Fprintf(&b, "%s\t%d\t%s\t%s\t%s\t%s\n",
+				short, ep.Ordinal,
+				formatTS(ep.StartedAtMs),
+				formatTS(ep.EndedAtMs),
+				cwd, intent)
+		}
+		return TextResult(b.String()), nil
+	}
+}
+
+// --- list_subagents ---
+
+func registerListSubagents(s *Server, c *apiclient.Client) {
+	s.RegisterTool(Tool{
+		Name: "list_subagents",
+		Description: "List sub-agent threads. Optional session_id (accepts 8+ char prefix) narrows " +
+			"to one session; absent, returns recent spans across the whole store. " +
+			"Use to discover subagent_id values for search_events filtering.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"session_id": {"type": "string"},
+				"limit":      {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}
+			}
+		}`),
+		Handler: listSubagentsAPIHandler(c),
+	})
+}
+
+func listSubagentsAPIHandler(c *apiclient.Client) ToolHandler {
+	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
+		var req struct {
+			SessionID string `json:"session_id"`
+			Limit     int    `json:"limit"`
+		}
+		if len(args) > 0 {
+			if err := json.Unmarshal(args, &req); err != nil {
+				return nil, &Error{Code: InvalidParams, Message: "list_subagents: bad args: " + err.Error()}
+			}
+		}
+		if req.Limit <= 0 || req.Limit > 100 {
+			req.Limit = 50
+		}
+
+		sessionID := req.SessionID
+		if sessionID != "" {
+			full, err := c.ResolveSession(ctx, sessionID)
+			if err != nil {
+				if errors.Is(err, apiclient.ErrSocketUnavailable) {
+					return TextError("aichronicles-api unreachable; is the daemon running?"), nil
+				}
+				return TextError("list_subagents: %v", err), nil
+			}
+			sessionID = full
+		}
+
+		resp, err := c.SubagentSpans(ctx, sessionID, req.Limit)
+		if err != nil {
+			if errors.Is(err, apiclient.ErrSocketUnavailable) {
+				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
+			}
+			return nil, &Error{Code: InternalError, Message: "list_subagents: query: " + err.Error()}
+		}
+		if len(resp.Spans) == 0 {
+			return TextResult("(no subagent threads)"), nil
+		}
+		var b strings.Builder
+		for _, sp := range resp.Spans {
+			short := sp.SessionID
+			if len(short) > 8 {
+				short = short[:8]
+			}
+			subType := "-"
+			if sp.SubagentType != nil && *sp.SubagentType != "" {
+				subType = *sp.SubagentType
+			}
+			fmt.Fprintf(&b, "%s\t%s\t%s\t%s\t%s\t%d\n",
+				short, sp.SubagentID, subType,
+				formatTS(sp.StartedAtMs),
+				formatTS(sp.EndedAtMs),
+				sp.EventCount)
+		}
+		return TextResult(b.String()), nil
+	}
 }
