@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/api"
 	"github.com/toabctl/aichronicles/internal/cli"
-	"github.com/toabctl/aichronicles/internal/daemon"
 	"github.com/toabctl/aichronicles/internal/mcp"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/events"
@@ -49,8 +49,8 @@ func TestE2E_IngestSummarizeFetchViaMCP(t *testing.T) {
 	defer func() { _ = s.Close() }()
 
 	// --- Block A: ingest via the daemon path, secret in prompt ---
-	srv := daemon.NewServer(s, nil)
-	shutdown, err := daemon.ListenAndServe(sock, srv.Handler())
+	srv := api.NewServer(s, nil)
+	shutdown, err := api.ListenAndServe(sock, srv.Handler())
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}

@@ -90,7 +90,7 @@ func TestRemoveSystemdUnits_PartialStateCleansUp(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	sockPath := filepath.Join(dir, "aichronicles.socket")
+	sockPath := filepath.Join(dir, "aichronicles-api.socket")
 	if err := os.WriteFile(sockPath, systemdSocketUnit, 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -105,10 +105,10 @@ func TestRemoveSystemdUnits_PartialStateCleansUp(t *testing.T) {
 	}
 	// disable call should reference only the socket
 	disable := strings.Join(r.calls[0], " ")
-	if !strings.Contains(disable, "aichronicles.socket") {
+	if !strings.Contains(disable, "aichronicles-api.socket") {
 		t.Errorf("disable missing socket: %q", disable)
 	}
-	if strings.Contains(disable, "aichronicles.service") {
+	if strings.Contains(disable, "aichronicles-api.service") {
 		t.Errorf("disable shouldn't reference absent service unit: %q", disable)
 	}
 }

@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/api"
 	"github.com/toabctl/aichronicles/internal/cli"
-	"github.com/toabctl/aichronicles/internal/daemon"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/events"
 )
@@ -40,8 +40,8 @@ func TestCLI_IngestRoundTrip(t *testing.T) {
 	}
 	defer func() { _ = s.Close() }()
 
-	srv := daemon.NewServer(s, nil)
-	shutdown, err := daemon.ListenAndServe(sock, srv.Handler())
+	srv := api.NewServer(s, nil)
+	shutdown, err := api.ListenAndServe(sock, srv.Handler())
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -102,8 +102,8 @@ func TestCLI_IngestRedactsSecretsEndToEnd(t *testing.T) {
 	}
 	defer func() { _ = s.Close() }()
 
-	srv := daemon.NewServer(s, nil)
-	shutdown, err := daemon.ListenAndServe(sock, srv.Handler())
+	srv := api.NewServer(s, nil)
+	shutdown, err := api.ListenAndServe(sock, srv.Handler())
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -168,8 +168,8 @@ func TestCLI_IngestRespectsDenyPaths(t *testing.T) {
 	}
 	defer func() { _ = s.Close() }()
 
-	srv := daemon.NewServer(s, nil)
-	shutdown, err := daemon.ListenAndServe(sock, srv.Handler())
+	srv := api.NewServer(s, nil)
+	shutdown, err := api.ListenAndServe(sock, srv.Handler())
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -305,8 +305,8 @@ func TestCLI_IngestRecoveryClearsOutageFlag(t *testing.T) {
 		t.Fatalf("store.Open: %v", err)
 	}
 	defer func() { _ = s.Close() }()
-	srv := daemon.NewServer(s, nil)
-	shutdown, err := daemon.ListenAndServe(sock, srv.Handler())
+	srv := api.NewServer(s, nil)
+	shutdown, err := api.ListenAndServe(sock, srv.Handler())
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}

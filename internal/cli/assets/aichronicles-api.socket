@@ -1,10 +1,10 @@
 [Unit]
-Description=aichronicles ingest socket
+Description=aichronicles-api unified daemon socket
 
 [Socket]
 # %t = $XDG_RUNTIME_DIR (typically /run/user/<uid>), tmpfs, per-user.
-# Matches what paths.Socket() resolves to when XDG_RUNTIME_DIR is set.
-ListenStream=%t/aichronicles/sock
+# Matches what paths.APISocket() resolves to when XDG_RUNTIME_DIR is set.
+ListenStream=%t/aichronicles/api.sock
 SocketMode=0600
 DirectoryMode=0700
 RemoveOnStop=true

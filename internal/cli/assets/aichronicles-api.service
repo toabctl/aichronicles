@@ -1,7 +1,7 @@
 [Unit]
-Description=aichronicles ingest daemon
-Requires=aichronicles.socket
-After=aichronicles.socket
+Description=aichronicles unified daemon (read+write+SSE+web)
+Requires=aichronicles-api.socket
+After=aichronicles-api.socket
 StartLimitIntervalSec=300
 StartLimitBurst=5
 
@@ -9,7 +9,7 @@ StartLimitBurst=5
 # systemd's spawned-service environment does not reliably inherit the
 # user manager's PATH, so we reference the binary by absolute path via
 # the %h (home) specifier. The XDG convention ~/.local/bin is assumed.
-ExecStart=%h/.local/bin/aichroniclesd
+ExecStart=%h/.local/bin/aichronicles-api
 
 # Type=notify: the daemon sends READY=1 once it has bound its
 # listener and STOPPING=1 on clean shutdown, so systemd can sequence

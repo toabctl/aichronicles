@@ -15,10 +15,12 @@ func newTeardownSystemdCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "systemd",
 		Short: "Remove aichronicles systemd --user units",
-		Long: "Disables + stops both unit pairs (aichronicles.socket /\n" +
+		Long: "Disables + stops both unit pairs (aichronicles-api.socket /\n" +
 			".service for the daemon; aichronicles-web.socket / .service\n" +
 			"for the web UI), deletes the unit files from\n" +
 			"~/.config/systemd/user/, and reloads the user manager.\n" +
+			"Also removes the legacy aichronicles.{socket,service} units\n" +
+			"installed by older versions before the api rearchitecture.\n" +
 			"Idempotent: running when nothing is installed is a no-op.\n\n" +
 			"Runs in dry-run mode by default: it reports what would be\n" +
 			"disabled and deleted without invoking systemctl or removing\n" +
@@ -75,7 +77,11 @@ func RemoveSystemdUnits(unitDir string, runner SystemctlRunner, dryRun bool) (st
 	}
 
 	var removed []string
-	for _, name := range unitFilenames {
+	// Remove both current and legacy units in one pass so an
+	// upgrade from an older install (aichronicles.{socket,service})
+	// to the new aichronicles-api.{socket,service} cleans up the
+	// orphan units that point at the deleted aichroniclesd binary.
+	for _, name := range allManagedUnitFilenames() {
 		path := filepath.Join(unitDir, name)
 		err := os.Remove(path)
 		switch {
@@ -95,12 +101,23 @@ func RemoveSystemdUnits(unitDir string, runner SystemctlRunner, dryRun bool) (st
 	return formatSystemdTeardownReport(unitDir, removed, false), nil
 }
 
+// allManagedUnitFilenames returns every unit filename teardown
+// is willing to remove: the current set plus the legacy set.
+func allManagedUnitFilenames() []string {
+	out := make([]string, 0, len(unitFilenames)+len(legacyUnitFilenames))
+	out = append(out, unitFilenames...)
+	out = append(out, legacyUnitFilenames...)
+	return out
+}
+
 // unitsPresent returns the names (not paths) of our units that exist
 // in unitDir. Used to avoid asking systemctl to disable a unit file
 // that does not exist, which on older systemd versions errors.
+// Includes legacy unit names so an upgrade-time teardown disables
+// both the current and the soon-to-be-removed previous set.
 func unitsPresent(unitDir string) ([]string, error) {
 	var present []string
-	for _, name := range unitFilenames {
+	for _, name := range allManagedUnitFilenames() {
 		path := filepath.Join(unitDir, name)
 		_, err := os.Stat(path)
 		switch {

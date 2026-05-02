@@ -12,10 +12,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-//go:embed assets/aichronicles.socket
+//go:embed assets/aichronicles-api.socket
 var systemdSocketUnit []byte
 
-//go:embed assets/aichronicles.service
+//go:embed assets/aichronicles-api.service
 var systemdServiceUnit []byte
 
 //go:embed assets/aichronicles-web.socket
@@ -28,16 +28,18 @@ var systemdWebServiceUnit []byte
 // in dependency order (socket before its service so a partial
 // install lands in a functional state). Two pairs:
 //
-//   - aichronicles.socket / .service      — the ingest daemon (UDS,
-//     long-lived under default.target)
-//   - aichronicles-web.socket / .service  — the web UI (TCP loopback,
-//     socket-activated and idle-shutdown after 5 min of no traffic)
+//   - aichronicles-api.socket / .service  — the unified daemon
+//     (UDS, long-lived under default.target; serves reads + writes
+//   - SSE + web HTML)
+//   - aichronicles-web.socket / .service  — the web UI (TCP
+//     loopback, socket-activated and idle-shutdown after 5 min of
+//     no traffic)
 //
 // Both are enabled together by `aichronicles setup systemd` and
 // removed together by `aichronicles teardown systemd`.
 var unitFilenames = []string{
-	"aichronicles.socket",
-	"aichronicles.service",
+	"aichronicles-api.socket",
+	"aichronicles-api.service",
 	"aichronicles-web.socket",
 	"aichronicles-web.service",
 }
@@ -46,8 +48,18 @@ var unitFilenames = []string{
 // separate from unitFilenames so the enable loop doesn't try to
 // `enable` plain .service units (only sockets and timers want it).
 var activatedSockets = []string{
-	"aichronicles.socket",
+	"aichronicles-api.socket",
 	"aichronicles-web.socket",
+}
+
+// legacyUnitFilenames lists units this binary used to install
+// before the aichronicles-api rearchitecture. Teardown removes
+// these alongside the current set so an existing user install
+// upgrades cleanly without leftover orphan units pointing at the
+// deleted aichroniclesd binary.
+var legacyUnitFilenames = []string{
+	"aichronicles.socket",
+	"aichronicles.service",
 }
 
 func newSetupSystemdCmd() *cobra.Command {
@@ -55,15 +67,15 @@ func newSetupSystemdCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "systemd",
 		Short: "Install socket-activated systemd --user units",
-		Long: "Writes the daemon and web-UI unit pairs into\n" +
+		Long: "Writes the api and web-UI unit pairs into\n" +
 			"~/.config/systemd/user/, reloads the user manager, and enables\n" +
 			"both sockets so the matching service starts on demand when\n" +
 			"someone connects:\n\n" +
-			"  - aichronicles.socket        UDS for hook ingest\n" +
-			"  - aichronicles.service       the long-lived ingest daemon\n" +
+			"  - aichronicles-api.socket    UDS for the unified daemon\n" +
+			"  - aichronicles-api.service   the long-lived read+write+SSE+web daemon\n" +
 			"  - aichronicles-web.socket    TCP 127.0.0.1:7878 for the web UI\n" +
 			"  - aichronicles-web.service   web UI; idle-shutdown after 5m\n\n" +
-			"The service units expect `aichronicles` and `aichroniclesd`\n" +
+			"The service units expect `aichronicles` and `aichronicles-api`\n" +
 			"to be discoverable on systemd's user manager PATH (~/.local/bin\n" +
 			"by default, via `make install`).\n\n" +
 			"Requires `systemctl` on PATH. Idempotent.",
@@ -149,9 +161,9 @@ func InstallSystemdUnits(unitDir string, runner SystemctlRunner) (string, error)
 // a mismatch is a programmer error caught immediately in tests.
 func unitContent(name string) []byte {
 	switch name {
-	case "aichronicles.socket":
+	case "aichronicles-api.socket":
 		return systemdSocketUnit
-	case "aichronicles.service":
+	case "aichronicles-api.service":
 		return systemdServiceUnit
 	case "aichronicles-web.socket":
 		return systemdWebSocketUnit

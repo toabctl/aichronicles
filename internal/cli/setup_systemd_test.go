@@ -46,7 +46,7 @@ func TestInstallSystemdUnits_WritesBothUnitsIntoEmptyDir(t *testing.T) {
 	if !strings.Contains(report, dir) {
 		t.Errorf("report should mention unit dir: %q", report)
 	}
-	if !strings.Contains(report, "aichronicles.socket") {
+	if !strings.Contains(report, "aichronicles-api.socket") {
 		t.Errorf("report should mention the socket unit: %q", report)
 	}
 }
@@ -63,7 +63,7 @@ func TestInstallSystemdUnits_RunsDaemonReloadAndEnable(t *testing.T) {
 	if got := strings.Join(r.calls[0], " "); got != "daemon-reload" {
 		t.Errorf("first call: got %q, want daemon-reload", got)
 	}
-	wantEnable := "enable --now aichronicles.socket aichronicles-web.socket"
+	wantEnable := "enable --now aichronicles-api.socket aichronicles-web.socket"
 	if got := strings.Join(r.calls[1], " "); got != wantEnable {
 		t.Errorf("second call: got %q, want %q", got, wantEnable)
 	}
@@ -82,7 +82,7 @@ func TestInstallSystemdUnits_IsIdempotent(t *testing.T) {
 		t.Errorf("first install should report writes, got %q", report1)
 	}
 
-	firstMtime := fileMtime(t, filepath.Join(dir, "aichronicles.socket"))
+	firstMtime := fileMtime(t, filepath.Join(dir, "aichronicles-api.socket"))
 
 	report2, err := InstallSystemdUnits(dir, r.run)
 	if err != nil {
@@ -93,7 +93,7 @@ func TestInstallSystemdUnits_IsIdempotent(t *testing.T) {
 	}
 
 	// Touch-time unchanged — we did not rewrite identical content.
-	if fileMtime(t, filepath.Join(dir, "aichronicles.socket")) != firstMtime {
+	if fileMtime(t, filepath.Join(dir, "aichronicles-api.socket")) != firstMtime {
 		t.Errorf("identical content should not cause a rewrite")
 	}
 }
@@ -101,7 +101,7 @@ func TestInstallSystemdUnits_IsIdempotent(t *testing.T) {
 func TestInstallSystemdUnits_OverwritesOutdatedFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "aichronicles.socket")
+	path := filepath.Join(dir, "aichronicles-api.socket")
 	if err := os.WriteFile(path, []byte("# stale from a prior version\n"), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
