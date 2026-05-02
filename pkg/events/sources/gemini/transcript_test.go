@@ -66,6 +66,24 @@ func collect(t *testing.T, src *TranscriptSource) []events.Event {
 	return got
 }
 
+// TestTranscriptSource_EmitsUnredactedEnvelopes guards against a
+// regression where TranscriptSource re-acquires its own Redactor.
+// Translation is pure; redaction is the consuming Pipeline's job.
+// Mirror of the claude/jsonl_test equivalent.
+func TestTranscriptSource_EmitsUnredactedEnvelopes(t *testing.T) {
+	t.Parallel()
+	path := writeJSON(t, userMessageFixture)
+	src := &TranscriptSource{Root: path, CwdMap: map[string]string{}}
+	got := collect(t, src)
+	if len(got) != 1 {
+		t.Fatalf("got %d events, want 1", len(got))
+	}
+	if got[0].Envelope.Redaction != nil {
+		t.Errorf("Source must emit unredacted envelopes; got Redaction=%+v",
+			got[0].Envelope.Redaction)
+	}
+}
+
 func TestTranscriptSource_UserMessage(t *testing.T) {
 	t.Parallel()
 	path := writeJSON(t, userMessageFixture)

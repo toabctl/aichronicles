@@ -103,3 +103,20 @@ func TestHookTranslator_MissingSessionIDErrors(t *testing.T) {
 		t.Errorf("expected error for missing session_id")
 	}
 }
+
+// TestHookTranslator_EmitsUnredactedEnvelope guards against a
+// regression where the gemini translator re-acquires its own
+// Redactor. Translation is pure; redaction is the consuming
+// Pipeline's job. Mirror of the same property on the claude side.
+func TestHookTranslator_EmitsUnredactedEnvelope(t *testing.T) {
+	t.Parallel()
+	raw := []byte(`{"session_id":"s","hook_event_name":"BeforeAgent","prompt":"hi"}`)
+	tr := &HookTranslator{Now: testNow}
+	env, err := tr.Translate(raw)
+	if err != nil {
+		t.Fatalf("Translate: %v", err)
+	}
+	if env.Redaction != nil {
+		t.Errorf("Translator must emit unredacted envelopes; got Redaction=%+v", env.Redaction)
+	}
+}
