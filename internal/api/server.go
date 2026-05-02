@@ -104,6 +104,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/ingest", s.handleIngest)
 	mux.HandleFunc("GET /v1/healthz", s.handleHealthz)
 	mux.HandleFunc("GET /v1/events", s.handleEventsList)
+	mux.HandleFunc("GET /v1/sessions", s.handleSessionsList)
+	mux.HandleFunc("GET /v1/sessions/{id}", s.handleSessionsGet)
+	mux.HandleFunc("GET /v1/sessions/{id}/related", s.handleSessionsRelated)
 	return mux
 }
 
