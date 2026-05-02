@@ -125,6 +125,15 @@ func (c *Client) do(ctx context.Context, method, path string, body, into any) er
 	return nil
 }
 
+// Healthz probes GET /v1/healthz. Returns nil when the daemon
+// answers 2xx; any other outcome (transport error, non-2xx) is
+// returned as an error suitable for surfacing to the user.
+// The body shape (currently {"status":"ok"}) is not inspected —
+// 200 is the contract.
+func (c *Client) Healthz(ctx context.Context) error {
+	return c.do(ctx, http.MethodGet, "/v1/healthz", nil, nil)
+}
+
 // isJSON reports whether the Content-Type's media type is JSON.
 // Handles "application/json", "application/json; charset=utf-8",
 // and the rare "text/json" variant.
