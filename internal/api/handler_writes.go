@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
@@ -30,6 +31,23 @@ func (s *Server) handleLLMOutputSave(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "Malformed body", err.Error())
 		return
 	}
+	// Pre-validate the fields the store would otherwise reject
+	// with a sentinel-less error. Splitting validation here lets
+	// transient storage failures surface as 500 (logged) and
+	// schema violations as 400 (echoed to the client).
+	if req.Kind == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing kind", "")
+		return
+	}
+	if req.PromptHash == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing prompt_hash", "")
+		return
+	}
+	if req.Body == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing body", "")
+		return
+	}
+
 	out := &store.LLMOutput{
 		Kind:        store.LLMOutputKind(req.Kind),
 		Model:       req.Model,
@@ -56,9 +74,8 @@ func (s *Server) handleLLMOutputSave(w http.ResponseWriter, r *http.Request) {
 	id, inserted, err := store.SaveLLMOutput(r.Context(), tx, out)
 	if err != nil {
 		_ = tx.Rollback()
-		// store.SaveLLMOutput rejects empty kind / prompt_hash /
-		// body with a sentinel-less error — surface as 400.
-		writeProblem(w, http.StatusBadRequest, "Invalid llm-output", err.Error())
+		s.slog.Error("SaveLLMOutput", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
 	if err := tx.Commit(); err != nil {
@@ -108,6 +125,21 @@ func (s *Server) handleFactsSave(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "Malformed body", err.Error())
 		return
 	}
+	// Pre-validate so storage failures don't get mis-labelled as
+	// client validation errors.
+	if req.SourceLLMOutputID <= 0 {
+		writeProblem(w, http.StatusBadRequest, "Missing source_llm_output_id", "must be > 0")
+		return
+	}
+	if req.Subject == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing subject", "")
+		return
+	}
+	if req.Predicate == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing predicate", "")
+		return
+	}
+
 	f := store.SemanticFact{
 		SourceLLMOutputID: req.SourceLLMOutputID,
 		Subject:           req.Subject,
@@ -124,10 +156,8 @@ func (s *Server) handleFactsSave(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := store.SaveSemanticFact(r.Context(), s.store.DB(), f)
 	if err != nil {
-		// Validation errors from the store (e.g. zero source id) →
-		// 400; storage errors → 500. The store helper conflates the
-		// two, so distinguish on the message prefix.
-		writeProblem(w, http.StatusBadRequest, "Invalid fact", err.Error())
+		s.slog.Error("SaveSemanticFact", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
 	writeJSON(w, http.StatusOK, api.SaveSemanticFactResponse{ID: id})
@@ -188,6 +218,30 @@ func (s *Server) handleSessionLinksSave(w http.ResponseWriter, r *http.Request) 
 		writeProblem(w, http.StatusBadRequest, "Missing from_session_id", "")
 		return
 	}
+	// Pre-validate the link constraints so transient storage
+	// failures don't get mis-labelled as 400. SaveSessionLinks
+	// also validates these, but the surface error is sentinel-
+	// less so we can't distinguish in the err handler. Mirror
+	// its checks here; any error returned from the store after
+	// these pass is a real storage failure.
+	for i, l := range req.Links {
+		if l.ToSessionID == "" {
+			writeProblem(w, http.StatusBadRequest, "Invalid link",
+				"link[%d].to_session_id is empty")
+			return
+		}
+		if l.ToSessionID == req.FromSessionID {
+			writeProblem(w, http.StatusBadRequest, "Invalid link",
+				"self-link not allowed")
+			return
+		}
+		if !store.IsValidSessionLinkKind(l.Kind) {
+			writeProblem(w, http.StatusBadRequest, "Invalid link kind",
+				"link["+strconv.Itoa(i)+"].kind="+l.Kind)
+			return
+		}
+	}
+
 	links := make([]store.SessionLink, 0, len(req.Links))
 	for _, l := range req.Links {
 		links = append(links, store.SessionLink{
@@ -199,9 +253,8 @@ func (s *Server) handleSessionLinksSave(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 	if err := store.SaveSessionLinks(r.Context(), s.store.DB(), req.FromSessionID, links); err != nil {
-		// store.SaveSessionLinks validates Kind / self-link / empty
-		// to_session_id with descriptive errors; surface as 400.
-		writeProblem(w, http.StatusBadRequest, "Invalid links", err.Error())
+		s.slog.Error("SaveSessionLinks", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

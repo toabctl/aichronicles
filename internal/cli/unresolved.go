@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,7 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/pkg/api"
 )
 
 // defaultUnresolvedSince matches LoadUnresolvedForCwd's default —
@@ -31,7 +33,7 @@ func newUnresolvedCmd() *cobra.Command {
 		since       time.Duration
 		maxSessions int
 		maxItems    int
-		dbPath      string
+		sockFlag    string
 		formatIn    string
 	)
 	cmd := &cobra.Command{
@@ -43,14 +45,12 @@ func newUnresolvedCmd() *cobra.Command {
 			"output is shaped to be drop-in usable as a Claude Code\n" +
 			"SessionStart hook — pipe stdout into the agent's context so\n" +
 			"the new session picks up where prior ones left off.\n\n" +
-			"Example SessionStart hook script:\n\n" +
-			"  #!/bin/sh\n" +
-			"  aichronicles unresolved --cwd \"$PWD\"\n\n" +
+			"Talks to aichronicles-api over its UDS (override with\n" +
+			"--socket or $AICHRONICLES_API_SOCKET).\n\n" +
 			"Filters: --since (default 30d), --max-sessions (default 5),\n" +
-			"--max-items (default 5 per session). The defaults bound the\n" +
-			"hook output so the new session isn't drowned in stale TODOs.\n" +
-			"Output is empty (0 exit) when no unresolved items match — a\n" +
-			"hook can pipe straight in without a length check.\n\n" +
+			"--max-items (default 5 per session). Output is empty (0\n" +
+			"exit) when no unresolved items match — a hook can pipe\n" +
+			"straight in without a length check.\n\n" +
 			"Use --format=json for the structured form when wiring this\n" +
 			"into something other than a context-injection hook.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -58,12 +58,10 @@ func newUnresolvedCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := openStore(dbPath)
+			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
-
 			if cwd == "" {
 				wd, werr := os.Getwd()
 				if werr != nil {
@@ -72,14 +70,14 @@ func newUnresolvedCmd() *cobra.Command {
 				cwd = wd
 			}
 			cwd = filepath.Clean(cwd)
-
-			sinceMs := time.Now().Add(-since).UnixMilli()
-			items, err := store.LoadUnresolvedForCwd(cmd.Context(), s.DB(),
-				cwd, sinceMs, maxSessions, maxItems)
-			if err != nil {
-				return fmt.Errorf("load unresolved: %w", err)
-			}
-			return renderUnresolved(cmd.OutOrStdout(), cwd, items, format)
+			return runUnresolved(cmd.Context(), c, runUnresolvedOpts{
+				Cwd:         cwd,
+				Since:       since,
+				MaxSessions: maxSessions,
+				MaxItems:    maxItems,
+				Format:      format,
+				Out:         cmd.OutOrStdout(),
+			})
 		},
 	}
 	cmd.Flags().StringVar(&cwd, "cwd", "", "cwd to look up (defaults to $PWD)")
@@ -89,9 +87,39 @@ func newUnresolvedCmd() *cobra.Command {
 		"cap on the number of prior sessions to draw from")
 	cmd.Flags().IntVar(&maxItems, "max-items", defaultUnresolvedMaxItems,
 		"cap on the number of unresolved items per session")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
+}
+
+// runUnresolvedOpts groups the parameters runUnresolved needs.
+// Tests construct one directly without cobra.
+type runUnresolvedOpts struct {
+	Cwd         string
+	Since       time.Duration
+	MaxSessions int
+	MaxItems    int
+	Format      OutputFormat
+	Out         io.Writer
+}
+
+// runUnresolved is the dependency-injected core of the cobra
+// command. Takes a configured *apiclient.Client and writes the
+// rendered output to opts.Out. Used by both the cobra path and
+// the package tests.
+func runUnresolved(ctx context.Context, c *apiclient.Client, opts runUnresolvedOpts) error {
+	sinceMs := time.Now().Add(-opts.Since).UnixMilli()
+	resp, err := c.Unresolved(ctx, apiclient.UnresolvedRequest{
+		Cwd:                opts.Cwd,
+		SinceMs:            sinceMs,
+		MaxSessions:        opts.MaxSessions,
+		MaxItemsPerSession: opts.MaxItems,
+	})
+	if err != nil {
+		return fmt.Errorf("load unresolved: %w", err)
+	}
+	return renderUnresolved(opts.Out, opts.Cwd, resp.Items, opts.Format)
 }
 
 // renderUnresolved writes the items in either text or JSON form.
@@ -105,7 +133,7 @@ func newUnresolvedCmd() *cobra.Command {
 // Empty items + text format = a single "(no unresolved …)" line.
 // A hook caller piping into the agent gets a one-line "all clear"
 // signal rather than a confusing empty injection.
-func renderUnresolved(out io.Writer, cwd string, items []store.UnresolvedItem, format OutputFormat) error {
+func renderUnresolved(out io.Writer, cwd string, items []api.UnresolvedItem, format OutputFormat) error {
 	if format == FormatJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
@@ -125,9 +153,6 @@ func renderUnresolved(out io.Writer, cwd string, items []store.UnresolvedItem, f
 	now := time.Now()
 	for _, it := range items {
 		when := relativeTimeOrAbsent(it.EndedAtMs, now)
-		// Topic gives 1-line context for the item (the agent picks
-		// up where the topic ended), small enough to keep the
-		// hook output tight.
 		topic := it.Topic
 		if topic == "" {
 			topic = "(no summary topic)"

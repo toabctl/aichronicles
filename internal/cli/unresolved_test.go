@@ -2,13 +2,22 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/api"
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/store"
+	apiwire "github.com/toabctl/aichronicles/pkg/api"
 )
 
+// plantSummaryWithUnresolved seeds the store with a session +
+// summary llm_output whose body contains the named unresolved
+// items. Goes through the test store directly; the api reads
+// the same DB.
 func plantSummaryWithUnresolved(t *testing.T, s *store.Store, sessID, cwd, topic string, endedAgo time.Duration, items []string) {
 	t.Helper()
 	now := time.Now().UTC()
@@ -43,7 +52,7 @@ func plantSummaryWithUnresolved(t *testing.T, s *store.Store, sessID, cwd, topic
 func TestRenderUnresolved_TextFormFitForHook(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
-	items := []store.UnresolvedItem{
+	items := []apiwire.UnresolvedItem{
 		{
 			SessionID:    "11111111-1111-1111-1111-111111111111",
 			SessionShort: "11111111",
@@ -66,12 +75,12 @@ func TestRenderUnresolved_TextFormFitForHook(t *testing.T) {
 	body := out.String()
 
 	for _, want := range []string{
-		"aichronicles:", // hook-recognisable preamble
+		"aichronicles:",
 		"2 unresolved item(s)",
 		"/repo/x",
-		"11111111",                       // short id
-		"auth middleware refactor",       // topic
-		"document the new fallback flow", // item
+		"11111111",
+		"auth middleware refactor",
+		"document the new fallback flow",
 		"22222222",
 		"ingest pipeline",
 		"add the redaction passthrough test",
@@ -94,9 +103,6 @@ func TestRenderUnresolved_EmptyHasFriendlyMessage(t *testing.T) {
 	if !strings.Contains(body, "no unresolved items") {
 		t.Errorf("expected friendly empty message:\n%s", body)
 	}
-	// Hook contract: even empty output must be a single line so a
-	// SessionStart hook piping it doesn't surprise the agent with
-	// a multi-line "(empty)" payload.
 	if strings.Count(body, "\n") != 1 {
 		t.Errorf("expected exactly 1 line of output, got:\n%s", body)
 	}
@@ -104,7 +110,7 @@ func TestRenderUnresolved_EmptyHasFriendlyMessage(t *testing.T) {
 
 func TestRenderUnresolved_JSONShape(t *testing.T) {
 	t.Parallel()
-	items := []store.UnresolvedItem{
+	items := []apiwire.UnresolvedItem{
 		{SessionID: "abc", SessionShort: "abc", EndedAtMs: 1, Topic: "t", Item: "i"},
 	}
 	var out bytes.Buffer
@@ -114,9 +120,9 @@ func TestRenderUnresolved_JSONShape(t *testing.T) {
 	body := out.String()
 	for _, want := range []string{
 		`"cwd": "/repo/y"`,
-		`"SessionID": "abc"`,
-		`"Topic": "t"`,
-		`"Item": "i"`,
+		`"session_id": "abc"`,
+		`"topic": "t"`,
+		`"item": "i"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("JSON missing %q:\n%s", want, body)
@@ -154,9 +160,11 @@ func TestRelativeTimeOrAbsent_Branches(t *testing.T) {
 	}
 }
 
-// End-to-end sanity check at the store + render seam: seed a few
-// summaries, ask LoadUnresolvedForCwd, render the result, assert
-// the rendered output contains the items.
+// TestUnresolvedEndToEnd seeds the store, stands up the real
+// internal/api handlers under httptest, runs the migrated
+// command body through an apiclient pointed at it, and asserts
+// the rendered output contains the expected items. Replaces the
+// pre-migration test that called the store loader directly.
 func TestUnresolvedEndToEnd(t *testing.T) {
 	t.Parallel()
 	s := testStore(t)
@@ -166,13 +174,21 @@ func TestUnresolvedEndToEnd(t *testing.T) {
 		"morning session", 2*time.Hour,
 		[]string{"land the migration", "open a follow-up issue"})
 
-	items, err := store.LoadUnresolvedForCwd(t.Context(), s.DB(), cwd, 0, 5, 5)
-	if err != nil {
-		t.Fatalf("LoadUnresolvedForCwd: %v", err)
-	}
+	srv := httptest.NewServer(api.NewServer(s, nil).Handler())
+	t.Cleanup(srv.Close)
+	c := apiclient.NewClientForTesting(srv.Client(), srv.URL)
+
 	var out bytes.Buffer
-	if err := renderUnresolved(&out, cwd, items, FormatTable); err != nil {
-		t.Fatalf("renderUnresolved: %v", err)
+	err := runUnresolved(context.Background(), c, runUnresolvedOpts{
+		Cwd:         cwd,
+		Since:       defaultUnresolvedSince,
+		MaxSessions: 5,
+		MaxItems:    5,
+		Format:      FormatTable,
+		Out:         &out,
+	})
+	if err != nil {
+		t.Fatalf("runUnresolved: %v", err)
 	}
 	for _, want := range []string{
 		"land the migration",

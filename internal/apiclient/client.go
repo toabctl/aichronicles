@@ -59,12 +59,19 @@ func NewClient(sockPath string) *Client {
 	}
 }
 
-// newClientForTests builds a Client that talks to baseURL through
-// the supplied http.Client. Used by package-internal tests against
-// an httptest.Server. NOT exported — production callers use
-// NewClient.
-func newClientForTests(httpClient *http.Client, baseURL string) *Client {
+// NewClientForTesting builds a Client that talks to baseURL via the
+// supplied *http.Client. Exported for cross-package test wiring (cli
+// subcommand tests stand up an httptest.Server holding the real
+// internal/api handlers and need to point an apiclient.Client at
+// that TCP URL). Production code uses NewClient.
+func NewClientForTesting(httpClient *http.Client, baseURL string) *Client {
 	return &Client{httpClient: httpClient, baseURL: baseURL}
+}
+
+// newClientForTests is the unexported package-internal alias kept
+// so existing same-package tests don't churn on the rename.
+func newClientForTests(httpClient *http.Client, baseURL string) *Client {
+	return NewClientForTesting(httpClient, baseURL)
 }
 
 // do is the single transport entry point. Marshals body (when
