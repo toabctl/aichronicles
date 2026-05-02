@@ -533,3 +533,13 @@ func truncatePreview(s sql.NullString) string {
 	}
 	return preview.OneLine(s.String)
 }
+
+// truncatePreviewString is the plain-string variant of
+// truncatePreview, for callers that already have a string and
+// want the same flatten-and-cap rendering.
+func truncatePreviewString(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return preview.OneLine(s)
+}

@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -10,10 +9,12 @@ import (
 	"github.com/toabctl/aichronicles/pkg/events"
 )
 
-// nullS is a tiny sql.NullString constructor for table-driven
-// tests that need to populate Cwd / Role values.
-func nullS(s string) sql.NullString {
-	return sql.NullString{String: s, Valid: s != ""}
+// nullS is a tiny events.NullString constructor for table-driven
+// tests that need to populate Cwd / Role values on events.EventView
+// fixtures. Episode.Cwd uses sql.NullString — for those tests, see
+// nullSQL.
+func nullS(s string) events.NullString {
+	return events.NullString{String: s, Valid: s != ""}
 }
 
 // TestSegmentSession_EmptyInput pins the trivial cases — empty
@@ -33,7 +34,7 @@ func TestSegmentSession_EmptyInput(t *testing.T) {
 // share one cwd produces exactly one episode covering everything.
 func TestSegmentSession_SingleEpisode(t *testing.T) {
 	t.Parallel()
-	events := []EventView{
+	events := []events.EventView{
 		{EventID: "e1", Kind: events.KindUserPrompt,
 			ContentText: nullS("how do I fix the build"),
 			Cwd:         nullS("/repo/a"), TsSourceMs: 1_000},
@@ -72,7 +73,7 @@ func TestSegmentSession_SingleEpisode(t *testing.T) {
 func TestSegmentSession_IdleGapBoundary(t *testing.T) {
 	t.Parallel()
 	const gap = int64(10_000) // 10s for test brevity
-	events := []EventView{
+	events := []events.EventView{
 		{EventID: "a", Kind: events.KindUserPrompt, ContentText: nullS("first intent"), TsSourceMs: 0},
 		{EventID: "b", Kind: events.KindAssistantMessage, TsSourceMs: 1_000},
 		// 12s gap → episode boundary.
@@ -103,7 +104,7 @@ func TestSegmentSession_IdleGapBoundary(t *testing.T) {
 // the same session" pattern.
 func TestSegmentSession_CwdShiftBoundary(t *testing.T) {
 	t.Parallel()
-	events := []EventView{
+	events := []events.EventView{
 		{EventID: "x", Kind: events.KindUserPrompt, Cwd: nullS("/repo/a"), ContentText: nullS("project A work"), TsSourceMs: 0},
 		{EventID: "y", Kind: events.KindToolUse, Cwd: nullS("/repo/a"), TsSourceMs: 100},
 		// Same time-frame, but cwd shifted — still a boundary.
@@ -123,7 +124,7 @@ func TestSegmentSession_CwdShiftBoundary(t *testing.T) {
 // happens to omit cwd shouldn't fragment the timeline.
 func TestSegmentSession_NullCwdDoesNotTrigger(t *testing.T) {
 	t.Parallel()
-	events := []EventView{
+	events := []events.EventView{
 		{EventID: "p", Kind: events.KindUserPrompt, Cwd: nullS("/repo/a"), TsSourceMs: 0},
 		{EventID: "q", Kind: events.KindToolUse /* no cwd */, TsSourceMs: 100},
 		{EventID: "r", Kind: events.KindToolResult, Cwd: nullS("/repo/a"), TsSourceMs: 200},

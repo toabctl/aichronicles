@@ -428,9 +428,9 @@ func loadEventRows(ctx context.Context, st *store.Store, sessionID string, limit
 		out = append(out, EventRow{
 			When:    relativeTime(e.TsSourceMs, now),
 			Kind:    e.Kind,
-			Role:    nullStr(e.Role),
-			Tool:    nullStr(e.ToolName),
-			Snippet: truncatePreview(e.ContentText),
+			Role:    e.Role.OrEmpty(),
+			Tool:    e.ToolName.OrEmpty(),
+			Snippet: truncatePreviewString(e.ContentText.OrEmpty()),
 		})
 	}
 	return out, nil
@@ -452,14 +452,4 @@ func endedOrActive(ms sql.NullInt64) string {
 		return "(active)"
 	}
 	return time.UnixMilli(ms.Int64).UTC().Format("2006-01-02 15:04 UTC")
-}
-
-// nullStr returns the underlying string of a sql.NullString or
-// "" when invalid. Mirrors orDash without the dash placeholder
-// for callers that prefer empty over "-".
-func nullStr(s sql.NullString) string {
-	if !s.Valid {
-		return ""
-	}
-	return s.String
 }

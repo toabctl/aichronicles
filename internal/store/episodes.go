@@ -67,7 +67,7 @@ const (
 // behaviour; the function does not re-sort.
 //
 // idleGapMs ≤ 0 falls back to DefaultEpisodeIdleGapMs.
-func SegmentSession(sessionID string, evs []EventView, idleGapMs int64) []Episode {
+func SegmentSession(sessionID string, evs []events.EventView, idleGapMs int64) []Episode {
 	if sessionID == "" || len(evs) == 0 {
 		return nil
 	}
@@ -78,7 +78,7 @@ func SegmentSession(sessionID string, evs []EventView, idleGapMs int64) []Episod
 	type runState struct {
 		startIdx int
 		startMs  int64
-		cwd      sql.NullString
+		cwd      events.NullString
 		intent   string
 		count    int
 	}
@@ -94,7 +94,7 @@ func SegmentSession(sessionID string, evs []EventView, idleGapMs int64) []Episod
 			Ordinal:       ord,
 			StartedAtMs:   run.startMs,
 			EndedAtMs:     endMs,
-			Cwd:           run.cwd,
+			Cwd:           sql.NullString{String: run.cwd.String, Valid: run.cwd.Valid},
 			IntentSummary: run.intent,
 			EventCount:    run.count,
 			FirstEventID:  evs[run.startIdx].EventID,
@@ -133,9 +133,9 @@ func SegmentSession(sessionID string, evs []EventView, idleGapMs int64) []Episod
 	return out
 }
 
-// EventView is enriched with Cwd in events.LoadSessionEvents but
+// events.EventView is enriched with Cwd in events.LoadSessionEvents but
 // the existing struct (in events.go) lacks the field. The
-// segmenter declares its own EventView-with-Cwd-and-FirstEventID
+// segmenter declares its own events.EventView-with-Cwd-and-FirstEventID
 // here so it can stay decoupled from any future evolution of the
 // shared struct. Callers populate this from the existing
 // LoadSessionEvents result + a tiny adapter.
@@ -144,7 +144,7 @@ func SegmentSession(sessionID string, evs []EventView, idleGapMs int64) []Episod
 // current episode (if any) before processing the next event. The
 // caller still decides whether `opened` was true; this just names
 // the rule.
-func classifyBoundary(opened bool, runCwd sql.NullString, e *EventView, idleGapMs int64, prevTs int64) episodeBoundary {
+func classifyBoundary(opened bool, runCwd events.NullString, e *events.EventView, idleGapMs int64, prevTs int64) episodeBoundary {
 	if !opened {
 		return boundaryFirst
 	}
@@ -160,7 +160,7 @@ func classifyBoundary(opened bool, runCwd sql.NullString, e *EventView, idleGapM
 // prevTsAt returns events[i-1].TsSourceMs when i > 0, else 0.
 // Wrapped as a helper so classifyBoundary stays a pure function
 // over indexable inputs.
-func prevTsAt(evs []EventView, i int) int64 {
+func prevTsAt(evs []events.EventView, i int) int64 {
 	if i <= 0 {
 		return 0
 	}

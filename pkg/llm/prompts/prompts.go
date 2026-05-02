@@ -512,7 +512,7 @@ type SummaryInputs struct {
 // Passing nil/empty for any of the optional slices is fine — the
 // corresponding stanza is omitted and the model receives an empty
 // array (or whatever it surfaces from prose mentions).
-func BuildSummary(sessionID string, events []store.EventView, in SummaryInputs) (Built, error) {
+func BuildSummary(sessionID string, events []events.EventView, in SummaryInputs) (Built, error) {
 	if sessionID == "" {
 		return Built{}, fmt.Errorf("BuildSummary: sessionID required")
 	}
@@ -3009,7 +3009,7 @@ func capForKind(kind string) int {
 // the user cared about. Surfacing the failure makes the size
 // problem visible so we can decide whether to chunk, sample, or
 // just skip the outlier.
-func renderEvents(events []store.EventView, pats patternSet) string {
+func renderEvents(events []events.EventView, pats patternSet) string {
 	var b strings.Builder
 	for _, e := range events {
 		b.WriteString(renderOneEvent(e, pats))
@@ -3021,7 +3021,7 @@ func renderEvents(events []store.EventView, pats patternSet) string {
 // previous monolithic renderEvents loop. Adds a per-kind cap on
 // content_text so a single huge tool_result can't blow the
 // prompt budget on its own.
-func renderOneEvent(e store.EventView, pats patternSet) string {
+func renderOneEvent(e events.EventView, pats patternSet) string {
 	label := e.Kind
 	if e.Role.Valid && e.Role.String != "" {
 		label = e.Role.String + "/" + e.Kind

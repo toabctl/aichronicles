@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // TestRenderEvents_PerKindCaps confirms the per-kind cap actually
@@ -36,7 +36,7 @@ func TestRenderEvents_PerKindCaps(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.kind, func(t *testing.T) {
 			body := strings.Repeat("x", tc.bodyRunes)
-			events := []store.EventView{
+			events := []events.EventView{
 				{EventID: "e1", Kind: tc.kind, ContentText: nullS(body), TsSourceMs: 1},
 			}
 			out := renderEvents(events, patternSet{})
@@ -68,7 +68,7 @@ func TestRenderEvents_PerKindCaps(t *testing.T) {
 // per-kind caps in place, the rendered transcript stays tiny.
 func TestRenderEvents_HugeToolResultDoesNotBlowBudget(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{EventID: "e1", Kind: "user_prompt", Role: nullS("user"),
 			ContentText: nullS("read the file"), TsSourceMs: 1},
 		{EventID: "e2", Kind: "tool_use", ToolName: nullS("Read"),
@@ -118,15 +118,15 @@ func TestRenderEvents_NoTotalCap(t *testing.T) {
 	// (per-kind caps don't fire because each event is at the cap,
 	// not over it).
 	const n = 100
-	events := make([]store.EventView, 0, n)
+	evs := make([]events.EventView, 0, n)
 	for i := 0; i < n; i++ {
 		body := strings.Repeat("x", maxRunesUserPrompt)
-		events = append(events, store.EventView{
+		evs = append(evs, events.EventView{
 			EventID: "e", Kind: "user_prompt", Role: nullS("user"),
 			ContentText: nullS(body), TsSourceMs: int64(i),
 		})
 	}
-	out := renderEvents(events, patternSet{})
+	out := renderEvents(evs, patternSet{})
 	if strings.Contains(out, "transcript") && strings.Contains(out, "truncated") {
 		t.Errorf("no transcript-level truncation should fire — caller surfaces 400 instead:\n(first 200 runes)\n%s",
 			string([]rune(out)[:200]))

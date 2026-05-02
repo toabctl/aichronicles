@@ -12,13 +12,13 @@ import (
 	"github.com/toabctl/aichronicles/pkg/llm"
 )
 
-func nullS(s string) sql.NullString { return sql.NullString{String: s, Valid: s != ""} }
+func nullS(s string) events.NullString { return events.NullString{String: s, Valid: s != ""} }
 
 // --- BuildSummary ---
 
 func TestBuildSummary_IncludesTranscriptAndSessionID(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{EventID: "e1", Kind: "user_prompt", Role: nullS("user"),
 			ContentText: nullS("how do I parse JSONL"), TsSourceMs: 1},
 		{EventID: "e2", Kind: "assistant_message", Role: nullS("assistant"),
@@ -50,7 +50,7 @@ func TestBuildSummary_IncludesTranscriptAndSessionID(t *testing.T) {
 
 func TestBuildSummary_LabelsSubagentEventsInTranscript(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{Kind: "user_prompt", Role: nullS("user"),
 			ContentText: nullS("main agent prompt"), TsSourceMs: 1},
 		{Kind: "user_prompt", Role: nullS("user"),
@@ -82,7 +82,7 @@ func TestBuildSummary_LabelsSubagentEventsInTranscript(t *testing.T) {
 
 func TestBuildSummary_SchemaIncludesSubagents(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
 	built, err := BuildSummary("sess", events, SummaryInputs{})
@@ -99,7 +99,7 @@ func TestBuildSummary_SchemaIncludesSubagents(t *testing.T) {
 
 func TestBuildSummary_SetsForcedTool(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
 	built, err := BuildSummary("sess", events, SummaryInputs{})
@@ -136,7 +136,7 @@ func TestBuildSummary_SetsForcedTool(t *testing.T) {
 
 func TestBuildSummary_RendersLinksBlockWhenPresent(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
 	built, err := BuildSummary("sess-l", events, SummaryInputs{
@@ -161,7 +161,7 @@ func TestBuildSummary_RendersLinksBlockWhenPresent(t *testing.T) {
 
 func TestBuildSummary_RendersFilesBlockWhenPresent(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
 	files := []string{
@@ -188,7 +188,7 @@ func TestBuildSummary_RendersFilesBlockWhenPresent(t *testing.T) {
 
 func TestBuildSummary_OmitsFilesBlockWhenNoneProvided(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
 	built, _ := BuildSummary("sess", events, SummaryInputs{})
@@ -200,7 +200,7 @@ func TestBuildSummary_OmitsFilesBlockWhenNoneProvided(t *testing.T) {
 
 func TestBuildSummary_HashChangesWhenFilesChange(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
 	a, _ := BuildSummary("sess", events, SummaryInputs{})
@@ -212,7 +212,7 @@ func TestBuildSummary_HashChangesWhenFilesChange(t *testing.T) {
 
 func TestBuildSummary_SchemaInstructsAbsoluteFiles(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
 	built, _ := BuildSummary("sess", events, SummaryInputs{})
@@ -231,7 +231,7 @@ func TestBuildSummary_SchemaInstructsAbsoluteFiles(t *testing.T) {
 
 func TestBuildSummary_OmitsLinksBlockWhenNoneProvided(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
 	built, err := BuildSummary("sess", events, SummaryInputs{})
@@ -246,7 +246,7 @@ func TestBuildSummary_OmitsLinksBlockWhenNoneProvided(t *testing.T) {
 
 func TestBuildSummary_LinksPassThroughEgressRedaction(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
 	// A URL carrying a basic-auth credential — the kind of thing
@@ -275,7 +275,7 @@ func TestBuildSummary_LinksPassThroughEgressRedaction(t *testing.T) {
 
 func TestBuildSummary_ScrubsSecretsAndReportsPatterns(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{EventID: "e1", Kind: "user_prompt", Role: nullS("user"),
 			ContentText: nullS("my AKIAIOSFODNN7EXAMPLE leak"), TsSourceMs: 1},
 	}
@@ -297,7 +297,7 @@ func TestBuildSummary_ScrubsSecretsAndReportsPatterns(t *testing.T) {
 
 func TestBuildSummary_RejectsEmptyInputs(t *testing.T) {
 	t.Parallel()
-	if _, err := BuildSummary("", []store.EventView{{}}, SummaryInputs{}); err == nil {
+	if _, err := BuildSummary("", []events.EventView{{}}, SummaryInputs{}); err == nil {
 		t.Error("empty sessionID: expected error")
 	}
 	if _, err := BuildSummary("sess", nil, SummaryInputs{}); err == nil {
@@ -307,7 +307,7 @@ func TestBuildSummary_RejectsEmptyInputs(t *testing.T) {
 
 func TestBuildSummary_HashDeterministicSameInput(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{Kind: "user_prompt", ContentText: nullS("identical prompt"), TsSourceMs: 1},
 	}
 	a, _ := BuildSummary("sess", events, SummaryInputs{})
@@ -319,10 +319,10 @@ func TestBuildSummary_HashDeterministicSameInput(t *testing.T) {
 
 func TestBuildSummary_HashChangesWhenContentChanges(t *testing.T) {
 	t.Parallel()
-	a, _ := BuildSummary("sess", []store.EventView{
+	a, _ := BuildSummary("sess", []events.EventView{
 		{Kind: "user_prompt", ContentText: nullS("first"), TsSourceMs: 1},
 	}, SummaryInputs{})
-	b, _ := BuildSummary("sess", []store.EventView{
+	b, _ := BuildSummary("sess", []events.EventView{
 		{Kind: "user_prompt", ContentText: nullS("second"), TsSourceMs: 1},
 	}, SummaryInputs{})
 	if a.Hash == b.Hash {
@@ -332,7 +332,7 @@ func TestBuildSummary_HashChangesWhenContentChanges(t *testing.T) {
 
 func TestBuildSummary_HashChangesWhenLinksChange(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
 	a, _ := BuildSummary("sess", events, SummaryInputs{})
@@ -344,11 +344,11 @@ func TestBuildSummary_HashChangesWhenLinksChange(t *testing.T) {
 
 func TestBuildSummary_NullToolUseEventDoesNotPanic(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{
 			EventID: "e1", Kind: "tool_use",
-			Role:        sql.NullString{},
-			ContentText: sql.NullString{},
+			Role:        events.NullString{},
+			ContentText: events.NullString{},
 			TsSourceMs:  1,
 			ToolName:    nullS("Bash"),
 		},
@@ -365,7 +365,7 @@ func TestBuildSummary_NullToolUseEventDoesNotPanic(t *testing.T) {
 
 func TestBuildSummary_AllNullEventFieldsRenderKindLabel(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{
 			EventID: "e1", Kind: "session_start",
 			TsSourceMs: 1,
@@ -383,7 +383,7 @@ func TestBuildSummary_AllNullEventFieldsRenderKindLabel(t *testing.T) {
 
 func TestBuildSummary_RendersPriorSessionsStanzaWhenCandidatesPresent(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
 	prior := []CandidatePriorSession{
@@ -422,7 +422,7 @@ func TestBuildSummary_RendersPriorSessionsStanzaWhenCandidatesPresent(t *testing
 
 func TestBuildSummary_OmitsPriorSessionsStanzaWhenNoneProvided(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
 	built, _ := BuildSummary("sess", events, SummaryInputs{})
@@ -434,7 +434,7 @@ func TestBuildSummary_OmitsPriorSessionsStanzaWhenNoneProvided(t *testing.T) {
 
 func TestBuildSummary_SchemaIncludesSessionLinks(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
 	built, _ := BuildSummary("sess", events, SummaryInputs{})
@@ -455,7 +455,7 @@ func TestBuildSummary_SchemaIncludesSessionLinks(t *testing.T) {
 
 func TestBuildSummary_HashChangesWhenCandidatesChange(t *testing.T) {
 	t.Parallel()
-	events := []store.EventView{
+	events := []events.EventView{
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
 	a, _ := BuildSummary("sess", events, SummaryInputs{})

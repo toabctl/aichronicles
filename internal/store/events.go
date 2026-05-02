@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/toabctl/aichronicles/internal/preview"
+	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // ErrNoSuchSession is returned when a session-id prefix does not match
@@ -468,25 +469,11 @@ func LoadSubagentSpans(ctx context.Context, db *sql.DB, sessionID string, limit 
 	return out, nil
 }
 
-// EventView is the read-only shape used by code that walks stored
-// events (prompt builders, export, audit). Nullable fields are
-// modelled with sql.Null* so callers can distinguish "empty string"
-// from "column was NULL".
-type EventView struct {
-	EventID      string
-	Kind         string
-	Role         sql.NullString
-	ContentText  sql.NullString
-	TsSourceMs   int64
-	ToolName     sql.NullString
-	SubagentID   sql.NullString
-	SubagentType sql.NullString
-	// Cwd is the working directory recorded on the event when the
-	// hook captured it. NULL for events whose hook frame omitted
-	// the cwd (some hook kinds don't carry one). Populated only by
-	// loaders that explicitly SELECT events.cwd; legacy paths that
-	// don't need it leave the field zero-valued.
-	Cwd sql.NullString
+// nullStringToEvents converts a SQL-layer sql.NullString into the
+// domain-pure events.NullString used on events.EventView and friends. Tiny
+// helper because every read-side scan boundary needs it.
+func nullStringToEvents(n sql.NullString) events.NullString {
+	return events.NullString{String: n.String, Valid: n.Valid}
 }
 
 // SessionDigestRow is the read shape used by reflect/propose. Each
@@ -749,7 +736,7 @@ func LoadSessionStartCwd(ctx context.Context, db *sql.DB, sessionID string) (sql
 //     truncated — the segmenter, primarily, where a missing tail
 //     event would silently fix the final episode's ended_at_ms at
 //     the wrong wall clock.
-func LoadEventsForSession(ctx context.Context, db *sql.DB, sessionID string, limit int) ([]EventView, error) {
+func LoadEventsForSession(ctx context.Context, db *sql.DB, sessionID string, limit int) ([]events.EventView, error) {
 	switch {
 	case limit == LoadEventsForSessionUnbounded:
 		// no LIMIT clause
@@ -785,13 +772,22 @@ func LoadEventsForSession(ctx context.Context, db *sql.DB, sessionID string, lim
 	}
 	defer func() { _ = rows.Close() }()
 
-	var out []EventView
+	var out []events.EventView
 	for rows.Next() {
-		var e EventView
-		if err := rows.Scan(&e.EventID, &e.Kind, &e.Role, &e.ContentText,
-			&e.TsSourceMs, &e.ToolName, &e.SubagentID, &e.SubagentType, &e.Cwd); err != nil {
+		var (
+			e                                                      events.EventView
+			role, content, toolName, subagentID, subagentType, cwd sql.NullString
+		)
+		if err := rows.Scan(&e.EventID, &e.Kind, &role, &content,
+			&e.TsSourceMs, &toolName, &subagentID, &subagentType, &cwd); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
+		e.Role = nullStringToEvents(role)
+		e.ContentText = nullStringToEvents(content)
+		e.ToolName = nullStringToEvents(toolName)
+		e.SubagentID = nullStringToEvents(subagentID)
+		e.SubagentType = nullStringToEvents(subagentType)
+		e.Cwd = nullStringToEvents(cwd)
 		out = append(out, e)
 	}
 	return out, rows.Err()
