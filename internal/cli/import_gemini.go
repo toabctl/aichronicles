@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,14 +13,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/pkg/events/sources/gemini"
-	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 func newImportGeminiCmd() *cobra.Command {
-	var dbPath string
+	var sockFlag string
 	cmd := &cobra.Command{
 		Use:   "import-gemini [path]",
 		Short: "Import gemini-cli session JSON files into the store",
@@ -45,14 +44,12 @@ func newImportGeminiCmd() *cobra.Command {
 				target = args[0]
 			}
 
-			s, err := openStore(dbPath)
+			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
-
 			log := newImportGeminiLogger(cmd.ErrOrStderr())
-			report, err := ImportGeminiTranscripts(cmd.Context(), target, s, log)
+			report, err := ImportGeminiTranscripts(cmd.Context(), c, target, log)
 			if err != nil {
 				return err
 			}
@@ -60,8 +57,8 @@ func newImportGeminiCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", "",
-		"SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	return cmd
 }
 
@@ -103,12 +100,14 @@ func (r GeminiImportReport) String() string {
 	return b.String()
 }
 
-// ImportGeminiTranscripts walks target and ingests every parseable
-// gemini-cli session file via the events.Pipeline. The
-// TranscriptSource fans out one message into one or more envelopes
-// (assistant turns with tool calls become 1+2N envelopes); the
-// BufferedSink amortises SQLite fsync cost across them.
-func ImportGeminiTranscripts(ctx context.Context, target string, s *store.Store, log *slog.Logger) (GeminiImportReport, error) {
+// ImportGeminiTranscripts walks target and streams every
+// parseable gemini-cli session message into POST /v1/import.
+// The TranscriptSource fans out one message into one or more
+// envelopes (assistant turns with tool calls become 1+2N
+// envelopes); each envelope becomes one NDJSON line on the wire.
+// The api applies server-side redaction and runs the extractor
+// registry — same path as live ingest. Idempotent on event_id.
+func ImportGeminiTranscripts(ctx context.Context, c *apiclient.Client, target string, log *slog.Logger) (GeminiImportReport, error) {
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
@@ -119,22 +118,46 @@ func ImportGeminiTranscripts(ctx context.Context, target string, s *store.Store,
 		Root:   target,
 		Logger: log,
 	}
-	sink := store.NewBufferedSink(s, store.BufferedSinkOpts{})
-	defer func() { _ = sink.Close() }()
 
-	pipeline := events.Pipeline{
-		Sink:       sink,
-		Extractors: events.DefaultExtractors(),
-		Redactor:   events.NewScannerRedactor(redact.Default()),
-		Logger:     log,
-	}
+	pr, pw := io.Pipe()
+	defer func() { _ = pr.Close() }()
+	go func() {
+		err := streamGeminiNDJSON(ctx, src, pw, log)
+		if err != nil {
+			_ = pw.CloseWithError(err)
+			return
+		}
+		_ = pw.Close()
+	}()
 
-	stats, err := pipeline.Run(ctx, src)
+	stats, err := c.Import(ctx, pr)
 	report.FilesRead = src.Stats.FilesRead
 	report.MessagesRead = src.Stats.MessagesRead
-	report.Invalid = src.Stats.Invalid
-	report.Imported = stats.Processed - stats.Deduped
+	report.Invalid = src.Stats.Invalid + stats.Invalid
+	report.Imported = stats.Imported
 	report.Deduped = stats.Deduped
 	report.DurationMS = time.Since(start).Milliseconds()
 	return report, err
+}
+
+// streamGeminiNDJSON walks src and writes one NDJSON line per
+// envelope to w. Mirrors streamClaudeNDJSON; lives next to
+// import_gemini.go's caller because TranscriptSource yields its
+// own Event shape and the file walks differ subtly between the
+// two source types.
+func streamGeminiNDJSON(ctx context.Context, src *gemini.TranscriptSource, w io.Writer, log *slog.Logger) error {
+	enc := json.NewEncoder(w)
+	for ev, err := range src.Events(ctx) {
+		if err != nil {
+			log.Warn("import-gemini: source error", "err", err)
+			continue
+		}
+		if ev.Envelope == nil {
+			continue
+		}
+		if encErr := enc.Encode(ev.Envelope); encErr != nil {
+			return encErr
+		}
+	}
+	return nil
 }

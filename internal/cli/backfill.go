@@ -48,7 +48,8 @@ func newBackfillExtractionsCmd() *cobra.Command {
 			}
 			defer func() { _ = s.Close() }()
 
-			log := newImportClaudeLogger(cmd.ErrOrStderr()).
+			log := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(),
+				&slog.HandlerOptions{Level: slog.LevelInfo})).
 				With("cmd", "aichronicles backfill-extractions")
 			report, err := RunBackfillExtractions(cmd.Context(), s, only, log)
 			if err != nil {
