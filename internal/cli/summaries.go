@@ -11,8 +11,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/llm"
 )
 
@@ -436,7 +438,7 @@ func newSummariesListCmd() *cobra.Command {
 		sessionIn string
 		typeIn    string
 		limit     int
-		dbPath    string
+		sockFlag  string
 		formatIn  string
 	)
 	cmd := &cobra.Command{
@@ -449,35 +451,36 @@ func newSummariesListCmd() *cobra.Command {
 			"Topic column is extracted from the stored JSON body when\n" +
 			"possible; rows whose body is not parseable as a known type\n" +
 			"show `(unparseable)` so the row is still discoverable by id.\n\n" +
-			"Pass --format=json for a structured payload suitable for jq.",
+			"Pass --format=json for a structured payload suitable for jq.\n\n" +
+			"Talks to aichronicles-api over its UDS (override with\n" +
+			"--socket or $AICHRONICLES_API_SOCKET).",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			format, err := ParseOutputFormat(formatIn)
 			if err != nil {
 				return err
 			}
-			s, err := openStore(dbPath)
+			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
 
-			filter := store.LLMOutputFilter{Limit: limit}
+			var resolvedSession, kind string
 			if sessionIn != "" {
-				sid, err := store.ResolveSessionIDPrefix(cmd.Context(), s.DB(), sessionIn)
+				full, err := c.ResolveSession(cmd.Context(), sessionIn)
 				if err != nil {
 					return fmt.Errorf("summaries list: %w", err)
 				}
-				filter.SessionID = sid
+				resolvedSession = full
 			}
 			if typeIn != "" {
 				k, err := parseOutputKind(typeIn)
 				if err != nil {
 					return err
 				}
-				filter.Kind = k
+				kind = string(k)
 			}
 
-			rows, err := store.LoadLLMOutputs(cmd.Context(), s.DB(), filter)
+			rows, err := c.LLMOutputsList(cmd.Context(), kind, resolvedSession, limit)
 			if err != nil {
 				return fmt.Errorf("summaries list: %w", err)
 			}
@@ -488,7 +491,8 @@ func newSummariesListCmd() *cobra.Command {
 	registerSessionFlagCompletion(cmd)
 	cmd.Flags().StringVar(&typeIn, "type", "", "filter by output type (summary | reflect | propose)")
 	cmd.Flags().IntVar(&limit, "limit", 0, "max rows to list (default 50)")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
@@ -496,7 +500,7 @@ func newSummariesListCmd() *cobra.Command {
 func newSummariesShowCmd() *cobra.Command {
 	var (
 		typeIn   string
-		dbPath   string
+		sockFlag string
 		formatIn string
 	)
 	cmd := &cobra.Command{
@@ -508,7 +512,9 @@ func newSummariesShowCmd() *cobra.Command {
 			"useful for piping into `jq`.\n\n" +
 			"Errors with `no output for session …/type …` when the session\n" +
 			"exists but has never been summarized/reflected/proposed under\n" +
-			"the requested type.",
+			"the requested type.\n\n" +
+			"Talks to aichronicles-api over its UDS (override with\n" +
+			"--socket or $AICHRONICLES_API_SOCKET).",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeSessionID,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -516,39 +522,40 @@ func newSummariesShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := openStore(dbPath)
+			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
-			}
-			defer func() { _ = s.Close() }()
-
-			sid, err := store.ResolveSessionIDPrefix(cmd.Context(), s.DB(), args[0])
-			if err != nil {
-				return fmt.Errorf("summaries show: %w", err)
 			}
 			kind, err := parseOutputKind(typeIn)
 			if err != nil {
 				return err
 			}
-
-			rows, err := store.LoadLLMOutputs(cmd.Context(), s.DB(), store.LLMOutputFilter{
-				SessionID: sid,
-				Kind:      kind,
-				Limit:     1,
-			})
-			if err != nil {
-				return fmt.Errorf("summaries show: %w", err)
-			}
-			if len(rows) == 0 {
-				return fmt.Errorf("no %s output for session %s", kind, sid)
-			}
-			return emitLLMBody(cmd.OutOrStdout(), kind, rows[0].Body, format == FormatJSON)
+			return runSummariesShow(cmd.Context(), c, args[0], kind, format == FormatJSON, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&typeIn, "type", "summary", "output type (summary | reflect | propose)")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
+}
+
+// runSummariesShow is the dependency-injected core of `summaries
+// show`. Tests call it directly with a configured *apiclient.Client
+// instead of going through cobra's flag parser.
+func runSummariesShow(ctx context.Context, c *apiclient.Client, sessionPrefix string, kind store.LLMOutputKind, jsonRaw bool, out io.Writer) error {
+	sid, err := c.ResolveSession(ctx, sessionPrefix)
+	if err != nil {
+		return fmt.Errorf("summaries show: %w", err)
+	}
+	rows, err := c.SessionLLMOutputs(ctx, sid, string(kind), 1)
+	if err != nil {
+		return fmt.Errorf("summaries show: %w", err)
+	}
+	if len(rows) == 0 {
+		return fmt.Errorf("no %s output for session %s", kind, sid)
+	}
+	return emitLLMBody(out, kind, rows[0].Body, jsonRaw)
 }
 
 // parseOutputKind normalizes the --kind flag into a store.LLMOutputKind.
@@ -588,19 +595,19 @@ type LLMOutputRowJSON struct {
 // human-readable tab-aligned table; format=json is a JSON array of
 // LLMOutputRowJSON for jq pipelines. Empty result is "(no outputs)"
 // in table mode and "[]" in JSON mode.
-func writeSummaries(w io.Writer, rows []store.LLMOutput, format OutputFormat) error {
+func writeSummaries(w io.Writer, rows []api.LLMOutput, format OutputFormat) error {
 	if format == FormatJSON {
 		payload := make([]LLMOutputRowJSON, 0, len(rows))
 		for _, r := range rows {
 			row := LLMOutputRowJSON{
 				ID:           r.ID,
-				Kind:         string(r.Kind),
-				SessionID:    nullableString(r.SessionID),
+				Kind:         r.Kind,
+				SessionID:    r.SessionID,
 				CreatedAtMs:  r.CreatedAtMs,
-				Topic:        extractTopic(r.Kind, r.Body),
+				Topic:        extractTopic(store.LLMOutputKind(r.Kind), r.Body),
 				Model:        r.Model,
-				InputTokens:  nullableInt64(r.InputTokens),
-				OutputTokens: nullableInt64(r.OutputTokens),
+				InputTokens:  r.InputTokens,
+				OutputTokens: r.OutputTokens,
 				Body:         json.RawMessage(r.Body),
 			}
 			// Body may have been stored as plain text (legacy or
@@ -624,10 +631,10 @@ func writeSummaries(w io.Writer, rows []store.LLMOutput, format OutputFormat) er
 		return err
 	}
 	for _, r := range rows {
-		topic := extractTopic(r.Kind, r.Body)
+		topic := extractTopic(store.LLMOutputKind(r.Kind), r.Body)
 		sess := "(multi)"
-		if r.SessionID.Valid && r.SessionID.String != "" {
-			sess = shortSessionID(r.SessionID.String)
+		if r.SessionID != nil && *r.SessionID != "" {
+			sess = shortSessionID(*r.SessionID)
 		}
 		when := formatTimeForUser(r.CreatedAtMs, time.Now())
 		if _, err := fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n",

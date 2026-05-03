@@ -11,10 +11,42 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
+
+// llmOutputsToWire converts store rows to the api wire shape so the
+// summaries-list renderer (which now consumes []api.LLMOutput) can
+// be exercised against fixtures seeded directly into the store.
+func llmOutputsToWire(rows []store.LLMOutput) []api.LLMOutput {
+	out := make([]api.LLMOutput, 0, len(rows))
+	for _, r := range rows {
+		o := api.LLMOutput{
+			ID:          r.ID,
+			Kind:        string(r.Kind),
+			Model:       r.Model,
+			PromptHash:  r.PromptHash,
+			Body:        r.Body,
+			CreatedAtMs: r.CreatedAtMs,
+		}
+		if r.SessionID.Valid {
+			v := r.SessionID.String
+			o.SessionID = &v
+		}
+		if r.InputTokens.Valid {
+			v := r.InputTokens.Int64
+			o.InputTokens = &v
+		}
+		if r.OutputTokens.Valid {
+			v := r.OutputTokens.Int64
+			o.OutputTokens = &v
+		}
+		out = append(out, o)
+	}
+	return out
+}
 
 // seedSummariesFixtures writes one of each kind so the list/show
 // commands have something to render. Returns the store and the full
@@ -113,7 +145,7 @@ func TestSummariesList_ShowsEveryKindWithTopic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if err := writeSummaries(&out, rows, FormatTable); err != nil {
+	if err := writeSummaries(&out, llmOutputsToWire(rows), FormatTable); err != nil {
 		t.Fatalf("writeSummariesTable: %v", err)
 	}
 	rendered := out.String()
@@ -136,7 +168,7 @@ func TestSummariesList_EmptyResultGivesPlaceholder(t *testing.T) {
 	s := testStore(t)
 	var out bytes.Buffer
 	rows, _ := store.LoadLLMOutputs(t.Context(), s.DB(), store.LLMOutputFilter{})
-	if err := writeSummaries(&out, rows, FormatTable); err != nil {
+	if err := writeSummaries(&out, llmOutputsToWire(rows), FormatTable); err != nil {
 		t.Fatalf("writeSummariesTable: %v", err)
 	}
 	if !strings.Contains(out.String(), "(no outputs)") {
@@ -237,15 +269,11 @@ func TestParseOutputKind_AcceptsAliases(t *testing.T) {
 func TestSummariesShow_CommandRendersBody(t *testing.T) {
 	t.Parallel()
 	s, sessID := seedSummariesFixtures(t)
+	c := apiForStore(t, s)
 
-	// Drive the actual cobra command to catch arg/flag wiring.
-	cmd := newSummariesShowCmd()
 	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--db", dbPathFromStore(t, s), sessID[:8]})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("execute: %v", err)
+	if err := runSummariesShow(t.Context(), c, sessID[:8], store.LLMKindSummary, false, &out); err != nil {
+		t.Fatalf("runSummariesShow: %v", err)
 	}
 	if !strings.Contains(out.String(), "Refactor the ingest loop") {
 		t.Errorf("show output missing topic:\n%s", out.String())
@@ -255,14 +283,11 @@ func TestSummariesShow_CommandRendersBody(t *testing.T) {
 func TestSummariesShow_JSONFlagEmitsRawBody(t *testing.T) {
 	t.Parallel()
 	s, sessID := seedSummariesFixtures(t)
+	c := apiForStore(t, s)
 
-	cmd := newSummariesShowCmd()
 	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--db", dbPathFromStore(t, s), "--format", "json", sessID[:8]})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("execute: %v", err)
+	if err := runSummariesShow(t.Context(), c, sessID[:8], store.LLMKindSummary, true, &out); err != nil {
+		t.Fatalf("runSummariesShow: %v", err)
 	}
 	var parsed prompts.SummaryResult
 	if err := json.Unmarshal(out.Bytes(), &parsed); err != nil {
@@ -276,16 +301,13 @@ func TestSummariesShow_JSONFlagEmitsRawBody(t *testing.T) {
 func TestSummariesShow_UnknownKindErrs(t *testing.T) {
 	t.Parallel()
 	s, sessID := seedSummariesFixtures(t)
+	c := apiForStore(t, s)
 
 	// This session only has a summary, not a reflection. Asking for
 	// reflect on it should error with a clear "no output" message
 	// rather than silently returning nothing.
-	cmd := newSummariesShowCmd()
 	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--db", dbPathFromStore(t, s), "--type", "reflect", sessID[:8]})
-	err := cmd.Execute()
+	err := runSummariesShow(t.Context(), c, sessID[:8], store.LLMKindReflect, false, &out)
 	if err == nil {
 		t.Fatal("expected error when kind not present on session")
 	}
