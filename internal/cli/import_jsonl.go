@@ -1,53 +1,45 @@
 package cli
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/events"
-	"github.com/toabctl/aichronicles/pkg/redact"
+	"github.com/toabctl/aichronicles/internal/apiclient"
 )
 
 func newImportJSONLCmd() *cobra.Command {
-	var dbPath string
+	var sockFlag string
 	cmd := &cobra.Command{
 		Use:   "import-jsonl <path>",
-		Short: "Replay events.jsonl into the SQLite store",
-		Long: "Reads a JSONL file of ingest envelopes (typically the POC's\n" +
-			"events.jsonl) and inserts each line into the store. Idempotent:\n" +
-			"duplicates (by event_id) are counted and skipped.\n\n" +
+		Short: "Replay events.jsonl into the SQLite store via aichronicles-api",
+		Long: "Streams a JSONL file of ingest envelopes (typically the POC's\n" +
+			"events.jsonl) into POST /v1/import on aichronicles-api.\n" +
+			"Idempotent: duplicates (by event_id) are counted and skipped.\n\n" +
 			"Use this once after upgrading from the JSONL-only POC to backfill\n" +
 			"historical events into SQLite, or to replay a backup.\n\n" +
-			"Trust model: import-jsonl bypasses the daemon. The store still\n" +
-			"refuses unredacted envelopes (ErrRedactionRequired), but anything\n" +
-			"the daemon would otherwise enforce — future origin signing, rate\n" +
-			"limits, audit logging — does not run. Treat the input file as\n" +
-			"authoritative; if a third party hands you events.jsonl, audit it\n" +
-			"with `aichronicles audit` after import.",
+			"Trust model: the api applies server-side redaction to every line\n" +
+			"regardless of any redaction.applied claim, so a third-party\n" +
+			"events.jsonl can be imported safely. After import, run\n" +
+			"`aichronicles audit` to inspect anything the redactor missed.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openStore(dbPath)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = s.Close() }()
-
 			f, err := os.Open(args[0])
 			if err != nil {
 				return fmt.Errorf("open %s: %w", args[0], err)
 			}
 			defer func() { _ = f.Close() }()
 
-			report, err := ImportJSONL(cmd.Context(), f, s)
+			c, err := openAPIClient(sockFlag)
+			if err != nil {
+				return err
+			}
+
+			report, err := ImportJSONL(cmd.Context(), c, f, args[0])
 			if err != nil {
 				return err
 			}
@@ -55,11 +47,15 @@ func newImportJSONLCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	return cmd
 }
 
-// ImportReport summarizes an ImportJSONL run.
+// ImportReport summarizes an ImportJSONL run. Fields are
+// preserved across the apiclient migration so existing callers
+// and the human renderer keep working; the values now come from
+// api.ImportStats rather than a local BufferedSink.
 type ImportReport struct {
 	Source     string
 	Imported   int
@@ -71,6 +67,9 @@ type ImportReport struct {
 
 func (r ImportReport) String() string {
 	var b strings.Builder
+	if r.Source != "" {
+		fmt.Fprintf(&b, "source:       %s\n", r.Source)
+	}
 	fmt.Fprintf(&b, "lines read:   %d\n", r.LinesRead)
 	fmt.Fprintf(&b, "imported:     %d\n", r.Imported)
 	fmt.Fprintf(&b, "deduped:      %d (already in store by event_id)\n", r.Deduped)
@@ -79,99 +78,22 @@ func (r ImportReport) String() string {
 	return b.String()
 }
 
-// ImportJSONL reads envelopes line-by-line from r and writes each
-// into the store via a BufferedSink (chunked commits, row-by-row
-// fallback). Re-scrubs every envelope on import — the input file
-// may be pre-redaction, a third-party dump, or a buggy client; we
-// don't trust Redaction.Applied on the wire.
-//
-// Idempotent via event_id PK. ctx propagates through the sink so
-// Ctrl-C stops between chunks rather than after the current file.
-func ImportJSONL(ctx context.Context, r io.Reader, s *store.Store) (ImportReport, error) {
-	start := time.Now()
-	report := ImportReport{}
-
-	sink := store.NewBufferedSink(s, store.BufferedSinkOpts{})
-	defer func() { _ = sink.Close() }()
-	redactor := events.NewScannerRedactor(redact.Default())
-	registry := events.DefaultExtractors()
-
-	sc := bufio.NewScanner(r)
-	// Envelopes can carry long assistant messages — widen the
-	// default 64KB token cap to handle realistic turns.
-	sc.Buffer(make([]byte, 1<<20), 16<<20)
-
-	for sc.Scan() {
-		report.LinesRead++
-		line := sc.Bytes()
-		if len(bytesTrimSpace(line)) == 0 {
-			continue
-		}
-
-		var env events.Envelope
-		if err := json.Unmarshal(line, &env); err != nil {
-			report.Invalid++
-			continue
-		}
-		if err := env.Validate(); err != nil {
-			report.Invalid++
-			continue
-		}
-
-		// Scrub every envelope on import. After scrubbing, re-marshal
-		// so raw_envelopes.envelope_json reflects the scrubbed shape.
-		redactor.Apply(&env)
-		scrubbed, err := json.Marshal(&env)
-		if err != nil {
-			report.Invalid++
-			continue
-		}
-
-		envCopy := env
-		if _, err := sink.Write(ctx, events.Event{
-			Envelope:    &envCopy,
-			Raw:         scrubbed,
-			Extractions: registry.Run(&envCopy),
-		}); err != nil {
-			report.DurationMS = time.Since(start).Milliseconds()
-			report.applySinkStats(sink.Stats())
-			return report, fmt.Errorf("import line %d (%s): %w", report.LinesRead, env.EventID, err)
-		}
+// ImportJSONL streams r into POST /v1/import. The api applies
+// server-side redaction, runs the extractor registry, and writes
+// through the SQLite Sink — same path as live ingest. Idempotent
+// on event_id; per-line failures (malformed JSON, validation)
+// increment Invalid and the run continues.
+func ImportJSONL(ctx context.Context, c *apiclient.Client, r io.Reader, source string) (ImportReport, error) {
+	stats, err := c.Import(ctx, r)
+	if err != nil {
+		return ImportReport{Source: source}, err
 	}
-	if err := sc.Err(); err != nil {
-		report.DurationMS = time.Since(start).Milliseconds()
-		report.applySinkStats(sink.Stats())
-		return report, fmt.Errorf("scan: %w", err)
-	}
-	if err := sink.Flush(ctx); err != nil {
-		report.DurationMS = time.Since(start).Milliseconds()
-		report.applySinkStats(sink.Stats())
-		return report, fmt.Errorf("flush: %w", err)
-	}
-
-	report.applySinkStats(sink.Stats())
-	report.DurationMS = time.Since(start).Milliseconds()
-	return report, nil
-}
-
-func (r *ImportReport) applySinkStats(s events.SinkStats) {
-	r.Imported = s.Imported
-	r.Deduped = s.Deduped
-}
-
-// bytesTrimSpace avoids the strings.TrimSpace copy for empty-line
-// detection on a hot loop.
-func bytesTrimSpace(b []byte) []byte {
-	start, end := 0, len(b)
-	for start < end && isASCIISpace(b[start]) {
-		start++
-	}
-	for end > start && isASCIISpace(b[end-1]) {
-		end--
-	}
-	return b[start:end]
-}
-
-func isASCIISpace(c byte) bool {
-	return c == ' ' || c == '\t' || c == '\r' || c == '\n'
+	return ImportReport{
+		Source:     source,
+		LinesRead:  stats.LinesRead,
+		Imported:   stats.Imported,
+		Deduped:    stats.Deduped,
+		Invalid:    stats.Invalid,
+		DurationMS: stats.DurationM,
+	}, nil
 }

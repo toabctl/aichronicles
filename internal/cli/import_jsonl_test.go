@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,9 +11,22 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/toabctl/aichronicles/internal/api"
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/events"
 )
+
+// apiForStore stands up an httptest internal/api server backed
+// by st and returns a configured apiclient.Client. Used by every
+// importer test after the apiclient migration so the tests
+// exercise the real /v1/import path.
+func apiForStore(t *testing.T, st *store.Store) *apiclient.Client {
+	t.Helper()
+	srv := httptest.NewServer(api.NewServer(st, nil).Handler())
+	t.Cleanup(srv.Close)
+	return apiclient.NewClientForTesting(srv.Client(), srv.URL)
+}
 
 // testStore opens a fresh Store in a temp dir and wires teardown.
 func testStore(t *testing.T) *store.Store {
@@ -66,7 +80,7 @@ func TestImportJSONL_HappyPath(t *testing.T) {
 		newEnv("tool_use"),
 	)
 
-	report, err := ImportJSONL(t.Context(), bytes.NewReader(data), s)
+	report, err := ImportJSONL(t.Context(), apiForStore(t, s), bytes.NewReader(data), "test")
 	if err != nil {
 		t.Fatalf("ImportJSONL: %v", err)
 	}
@@ -89,10 +103,10 @@ func TestImportJSONL_IdempotentOnDuplicates(t *testing.T) {
 	s := testStore(t)
 	data := jsonlFromEnvelopes(t, newEnv("user_prompt"), newEnv("tool_use"))
 
-	if _, err := ImportJSONL(t.Context(), bytes.NewReader(data), s); err != nil {
+	if _, err := ImportJSONL(t.Context(), apiForStore(t, s), bytes.NewReader(data), "test"); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	report, err := ImportJSONL(t.Context(), bytes.NewReader(data), s)
+	report, err := ImportJSONL(t.Context(), apiForStore(t, s), bytes.NewReader(data), "test")
 	if err != nil {
 		t.Fatalf("second: %v", err)
 	}
@@ -134,7 +148,7 @@ func TestImportJSONL_MalformedLinesAreCountedNotFatal(t *testing.T) {
 	buf.Write(goodB2)
 	buf.WriteByte('\n')
 
-	report, err := ImportJSONL(t.Context(), &buf, s)
+	report, err := ImportJSONL(t.Context(), apiForStore(t, s), &buf, "test")
 	if err != nil {
 		t.Fatalf("ImportJSONL: %v", err)
 	}
@@ -150,7 +164,7 @@ func TestImportJSONL_EmptyInput(t *testing.T) {
 	t.Parallel()
 	s := testStore(t)
 
-	report, err := ImportJSONL(t.Context(), bytes.NewReader(nil), s)
+	report, err := ImportJSONL(t.Context(), apiForStore(t, s), bytes.NewReader(nil), "test")
 	if err != nil {
 		t.Fatalf("ImportJSONL: %v", err)
 	}
@@ -169,7 +183,7 @@ func TestImportJSONL_LargeContentSurvivesScannerBuffer(t *testing.T) {
 	env.Payload = map[string]any{"text": huge}
 	data := jsonlFromEnvelopes(t, env)
 
-	report, err := ImportJSONL(t.Context(), bytes.NewReader(data), s)
+	report, err := ImportJSONL(t.Context(), apiForStore(t, s), bytes.NewReader(data), "test")
 	if err != nil {
 		t.Fatalf("ImportJSONL: %v", err)
 	}
@@ -196,7 +210,7 @@ func TestImportJSONL_ScrubsSecretsEvenWhenInputClaimsApplied(t *testing.T) {
 	env.Redaction = &events.Redaction{Applied: true, Patterns: nil}
 	data := jsonlFromEnvelopes(t, env)
 
-	report, err := ImportJSONL(t.Context(), bytes.NewReader(data), s)
+	report, err := ImportJSONL(t.Context(), apiForStore(t, s), bytes.NewReader(data), "test")
 	if err != nil {
 		t.Fatalf("ImportJSONL: %v", err)
 	}
