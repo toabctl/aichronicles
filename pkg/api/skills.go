@@ -27,3 +27,27 @@ type SkillStalenessRequest struct {
 type SkillStalenessResponse struct {
 	Skills []SkillStaleness `json:"skills"`
 }
+
+// SkillImpact is the wire shape for one /v1/skills/impact row.
+// Sister of SkillStaleness — covers every loaded skill (including
+// the 100%-success ones) so callers can render the full
+// distribution rather than just the trouble subset.
+type SkillImpact struct {
+	Name         string  `json:"name"`
+	TotalLoads   int     `json:"total_loads"`
+	FailedLoads  int     `json:"failed_loads"`
+	SuccessRate  float64 `json:"success_rate"`
+	LastLoadedMs int64   `json:"last_loaded_ms"`
+}
+
+// SkillImpactRequest is the query-shape for GET /v1/skills/impact.
+type SkillImpactRequest struct {
+	SinceMs   int64 `json:"since_ms,omitempty"`
+	WindowMs  int64 `json:"window_ms,omitempty"`
+	MaxSkills int   `json:"max_skills,omitempty"`
+}
+
+// SkillImpactResponse is the body for /v1/skills/impact.
+type SkillImpactResponse struct {
+	Skills []SkillImpact `json:"skills"`
+}

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,7 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/pkg/api"
 )
 
 // defaultSkillStaleWindow matches what hermes-agent observed in
@@ -34,7 +36,7 @@ func newSkillsImpactCmd() *cobra.Command {
 	var (
 		since    time.Duration
 		window   time.Duration
-		dbPath   string
+		sockFlag string
 		formatIn string
 	)
 	cmd := &cobra.Command{
@@ -54,49 +56,66 @@ func newSkillsImpactCmd() *cobra.Command {
 			"The signal is conservative: only Claude's PostToolUseFailure\n" +
 			"hook fills tool_failure events, so a high success rate doesn't\n" +
 			"mean the skill is perfect — just that this signal hasn't\n" +
-			"fired. Output is sorted most-loaded first.",
+			"fired. Output is sorted most-loaded first.\n\n" +
+			"Talks to aichronicles-api over its UDS (override with\n" +
+			"--socket or $AICHRONICLES_API_SOCKET).",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			format, err := ParseOutputFormat(formatIn)
 			if err != nil {
 				return err
 			}
-			s, err := openStore(dbPath)
+			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
-
 			if since <= 0 {
 				since = 30 * 24 * time.Hour
 			}
 			if window <= 0 {
 				window = defaultSkillStaleWindow
 			}
-			sinceMs := time.Now().Add(-since).UnixMilli()
-			rows, err := store.LoadSkillImpact(cmd.Context(), s.DB(),
-				sinceMs, window.Milliseconds(),
-				store.SkillImpactLimits{})
-			if err != nil {
-				return fmt.Errorf("load skill impact: %w", err)
-			}
-			return renderSkillImpact(cmd.OutOrStdout(), rows, since, window, format)
+			return runSkillsImpact(cmd.Context(), c, runSkillsImpactOpts{
+				Since:  since,
+				Window: window,
+				Format: format,
+				Out:    cmd.OutOrStdout(),
+			})
 		},
 	}
 	addFlexDurationFlag(cmd, &since, "since", 30*24*time.Hour,
 		"only consider skill loads within this window (e.g. 24h, 7d, 30d)")
 	addFlexDurationFlag(cmd, &window, "window", defaultSkillStaleWindow,
 		"how long after a skill load to look for a tool_failure (e.g. 5m, 10m, 30m)")
-	cmd.Flags().StringVar(&dbPath, "db", "",
-		"SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
+}
+
+type runSkillsImpactOpts struct {
+	Since  time.Duration
+	Window time.Duration
+	Format OutputFormat
+	Out    io.Writer
+}
+
+func runSkillsImpact(ctx context.Context, c *apiclient.Client, opts runSkillsImpactOpts) error {
+	sinceMs := time.Now().Add(-opts.Since).UnixMilli()
+	resp, err := c.SkillImpact(ctx, api.SkillImpactRequest{
+		SinceMs:  sinceMs,
+		WindowMs: opts.Window.Milliseconds(),
+	})
+	if err != nil {
+		return fmt.Errorf("load skill impact: %w", err)
+	}
+	return renderSkillImpact(opts.Out, resp.Skills, opts.Since, opts.Window, opts.Format)
 }
 
 // renderSkillImpact writes the impact report to out. Sister of
 // renderSkillStaleness; same column layout intent (skill name on
 // the left, counts in the middle, percentage on the right) so a
 // user looking at both side-by-side has consistent muscle memory.
-func renderSkillImpact(out io.Writer, rows []store.SkillImpact, since, window time.Duration, format OutputFormat) error {
+func renderSkillImpact(out io.Writer, rows []api.SkillImpact, since, window time.Duration, format OutputFormat) error {
 	if format == FormatJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
@@ -134,9 +153,7 @@ func renderSkillImpact(out io.Writer, rows []store.SkillImpact, since, window ti
 }
 
 // relativeTimeOrDash formats an epoch-millis as "Nh ago" / "Nd
-// ago", or "-" when the timestamp is missing. Local copy rather
-// than reaching into the web package for its formatTimeForUser
-// because the cli package doesn't depend on web.
+// ago", or "-" when the timestamp is missing.
 func relativeTimeOrDash(ms int64, now time.Time) string {
 	if ms <= 0 {
 		return "-"
@@ -162,7 +179,7 @@ func newSkillsStaleCmd() *cobra.Command {
 	var (
 		since    time.Duration
 		window   time.Duration
-		dbPath   string
+		sockFlag string
 		formatIn string
 	)
 	cmd := &cobra.Command{
@@ -176,48 +193,65 @@ func newSkillsStaleCmd() *cobra.Command {
 			"this signal hasn't fired. A consistently high rate is a strong\n" +
 			"hint that the skill's instructions are wrong / outdated and\n" +
 			"deserve a `skill_manage edit` pass.\n\n" +
-			"Output is sorted most-likely-broken first.",
+			"Output is sorted most-likely-broken first.\n\n" +
+			"Talks to aichronicles-api over its UDS (override with\n" +
+			"--socket or $AICHRONICLES_API_SOCKET).",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			format, err := ParseOutputFormat(formatIn)
 			if err != nil {
 				return err
 			}
-			s, err := openStore(dbPath)
+			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
-
 			if since <= 0 {
 				since = 14 * 24 * time.Hour
 			}
 			if window <= 0 {
 				window = defaultSkillStaleWindow
 			}
-			sinceMs := time.Now().Add(-since).UnixMilli()
-			report, err := store.LoadSkillStaleness(cmd.Context(), s.DB(),
-				sinceMs, window.Milliseconds(),
-				store.SkillStalenessLimits{})
-			if err != nil {
-				return fmt.Errorf("load skill staleness: %w", err)
-			}
-			return renderSkillStaleness(cmd.OutOrStdout(), report, since, window, format)
+			return runSkillsStale(cmd.Context(), c, runSkillsStaleOpts{
+				Since:  since,
+				Window: window,
+				Format: format,
+				Out:    cmd.OutOrStdout(),
+			})
 		},
 	}
 	addFlexDurationFlag(cmd, &since, "since", 14*24*time.Hour,
 		"only consider skill loads within this window (e.g. 24h, 7d, 30d)")
 	addFlexDurationFlag(cmd, &window, "window", defaultSkillStaleWindow,
 		"how long after a skill load to look for a tool_failure (e.g. 5m, 10m, 30m)")
-	cmd.Flags().StringVar(&dbPath, "db", "",
-		"SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
+}
+
+type runSkillsStaleOpts struct {
+	Since  time.Duration
+	Window time.Duration
+	Format OutputFormat
+	Out    io.Writer
+}
+
+func runSkillsStale(ctx context.Context, c *apiclient.Client, opts runSkillsStaleOpts) error {
+	sinceMs := time.Now().Add(-opts.Since).UnixMilli()
+	resp, err := c.SkillStaleness(ctx, api.SkillStalenessRequest{
+		SinceMs:  sinceMs,
+		WindowMs: opts.Window.Milliseconds(),
+	})
+	if err != nil {
+		return fmt.Errorf("load skill staleness: %w", err)
+	}
+	return renderSkillStaleness(opts.Out, resp.Skills, opts.Since, opts.Window, opts.Format)
 }
 
 // renderSkillStaleness writes the staleness report to out in the
 // requested format. Empty report → "no stale-correlated skills"
 // rather than an empty table.
-func renderSkillStaleness(out io.Writer, rows []store.SkillStaleness, since, window time.Duration, format OutputFormat) error {
+func renderSkillStaleness(out io.Writer, rows []api.SkillStaleness, since, window time.Duration, format OutputFormat) error {
 	if format == FormatJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")

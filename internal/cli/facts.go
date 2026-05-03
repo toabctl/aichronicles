@@ -15,6 +15,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
@@ -109,7 +110,7 @@ func newFactsInduceCmd() *cobra.Command {
 
 func newFactsListCmd() *cobra.Command {
 	var (
-		dbPath   string
+		sockFlag string
 		limit    int
 		formatIn string
 	)
@@ -121,23 +122,19 @@ func newFactsListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := openStore(dbPath)
+			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
-
-			rows, err := store.LoadLLMOutputs(cmd.Context(), s.DB(), store.LLMOutputFilter{
-				Kind:  store.LLMKindFacts,
-				Limit: limit,
-			})
+			rows, err := c.LLMOutputsList(cmd.Context(), string(store.LLMKindFacts), "", limit)
 			if err != nil {
 				return fmt.Errorf("load facts rows: %w", err)
 			}
 			return renderFactsList(cmd.OutOrStdout(), rows, format)
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "max rows to render, newest first")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
@@ -146,7 +143,7 @@ func newFactsListCmd() *cobra.Command {
 func newFactsShowCmd() *cobra.Command {
 	var (
 		subject  string
-		dbPath   string
+		sockFlag string
 		limit    int
 		formatIn string
 	)
@@ -165,20 +162,20 @@ func newFactsShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := openStore(dbPath)
+			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
-			facts, err := store.LoadFactsForSubject(cmd.Context(), s.DB(), subject, limit)
+			resp, err := c.Facts(cmd.Context(), subject, limit)
 			if err != nil {
 				return fmt.Errorf("load facts: %w", err)
 			}
-			return renderFactsForSubject(cmd.OutOrStdout(), subject, facts, format)
+			return renderFactsForSubject(cmd.OutOrStdout(), subject, resp.Facts, format)
 		},
 	}
 	cmd.Flags().StringVar(&subject, "subject", "", "subject (cwd path or other anchor) to load facts for")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	cmd.Flags().IntVar(&limit, "limit", 100, "max facts to return")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
@@ -385,8 +382,9 @@ func renderFactsResult(out io.Writer, sessionID string, r *prompts.FactsResult, 
 }
 
 // renderFactsList renders the LLM-output history for kind=facts.
-// Mirrors renderInductionList / renderWorkflowList.
-func renderFactsList(out io.Writer, rows []store.LLMOutput, format OutputFormat) error {
+// Mirrors renderInductionList / renderWorkflowList. Reads the wire
+// shape since `facts list` goes through the api now.
+func renderFactsList(out io.Writer, rows []api.LLMOutput, format OutputFormat) error {
 	if format == FormatJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
@@ -411,8 +409,8 @@ func renderFactsList(out io.Writer, rows []store.LLMOutput, format OutputFormat)
 			}
 		}
 		sessShort := "(none)"
-		if r.SessionID.Valid && len(r.SessionID.String) >= 8 {
-			sessShort = r.SessionID.String[:8]
+		if r.SessionID != nil && len(*r.SessionID) >= 8 {
+			sessShort = (*r.SessionID)[:8]
 		}
 		when := time.UnixMilli(r.CreatedAtMs).UTC().Format("2006-01-02 15:04 UTC")
 		fmt.Fprintf(&b, "%-8s  %-19s  %s\n", sessShort, when, outcome)
@@ -424,7 +422,7 @@ func renderFactsList(out io.Writer, rows []store.LLMOutput, format OutputFormat)
 // renderFactsForSubject renders every semantic_facts row for one
 // subject. Tabular format keyed on predicate so a reader scans
 // "what do I know about /work/foo" cleanly.
-func renderFactsForSubject(out io.Writer, subject string, facts []store.SemanticFact, format OutputFormat) error {
+func renderFactsForSubject(out io.Writer, subject string, facts []api.SemanticFact, format OutputFormat) error {
 	if format == FormatJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
@@ -440,8 +438,8 @@ func renderFactsForSubject(out io.Writer, subject string, facts []store.Semantic
 		fmt.Fprintf(&b, "  %s = %s  (conf=%.2f, asserted %s)\n",
 			f.Predicate, f.Object, f.Confidence,
 			time.UnixMilli(f.AssertedAtMs).UTC().Format("2006-01-02 15:04 UTC"))
-		if f.EvidenceQuote.Valid && f.EvidenceQuote.String != "" {
-			fmt.Fprintf(&b, "    quote: %s\n", f.EvidenceQuote.String)
+		if f.EvidenceQuote != nil && *f.EvidenceQuote != "" {
+			fmt.Fprintf(&b, "    quote: %s\n", *f.EvidenceQuote)
 		}
 	}
 	_, err := io.WriteString(out, b.String())

@@ -9,6 +9,29 @@ import (
 	"github.com/toabctl/aichronicles/pkg/api"
 )
 
+// SkillImpact queries GET /v1/skills/impact.
+func (c *Client) SkillImpact(ctx context.Context, req api.SkillImpactRequest) (api.SkillImpactResponse, error) {
+	q := url.Values{}
+	if req.SinceMs > 0 {
+		q.Set("since_ms", strconv.FormatInt(req.SinceMs, 10))
+	}
+	if req.WindowMs > 0 {
+		q.Set("window_ms", strconv.FormatInt(req.WindowMs, 10))
+	}
+	if req.MaxSkills > 0 {
+		q.Set("max_skills", strconv.Itoa(req.MaxSkills))
+	}
+	path := "/v1/skills/impact"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out api.SkillImpactResponse
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return api.SkillImpactResponse{}, err
+	}
+	return out, nil
+}
+
 // SkillStaleness queries GET /v1/skills/staleness.
 func (c *Client) SkillStaleness(ctx context.Context, req api.SkillStalenessRequest) (api.SkillStalenessResponse, error) {
 	q := url.Values{}

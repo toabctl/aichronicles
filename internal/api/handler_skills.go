@@ -71,3 +71,59 @@ func (s *Server) handleSkillsStaleness(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+// handleSkillsImpact serves GET /v1/skills/impact with optional
+// since_ms / window_ms / max_skills filters. Sister of staleness:
+// covers every loaded skill (including 100%-success ones) so
+// callers can render the full distribution. Backed by
+// store.LoadSkillImpact.
+func (s *Server) handleSkillsImpact(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	var sinceMs, windowMs int64
+	if v := q.Get("since_ms"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			writeProblem(w, http.StatusBadRequest, "Invalid since_ms", "")
+			return
+		}
+		sinceMs = n
+	}
+	if v := q.Get("window_ms"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			writeProblem(w, http.StatusBadRequest, "Invalid window_ms", "")
+			return
+		}
+		windowMs = n
+	}
+
+	lim := store.SkillImpactLimits{}
+	if v := q.Get("max_skills"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			writeProblem(w, http.StatusBadRequest, "Invalid max_skills", "")
+			return
+		}
+		lim.MaxSkills = n
+	}
+
+	rows, err := store.LoadSkillImpact(r.Context(), s.store.DB(), sinceMs, windowMs, lim)
+	if err != nil {
+		s.slog.Error("LoadSkillImpact", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+
+	out := api.SkillImpactResponse{Skills: make([]api.SkillImpact, 0, len(rows))}
+	for _, r := range rows {
+		out.Skills = append(out.Skills, api.SkillImpact{
+			Name:         r.Name,
+			TotalLoads:   r.TotalLoads,
+			FailedLoads:  r.FailedLoads,
+			SuccessRate:  r.SuccessRate,
+			LastLoadedMs: r.LastLoadedMs,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
