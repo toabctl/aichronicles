@@ -2,13 +2,12 @@ package cli
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 )
 
 // renderInsightsText delegates almost everything to small format
@@ -17,8 +16,8 @@ import (
 
 func TestRenderInsights_EmptyWindow(t *testing.T) {
 	t.Parallel()
-	r := &store.InsightsReport{
-		Window: store.InsightsWindow{
+	r := &api.Insights{
+		Window: api.InsightsWindow{
 			SinceMs: time.Now().Add(-7 * 24 * time.Hour).UnixMilli(),
 			UntilMs: time.Now().UnixMilli(),
 			Days:    7,
@@ -36,20 +35,22 @@ func TestRenderInsights_EmptyWindow(t *testing.T) {
 
 func TestRenderInsights_TextHasAllSectionsWhenPopulated(t *testing.T) {
 	t.Parallel()
-	r := &store.InsightsReport{
-		Window:   store.InsightsWindow{SinceMs: 0, UntilMs: time.Now().UnixMilli(), Days: 7},
-		Overview: store.InsightsOverview{Sessions: 3, Events: 100, ToolUses: 50, UserPrompts: 5, DistinctTools: 4, DistinctSkills: 2},
-		TopTools: []store.ToolUsage{{ToolName: "Bash", Count: 30}, {ToolName: "Read", Count: 15}},
-		TopSkills: []store.SkillUsage{
+	started := time.Date(2026, 4, 24, 9, 0, 0, 0, time.UTC).UnixMilli()
+	cwd := "/home/dev/proj"
+	r := &api.Insights{
+		Window:   api.InsightsWindow{SinceMs: 0, UntilMs: time.Now().UnixMilli(), Days: 7},
+		Overview: api.InsightsOverview{Sessions: 3, Events: 100, ToolUses: 50, UserPrompts: 5, DistinctTools: 4, DistinctSkills: 2},
+		TopTools: []api.ToolUsage{{ToolName: "Bash", Count: 30}, {ToolName: "Read", Count: 15}},
+		TopSkills: []api.SkillUsage{
 			{Name: "build-test", Count: 4, LastUsedMs: time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC).UnixMilli()},
 		},
 		ActivityByHour: makeHourBuckets(map[int]int{9: 12, 14: 7}),
-		TopSessions: []store.TopSession{
+		TopSessions: []api.TopSession{
 			{
 				SessionID:   "abcd1234-1111-2222-3333-444444444444",
 				EventCount:  42,
-				StartedAtMs: sql.NullInt64{Int64: time.Date(2026, 4, 24, 9, 0, 0, 0, time.UTC).UnixMilli(), Valid: true},
-				Cwd:         sql.NullString{String: "/home/dev/proj", Valid: true},
+				StartedAtMs: &started,
+				Cwd:         &cwd,
 				FirstPrompt: "investigate the slow Bash invocation under heavy load",
 			},
 		},
@@ -83,16 +84,16 @@ func TestRenderInsights_TextHasAllSectionsWhenPopulated(t *testing.T) {
 // don't have to re-derive anything from text.
 func TestRenderInsights_JSONEmitsRawStruct(t *testing.T) {
 	t.Parallel()
-	r := &store.InsightsReport{
-		Window:   store.InsightsWindow{SinceMs: 100, UntilMs: 200, Days: 1},
-		Overview: store.InsightsOverview{Sessions: 1, Events: 10, ToolUses: 5, DistinctTools: 1},
-		TopTools: []store.ToolUsage{{ToolName: "Bash", Count: 5}},
+	r := &api.Insights{
+		Window:   api.InsightsWindow{SinceMs: 100, UntilMs: 200, Days: 1},
+		Overview: api.InsightsOverview{Sessions: 1, Events: 10, ToolUses: 5, DistinctTools: 1},
+		TopTools: []api.ToolUsage{{ToolName: "Bash", Count: 5}},
 	}
 	var buf bytes.Buffer
 	if err := renderInsights(&buf, r, FormatJSON); err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	var got store.InsightsReport
+	var got api.Insights
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 		t.Fatalf("json roundtrip: %v\nbody: %s", err, buf.String())
 	}
@@ -106,9 +107,9 @@ func TestRenderInsights_JSONEmitsRawStruct(t *testing.T) {
 // (no "Top Skills:" with zero rows below).
 func TestRenderInsightsText_OmitsEmptySections(t *testing.T) {
 	t.Parallel()
-	r := &store.InsightsReport{
-		Window:         store.InsightsWindow{Days: 7},
-		Overview:       store.InsightsOverview{Sessions: 1, Events: 1, ToolUses: 0},
+	r := &api.Insights{
+		Window:         api.InsightsWindow{Days: 7},
+		Overview:       api.InsightsOverview{Sessions: 1, Events: 1, ToolUses: 0},
 		ActivityByHour: makeHourBuckets(nil),
 	}
 	var buf bytes.Buffer
@@ -144,10 +145,10 @@ func TestCollapseWhitespace(t *testing.T) {
 }
 
 // makeHourBuckets builds a dense 24-bucket array with the given
-// counts overlaid. Mirrors the contract LoadInsights provides; we
+// counts overlaid. Mirrors the contract /v1/insights provides; we
 // can't test the renderer faithfully without it.
-func makeHourBuckets(byHour map[int]int) []store.HourBucket {
-	out := make([]store.HourBucket, 24)
+func makeHourBuckets(byHour map[int]int) []api.HourBucket {
+	out := make([]api.HourBucket, 24)
 	for i := range out {
 		out[i].Hour = i
 		out[i].Count = byHour[i]

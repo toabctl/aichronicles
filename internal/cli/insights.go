@@ -10,18 +10,19 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/pkg/api"
 )
 
-// defaultInsightsWindow matches the default Hermes /insights uses
-// (and what people expect from a "what did I do this month"
-// digest). Override with --since for a tighter or wider net.
+// defaultInsightsWindow matches the default the api uses (and what
+// people expect from a "what did I do this month" digest). Override
+// with --since for a tighter or wider net.
 const defaultInsightsWindow = 30 * 24 * time.Hour
 
 func newInsightsCmd() *cobra.Command {
 	var (
 		since    time.Duration
-		dbPath   string
+		sockFlag string
 		formatIn string
 	)
 	cmd := &cobra.Command{
@@ -32,41 +33,57 @@ func newInsightsCmd() *cobra.Command {
 			"tool calls), top tools, top skills, an activity-by-hour\n" +
 			"histogram, and the highest-event-count sessions.\n\n" +
 			"No LLM call — pure SQL aggregation, fast even on large stores.\n" +
-			"For LLM-derived analysis, see `reflect` and `propose`.",
+			"For LLM-derived analysis, see `reflect` and `propose`.\n\n" +
+			"Talks to aichronicles-api over its UDS (override with\n" +
+			"--socket or $AICHRONICLES_API_SOCKET).",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			format, err := ParseOutputFormat(formatIn)
 			if err != nil {
 				return err
 			}
-			s, err := openStore(dbPath)
+			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
-
 			window := since
 			if window <= 0 {
 				window = defaultInsightsWindow
 			}
-			sinceMs := time.Now().Add(-window).UnixMilli()
-			report, err := store.LoadInsights(cmd.Context(), s.DB(), sinceMs, store.InsightsLimits{})
-			if err != nil {
-				return fmt.Errorf("load insights: %w", err)
-			}
-			return renderInsights(cmd.OutOrStdout(), report, format)
+			return runInsights(cmd.Context(), c, runInsightsOpts{
+				Since:  window,
+				Format: format,
+				Out:    cmd.OutOrStdout(),
+			})
 		},
 	}
 	addFlexDurationFlag(cmd, &since, "since", defaultInsightsWindow,
 		"only consider sessions/events within this window (e.g. 24h, 7d, 30d)")
-	cmd.Flags().StringVar(&dbPath, "db", "",
-		"SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
 
+// runInsightsOpts groups runInsights' arguments. Tests construct one
+// directly without cobra.
+type runInsightsOpts struct {
+	Since  time.Duration
+	Format OutputFormat
+	Out    io.Writer
+}
+
+func runInsights(ctx context.Context, c *apiclient.Client, opts runInsightsOpts) error {
+	sinceMs := time.Now().Add(-opts.Since).UnixMilli()
+	report, err := c.Insights(ctx, apiclient.InsightsRequest{SinceMs: sinceMs})
+	if err != nil {
+		return fmt.Errorf("load insights: %w", err)
+	}
+	return renderInsights(opts.Out, &report, opts.Format)
+}
+
 // renderInsights writes the report to out in the requested format.
 // JSON gets the raw struct; text gets a hand-tuned digest layout.
-func renderInsights(out io.Writer, r *store.InsightsReport, format OutputFormat) error {
+func renderInsights(out io.Writer, r *api.Insights, format OutputFormat) error {
 	if format == FormatJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
@@ -79,7 +96,7 @@ func renderInsights(out io.Writer, r *store.InsightsReport, format OutputFormat)
 // every section omitted when its underlying slice is empty (no
 // "Top Skills: (none)" placeholder lines — keeps the report tight
 // for users who don't load skills).
-func renderInsightsText(out io.Writer, r *store.InsightsReport) error {
+func renderInsightsText(out io.Writer, r *api.Insights) error {
 	var b strings.Builder
 
 	since := time.UnixMilli(r.Window.SinceMs).UTC().Format("2006-01-02")
@@ -138,8 +155,8 @@ func renderInsightsText(out io.Writer, r *store.InsightsReport) error {
 		fmt.Fprintf(&b, "Top sessions (by event count)\n")
 		for _, ts := range r.TopSessions {
 			cwd := "-"
-			if ts.Cwd.Valid && ts.Cwd.String != "" {
-				cwd = ts.Cwd.String
+			if ts.Cwd != nil && *ts.Cwd != "" {
+				cwd = *ts.Cwd
 			}
 			prompt := strings.TrimSpace(ts.FirstPrompt)
 			prompt = collapseWhitespace(prompt)
@@ -147,8 +164,8 @@ func renderInsightsText(out io.Writer, r *store.InsightsReport) error {
 				prompt = prompt[:57] + "..."
 			}
 			started := "-"
-			if ts.StartedAtMs.Valid {
-				started = time.UnixMilli(ts.StartedAtMs.Int64).UTC().Format("2006-01-02")
+			if ts.StartedAtMs != nil {
+				started = time.UnixMilli(*ts.StartedAtMs).UTC().Format("2006-01-02")
 			}
 			fmt.Fprintf(&b, "  %s  %5d events  %s\n", shortID(ts.SessionID), ts.EventCount, started)
 			fmt.Fprintf(&b, "    cwd: %s\n", cwd)
@@ -163,7 +180,6 @@ func renderInsightsText(out io.Writer, r *store.InsightsReport) error {
 }
 
 // shortID is the same 8-char prefix used elsewhere in the CLI.
-// Local copy to avoid depending on web-package types from cli.
 func shortID(id string) string {
 	if len(id) < 8 {
 		return id
@@ -173,7 +189,7 @@ func shortID(id string) string {
 
 // maxToolNameWidth picks a column width for the tool-name column,
 // clamped to cap so absurdly long names don't blow up the layout.
-func maxToolNameWidth(tools []store.ToolUsage, cap int) int {
+func maxToolNameWidth(tools []api.ToolUsage, cap int) int {
 	w := 0
 	for _, t := range tools {
 		if n := len(t.ToolName); n > w {
@@ -189,7 +205,7 @@ func maxToolNameWidth(tools []store.ToolUsage, cap int) int {
 	return w
 }
 
-func maxSkillNameWidth(skills []store.SkillUsage, cap int) int {
+func maxSkillNameWidth(skills []api.SkillUsage, cap int) int {
 	w := 0
 	for _, s := range skills {
 		if n := len(s.Name); n > w {
@@ -205,7 +221,7 @@ func maxSkillNameWidth(skills []store.SkillUsage, cap int) int {
 	return w
 }
 
-func hasAnyHourActivity(buckets []store.HourBucket) bool {
+func hasAnyHourActivity(buckets []api.HourBucket) bool {
 	for _, b := range buckets {
 		if b.Count > 0 {
 			return true
@@ -218,7 +234,7 @@ func hasAnyHourActivity(buckets []store.HourBucket) bool {
 // list with a unicode-block-element bar per hour. Bar width is
 // scaled to the busiest hour so the chart self-fits at any
 // activity level.
-func writeHourHistogram(b *strings.Builder, buckets []store.HourBucket) {
+func writeHourHistogram(b *strings.Builder, buckets []api.HourBucket) {
 	maxCount := 0
 	for _, hb := range buckets {
 		if hb.Count > maxCount {
@@ -241,9 +257,7 @@ func writeHourHistogram(b *strings.Builder, buckets []store.HourBucket) {
 
 // collapseWhitespace squashes runs of whitespace (newlines,
 // multiple spaces) into single spaces so a multi-line first
-// prompt fits on one line in the report. ASCII-only — no unicode
-// whitespace beyond ' ' and '\t' / '\n' need handling for
-// transcript content.
+// prompt fits on one line in the report.
 func collapseWhitespace(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
@@ -260,19 +274,4 @@ func collapseWhitespace(s string) string {
 		prevSpace = false
 	}
 	return b.String()
-}
-
-// Compile-time assert RunInsights signature for parity with the
-// other Run* functions if a caller wants to invoke programmatically
-// without going through cobra. Currently unused outside the cobra
-// command, but kept for symmetry with RunReflect / RunPropose.
-var _ = func(ctx context.Context, s *store.Store, w io.Writer, since time.Duration, format OutputFormat) error {
-	if since <= 0 {
-		since = defaultInsightsWindow
-	}
-	r, err := store.LoadInsights(ctx, s.DB(), time.Now().Add(-since).UnixMilli(), store.InsightsLimits{})
-	if err != nil {
-		return err
-	}
-	return renderInsights(w, r, format)
 }
