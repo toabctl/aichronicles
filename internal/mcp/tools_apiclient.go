@@ -855,13 +855,6 @@ func getSummaryAPIHandler(c *apiclient.Client) ToolHandler {
 	}
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // --- list_workflows ---
 
 func registerListWorkflows(s *Server, c *apiclient.Client) {

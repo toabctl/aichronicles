@@ -30,6 +30,9 @@ func (c *Client) Search(ctx context.Context, req api.SearchRequest) (api.SearchR
 	if req.WithFailures {
 		q.Set("with_failures", "true")
 	}
+	if req.NoDedup {
+		q.Set("no_dedup", "true")
+	}
 	if req.SinceMs > 0 {
 		q.Set("since_ms", strconv.FormatInt(req.SinceMs, 10))
 	}

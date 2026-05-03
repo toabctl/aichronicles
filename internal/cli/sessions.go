@@ -2,7 +2,7 @@ package cli
 
 import (
 	"bytes"
-	"database/sql"
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -11,8 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/toabctl/aichronicles/internal/nullable"
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/pkg/api"
 )
 
 // maxPromptRunes caps the identifying-prompt snippet in `sessions`
@@ -23,9 +23,8 @@ func newSessionsCmd() *cobra.Command {
 	var (
 		limit    int
 		cwd      string
-		agent    string
 		since    time.Duration
-		dbPath   string
+		sockFlag string
 		formatIn string
 	)
 	cmd := &cobra.Command{
@@ -35,45 +34,42 @@ func newSessionsCmd() *cobra.Command {
 			"  SESSION  STARTED  ENDED  EVENTS  CWD  FIRST_PROMPT\n\n" +
 			"On a TTY columns are aligned for reading; when piped or\n" +
 			"redirected they emit as tab-separated values for awk/cut.\n" +
-			"Pass --format=json for a structured payload suitable for jq.\n" +
-			"Filters stack.",
+			"Pass --format=json for a structured payload suitable for jq.\n\n" +
+			"Talks to aichronicles-api over its UDS (override with\n" +
+			"--socket or $AICHRONICLES_API_SOCKET).",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			format, err := ParseOutputFormat(formatIn)
 			if err != nil {
 				return err
 			}
-			s, err := openStore(dbPath)
+			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
-
 			opts := SessionsOptions{
 				Cwd:    cwd,
-				Agent:  agent,
 				Limit:  limit,
 				Format: format,
 			}
 			if since > 0 {
 				opts.SinceMs = time.Now().Add(-since).UnixMilli()
 			}
-			return RunListSessions(s, opts, cmd.OutOrStdout())
+			return RunListSessions(cmd.Context(), c, opts, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 30, "max sessions to return")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "filter by cwd (exact match)")
-	cmd.Flags().StringVar(&agent, "agent", "", "filter by source_agent (e.g. claude-code)")
 	addFlexDurationFlag(cmd, &since, "since", 0, "only sessions whose ended_at is within this duration (e.g. 24h, 7d)")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
 
 // SessionsOptions is the filter set for listing sessions. Exported so
-// tests and MCP wiring can drive the same code path.
+// tests can drive the same code path without going through cobra.
 type SessionsOptions struct {
 	Cwd     string
-	Agent   string
 	SinceMs int64 // only sessions ended_at_ms >= this
 	Limit   int
 	Format  OutputFormat // empty == FormatTable
@@ -93,58 +89,41 @@ type SessionRowJSON struct {
 	FirstPrompt *string `json:"first_prompt"`
 }
 
-// RunListSessions queries the store and writes one row per session
-// to out. Filters stack; ordering is always most-recently-ended first.
+// RunListSessions queries aichronicles-api and writes one row per
+// session to out. Filters stack; ordering is always
+// most-recently-ended first.
 //
 // Format=table (default) renders aligned columns + tab-separated
 // underneath for awk/cut. Format=json emits a JSON array of
 // SessionRowJSON values for jq pipelines. Empty result sets print a
 // "(no sessions matched)" line in table mode and an empty array in
 // JSON mode so consumers always see well-formed output.
-func RunListSessions(s *store.Store, opts SessionsOptions, out io.Writer) error {
-	sqlText, args := buildSessionsSQL(opts)
-	rows, err := s.DB().Query(sqlText, args...)
+func RunListSessions(ctx context.Context, c *apiclient.Client, opts SessionsOptions, out io.Writer) error {
+	resp, err := c.Sessions(ctx, api.SessionListRequest{
+		SinceMs: opts.SinceMs,
+		Cwd:     opts.Cwd,
+		Limit:   opts.Limit,
+	})
 	if err != nil {
-		return fmt.Errorf("sessions query: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	type rawRow struct {
-		id          string
-		startedMs   sql.NullInt64
-		endedMs     sql.NullInt64
-		eventCount  int
-		cwd         sql.NullString
-		firstPrompt sql.NullString
-	}
-	var collected []rawRow
-	for rows.Next() {
-		var r rawRow
-		if err := rows.Scan(&r.id, &r.startedMs, &r.endedMs, &r.eventCount, &r.cwd, &r.firstPrompt); err != nil {
-			return fmt.Errorf("scan row: %w", err)
-		}
-		collected = append(collected, r)
-	}
-	if err := rows.Err(); err != nil {
-		return err
+		return fmt.Errorf("list sessions: %w", err)
 	}
 
 	if opts.Format == FormatJSON {
-		payload := make([]SessionRowJSON, 0, len(collected))
-		for _, r := range collected {
+		payload := make([]SessionRowJSON, 0, len(resp.Sessions))
+		for _, s := range resp.Sessions {
 			payload = append(payload, SessionRowJSON{
-				SessionID:   r.id,
-				StartedAtMs: nullableInt64(r.startedMs),
-				EndedAtMs:   nullableInt64(r.endedMs),
-				EventCount:  r.eventCount,
-				Cwd:         nullableString(r.cwd),
-				FirstPrompt: nullableString(r.firstPrompt),
+				SessionID:   s.ID,
+				StartedAtMs: s.StartedAtMs,
+				EndedAtMs:   s.EndedAtMs,
+				EventCount:  s.EventCount,
+				Cwd:         s.Cwd,
+				FirstPrompt: s.FirstPrompt,
 			})
 		}
 		return emitJSON(out, payload)
 	}
 
-	if len(collected) == 0 {
+	if len(resp.Sessions) == 0 {
 		_, err := fmt.Fprintln(out, "(no sessions matched)")
 		return err
 	}
@@ -156,8 +135,8 @@ func RunListSessions(s *store.Store, opts SessionsOptions, out io.Writer) error 
 	if _, err := fmt.Fprintln(tw, "SESSION\tSTARTED\tENDED\tEVENTS\tCWD\tFIRST_PROMPT"); err != nil {
 		return err
 	}
-	for _, r := range collected {
-		_, _ = fmt.Fprintln(tw, formatSessionRow(r.id, r.startedMs, r.endedMs, r.eventCount, r.cwd, r.firstPrompt))
+	for _, s := range resp.Sessions {
+		_, _ = fmt.Fprintln(tw, formatSessionRow(s))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -166,77 +145,45 @@ func RunListSessions(s *store.Store, opts SessionsOptions, out io.Writer) error 
 	return err
 }
 
-// nullableInt64 / nullableString are thin wrappers over
-// internal/nullable so the JSON-mode column renderings stay
-// shared with the web and MCP surfaces.
-func nullableInt64(n sql.NullInt64) *int64    { return nullable.Int64Ptr(n) }
-func nullableString(n sql.NullString) *string { return nullable.StringPtr(n) }
-
-// buildSessionsSQL composes the list query. Factored out for unit
-// tests that check filter composition without hitting SQLite.
-func buildSessionsSQL(opts SessionsOptions) (string, []any) {
-	var filter strings.Builder
-	var args []any
-
-	if opts.Cwd != "" {
-		filter.WriteString(` AND s.cwd = ?`)
-		args = append(args, opts.Cwd)
-	}
-	if opts.Agent != "" {
-		filter.WriteString(` AND s.source_agent = ?`)
-		args = append(args, opts.Agent)
-	}
-	if opts.SinceMs > 0 {
-		filter.WriteString(` AND s.ended_at_ms >= ?`)
-		args = append(args, opts.SinceMs)
-	}
-
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 30
-	}
-	args = append(args, limit)
-
-	// first_prompt_text is the column the migration-016 trigger
-	// keeps populated with the session's first user_prompt content
-	// — replaces the per-row correlated subquery the previous
-	// implementation ran.
-	return `SELECT s.id, s.started_at_ms, s.ended_at_ms, s.event_count, s.cwd,
-			s.first_prompt_text AS first_prompt
-		FROM sessions s
-		WHERE 1=1` + filter.String() + `
-		ORDER BY ` + store.EffectiveTsExpr + ` DESC
-		LIMIT ?`, args
-}
-
 // formatSessionRow renders one row for CLI output. Tab-separated so
 // downstream column -t / awk / cut behave. First prompt is truncated
-// and newlines flattened; empty-session sentinels render as "-".
-func formatSessionRow(id string, startedMs, endedMs sql.NullInt64, eventCount int, cwd, firstPrompt sql.NullString) string {
-	sess := id
+// and newlines flattened; missing values render as "-".
+func formatSessionRow(s api.SessionDigest) string {
+	sess := s.ID
 	if len(sess) > 8 {
 		sess = sess[:8]
 	}
 	return fmt.Sprintf(
 		"%s\t%s\t%s\t%d\t%s\t%s",
 		sess,
-		formatTsNullable(startedMs),
-		formatTsNullable(endedMs),
-		eventCount,
-		nullStringOrDash(cwd),
-		truncatePrompt(nullStringOrDash(firstPrompt)),
+		formatTsPtr(s.StartedAtMs),
+		formatTsPtr(s.EndedAtMs),
+		s.EventCount,
+		strPtrOrDash(s.Cwd),
+		truncatePrompt(strPtrOrDash(s.FirstPrompt)),
 	)
 }
 
-func formatTsNullable(n sql.NullInt64) string {
-	if !n.Valid {
+// formatTsPtr renders a *int64 epoch-millis as the canonical
+// human-readable form, or "-" when nil.
+func formatTsPtr(p *int64) string {
+	if p == nil {
 		return "-"
 	}
-	return formatTimeForUser(n.Int64, time.Now())
+	return formatTimeForUser(*p, time.Now())
 }
 
-func nullStringOrDash(s sql.NullString) string { return nullable.OrDash(s) }
+// strPtrOrDash returns *p or "-" when p is nil or empty.
+func strPtrOrDash(p *string) string {
+	if p == nil || *p == "" {
+		return "-"
+	}
+	return *p
+}
 
+// truncatePrompt collapses internal whitespace and caps the rune
+// length so the FIRST_PROMPT column doesn't blow up the layout. The
+// dash sentinel passes through unchanged.
 func truncatePrompt(s string) string {
 	if s == "-" {
 		return s

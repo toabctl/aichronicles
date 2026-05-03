@@ -58,7 +58,7 @@ func TestRunSearchSummary_NoHitsPrintsEmptyMarker(t *testing.T) {
 		called++
 		return &fakeLLM{reply: "should not be called"}, nil
 	}
-	err := RunSearchSummary(context.Background(), s,
+	err := RunSearchSummary(context.Background(), apiForStore(t, s),
 		SearchOptions{Query: "noresults", TopN: 5},
 		newClient, &buf)
 	if err != nil {
@@ -84,7 +84,7 @@ func TestRunSearchSummary_PassesGroundedHitsToLLM(t *testing.T) {
 		events.DeriveSessionID("claude-code", "summary-sess-1")[:8] + "]."}
 
 	var buf bytes.Buffer
-	err := RunSearchSummary(context.Background(), s,
+	err := RunSearchSummary(context.Background(), apiForStore(t, s),
 		SearchOptions{Query: "slow query", TopN: 5},
 		func() (llm.Client, error) { return f, nil }, &buf)
 	if err != nil {
@@ -114,7 +114,7 @@ func TestRunSearchSummary_JSONIncludesSummaryAndHits(t *testing.T) {
 	seedSearchableEvent(t, s, "summary-sess-2", "FTS5 trigram tokenizer notes")
 
 	var buf bytes.Buffer
-	err := RunSearchSummary(context.Background(), s,
+	err := RunSearchSummary(context.Background(), apiForStore(t, s),
 		SearchOptions{Query: "FTS5", TopN: 5, Format: FormatJSON},
 		func() (llm.Client, error) { return &fakeLLM{reply: "synthesised answer"}, nil },
 		&buf)
@@ -148,7 +148,7 @@ func TestRunSearchSummary_ClampsTopNToFive(t *testing.T) {
 	}
 	f := &fakeLLM{reply: "ok"}
 	var buf bytes.Buffer
-	err := RunSearchSummary(context.Background(), s,
+	err := RunSearchSummary(context.Background(), apiForStore(t, s),
 		SearchOptions{Query: "needle", TopN: 0}, // 0 → default 5
 		func() (llm.Client, error) { return f, nil }, &buf)
 	if err != nil {

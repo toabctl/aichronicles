@@ -33,7 +33,12 @@ type SearchRequest struct {
 	FilePathSubstring string `json:"file_path_substring,omitempty"`
 	SinceMs           int64  `json:"since_ms,omitempty"`
 	WithFailures      bool   `json:"with_failures,omitempty"`
-	Limit             int    `json:"limit,omitempty"`
+	// NoDedup disables the default same-turn collapsing that picks
+	// transport=hook over a transcript-import duplicate. Set true
+	// only when the caller wants to see every captured row, e.g.
+	// to debug ingest fan-out.
+	NoDedup bool `json:"no_dedup,omitempty"`
+	Limit   int  `json:"limit,omitempty"`
 }
 
 // SearchResponse is the body shape for GET /v1/search.

@@ -92,7 +92,7 @@ func TestRunSearch_FindsByKeyword(t *testing.T) {
 	s, _ := seedStore(t)
 	var out bytes.Buffer
 
-	if err := RunSearch(s, SearchOptions{Query: "jsonl"}, &out); err != nil {
+	if err := RunSearch(t.Context(), apiForStore(t, s), SearchOptions{Query: "jsonl"}, &out); err != nil {
 		t.Fatalf("RunSearch: %v", err)
 	}
 	if !strings.Contains(out.String(), "what is jsonl format") {
@@ -112,7 +112,7 @@ func TestRunSearch_RespectsKindFilter(t *testing.T) {
 
 	// "systemd" appears in both a user_prompt and (via Bash) a tool_use;
 	// kind=user_prompt should narrow to one line.
-	if err := RunSearch(s, SearchOptions{Query: "systemd", Kind: "user_prompt"}, &out); err != nil {
+	if err := RunSearch(t.Context(), apiForStore(t, s), SearchOptions{Query: "systemd", Kind: "user_prompt"}, &out); err != nil {
 		t.Fatalf("RunSearch: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
@@ -131,7 +131,7 @@ func TestRunSearch_RespectsSessionFilter(t *testing.T) {
 	var out bytes.Buffer
 
 	sessFooID := events.DeriveSessionID("claude-code", "sess-foo")
-	if err := RunSearch(s, SearchOptions{Query: "is", SessionID: sessFooID}, &out); err != nil {
+	if err := RunSearch(t.Context(), apiForStore(t, s), SearchOptions{Query: "is", SessionID: sessFooID}, &out); err != nil {
 		t.Fatalf("RunSearch: %v", err)
 	}
 	got := out.String()
@@ -158,7 +158,7 @@ func TestRunSearch_RespectsSinceFilter(t *testing.T) {
 
 	// Only events in the last 3 hours — excludes the 48h-old foo session.
 	sinceMs := time.Now().Add(-3 * time.Hour).UnixMilli()
-	if err := RunSearch(s, SearchOptions{Query: "systemd", SinceMs: sinceMs}, &out); err != nil {
+	if err := RunSearch(t.Context(), apiForStore(t, s), SearchOptions{Query: "systemd", SinceMs: sinceMs}, &out); err != nil {
 		t.Fatalf("RunSearch: %v", err)
 	}
 	if strings.Contains(out.String(), "jsonl") {
@@ -193,7 +193,7 @@ func TestRunSearch_RespectsLimit(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := RunSearch(s, SearchOptions{Query: "limittest", Limit: 5}, &out); err != nil {
+	if err := RunSearch(t.Context(), apiForStore(t, s), SearchOptions{Query: "limittest", Limit: 5}, &out); err != nil {
 		t.Fatalf("RunSearch: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
@@ -206,7 +206,7 @@ func TestRunSearch_RespectsLimit(t *testing.T) {
 func TestRunSearch_EmptyQueryIsError(t *testing.T) {
 	t.Parallel()
 	s, _ := seedStore(t)
-	err := RunSearch(s, SearchOptions{Query: "   "}, &bytes.Buffer{})
+	err := RunSearch(t.Context(), apiForStore(t, s), SearchOptions{Query: "   "}, &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("expected error for whitespace-only query")
 	}
@@ -216,7 +216,7 @@ func TestRunSearch_NoMatchesShowsEmptyStateLine(t *testing.T) {
 	t.Parallel()
 	s, _ := seedStore(t)
 	var out bytes.Buffer
-	if err := RunSearch(s, SearchOptions{Query: "thisdoesnotappear"}, &out); err != nil {
+	if err := RunSearch(t.Context(), apiForStore(t, s), SearchOptions{Query: "thisdoesnotappear"}, &out); err != nil {
 		t.Fatalf("RunSearch: %v", err)
 	}
 	if !strings.Contains(out.String(), "(no hits") {
@@ -231,7 +231,7 @@ func TestRunSearch_PrefixMatchFromBareToken(t *testing.T) {
 	t.Parallel()
 	s, _ := seedStore(t)
 	var out bytes.Buffer
-	if err := RunSearch(s, SearchOptions{Query: "json"}, &out); err != nil {
+	if err := RunSearch(t.Context(), apiForStore(t, s), SearchOptions{Query: "json"}, &out); err != nil {
 		t.Fatalf("RunSearch: %v", err)
 	}
 	if !strings.Contains(out.String(), "jsonl") {
@@ -245,12 +245,16 @@ func TestRunSearch_PrefixMatchFromBareToken(t *testing.T) {
 func TestRunSearch_UnclosedQuoteIsParseError(t *testing.T) {
 	t.Parallel()
 	s, _ := seedStore(t)
-	err := RunSearch(s, SearchOptions{Query: `find "this without close`}, &bytes.Buffer{})
+	err := RunSearch(t.Context(), apiForStore(t, s), SearchOptions{Query: `find "this without close`}, &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("expected error for unclosed quote")
 	}
-	if !strings.Contains(err.Error(), "parse query") {
-		t.Errorf("expected wrapped parse-query error, got: %v", err)
+	// The api parses the query server-side and rejects unclosed
+	// quotes with a 400 + "Invalid q" problem; the apiclient
+	// surfaces that as a wrapped HTTPError. We just want any
+	// signal that the parse failure was reported, not papered over.
+	if !strings.Contains(err.Error(), "Invalid q") {
+		t.Errorf("expected api invalid-q error, got: %v", err)
 	}
 }
 
@@ -308,7 +312,7 @@ func TestRunSearch_DedupeCollapsesDuplicateTurn(t *testing.T) {
 	seedDuplicateTurn(t, s)
 
 	var out bytes.Buffer
-	if err := RunSearch(s, SearchOptions{Query: "duplicated"}, &out); err != nil {
+	if err := RunSearch(t.Context(), apiForStore(t, s), SearchOptions{Query: "duplicated"}, &out); err != nil {
 		t.Fatalf("RunSearch: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
@@ -327,7 +331,7 @@ func TestRunSearch_NoDedupSurfacesBothCopies(t *testing.T) {
 	seedDuplicateTurn(t, s)
 
 	var out bytes.Buffer
-	if err := RunSearch(s, SearchOptions{Query: "duplicated", NoDedup: true}, &out); err != nil {
+	if err := RunSearch(t.Context(), apiForStore(t, s), SearchOptions{Query: "duplicated", NoDedup: true}, &out); err != nil {
 		t.Fatalf("RunSearch: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
@@ -403,7 +407,7 @@ func TestRunSearch_DedupeDoesNotCollapseDistinctContent(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := RunSearch(s, SearchOptions{Query: "distinct"}, &out); err != nil {
+	if err := RunSearch(t.Context(), apiForStore(t, s), SearchOptions{Query: "distinct"}, &out); err != nil {
 		t.Fatalf("RunSearch: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")

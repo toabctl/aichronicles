@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -13,9 +12,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/config"
-	"github.com/toabctl/aichronicles/internal/searchquery"
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
@@ -31,7 +30,7 @@ func newSearchCmd() *cobra.Command {
 		kind      string
 		sessionID string
 		since     time.Duration
-		dbPath    string
+		sockFlag  string
 		noDedup   bool
 		formatIn  string
 		summarize bool
@@ -51,26 +50,26 @@ func newSearchCmd() *cobra.Command {
 			"(`mongo` finds `mongodb`). Wrap exact matches in double\n" +
 			"quotes (`\"panic stack\"`). Identifiers and paths can be\n" +
 			"typed verbatim (`migrate.go`). Pass --format=json for a\n" +
-			"structured payload suitable for jq.",
+			"structured payload suitable for jq.\n\n" +
+			"Talks to aichronicles-api over its UDS (override with\n" +
+			"--socket or $AICHRONICLES_API_SOCKET).",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, err := ParseOutputFormat(formatIn)
 			if err != nil {
 				return err
 			}
-			s, err := openStore(dbPath)
+			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
 
-			// If the user passed a session-id prefix (e.g. the 8-char
-			// preview `aichronicles sessions` prints), resolve it to
-			// the full id here so the downstream filter is an exact
-			// match.
+			// If the user passed a session-id prefix, resolve it to
+			// the canonical id via the api so the downstream filter
+			// is an exact match.
 			resolvedSessionID := sessionID
 			if resolvedSessionID != "" {
-				full, err := store.ResolveSessionIDPrefix(cmd.Context(), s.DB(), resolvedSessionID)
+				full, err := c.ResolveSession(cmd.Context(), resolvedSessionID)
 				if err != nil {
 					return err
 				}
@@ -105,11 +104,11 @@ func newSearchCmd() *cobra.Command {
 				ctx, cancel := context.WithTimeout(cmd.Context(),
 					cfg.Limits.ReflectTimeout.Or(defaultMetaLLMTimeout))
 				defer cancel()
-				return RunSearchSummary(ctx, s, opts,
+				return RunSearchSummary(ctx, c, opts,
 					func() (llm.Client, error) { return llm.FromConfig(ctx, llmCfg) },
 					cmd.OutOrStdout())
 			}
-			return RunSearch(s, opts, cmd.OutOrStdout())
+			return RunSearch(cmd.Context(), c, opts, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 20, "max number of hits")
@@ -117,7 +116,8 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sessionID, "session", "", "filter by session id or unique prefix")
 	registerSessionFlagCompletion(cmd)
 	addFlexDurationFlag(cmd, &since, "since", 0, "only events within this duration (e.g. 24h, 7d)")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	cmd.Flags().BoolVar(&noDedup, "no-dedup", false, "show every row even when the same turn was captured from multiple sources (hook + import)")
 	cmd.Flags().BoolVar(&summarize, "summarize", false, "synthesise an LLM-written answer from the top hits instead of printing rows (requires "+llm.APIKeyEnv+")")
 	cmd.Flags().IntVar(&topN, "top", 5, "with --summarize: max hits fed to the LLM as grounding context")
@@ -175,60 +175,50 @@ type SearchHitJSON struct {
 	Truncated  bool   `json:"truncated"`
 }
 
-// RunSearch executes an FTS5 query against the store and writes hits
-// to out. Empty query is an error because FTS5 would either error
-// itself or return the whole corpus.
-//
-// The user-facing query (plain words, optionally "quoted phrases")
-// is translated into a syntactically-safe FTS5 MATCH expression by
-// internal/searchquery before it ever reaches SQLite. Callers should
-// not pre-escape — that's the parser's job.
-//
-// SQL composition lives in internal/store/search.go; this function
-// is just the CLI's translation between SearchOptions (cobra flags)
-// and store.SearchEventOpts plus the formatting layer.
-//
-// Format=table renders aligned columns (header + tab-separated rows
-// fed through tabwriter), with a "(no hits)" line on an empty result.
-// Format=json emits a JSON array of SearchHitJSON values for jq.
-func RunSearch(s *store.Store, opts SearchOptions, out io.Writer) error {
-	if strings.TrimSpace(opts.Query) == "" {
-		return errors.New("search query must not be empty")
-	}
-
-	fts, err := searchquery.ToFTS5(opts.Query)
-	if err != nil {
-		return fmt.Errorf("parse query: %w", err)
-	}
-
-	hits, err := store.SearchEvents(context.Background(), s.DB(), store.SearchEventOpts{
-		Query:             fts,
+// searchRequestFromOptions translates SearchOptions into the wire-shape
+// api.SearchRequest. Limit defaults left to the server (DefaultPageLimit).
+func searchRequestFromOptions(opts SearchOptions, limit int) api.SearchRequest {
+	return api.SearchRequest{
+		Q:                 opts.Query,
 		Kind:              opts.Kind,
 		SessionID:         opts.SessionID,
-		SinceMs:           opts.SinceMs,
-		Limit:             opts.Limit,
-		NoDedup:           opts.NoDedup,
 		SourceAgent:       opts.SourceAgent,
 		ToolName:          opts.ToolName,
 		SkillName:         opts.SkillName,
 		FilePathSubstring: opts.FilePathSubstring,
+		SinceMs:           opts.SinceMs,
 		WithFailures:      opts.WithFailures,
-		// CLI defaults to FTS rank ordering (most relevant first);
-		// recency-boosted scoring lands in a follow-up commit.
-		Order: store.OrderRank,
-	})
+		NoDedup:           opts.NoDedup,
+		Limit:             limit,
+	}
+}
+
+// RunSearch executes an FTS5 query against the api and writes hits
+// to out. The api parses the user-facing query (plain words / quoted
+// phrases) into FTS5 syntax server-side and rejects empty / malformed
+// queries with 400.
+//
+// Format=table renders aligned columns (header + tab-separated rows
+// fed through tabwriter), with a "(no hits)" line on an empty result.
+// Format=json emits a JSON array of SearchHitJSON values for jq.
+func RunSearch(ctx context.Context, c *apiclient.Client, opts SearchOptions, out io.Writer) error {
+	if strings.TrimSpace(opts.Query) == "" {
+		return errors.New("search query must not be empty")
+	}
+
+	resp, err := c.Search(ctx, searchRequestFromOptions(opts, opts.Limit))
 	if err != nil {
-		return err
+		return fmt.Errorf("search: %w", err)
 	}
 
 	if opts.Format == FormatJSON {
-		payload := make([]SearchHitJSON, 0, len(hits))
-		for _, h := range hits {
+		payload := make([]SearchHitJSON, 0, len(resp.Hits))
+		for _, h := range resp.Hits {
 			snippet, truncated := pickSnippet(h)
 			payload = append(payload, SearchHitJSON{
 				SessionID:  h.SessionID,
 				Kind:       h.Kind,
-				Cwd:        nullStringValue(h.Cwd),
+				Cwd:        ptrStrOrEmpty(h.Cwd),
 				TsSourceMs: h.TsSourceMs,
 				Snippet:    snippet,
 				Truncated:  truncated,
@@ -237,7 +227,7 @@ func RunSearch(s *store.Store, opts SearchOptions, out io.Writer) error {
 		return emitJSON(out, payload)
 	}
 
-	if len(hits) == 0 {
+	if len(resp.Hits) == 0 {
 		_, err := fmt.Fprintf(out, "(no hits for %q)\n", opts.Query)
 		return err
 	}
@@ -247,10 +237,10 @@ func RunSearch(s *store.Store, opts SearchOptions, out io.Writer) error {
 	if _, err := fmt.Fprintln(tw, "WHEN\tSESSION\tKIND\tCWD\tCONTENT"); err != nil {
 		return err
 	}
-	for _, h := range hits {
+	for _, h := range resp.Hits {
 		snippet, _ := pickSnippet(h)
 		_, _ = fmt.Fprintln(tw, formatHit(h.SessionID, h.Kind,
-			nullStringValue(h.Cwd), h.TsSourceMs, snippet))
+			ptrStrOrEmpty(h.Cwd), h.TsSourceMs, snippet))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -259,14 +249,13 @@ func RunSearch(s *store.Store, opts SearchOptions, out io.Writer) error {
 	return err
 }
 
-// nullStringValue returns the string content of a sql.NullString, or
-// empty if NULL. Mirrors the old `deref` helper that operated on
-// *string.
-func nullStringValue(n sql.NullString) string {
-	if !n.Valid {
+// ptrStrOrEmpty unwraps an api wire *string into a plain string,
+// flattening nil to "".
+func ptrStrOrEmpty(p *string) string {
+	if p == nil {
 		return ""
 	}
-	return n.String
+	return *p
 }
 
 // pickSnippet chooses the best available text for a search hit.
@@ -277,10 +266,11 @@ func nullStringValue(n sql.NullString) string {
 // Returns (display, truncated). truncated is true iff the displayed
 // text is shorter than the full content_text — i.e., the user is
 // looking at a preview, not the whole row.
-func pickSnippet(h store.SearchEventHit) (string, bool) {
-	full := nullStringValue(h.Content)
-	if h.Snippet.Valid && h.Snippet.String != "" {
-		return h.Snippet.String, h.Snippet.String != full
+func pickSnippet(h api.SearchHit) (string, bool) {
+	full := ptrStrOrEmpty(h.Content)
+	snip := ptrStrOrEmpty(h.Snippet)
+	if snip != "" {
+		return snip, snip != full
 	}
 	return snippetWithTruncation(full)
 }
@@ -342,23 +332,19 @@ const summarySnippetRunes = 1200
 // future flag if a real use case wants longer.
 const defaultSummaryMaxTokens = 512
 
-// RunSearchSummary runs a normal FTS search and then, instead of
-// printing rows, asks the LLM to synthesise a grounded answer
-// citing the top hits' session_ids. JSON format wraps the answer
-// alongside the hits used so jq consumers can show both.
+// RunSearchSummary runs a normal FTS search via the api and then
+// asks the LLM to synthesise a grounded answer citing the top hits'
+// session_ids. JSON format wraps the answer alongside the hits used
+// so jq consumers can show both.
 func RunSearchSummary(
 	ctx context.Context,
-	s *store.Store,
+	c *apiclient.Client,
 	opts SearchOptions,
 	newClient func() (llm.Client, error),
 	out io.Writer,
 ) error {
 	if strings.TrimSpace(opts.Query) == "" {
 		return errors.New("search query must not be empty")
-	}
-	fts, err := searchquery.ToFTS5(opts.Query)
-	if err != nil {
-		return fmt.Errorf("parse query: %w", err)
 	}
 
 	// Cap top-N: even if the user passed --limit=200, summary should
@@ -368,23 +354,11 @@ func RunSearchSummary(
 	if topN <= 0 {
 		topN = 5
 	}
-	hits, err := store.SearchEvents(ctx, s.DB(), store.SearchEventOpts{
-		Query:             fts,
-		Kind:              opts.Kind,
-		SessionID:         opts.SessionID,
-		SinceMs:           opts.SinceMs,
-		Limit:             topN,
-		NoDedup:           opts.NoDedup,
-		SourceAgent:       opts.SourceAgent,
-		ToolName:          opts.ToolName,
-		SkillName:         opts.SkillName,
-		FilePathSubstring: opts.FilePathSubstring,
-		WithFailures:      opts.WithFailures,
-		Order:             store.OrderRank,
-	})
+	resp, err := c.Search(ctx, searchRequestFromOptions(opts, topN))
 	if err != nil {
-		return err
+		return fmt.Errorf("search: %w", err)
 	}
+	hits := resp.Hits
 
 	if len(hits) == 0 {
 		if opts.Format == FormatJSON {
@@ -396,7 +370,7 @@ func RunSearchSummary(
 
 	promptHits := make([]prompts.SearchHit, 0, len(hits))
 	for _, h := range hits {
-		full := nullStringValue(h.Content)
+		full := ptrStrOrEmpty(h.Content)
 		flat := strings.ReplaceAll(full, "\r", " ")
 		runes := []rune(flat)
 		if len(runes) > summarySnippetRunes {
@@ -405,7 +379,7 @@ func RunSearchSummary(
 		promptHits = append(promptHits, prompts.SearchHit{
 			SessionID:  h.SessionID,
 			Kind:       h.Kind,
-			Cwd:        nullStringValue(h.Cwd),
+			Cwd:        ptrStrOrEmpty(h.Cwd),
 			TsSourceMs: h.TsSourceMs,
 			Snippet:    flat,
 		})
@@ -424,7 +398,7 @@ func RunSearchSummary(
 	if opts.Model != "" {
 		req.Model = opts.Model
 	}
-	resp, err := client.Complete(ctx, req)
+	llmResp, err := client.Complete(ctx, req)
 	if err != nil {
 		return fmt.Errorf("LLM call: %w", err)
 	}
@@ -439,7 +413,7 @@ func RunSearchSummary(
 			hitPayload = append(hitPayload, SearchHitJSON{
 				SessionID:  h.SessionID,
 				Kind:       h.Kind,
-				Cwd:        nullStringValue(h.Cwd),
+				Cwd:        ptrStrOrEmpty(h.Cwd),
 				TsSourceMs: h.TsSourceMs,
 				Snippet:    snippet,
 				Truncated:  truncated,
@@ -447,11 +421,11 @@ func RunSearchSummary(
 		}
 		return emitJSON(out, map[string]any{
 			"query":   opts.Query,
-			"summary": resp.Text,
+			"summary": llmResp.Text,
 			"hits":    hitPayload,
 		})
 	}
 
-	_, err = fmt.Fprintln(out, resp.Text)
+	_, err = fmt.Fprintln(out, llmResp.Text)
 	return err
 }

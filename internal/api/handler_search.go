@@ -52,6 +52,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		SkillName:         q.Get("skill_name"),
 		FilePathSubstring: q.Get("file_path_substring"),
 		WithFailures:      q.Get("with_failures") == "true",
+		NoDedup:           q.Get("no_dedup") == "true",
 	}
 	if v := q.Get("since_ms"); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)

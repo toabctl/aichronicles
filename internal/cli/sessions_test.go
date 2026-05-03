@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -11,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
@@ -74,44 +74,13 @@ func seedStoreForSessions(t *testing.T) *store.Store {
 	return s
 }
 
-func TestBuildSessionsSQL_DefaultLimitIs30(t *testing.T) {
-	t.Parallel()
-	sqlText, args := buildSessionsSQL(SessionsOptions{})
-	if !strings.Contains(sqlText, "FROM sessions s") {
-		t.Errorf("SQL should query sessions: %s", sqlText)
-	}
-	if !strings.Contains(sqlText, "ORDER BY COALESCE(s.ended_at_ms") {
-		t.Errorf("SQL should order by ended_at_ms desc: %s", sqlText)
-	}
-	if len(args) != 1 || args[0] != 30 {
-		t.Errorf("args: got %v, want [30]", args)
-	}
-}
-
-func TestBuildSessionsSQL_AllFilters(t *testing.T) {
-	t.Parallel()
-	sqlText, args := buildSessionsSQL(SessionsOptions{
-		Cwd: "/work", Agent: "claude-code", SinceMs: 100, Limit: 5,
-	})
-	for _, frag := range []string{`s.cwd = ?`, `s.source_agent = ?`, `s.ended_at_ms >= ?`} {
-		if !strings.Contains(sqlText, frag) {
-			t.Errorf("missing filter %q: %s", frag, sqlText)
-		}
-	}
-	want := []any{"/work", "claude-code", int64(100), 5}
-	for i, w := range want {
-		if args[i] != w {
-			t.Errorf("args[%d]: got %v, want %v", i, args[i], w)
-		}
-	}
-}
-
 func TestRunListSessions_OrdersMostRecentFirst(t *testing.T) {
 	t.Parallel()
 	s := seedStoreForSessions(t)
+	c := apiForStore(t, s)
 
 	var out bytes.Buffer
-	if err := RunListSessions(s, SessionsOptions{}, &out); err != nil {
+	if err := RunListSessions(t.Context(), c, SessionsOptions{}, &out); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
@@ -131,8 +100,9 @@ func TestRunListSessions_OrdersMostRecentFirst(t *testing.T) {
 func TestRunListSessions_IncludesFirstPromptSnippet(t *testing.T) {
 	t.Parallel()
 	s := seedStoreForSessions(t)
+	c := apiForStore(t, s)
 	var out bytes.Buffer
-	if err := RunListSessions(s, SessionsOptions{}, &out); err != nil {
+	if err := RunListSessions(t.Context(), c, SessionsOptions{}, &out); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if !strings.Contains(out.String(), "first prompt baz") {
@@ -143,8 +113,9 @@ func TestRunListSessions_IncludesFirstPromptSnippet(t *testing.T) {
 func TestRunListSessions_RespectsCwdFilter(t *testing.T) {
 	t.Parallel()
 	s := seedStoreForSessions(t)
+	c := apiForStore(t, s)
 	var out bytes.Buffer
-	if err := RunListSessions(s, SessionsOptions{Cwd: "/work/bar"}, &out); err != nil {
+	if err := RunListSessions(t.Context(), c, SessionsOptions{Cwd: "/work/bar"}, &out); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
@@ -160,10 +131,11 @@ func TestRunListSessions_RespectsCwdFilter(t *testing.T) {
 func TestRunListSessions_RespectsSinceFilter(t *testing.T) {
 	t.Parallel()
 	s := seedStoreForSessions(t)
+	c := apiForStore(t, s)
 	var out bytes.Buffer
 	// Only within last 36h: excludes /work/foo (72h old)
 	sinceMs := time.Now().Add(-36 * time.Hour).UnixMilli()
-	if err := RunListSessions(s, SessionsOptions{SinceMs: sinceMs}, &out); err != nil {
+	if err := RunListSessions(t.Context(), c, SessionsOptions{SinceMs: sinceMs}, &out); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if strings.Contains(out.String(), "/work/foo") {
@@ -177,8 +149,9 @@ func TestRunListSessions_RespectsSinceFilter(t *testing.T) {
 func TestRunListSessions_RespectsLimit(t *testing.T) {
 	t.Parallel()
 	s := seedStoreForSessions(t)
+	c := apiForStore(t, s)
 	var out bytes.Buffer
-	if err := RunListSessions(s, SessionsOptions{Limit: 2}, &out); err != nil {
+	if err := RunListSessions(t.Context(), c, SessionsOptions{Limit: 2}, &out); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	// One header line + N data rows.
@@ -191,8 +164,9 @@ func TestRunListSessions_RespectsLimit(t *testing.T) {
 func TestRunListSessions_EmptyStoreShowsEmptyStateLine(t *testing.T) {
 	t.Parallel()
 	s := testStore(t)
+	c := apiForStore(t, s)
 	var out bytes.Buffer
-	if err := RunListSessions(s, SessionsOptions{}, &out); err != nil {
+	if err := RunListSessions(t.Context(), c, SessionsOptions{}, &out); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if !strings.Contains(out.String(), "(no sessions matched)") {
@@ -203,8 +177,9 @@ func TestRunListSessions_EmptyStoreShowsEmptyStateLine(t *testing.T) {
 func TestRunListSessions_JSONFormatIsArray(t *testing.T) {
 	t.Parallel()
 	s := seedStoreForSessions(t)
+	c := apiForStore(t, s)
 	var out bytes.Buffer
-	if err := RunListSessions(s, SessionsOptions{Format: FormatJSON}, &out); err != nil {
+	if err := RunListSessions(t.Context(), c, SessionsOptions{Format: FormatJSON}, &out); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	body := out.String()
@@ -220,8 +195,9 @@ func TestRunListSessions_JSONFormatIsArray(t *testing.T) {
 func TestRunListSessions_JSONEmptyStoreReturnsArray(t *testing.T) {
 	t.Parallel()
 	s := testStore(t)
+	c := apiForStore(t, s)
 	var out bytes.Buffer
-	if err := RunListSessions(s, SessionsOptions{Format: FormatJSON}, &out); err != nil {
+	if err := RunListSessions(t.Context(), c, SessionsOptions{Format: FormatJSON}, &out); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	// Must be a valid (empty) array, not the "(no sessions matched)" line.
@@ -233,15 +209,18 @@ func TestRunListSessions_JSONEmptyStoreReturnsArray(t *testing.T) {
 
 func TestFormatSessionRow_ColumnsAndNullHandling(t *testing.T) {
 	t.Parallel()
-	// Typical row
-	got := formatSessionRow(
-		"abcdef0123456789",
-		sql.NullInt64{Int64: 1700000000000, Valid: true},
-		sql.NullInt64{Int64: 1700000060000, Valid: true},
-		5,
-		sql.NullString{String: "/home/u/proj", Valid: true},
-		sql.NullString{String: "hello", Valid: true},
-	)
+	started := int64(1700000000000)
+	ended := int64(1700000060000)
+	cwd := "/home/u/proj"
+	prompt := "hello"
+	got := formatSessionRow(api.SessionDigest{
+		ID:          "abcdef0123456789",
+		StartedAtMs: &started,
+		EndedAtMs:   &ended,
+		EventCount:  5,
+		Cwd:         &cwd,
+		FirstPrompt: &prompt,
+	})
 	parts := strings.Split(got, "\t")
 	if len(parts) != 6 {
 		t.Fatalf("expected 6 tab-separated columns, got %d: %q", len(parts), got)
@@ -253,11 +232,8 @@ func TestFormatSessionRow_ColumnsAndNullHandling(t *testing.T) {
 		t.Errorf("cwd: got %q", parts[4])
 	}
 
-	// NULL started/ended/cwd/prompt render as "-"
-	got = formatSessionRow(
-		"zzzzzzzz", sql.NullInt64{}, sql.NullInt64{},
-		0, sql.NullString{}, sql.NullString{},
-	)
+	// nil started/ended/cwd/prompt render as "-"
+	got = formatSessionRow(api.SessionDigest{ID: "zzzzzzzz"})
 	parts = strings.Split(got, "\t")
 	for i := 1; i <= 4; i++ {
 		// skip event_count check — that's "0"
