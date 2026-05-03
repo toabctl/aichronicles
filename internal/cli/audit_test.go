@@ -11,7 +11,6 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/events"
-	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 // seedAuditStore writes two benign events and two events containing
@@ -67,33 +66,18 @@ func seedAuditStore(t *testing.T) *store.Store {
 func TestRunAudit_FindsSeededSecrets(t *testing.T) {
 	t.Parallel()
 	s := seedAuditStore(t)
+	c := apiForStore(t, s)
 
 	var out bytes.Buffer
-	report, err := RunAudit(s, redact.Default(), AuditOptions{}, &out)
-	if err != nil {
-		t.Fatalf("RunAudit: %v", err)
-	}
-
-	if report.Scanned != 4 {
-		t.Errorf("Scanned: got %d, want 4", report.Scanned)
-	}
-	if report.Flagged != 2 {
-		t.Errorf("Flagged: got %d, want 2", report.Flagged)
-	}
-	if report.TotalFindings != 2 {
-		t.Errorf("TotalFindings: got %d, want 2", report.TotalFindings)
-	}
-	if report.PatternHits["aws_access_key"] != 1 {
-		t.Errorf("aws hits: got %d, want 1", report.PatternHits["aws_access_key"])
-	}
-	if report.PatternHits["anthropic_api_key"] != 1 {
-		t.Errorf("anthropic hits: got %d, want 1", report.PatternHits["anthropic_api_key"])
+	if err := runAudit(t.Context(), c, AuditOptions{}, &out); err != nil {
+		t.Fatalf("runAudit: %v", err)
 	}
 
 	// Header + 2 rows = 3 lines.
-	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	body := out.String()
+	lines := strings.Split(strings.TrimSpace(body), "\n")
 	if len(lines) != 3 {
-		t.Fatalf("expected header + 2 output lines = 3, got %d:\n%s", len(lines), out.String())
+		t.Fatalf("expected header + 2 output lines = 3, got %d:\n%s", len(lines), body)
 	}
 	// Snippet must NEVER contain the raw secret — that's the whole
 	// point of audit: produce safely-copyable output.
@@ -105,82 +89,107 @@ func TestRunAudit_FindsSeededSecrets(t *testing.T) {
 			t.Errorf("audit row leaked raw anthropic key: %q", l)
 		}
 	}
+	// Both expected pattern markers should be present in the output.
+	for _, want := range []string{"<aws_access_key>", "<anthropic_api_key>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing marker %q in audit output:\n%s", want, body)
+		}
+	}
+}
+
+func TestRunAudit_JSONReportsAggregates(t *testing.T) {
+	t.Parallel()
+	s := seedAuditStore(t)
+	c := apiForStore(t, s)
+
+	var out bytes.Buffer
+	if err := runAudit(t.Context(), c, AuditOptions{Format: FormatJSON}, &out); err != nil {
+		t.Fatalf("runAudit: %v", err)
+	}
+	var got AuditReportJSON
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("json: %v\n%s", err, out.String())
+	}
+	if got.Scanned != 4 {
+		t.Errorf("Scanned: got %d, want 4", got.Scanned)
+	}
+	if got.Flagged != 2 {
+		t.Errorf("Flagged: got %d, want 2", got.Flagged)
+	}
+	if got.PatternHits["aws_access_key"] != 1 {
+		t.Errorf("aws hits: got %d, want 1", got.PatternHits["aws_access_key"])
+	}
+	if got.PatternHits["anthropic_api_key"] != 1 {
+		t.Errorf("anthropic hits: got %d, want 1", got.PatternHits["anthropic_api_key"])
+	}
 }
 
 func TestRunAudit_RespectsLimit(t *testing.T) {
 	t.Parallel()
 	s := seedAuditStore(t)
+	c := apiForStore(t, s)
 
 	var out bytes.Buffer
-	report, err := RunAudit(s, redact.Default(), AuditOptions{Limit: 1}, &out)
-	if err != nil {
-		t.Fatalf("RunAudit: %v", err)
-	}
-	// Limit caps rows fetched from SQLite, not Flagged. With 4 rows
+	// Limit=1 caps rows fetched from SQLite, not Flagged. With 4 rows
 	// ordered by ts DESC, limit=1 returns the newest (benign), so
 	// nothing flags.
-	if report.Scanned != 1 {
-		t.Errorf("Scanned should equal Limit: got %d", report.Scanned)
+	if err := runAudit(t.Context(), c, AuditOptions{Limit: 1, Format: FormatJSON}, &out); err != nil {
+		t.Fatalf("runAudit: %v", err)
+	}
+	var got AuditReportJSON
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if got.Scanned != 1 {
+		t.Errorf("Scanned should equal Limit: got %d", got.Scanned)
 	}
 }
 
 func TestRunAudit_RespectsSinceFilter(t *testing.T) {
 	t.Parallel()
 	s := seedAuditStore(t)
+	c := apiForStore(t, s)
 
-	// Set Since to 10 minutes ago — all 4 fixture events are within
-	// the last 4 seconds, so nothing is excluded.
 	var out bytes.Buffer
-	report, err := RunAudit(s, redact.Default(),
-		AuditOptions{SinceMs: time.Now().Add(-10 * time.Minute).UnixMilli()}, &out)
-	if err != nil {
-		t.Fatalf("RunAudit: %v", err)
+	// Since 10 minutes ago — all 4 fixture events are within the last
+	// 4 seconds, so nothing is excluded.
+	if err := runAudit(t.Context(), c,
+		AuditOptions{SinceMs: time.Now().Add(-10 * time.Minute).UnixMilli(), Format: FormatJSON},
+		&out); err != nil {
+		t.Fatalf("runAudit: %v", err)
 	}
-	if report.Scanned != 4 {
-		t.Errorf("Scanned: got %d, want 4", report.Scanned)
+	var got AuditReportJSON
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if got.Scanned != 4 {
+		t.Errorf("Scanned: got %d, want 4", got.Scanned)
 	}
 
 	// Same call with Since in the future — should exclude everything.
 	out.Reset()
-	report, err = RunAudit(s, redact.Default(),
-		AuditOptions{SinceMs: time.Now().Add(10 * time.Minute).UnixMilli()}, &out)
-	if err != nil {
-		t.Fatalf("RunAudit future: %v", err)
+	if err := runAudit(t.Context(), c,
+		AuditOptions{SinceMs: time.Now().Add(10 * time.Minute).UnixMilli(), Format: FormatJSON},
+		&out); err != nil {
+		t.Fatalf("runAudit future: %v", err)
 	}
-	if report.Scanned != 0 {
-		t.Errorf("future Since: Scanned got %d, want 0", report.Scanned)
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if got.Scanned != 0 {
+		t.Errorf("future Since: Scanned got %d, want 0", got.Scanned)
 	}
 }
 
 func TestRunAudit_EmptyStoreShowsEmptyStateLine(t *testing.T) {
 	t.Parallel()
 	s := testStore(t)
+	c := apiForStore(t, s)
 	var out bytes.Buffer
-	report, err := RunAudit(s, redact.Default(), AuditOptions{}, &out)
-	if err != nil {
-		t.Fatalf("RunAudit: %v", err)
-	}
-	if report.Scanned != 0 || report.Flagged != 0 {
-		t.Errorf("empty store: %+v", report)
+	if err := runAudit(t.Context(), c, AuditOptions{}, &out); err != nil {
+		t.Fatalf("runAudit: %v", err)
 	}
 	if !strings.Contains(out.String(), "(no findings)") {
 		t.Errorf("expected empty-state line, got %q", out.String())
-	}
-}
-
-func TestAuditSnippet_ReplacesSecretWithMarker(t *testing.T) {
-	t.Parallel()
-	secret := "AKIAIOSFODNN7EXAMPLE"
-	content := "blah blah " + secret + " trailing"
-	findings := redact.Default().Scan(content)
-	if len(findings) != 1 {
-		t.Fatalf("expected 1 finding, got %d", len(findings))
-	}
-	s := auditSnippet(content, findings[0])
-	if strings.Contains(s, secret) {
-		t.Errorf("snippet leaked secret: %q", s)
-	}
-	if !strings.Contains(s, "<aws_access_key>") {
-		t.Errorf("expected marker in snippet: %q", s)
 	}
 }

@@ -2,7 +2,7 @@ package cli
 
 import (
 	"bytes"
-	"database/sql"
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -11,53 +11,51 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/redact"
+	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/pkg/api"
 )
-
-// auditSnippetRunes caps the per-row snippet printed by `audit`. Long
-// assistant messages with a single leaked token deep inside would
-// otherwise dominate the output.
-const auditSnippetRunes = 120
 
 func newAuditCmd() *cobra.Command {
 	var (
 		limit    int
 		since    time.Duration
-		dbPath   string
+		sockFlag string
 		formatIn string
 	)
 	cmd := &cobra.Command{
 		Use:   "audit",
 		Short: "Scan stored events for credential patterns (read-only)",
-		Long: "Runs the current credential detectors against every stored\n" +
-			"event and reports matches. Use it to find leaks that predate\n" +
-			"the redactor, or to validate that a new detector catches what\n" +
-			"you expect. This command never modifies the store — see\n" +
-			"`aichronicles scrub` for that.\n\n" +
-			"Pass --format=json for a structured payload suitable for jq.",
+		Long: "Asks aichronicles-api to run the current credential detectors\n" +
+			"against every stored event and prints one row per match. Use it\n" +
+			"to find leaks that predate the redactor, or to validate that a\n" +
+			"new detector catches what you expect. This command never\n" +
+			"modifies the store — see `aichronicles scrub` for that.\n\n" +
+			"The api runs the scanner server-side and returns the marker\n" +
+			"form of every match — raw secret bytes never traverse the wire,\n" +
+			"so audit output is safe to paste into a ticket.\n\n" +
+			"Pass --format=json for a structured payload suitable for jq.\n\n" +
+			"Talks to aichronicles-api over its UDS (override with\n" +
+			"--socket or $AICHRONICLES_API_SOCKET).",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			format, err := ParseOutputFormat(formatIn)
 			if err != nil {
 				return err
 			}
-			s, err := openStore(dbPath)
+			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
-
 			opts := AuditOptions{Limit: limit, Format: format}
 			if since > 0 {
 				opts.SinceMs = time.Now().Add(-since).UnixMilli()
 			}
-			_, err = RunAudit(s, redact.Default(), opts, cmd.OutOrStdout())
-			return err
+			return runAudit(cmd.Context(), c, opts, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 0, "max events to scan, newest first (0 = scan all)")
 	addFlexDurationFlag(cmd, &since, "since", 0, "only scan events with ts_source newer than this duration (e.g. 24h, 7d)")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
@@ -71,8 +69,8 @@ type AuditOptions struct {
 }
 
 // AuditFindingJSON is the JSON shape emitted by `audit --format=json`.
-// Snippet is always the marker form (raw secret bytes never appear),
-// matching the table-mode contract.
+// Same field names as the api wire shape so jq pipelines built
+// against /v1/audit work unchanged against the CLI output.
 type AuditFindingJSON struct {
 	SessionID  string   `json:"session_id"`
 	TsSourceMs *int64   `json:"ts_source_ms"`
@@ -81,9 +79,9 @@ type AuditFindingJSON struct {
 	Snippet    string   `json:"snippet"`
 }
 
-// AuditReportJSON is the top-level shape: a list of findings plus the
-// aggregate counts. Lets jq pipelines either iterate `.findings[]` or
-// `.scanned`/`.flagged` for the summary in one call.
+// AuditReportJSON is the top-level shape: a list of findings plus
+// the aggregate counts. Lets jq pipelines either iterate
+// `.findings[]` or `.scanned`/`.flagged` for the summary in one call.
 type AuditReportJSON struct {
 	Findings      []AuditFindingJSON `json:"findings"`
 	Scanned       int                `json:"scanned"`
@@ -92,193 +90,59 @@ type AuditReportJSON struct {
 	PatternHits   map[string]int     `json:"pattern_hits"`
 }
 
-// AuditReport is the running tally returned alongside per-row output.
-type AuditReport struct {
-	Scanned       int
-	Flagged       int
-	TotalFindings int
-	PatternHits   map[string]int
-}
-
-// RunAudit scans events.content_text with scanner and prints one
-// row per event that contains any finding. A summary report is
-// returned for callers that want aggregate numbers.
-//
-// Output format: a header row followed by one row per finding,
-// column-aligned via tabwriter so the snippet column lines up. When
-// piped, the same content remains tab-separated for grep / awk.
-//
-// Row columns: SESSION  WHEN  KIND  PATTERNS  SNIPPET.
-func RunAudit(s *store.Store, scanner redact.Scanner, opts AuditOptions, out io.Writer) (*AuditReport, error) {
-	sqlText, args := buildAuditSQL(opts)
-	rows, err := s.DB().Query(sqlText, args...)
+// runAudit calls /v1/audit and renders the response. Format=table
+// emits a header + tab-aligned row per finding; format=json emits
+// the AuditReportJSON envelope.
+func runAudit(ctx context.Context, c *apiclient.Client, opts AuditOptions, out io.Writer) error {
+	resp, err := c.Audit(ctx, api.AuditRequest{SinceMs: opts.SinceMs, Limit: opts.Limit})
 	if err != nil {
-		return nil, fmt.Errorf("audit query: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	report := &AuditReport{PatternHits: map[string]int{}}
-	var jsonHits []AuditFindingJSON
-
-	// Buffer rows so an empty-findings run can print "(no findings)"
-	// without the header floating above it.
-	var buf bytes.Buffer
-	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "SESSION\tWHEN\tKIND\tPATTERNS\tSNIPPET"); err != nil {
-		return nil, err
-	}
-
-	for rows.Next() {
-		var (
-			sess    string
-			tsMs    sql.NullInt64
-			kind    string
-			content sql.NullString
-		)
-		if err := rows.Scan(&sess, &tsMs, &kind, &content); err != nil {
-			return nil, fmt.Errorf("scan: %w", err)
-		}
-		report.Scanned++
-		if !content.Valid || content.String == "" {
-			continue
-		}
-		findings := scanner.Scan(content.String)
-		if len(findings) == 0 {
-			continue
-		}
-		report.Flagged++
-		report.TotalFindings += len(findings)
-
-		names := uniquePatterns(findings)
-		for _, n := range names {
-			report.PatternHits[n]++
-		}
-		snippet := auditSnippet(content.String, findings[0])
-
-		if opts.Format == FormatJSON {
-			jsonHits = append(jsonHits, AuditFindingJSON{
-				SessionID:  sess,
-				TsSourceMs: nullableInt64(tsMs),
-				Kind:       kind,
-				Patterns:   names,
-				Snippet:    snippet,
-			})
-			continue
-		}
-
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			firstN(sess, 8),
-			formatTsNullable(tsMs),
-			kind,
-			strings.Join(names, ","),
-			snippet,
-		)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+		return fmt.Errorf("audit: %w", err)
 	}
 
 	if opts.Format == FormatJSON {
-		if jsonHits == nil {
-			jsonHits = []AuditFindingJSON{}
+		findings := make([]AuditFindingJSON, 0, len(resp.Findings))
+		for _, f := range resp.Findings {
+			findings = append(findings, AuditFindingJSON{
+				SessionID:  f.SessionID,
+				TsSourceMs: f.TsSourceMs,
+				Kind:       f.Kind,
+				Patterns:   f.Patterns,
+				Snippet:    f.Snippet,
+			})
 		}
-		err := emitJSON(out, AuditReportJSON{
-			Findings:      jsonHits,
-			Scanned:       report.Scanned,
-			Flagged:       report.Flagged,
-			TotalFindings: report.TotalFindings,
-			PatternHits:   report.PatternHits,
+		return emitJSON(out, AuditReportJSON{
+			Findings:      findings,
+			Scanned:       resp.Scanned,
+			Flagged:       resp.Flagged,
+			TotalFindings: resp.TotalFindings,
+			PatternHits:   resp.PatternHits,
 		})
-		return report, err
 	}
 
-	if report.Flagged == 0 {
-		_, _ = fmt.Fprintln(out, "(no findings)")
-		return report, nil
+	if resp.Flagged == 0 {
+		_, err := fmt.Fprintln(out, "(no findings)")
+		return err
+	}
+
+	var buf bytes.Buffer
+	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "SESSION\tWHEN\tKIND\tPATTERNS\tSNIPPET"); err != nil {
+		return err
+	}
+	for _, f := range resp.Findings {
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			firstN(f.SessionID, 8),
+			formatTsPtr(f.TsSourceMs),
+			f.Kind,
+			strings.Join(f.Patterns, ","),
+			f.Snippet,
+		)
 	}
 	if err := tw.Flush(); err != nil {
-		return nil, err
+		return err
 	}
-	if _, err := io.Copy(out, &buf); err != nil {
-		return nil, err
-	}
-	return report, nil
-}
-
-// buildAuditSQL returns a query that yields (session_id, ts, kind,
-// content_text) ordered by most-recent-first. content_text is allowed
-// to be NULL — some kinds (tool_result, session_start) legitimately
-// have no content. The caller filters those out.
-func buildAuditSQL(opts AuditOptions) (string, []any) {
-	var filter strings.Builder
-	var args []any
-	if opts.SinceMs > 0 {
-		filter.WriteString(` AND ts_source_ms >= ?`)
-		args = append(args, opts.SinceMs)
-	}
-	q := `SELECT session_id, ts_source_ms, kind, content_text
-		FROM events
-		WHERE content_text IS NOT NULL` + filter.String() + `
-		ORDER BY ts_source_ms DESC`
-	if opts.Limit > 0 {
-		q += ` LIMIT ?`
-		args = append(args, opts.Limit)
-	}
-	return q, args
-}
-
-func uniquePatterns(findings []redact.Finding) []string {
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(findings))
-	for _, f := range findings {
-		if _, ok := seen[f.Pattern]; ok {
-			continue
-		}
-		seen[f.Pattern] = struct{}{}
-		out = append(out, f.Pattern)
-	}
-	return out
-}
-
-// auditSnippet renders a short context window around the first finding
-// so the operator can see where in the event the match occurred.
-// Keeps newlines out of the one-line output.
-func auditSnippet(content string, f redact.Finding) string {
-	// Centre the snippet on the find.
-	start := f.Start
-	end := f.End
-	if start < 0 {
-		start = 0
-	}
-	if end > len(content) {
-		end = len(content)
-	}
-	// Widen to ±auditSnippetRunes/2 worth of runes around the match.
-	// Byte-offset math from regex, then convert through runes for
-	// truncation so we never split a multibyte sequence.
-	prefix := content[:start]
-	suffix := content[end:]
-	pre := []rune(prefix)
-	post := []rune(suffix)
-	padding := auditSnippetRunes / 2
-	if len(pre) > padding {
-		pre = append([]rune{'…'}, pre[len(pre)-padding:]...)
-	}
-	if len(post) > padding {
-		post = append(post[:padding], '…')
-	}
-	hit := []rune(content[start:end])
-	combined := string(pre) + string(hit) + string(post)
-	combined = strings.ReplaceAll(combined, "\n", " ")
-	combined = strings.ReplaceAll(combined, "\r", " ")
-	combined = strings.ReplaceAll(combined, "\t", " ")
-	if r := []rune(combined); len(r) > auditSnippetRunes {
-		combined = string(r[:auditSnippetRunes]) + "…"
-	}
-	// Belt-and-suspenders: never emit the raw secret substring
-	// verbatim in audit output — replace it with the marker form so
-	// copy-pasting audit output to a ticket doesn't re-leak.
-	return strings.Replace(combined, string(hit), "<"+f.Pattern+">", 1)
+	_, err = io.Copy(out, &buf)
+	return err
 }
 
 func firstN(s string, n int) string {

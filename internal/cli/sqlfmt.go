@@ -7,13 +7,6 @@ import (
 	"github.com/toabctl/aichronicles/internal/nullable"
 )
 
-// nullableInt64 converts a sql.NullInt64 into the *int64 form used
-// by the CLI's JSON-mode renderers. Shared across audit, summaries,
-// and any other read CLI that still pulls rows directly out of the
-// store. The /v1/* JSON wire types use *T pointers natively, so
-// callers going through apiclient should not need this.
-func nullableInt64(n sql.NullInt64) *int64 { return nullable.Int64Ptr(n) }
-
 // formatTsNullable renders a sql.NullInt64 epoch-millis as the
 // canonical human-readable form, or "-" when invalid.
 func formatTsNullable(n sql.NullInt64) string {
