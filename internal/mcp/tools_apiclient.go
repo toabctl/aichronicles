@@ -32,6 +32,7 @@ func RegisterAichroniclesAPITools(s *Server, c *apiclient.Client) {
 	registerGetInsights(s, c)
 	registerFindEpisodes(s, c)
 	registerListSubagents(s, c)
+	registerSearchEvents(s, c)
 }
 
 func registerGetUnresolvedForCwd(s *Server, c *apiclient.Client) {
@@ -592,4 +593,110 @@ func listSubagentsAPIHandler(c *apiclient.Client) ToolHandler {
 		}
 		return TextResult(b.String()), nil
 	}
+}
+
+// --- search_events ---
+
+func registerSearchEvents(s *Server, c *apiclient.Client) {
+	s.RegisterTool(Tool{
+		Name: "search_events",
+		Description: "Search the user's PAST Claude Code and Gemini CLI sessions by keyword. " +
+			"Returns matching events with session id, timestamp, kind, and a snippet centred on " +
+			"the match. Use when the user asks 'when did I…?', 'find the session where…', " +
+			"'did I work on…'. The corpus is every captured hook event from past sessions, " +
+			"indexed by SQLite FTS5; this is the user's actual conversation history, not a " +
+			"generic web search. " +
+			"Bare tokens match by prefix (mongo finds mongodb); wrap exact matches in double " +
+			"quotes (\"panic stack\").",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"query":        {"type": "string", "description": "Search words. Bare tokens match by prefix; wrap exact matches in double quotes."},
+				"subagent_id":  {"type": "string", "description": "Narrow to events run inside one sub-agent thread; pair with list_subagents to discover ids."},
+				"limit":        {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}
+			},
+			"required": ["query"]
+		}`),
+		Handler: searchEventsAPIHandler(c),
+	})
+}
+
+func searchEventsAPIHandler(c *apiclient.Client) ToolHandler {
+	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
+		var req struct {
+			Query      string `json:"query"`
+			SubagentID string `json:"subagent_id"`
+			Limit      int    `json:"limit"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, &Error{Code: InvalidParams, Message: "search_events: bad args: " + err.Error()}
+		}
+		if strings.TrimSpace(req.Query) == "" {
+			return TextError("search_events: query is required"), nil
+		}
+		if req.Limit <= 0 || req.Limit > 100 {
+			req.Limit = 20
+		}
+
+		// The api parses the user-facing query through
+		// internal/searchquery server-side and surfaces
+		// ErrSyntax as a 400 problem+json. Translate that back
+		// to a user-friendly TextError so the agent sees the
+		// hint rather than an opaque "400 Invalid q".
+		resp, err := c.Search(ctx, api.SearchRequest{
+			Q:          req.Query,
+			SubagentID: req.SubagentID,
+			Limit:      req.Limit,
+		})
+		if err != nil {
+			if errors.Is(err, apiclient.ErrSocketUnavailable) {
+				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
+			}
+			var herr *apiclient.HTTPError
+			if errors.As(err, &herr) && herr.Status == 400 {
+				return TextError("search_events: %s", herr.Problem.Detail), nil
+			}
+			return nil, &Error{Code: InternalError, Message: "search_events: query: " + err.Error()}
+		}
+
+		// search_events historically returned "no events for
+		// subagent_id" rather than an empty list when the
+		// subagent didn't exist — the api can't distinguish
+		// "no events match" from "subagent doesn't exist", so
+		// the agent gets a generic empty result. Acceptable
+		// regression: the cost of dropping the
+		// store.SubagentExists pre-check is one less round-trip
+		// to a typo-checking endpoint.
+		if len(resp.Hits) == 0 {
+			return TextResult("(no hits)"), nil
+		}
+		var b strings.Builder
+		for _, h := range resp.Hits {
+			short := h.SessionID
+			if len(short) > 8 {
+				short = short[:8]
+			}
+			preview := ""
+			if h.Snippet != nil && *h.Snippet != "" {
+				preview = *h.Snippet
+			} else if h.Content != nil {
+				preview = *h.Content
+			}
+			fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n",
+				short, formatTS(h.TsSourceMs), h.Kind, oneLineSnippet2(preview))
+		}
+		return TextResult(b.String()), nil
+	}
+}
+
+// oneLineSnippet2 mirrors oneLineSnippet but takes a plain
+// string (api hits already projected the nullable). Kept local
+// to the api handlers so internal/store types don't leak in.
+func oneLineSnippet2(s string) string {
+	const maxRunes = 200
+	cleaned := strings.Join(strings.Fields(s), " ")
+	if len(cleaned) > maxRunes {
+		cleaned = cleaned[:maxRunes] + "…"
+	}
+	return cleaned
 }

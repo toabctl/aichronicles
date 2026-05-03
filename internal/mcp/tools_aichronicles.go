@@ -4,14 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/preview"
-	"github.com/toabctl/aichronicles/internal/searchquery"
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/timefmt"
@@ -26,26 +24,7 @@ import (
 // MCP client that compromises its sandbox still only reads a subset
 // of already-stored events, already scrubbed at events.
 func RegisterAichroniclesTools(s *Server, st *store.Store) {
-	s.RegisterTool(Tool{
-		Name: "search_events",
-		Description: "Search the user's PAST Claude Code and Gemini CLI sessions by keyword. " +
-			"Returns matching events (user prompts, assistant turns, tool calls) with session id, " +
-			"timestamp, and a snippet centred on the match. " +
-			"Use when the user asks 'when did I…?', 'find the session where…', 'did I work on…', " +
-			"or wants to recall a specific prior conversation. " +
-			"The corpus is every captured hook event from past sessions, indexed by SQLite FTS5; " +
-			"this is the user's actual conversation history, not a generic web search.",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"query":        {"type": "string", "description": "Search words. Bare tokens match by prefix (mongo finds mongodb); wrap exact matches in double quotes (\"panic stack\")."},
-				"subagent_id":  {"type": "string", "description": "Narrow to events run inside one sub-agent thread; pair with list_subagents to discover ids."},
-				"limit":        {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}
-			},
-			"required": ["query"]
-		}`),
-		Handler: searchEventsHandler(st),
-	})
+	// search_events is registered by RegisterAichroniclesAPITools.
 
 	s.RegisterTool(Tool{
 		Name: "list_sessions",
@@ -152,91 +131,7 @@ func RegisterAichroniclesTools(s *Server, st *store.Store) {
 	})
 }
 
-// --- search_events ---
-
-func searchEventsHandler(st *store.Store) ToolHandler {
-	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
-		var req struct {
-			Query      string `json:"query"`
-			SubagentID string `json:"subagent_id"`
-			Limit      int    `json:"limit"`
-		}
-		if err := json.Unmarshal(args, &req); err != nil {
-			return nil, &Error{Code: InvalidParams, Message: "search_events: bad args: " + err.Error()}
-		}
-		if strings.TrimSpace(req.Query) == "" {
-			return TextError("search_events: query is required"), nil
-		}
-		if req.Limit <= 0 || req.Limit > 100 {
-			req.Limit = 20
-		}
-
-		// Translate the user-facing query (plain words, optionally
-		// "quoted phrases") into a syntactically-safe FTS5 MATCH
-		// expression. Surface ErrEmpty / ErrSyntax as user-facing
-		// tool errors so the agent can correct itself rather than
-		// see an opaque SQLite error.
-		ftsQuery, err := searchquery.ToFTS5(req.Query)
-		if err != nil {
-			switch {
-			case errors.Is(err, searchquery.ErrEmpty):
-				return TextError("search_events: query is required"), nil
-			case errors.Is(err, searchquery.ErrSyntax):
-				return TextError("search_events: %v", err), nil
-			default:
-				return nil, &Error{Code: InvalidParams, Message: "search_events: parse query: " + err.Error()}
-			}
-		}
-
-		// Surface a clear "no such subagent" error rather than
-		// silently returning zero hits, which is indistinguishable
-		// from "real subagent with no matches" and would hide a
-		// typo from the calling agent.
-		if req.SubagentID != "" {
-			exists, err := store.SubagentExists(ctx, st.DB(), req.SubagentID)
-			if err != nil {
-				return nil, &Error{Code: InternalError, Message: "search_events: subagent check: " + err.Error()}
-			}
-			if !exists {
-				return TextError("search_events: no events for subagent_id %q", req.SubagentID), nil
-			}
-		}
-
-		hits, err := store.SearchEvents(ctx, st.DB(), store.SearchEventOpts{
-			Query:      ftsQuery,
-			SubagentID: req.SubagentID,
-			Limit:      req.Limit,
-			// MCP defaults to chronological — an agent asking
-			// "did I work on X recently?" wants newest first.
-			Order: store.OrderRecency,
-		})
-		if err != nil {
-			return nil, &Error{Code: InternalError, Message: "search_events: query: " + err.Error()}
-		}
-
-		if len(hits) == 0 {
-			return TextResult("(no hits)"), nil
-		}
-		var b strings.Builder
-		for _, h := range hits {
-			// Prefer SQLite's snippet (centered on the match,
-			// tokenizer-aware) over the raw content_text. The
-			// trigger keeps it filled for FTS hits; the empty
-			// fallback is just defensive.
-			preview := h.Snippet
-			if !preview.Valid || preview.String == "" {
-				preview = h.Content
-			}
-			fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n",
-				first8(h.SessionID),
-				formatTS(h.TsSourceMs),
-				h.Kind,
-				oneLineSnippet(preview),
-			)
-		}
-		return TextResult(b.String()), nil
-	}
-}
+// search_events migrated to tools_apiclient.go.
 
 // --- list_sessions ---
 

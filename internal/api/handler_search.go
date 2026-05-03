@@ -1,9 +1,11 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
+	"github.com/toabctl/aichronicles/internal/searchquery"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
 )
@@ -22,8 +24,26 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// store.SearchEvents expects an FTS5-syntax query; the user-
+	// facing form is plain words + optional "quoted phrases".
+	// Parse here so every consumer (CLI, MCP, web, third party)
+	// gets the same shape on the wire and sees ErrSyntax as a
+	// clean 400 instead of a generic 500 from SQLite.
+	ftsQuery, err := searchquery.ToFTS5(query)
+	if err != nil {
+		switch {
+		case errors.Is(err, searchquery.ErrEmpty):
+			writeProblem(w, http.StatusBadRequest, "Missing q", "search query is required")
+		case errors.Is(err, searchquery.ErrSyntax):
+			writeProblem(w, http.StatusBadRequest, "Invalid q", err.Error())
+		default:
+			writeProblem(w, http.StatusBadRequest, "Invalid q", err.Error())
+		}
+		return
+	}
+
 	opts := store.SearchEventOpts{
-		Query:             query,
+		Query:             ftsQuery,
 		Kind:              q.Get("kind"),
 		SessionID:         q.Get("session_id"),
 		SubagentID:        q.Get("subagent_id"),
