@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"io"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/api"
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/cli"
 	"github.com/toabctl/aichronicles/internal/mcp"
 	"github.com/toabctl/aichronicles/internal/store"
@@ -117,8 +119,17 @@ func TestE2E_IngestSummarizeFetchViaMCP(t *testing.T) {
 	// gone by the time the wire sees them. The MCP dispatcher itself
 	// passes content through verbatim — the protection is upstream
 	// at the two write paths.
+	// Mirror production wiring: legacy tools + apiclient-backed
+	// tools come from separate registrars now. Spin up an
+	// httptest internal/api server for the apiclient side.
+	apiSrv := httptest.NewServer(api.NewServer(s, nil).Handler())
+	defer apiSrv.Close()
+	apiC := apiclient.NewClientForTesting(apiSrv.Client(), apiSrv.URL)
+
 	mcpSrv := mcp.New(mcp.ServerInfo{Name: "e2e", Version: "0.0.1"}, nil)
 	mcp.RegisterAichroniclesTools(mcpSrv, s)
+	mcp.RegisterAichroniclesAnalyticsTools(mcpSrv, s)
+	mcp.RegisterAichroniclesAPITools(mcpSrv, apiC)
 
 	// Drive the MCP server through the JSON-RPC wire as a real
 	// client would. The dispatcher passes content through verbatim

@@ -15,6 +15,9 @@ func (c *Client) Sessions(ctx context.Context, req api.SessionListRequest) (api.
 	if req.SinceMs > 0 {
 		q.Set("since_ms", strconv.FormatInt(req.SinceMs, 10))
 	}
+	if req.Cwd != "" {
+		q.Set("cwd", req.Cwd)
+	}
 	if req.Limit > 0 {
 		q.Set("limit", strconv.Itoa(req.Limit))
 	}

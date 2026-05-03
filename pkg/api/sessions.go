@@ -16,6 +16,10 @@ type SessionDigest struct {
 	Cwd           *string `json:"cwd,omitempty"`
 	FirstPrompt   *string `json:"first_prompt,omitempty"`
 	LatestSummary *string `json:"latest_summary,omitempty"`
+	// EventCount is populated by GET /v1/sessions only; the
+	// per-session detail endpoint leaves it 0. omitempty drops
+	// it from the wire when unset.
+	EventCount int `json:"event_count,omitempty"`
 }
 
 // SessionListRequest is the query-shape for GET /v1/sessions.
@@ -26,7 +30,10 @@ type SessionDigest struct {
 // applies a generous default — 30 days).
 type SessionListRequest struct {
 	SinceMs int64 `json:"since_ms,omitempty"`
-	Limit   int   `json:"limit,omitempty"`
+	// Cwd narrows to sessions whose cwd matches exactly. Empty
+	// means "any cwd" (the default).
+	Cwd   string `json:"cwd,omitempty"`
+	Limit int    `json:"limit,omitempty"`
 }
 
 // SessionListResponse is the body shape for GET /v1/sessions.

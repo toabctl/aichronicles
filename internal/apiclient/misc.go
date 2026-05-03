@@ -9,6 +9,56 @@ import (
 	"github.com/toabctl/aichronicles/pkg/api"
 )
 
+// SessionLLMOutputs fetches every llm_outputs row for a session,
+// optionally filtered by kind. Used by MCP get_summary (when
+// kind != summary).
+func (c *Client) SessionLLMOutputs(ctx context.Context, sessionID, kind string, limit int) ([]api.LLMOutput, error) {
+	q := url.Values{}
+	if kind != "" {
+		q.Set("kind", kind)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/sessions/" + url.PathEscape(sessionID) + "/llm-outputs"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out struct {
+		Outputs []api.LLMOutput `json:"outputs"`
+	}
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Outputs, nil
+}
+
+// LLMOutputsList fetches a filtered list of LLM outputs across
+// sessions. Used by MCP list_workflows (kind=induction).
+func (c *Client) LLMOutputsList(ctx context.Context, kind, sessionID string, limit int) ([]api.LLMOutput, error) {
+	q := url.Values{}
+	if kind != "" {
+		q.Set("kind", kind)
+	}
+	if sessionID != "" {
+		q.Set("session_id", sessionID)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/llm-outputs/list"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out struct {
+		Outputs []api.LLMOutput `json:"outputs"`
+	}
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Outputs, nil
+}
+
 // Summary fetches the cached summary for a session, or
 // ErrNotFound when none exists.
 func (c *Client) Summary(ctx context.Context, sessionID string) (api.LLMOutput, error) {

@@ -606,8 +606,8 @@ func TestGetSummary_UnknownSessionIsUserError(t *testing.T) {
 	if !res.IsError {
 		t.Errorf("expected IsError=true for unknown session")
 	}
-	if !strings.Contains(res.Content[0].Text, "no such session") {
-		t.Errorf("expected 'no such session' diagnostic, got: %s", res.Content[0].Text)
+	if !strings.Contains(res.Content[0].Text, "no session matches") {
+		t.Errorf("expected 'no session matches' diagnostic, got: %s", res.Content[0].Text)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 // RegisterAichroniclesAPITools registers the MCP tools that have
@@ -33,6 +34,9 @@ func RegisterAichroniclesAPITools(s *Server, c *apiclient.Client) {
 	registerFindEpisodes(s, c)
 	registerListSubagents(s, c)
 	registerSearchEvents(s, c)
+	registerListSessions(s, c)
+	registerGetSummary(s, c)
+	registerListWorkflows(s, c)
 }
 
 func registerGetUnresolvedForCwd(s *Server, c *apiclient.Client) {
@@ -699,4 +703,270 @@ func oneLineSnippet2(s string) string {
 		cleaned = cleaned[:maxRunes] + "…"
 	}
 	return cleaned
+}
+
+// --- list_sessions ---
+
+func registerListSessions(s *Server, c *apiclient.Client) {
+	s.RegisterTool(Tool{
+		Name: "list_sessions",
+		Description: "List the user's recent past Claude Code / Gemini CLI conversations, newest first. " +
+			"Each row is one session: id, started/ended time, working directory, event count. " +
+			"Use when the user asks 'what was I doing yesterday', 'show me recent sessions'. " +
+			"For keyword search, use search_events instead.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"cwd":        {"type": "string",  "description": "exact cwd match"},
+				"since_hours":{"type": "integer", "minimum": 1, "description": "limit to sessions ended within this many hours"},
+				"limit":      {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}
+			}
+		}`),
+		Handler: listSessionsAPIHandler(c),
+	})
+}
+
+func listSessionsAPIHandler(c *apiclient.Client) ToolHandler {
+	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
+		var req struct {
+			Cwd        string `json:"cwd"`
+			SinceHours int    `json:"since_hours"`
+			Limit      int    `json:"limit"`
+		}
+		if len(args) > 0 {
+			if err := json.Unmarshal(args, &req); err != nil {
+				return nil, &Error{Code: InvalidParams, Message: "list_sessions: bad args: " + err.Error()}
+			}
+		}
+		if req.Limit <= 0 || req.Limit > 100 {
+			req.Limit = 20
+		}
+		var sinceMs int64
+		if req.SinceHours > 0 {
+			sinceMs = time.Now().Add(-time.Duration(req.SinceHours) * time.Hour).UnixMilli()
+		}
+		resp, err := c.Sessions(ctx, api.SessionListRequest{
+			Cwd:     req.Cwd,
+			SinceMs: sinceMs,
+			Limit:   req.Limit,
+		})
+		if err != nil {
+			if errors.Is(err, apiclient.ErrSocketUnavailable) {
+				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
+			}
+			return nil, &Error{Code: InternalError, Message: "list_sessions: " + err.Error()}
+		}
+		if len(resp.Sessions) == 0 {
+			return TextResult("(no sessions)"), nil
+		}
+		var b strings.Builder
+		for _, ss := range resp.Sessions {
+			short := ss.ID
+			if len(short) > 8 {
+				short = short[:8]
+			}
+			started := "-"
+			ended := "-"
+			if ss.StartedAtMs != nil && *ss.StartedAtMs > 0 {
+				started = formatTS(*ss.StartedAtMs)
+			}
+			if ss.EndedAtMs != nil && *ss.EndedAtMs > 0 {
+				ended = formatTS(*ss.EndedAtMs)
+			}
+			cwd := "-"
+			if ss.Cwd != nil && *ss.Cwd != "" {
+				cwd = *ss.Cwd
+			}
+			fp := ""
+			if ss.FirstPrompt != nil {
+				fp = *ss.FirstPrompt
+			}
+			fmt.Fprintf(&b, "%s\t%s\t%s\t%d\t%s\t%s\n",
+				short, started, ended, ss.EventCount, cwd, oneLineSnippet2(fp))
+		}
+		return TextResult(b.String()), nil
+	}
+}
+
+// --- get_summary ---
+
+func registerGetSummary(s *Server, c *apiclient.Client) {
+	s.RegisterTool(Tool{
+		Name: "get_summary",
+		Description: "Fetch the cached LLM-generated summary of one past session. " +
+			"Returns the structured summary body if one was generated. " +
+			"Pass kind=reflect or kind=propose for the multi-session analysis kinds.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"session_id": {"type": "string"},
+				"kind":       {"type": "string", "enum": ["summary", "reflect", "propose"], "default": "summary"}
+			},
+			"required": ["session_id"]
+		}`),
+		Handler: getSummaryAPIHandler(c),
+	})
+}
+
+func getSummaryAPIHandler(c *apiclient.Client) ToolHandler {
+	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
+		var req struct {
+			SessionID string `json:"session_id"`
+			Kind      string `json:"kind"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, &Error{Code: InvalidParams, Message: "get_summary: bad args: " + err.Error()}
+		}
+		if req.SessionID == "" {
+			return TextError("get_summary: session_id is required"), nil
+		}
+		kind := req.Kind
+		if kind == "" {
+			kind = "summary"
+		}
+
+		// Resolve short prefixes to canonical id.
+		full, err := c.ResolveSession(ctx, req.SessionID)
+		if err != nil {
+			if errors.Is(err, apiclient.ErrNotFound) {
+				return TextError("get_summary: no session matches %q", req.SessionID), nil
+			}
+			if errors.Is(err, apiclient.ErrConflict) {
+				return TextError("get_summary: prefix %q is ambiguous", req.SessionID), nil
+			}
+			if errors.Is(err, apiclient.ErrSocketUnavailable) {
+				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
+			}
+			return nil, &Error{Code: InternalError, Message: "get_summary: resolve: " + err.Error()}
+		}
+
+		outs, err := c.SessionLLMOutputs(ctx, full, kind, 1)
+		if err != nil {
+			if errors.Is(err, apiclient.ErrSocketUnavailable) {
+				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
+			}
+			return nil, &Error{Code: InternalError, Message: "get_summary: " + err.Error()}
+		}
+		if len(outs) == 0 {
+			return TextError("no %s output for session %s", kind, full), nil
+		}
+		// Newest first; take the first.
+		return TextResult(outs[0].Body), nil
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// --- list_workflows ---
+
+func registerListWorkflows(s *Server, c *apiclient.Client) {
+	s.RegisterTool(Tool{
+		Name: "list_workflows",
+		Description: "List abstract procedural workflows aichronicles has induced from past " +
+			"sessions (AWM — Agent Workflow Memory). Each workflow is a task_shape (abstract " +
+			"description) plus a numbered procedure of NL action steps with {placeholder} tokens " +
+			"for varying values. " +
+			"Use when the user is about to start a task and you want to check whether a similar " +
+			"task shape has been done before. " +
+			"Pass `task_shape_contains` to narrow by substring (case-insensitive).",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"task_shape_contains": {"type": "string"},
+				"limit":               {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
+				"include_not_found":   {"type": "boolean", "default": false}
+			}
+		}`),
+		Handler: listWorkflowsAPIHandler(c),
+	})
+}
+
+func listWorkflowsAPIHandler(c *apiclient.Client) ToolHandler {
+	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
+		var req struct {
+			TaskShapeContains string `json:"task_shape_contains"`
+			Limit             int    `json:"limit"`
+			IncludeNotFound   bool   `json:"include_not_found"`
+		}
+		if len(args) > 0 {
+			if err := json.Unmarshal(args, &req); err != nil {
+				return nil, &Error{Code: InvalidParams, Message: "list_workflows: bad args: " + err.Error()}
+			}
+		}
+		if req.Limit <= 0 || req.Limit > 50 {
+			req.Limit = 10
+		}
+		// Pull more than the cap because most induction rows
+		// have no workflow — filter post-fetch.
+		outs, err := c.LLMOutputsList(ctx, "induction", "", req.Limit*5)
+		if err != nil {
+			if errors.Is(err, apiclient.ErrSocketUnavailable) {
+				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
+			}
+			return nil, &Error{Code: InternalError, Message: "list_workflows: " + err.Error()}
+		}
+
+		needle := strings.ToLower(strings.TrimSpace(req.TaskShapeContains))
+		type entry struct {
+			row api.LLMOutput
+			ind prompts.InductionResult
+		}
+		var keep []entry
+		for _, r := range outs {
+			var ind prompts.InductionResult
+			if jerr := json.Unmarshal([]byte(r.Body), &ind); jerr != nil {
+				continue
+			}
+			if ind.Workflow == nil {
+				if !req.IncludeNotFound {
+					continue
+				}
+				keep = append(keep, entry{row: r, ind: ind})
+				if len(keep) >= req.Limit {
+					break
+				}
+				continue
+			}
+			if needle != "" && !strings.Contains(strings.ToLower(ind.Workflow.TaskShape), needle) {
+				continue
+			}
+			keep = append(keep, entry{row: r, ind: ind})
+			if len(keep) >= req.Limit {
+				break
+			}
+		}
+		if len(keep) == 0 {
+			return TextResult("(no workflows yet — try `aichronicles induction sweep` to populate the workflow corpus)"), nil
+		}
+
+		var b strings.Builder
+		for _, e := range keep {
+			sessShort := "(none)"
+			if e.row.SessionID != nil && len(*e.row.SessionID) >= 8 {
+				sessShort = (*e.row.SessionID)[:8]
+			}
+			when := formatTS(e.row.CreatedAtMs)
+			if e.ind.Workflow == nil {
+				fmt.Fprintf(&b, "%s\t%s\t(no workflow — %s)\n", sessShort, when, e.ind.Rationale)
+				continue
+			}
+			w := e.ind.Workflow
+			fmt.Fprintf(&b, "%s\t%s\t%s\n", sessShort, when, w.TaskShape)
+			for i, step := range w.Procedure {
+				fmt.Fprintf(&b, "  %d. %s\n", i+1, step.Action)
+			}
+			if len(w.Preconditions) > 0 {
+				fmt.Fprintln(&b, "  preconditions:")
+				for _, p := range w.Preconditions {
+					fmt.Fprintf(&b, "    - %s\n", p)
+				}
+			}
+		}
+		return TextResult(strings.TrimRight(b.String(), "\n")), nil
+	}
 }

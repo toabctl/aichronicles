@@ -118,6 +118,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sessions/resolve", s.handleSessionsResolve)
 	mux.HandleFunc("GET /v1/sessions/{id}", s.handleSessionsGet)
 	mux.HandleFunc("GET /v1/sessions/{id}/related", s.handleSessionsRelated)
+	mux.HandleFunc("GET /v1/sessions/{id}/llm-outputs", s.handleSessionLLMOutputs)
+	mux.HandleFunc("GET /v1/llm-outputs/list", s.handleLLMOutputsList)
 	mux.HandleFunc("GET /v1/episodes", s.handleEpisodesList)
 	mux.HandleFunc("GET /v1/search", s.handleSearch)
 	mux.HandleFunc("GET /v1/facts/subjects", s.handleFactsSubjects)

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -61,6 +62,24 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 		limit = n
 	}
 
+	cwd := q.Get("cwd")
+
+	// When cwd or event_count are required, fall back to an
+	// inline SQL that matches the legacy MCP list_sessions
+	// shape (event_count + optional cwd filter). The plain
+	// LoadRecentSessionDigests path stays the default for
+	// callers that don't need either.
+	if cwd != "" {
+		rows, err := loadSessionsForListEndpoint(r.Context(), s.store.DB(), cwd, sinceMs, limit)
+		if err != nil {
+			s.slog.Error("loadSessionsForListEndpoint", "err", err)
+			writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+			return
+		}
+		writeJSON(w, http.StatusOK, api.SessionListResponse{Sessions: rows})
+		return
+	}
+
 	rows, err := store.LoadRecentSessionDigests(r.Context(), s.store.DB(), sinceMs, limit)
 	if err != nil {
 		s.slog.Error("LoadRecentSessionDigests", "err", err)
@@ -75,6 +94,44 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 		out.Sessions = append(out.Sessions, sessionDigestRowToWire(row))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// loadSessionsForListEndpoint runs the cwd + since_ms + limit
+// session query that backs MCP list_sessions. Inline so the api
+// doesn't need to widen the legacy LoadRecentSessionDigests
+// signature; consumers that need a richer shape will land in a
+// dedicated store helper later.
+func loadSessionsForListEndpoint(ctx context.Context, db *sql.DB, cwd string, sinceMs int64, limit int) ([]api.SessionDigest, error) {
+	q := `SELECT s.id, s.started_at_ms, s.ended_at_ms, s.event_count,
+		s.cwd, s.first_prompt_text
+		FROM sessions s
+		WHERE s.cwd = ? AND ` + store.EffectiveTsExpr + ` >= ?
+		ORDER BY ` + store.EffectiveTsExpr + ` DESC
+		LIMIT ?`
+	rows, err := db.QueryContext(ctx, q, cwd, sinceMs, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]api.SessionDigest, 0)
+	for rows.Next() {
+		var id string
+		var started, ended sql.NullInt64
+		var ec int
+		var cwdN, fp sql.NullString
+		if err := rows.Scan(&id, &started, &ended, &ec, &cwdN, &fp); err != nil {
+			return nil, err
+		}
+		out = append(out, api.SessionDigest{
+			ID:          id,
+			StartedAtMs: sqlNullInt64ToPtr(started),
+			EndedAtMs:   sqlNullInt64ToPtr(ended),
+			Cwd:         sqlNullToPtr(cwdN),
+			FirstPrompt: sqlNullToPtr(fp),
+			EventCount:  ec,
+		})
+	}
+	return out, rows.Err()
 }
 
 // handleSessionsGet serves GET /v1/sessions/{id}.

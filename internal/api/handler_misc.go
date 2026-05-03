@@ -8,6 +8,76 @@ import (
 	"github.com/toabctl/aichronicles/pkg/api"
 )
 
+// handleSessionLLMOutputs serves
+// GET /v1/sessions/{id}/llm-outputs?kind=&limit=. Returns every
+// llm_outputs row for the session, optionally filtered by kind.
+// Used by MCP get_summary (when kind != summary) and the
+// summarize CLI for cache hit-rate inspection.
+func (s *Server) handleSessionLLMOutputs(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing session id", "")
+		return
+	}
+	kind := r.URL.Query().Get("kind")
+	limit := parseLimit(r, 50)
+	if limit < 0 {
+		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+		return
+	}
+	rows, err := store.LoadLLMOutputsForSession(r.Context(), s.store.DB(), id)
+	if err != nil {
+		s.slog.Error("LoadLLMOutputsForSession", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	out := make([]api.LLMOutput, 0, len(rows))
+	for _, o := range rows {
+		if kind != "" && string(o.Kind) != kind {
+			continue
+		}
+		out = append(out, llmOutputToWire(o))
+		if len(out) >= limit {
+			break
+		}
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Outputs []api.LLMOutput `json:"outputs"`
+	}{Outputs: out})
+}
+
+// handleLLMOutputsList serves
+// GET /v1/llm-outputs/list?kind=&session_id=&since_ms=&limit=.
+// Filtered list of LLM outputs across sessions; used by MCP
+// list_workflows (kind=induction) and the digest CLI.
+func (s *Server) handleLLMOutputsList(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	filter := store.LLMOutputFilter{
+		Kind:      store.LLMOutputKind(q.Get("kind")),
+		SessionID: q.Get("session_id"),
+	}
+	limit := parseLimit(r, 50)
+	if limit < 0 {
+		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+		return
+	}
+	filter.Limit = limit
+
+	rows, err := store.LoadLLMOutputs(r.Context(), s.store.DB(), filter)
+	if err != nil {
+		s.slog.Error("LoadLLMOutputs", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	out := make([]api.LLMOutput, 0, len(rows))
+	for _, o := range rows {
+		out = append(out, llmOutputToWire(o))
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Outputs []api.LLMOutput `json:"outputs"`
+	}{Outputs: out})
+}
+
 // handleSummariesGet serves GET /v1/summaries?session_id=<id>.
 // Returns 404 when the session has no summary yet (collection
 // vs resource: a summary is a per-session resource).
