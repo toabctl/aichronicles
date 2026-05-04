@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
@@ -50,6 +51,7 @@ func newFactsInduceCmd() *cobra.Command {
 		model    string
 		force    bool
 		dbPath   string
+		sockFlag string
 		formatIn string
 	)
 	cmd := &cobra.Command{
@@ -79,6 +81,10 @@ func newFactsInduceCmd() *cobra.Command {
 				return err
 			}
 			defer func() { _ = s.Close() }()
+			c, err := openAPIClient(sockFlag)
+			if err != nil {
+				return err
+			}
 
 			cfg, cfgErr := config.Load()
 			if cfgErr != nil {
@@ -89,7 +95,7 @@ func newFactsInduceCmd() *cobra.Command {
 				cfg.Limits.SummarizeTimeout.Or(defaultSummarizeTimeout))
 			defer cancel()
 
-			_, err = RunFactsForSession(ctx, s,
+			_, err = RunFactsForSession(ctx, s, c,
 				func() (llm.Client, error) { return llm.FromConfig(ctx, llmCfg) },
 				FactsRunOptions{
 					SessionID: session,
@@ -104,6 +110,8 @@ func newFactsInduceCmd() *cobra.Command {
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the cache and re-call the LLM")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
@@ -204,6 +212,7 @@ type FactsRunOptions struct {
 func RunFactsForSession(
 	ctx context.Context,
 	s *store.Store,
+	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts FactsRunOptions,
 	out io.Writer,
@@ -281,7 +290,7 @@ func RunFactsForSession(
 			"patterns", strings.Join(built.Patterns, ","))
 	}
 
-	id, err := runCachedLLM(ctx, s, newClient, cachedLLMInput{
+	id, err := runCachedLLM(ctx, c, newClient, cachedLLMInput{
 		kind:      store.LLMKindFacts,
 		toolName:  prompts.ToolNameFacts,
 		result:    new(prompts.FactsResult),

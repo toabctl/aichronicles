@@ -84,7 +84,7 @@ func TestRunReflect_HappyPathUsesAllSessionsInWindow(t *testing.T) {
 	f := &fakeLLM{reply: "Top 3 tasks:\n..."}
 
 	var out bytes.Buffer
-	id, err := RunReflect(context.Background(), s,
+	id, err := RunReflect(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		ReflectOptions{Since: 6 * time.Hour, Limit: 10},
 		&out,
@@ -115,7 +115,7 @@ func TestRunReflect_HappyPathUsesAllSessionsInWindow(t *testing.T) {
 func TestRunReflect_EmptyWindowReturnsError(t *testing.T) {
 	t.Parallel()
 	s := seedSessionsForMeta(t, 3)
-	_, err := RunReflect(context.Background(), s,
+	_, err := RunReflect(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return &fakeLLM{}, nil },
 		ReflectOptions{Since: time.Minute, Limit: 10},
 		&bytes.Buffer{},
@@ -131,12 +131,12 @@ func TestRunReflect_CacheHitSkipsLLM(t *testing.T) {
 	f := &fakeLLM{reply: "cached reflect"}
 	newClient := func() (llm.Client, error) { return f, nil }
 
-	if _, err := RunReflect(context.Background(), s, newClient,
+	if _, err := RunReflect(context.Background(), s, apiForStore(t, s), newClient,
 		ReflectOptions{Since: 10 * time.Hour, Limit: 10}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("first: %v", err)
 	}
 	var out bytes.Buffer
-	if _, err := RunReflect(context.Background(), s, newClient,
+	if _, err := RunReflect(context.Background(), s, apiForStore(t, s), newClient,
 		ReflectOptions{Since: 10 * time.Hour, Limit: 10}, &out); err != nil {
 		t.Fatalf("second: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestRunReflect_LimitCapsDigestsSentToLLM(t *testing.T) {
 	t.Parallel()
 	s := seedSessionsForMeta(t, 8)
 	f := &fakeLLM{reply: "ok"}
-	if _, err := RunReflect(context.Background(), s,
+	if _, err := RunReflect(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		ReflectOptions{Since: 24 * time.Hour, Limit: 3},
 		&bytes.Buffer{},
@@ -195,7 +195,7 @@ func TestRunReflect_PrefersExistingSummaryOverFirstPrompt(t *testing.T) {
 	_ = tx.Commit()
 
 	f := &fakeLLM{reply: "ok"}
-	if _, err := RunReflect(context.Background(), s,
+	if _, err := RunReflect(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		ReflectOptions{Since: 10 * time.Hour, Limit: 10},
 		&bytes.Buffer{},
@@ -217,7 +217,7 @@ func TestRunPropose_HappyPathPersistsWithKindPropose(t *testing.T) {
 	t.Parallel()
 	s := seedSessionsForMeta(t, 3)
 	f := &fakeLLM{reply: "Skills:\n- foo"}
-	id, err := RunPropose(context.Background(), s,
+	id, err := RunPropose(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		ProposeOptions{Since: 5 * time.Hour, Limit: 10},
 		&bytes.Buffer{},
@@ -235,7 +235,7 @@ func TestRunPropose_HappyPathPersistsWithKindPropose(t *testing.T) {
 func TestRunPropose_EmptyWindowReturnsError(t *testing.T) {
 	t.Parallel()
 	s := testStore(t)
-	_, err := RunPropose(context.Background(), s,
+	_, err := RunPropose(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return &fakeLLM{}, nil },
 		ProposeOptions{Since: time.Hour, Limit: 10},
 		&bytes.Buffer{},
@@ -249,7 +249,7 @@ func TestRunPropose_LLMErrorLeavesDBClean(t *testing.T) {
 	t.Parallel()
 	s := seedSessionsForMeta(t, 2)
 	f := &fakeLLM{err: errors.New("network gone")}
-	_, err := RunPropose(context.Background(), s,
+	_, err := RunPropose(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		ProposeOptions{Since: 10 * time.Hour, Limit: 10},
 		&bytes.Buffer{},
@@ -273,11 +273,11 @@ func TestRunPropose_ReflectAndProposeCoexistUnderSameInput(t *testing.T) {
 	s := seedSessionsForMeta(t, 3)
 	newClient := func() (llm.Client, error) { return &fakeLLM{reply: "r"}, nil }
 
-	if _, err := RunReflect(context.Background(), s, newClient,
+	if _, err := RunReflect(context.Background(), s, apiForStore(t, s), newClient,
 		ReflectOptions{Since: 10 * time.Hour, Limit: 10}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("reflect: %v", err)
 	}
-	if _, err := RunPropose(context.Background(), s, newClient,
+	if _, err := RunPropose(context.Background(), s, apiForStore(t, s), newClient,
 		ProposeOptions{Since: 10 * time.Hour, Limit: 10}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("propose: %v", err)
 	}

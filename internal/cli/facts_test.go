@@ -16,7 +16,7 @@ func TestRunFactsForSession_RequiresSummary(t *testing.T) {
 	t.Parallel()
 	s, sessID := seedSessionForSummarize(t)
 	f := &fakeLLM{reply: "should not be called"}
-	_, err := RunFactsForSession(context.Background(), s,
+	_, err := RunFactsForSession(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		FactsRunOptions{SessionID: sessID}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "no summary") {
@@ -60,7 +60,7 @@ func TestRunFactsForSession_PersistsFactsIntoSemanticFacts(t *testing.T) {
 	f := &fakeLLM{toolInput: toolInput}
 
 	var out bytes.Buffer
-	id, err := RunFactsForSession(context.Background(), s,
+	id, err := RunFactsForSession(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		FactsRunOptions{SessionID: sessID}, &out)
 	if err != nil {
@@ -126,7 +126,7 @@ func TestRunFactsForSession_NoFactsFoundDoesNotPersist(t *testing.T) {
 	f := &fakeLLM{toolInput: toolInput}
 
 	var out bytes.Buffer
-	id, err := RunFactsForSession(context.Background(), s,
+	id, err := RunFactsForSession(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		FactsRunOptions{SessionID: sessID}, &out)
 	if err != nil {
@@ -175,7 +175,7 @@ func TestRunFactsForSession_CacheHitSkipsLLMAndStillRendersFacts(t *testing.T) {
 	newClient := func() (llm.Client, error) { return f, nil }
 
 	// First run populates the cache + persists facts.
-	if _, err := RunFactsForSession(context.Background(), s, newClient,
+	if _, err := RunFactsForSession(context.Background(), s, apiForStore(t, s), newClient,
 		FactsRunOptions{SessionID: sessID}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("first: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestRunFactsForSession_CacheHitSkipsLLMAndStillRendersFacts(t *testing.T) {
 	// facts must still be rendered + the upsert refreshes
 	// asserted_at_ms via SaveSemanticFact's ON CONFLICT DO UPDATE.
 	var out2 bytes.Buffer
-	if _, err := RunFactsForSession(context.Background(), s, newClient,
+	if _, err := RunFactsForSession(context.Background(), s, apiForStore(t, s), newClient,
 		FactsRunOptions{SessionID: sessID}, &out2); err != nil {
 		t.Fatalf("second: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestRunFactsForSession_JSONFormatEmitsRawBody(t *testing.T) {
 	f := &fakeLLM{toolInput: toolInput}
 
 	var out bytes.Buffer
-	if _, err := RunFactsForSession(context.Background(), s,
+	if _, err := RunFactsForSession(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		FactsRunOptions{SessionID: sessID, JSON: true}, &out); err != nil {
 		t.Fatalf("run: %v", err)

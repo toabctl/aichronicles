@@ -11,8 +11,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
@@ -39,6 +41,7 @@ func newReflectCmd() *cobra.Command {
 		model    string
 		force    bool
 		dbPath   string
+		sockFlag string
 		formatIn string
 	)
 	cmd := &cobra.Command{
@@ -63,6 +66,10 @@ func newReflectCmd() *cobra.Command {
 				return err
 			}
 			defer func() { _ = s.Close() }()
+			c, err := openAPIClient(sockFlag)
+			if err != nil {
+				return err
+			}
 
 			cfg, cfgErr := config.Load()
 			if cfgErr != nil {
@@ -74,7 +81,7 @@ func newReflectCmd() *cobra.Command {
 				cfg.Limits.ReflectTimeout.Or(defaultMetaLLMTimeout))
 			defer cancel()
 
-			_, err = RunReflect(ctx, s,
+			_, err = RunReflect(ctx, s, c,
 				func() (llm.Client, error) {
 					return llm.FromConfig(ctx, llmCfg)
 				},
@@ -88,6 +95,8 @@ func newReflectCmd() *cobra.Command {
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
@@ -103,9 +112,15 @@ type ReflectOptions struct {
 
 // RunReflect orchestrates the meta-analysis path. Same cache-first /
 // lazy-client / LLM-errors-are-clean discipline as RunSummarize.
+//
+// Reads (session digests + per-session extractions) still go through
+// the store directly — those don't have api endpoints yet. The cache
+// lookup + persist routes through aichronicles-api so the single-
+// writer invariant on llm_outputs is preserved.
 func RunReflect(
 	ctx context.Context,
 	s *store.Store,
+	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts ReflectOptions,
 	out io.Writer,
@@ -137,7 +152,7 @@ func RunReflect(
 			"patterns", strings.Join(built.Patterns, ","))
 	}
 
-	return runCachedLLM(ctx, s, newClient, cachedLLMInput{
+	return runCachedLLM(ctx, c, newClient, cachedLLMInput{
 		kind:     store.LLMKindReflect,
 		toolName: prompts.ToolNameReflection,
 		result:   new(prompts.ReflectionResult),
@@ -263,19 +278,25 @@ type cachedLLMInput struct {
 }
 
 // runCachedLLM implements the cache-first / lazy-client / clean-on-
-// failure dance for reflect and propose. Returns the persisted row id.
+// failure dance for reflect, propose, summarize, induction, facts,
+// and skills evolve. Returns the persisted row id.
+//
+// Cache lookup goes through GET /v1/llm-outputs?kind=&prompt_hash=
+// (ErrNotFound is the cache-miss signal); persistence goes through
+// POST /v1/llm-outputs. The api owns the single writer lock — every
+// LLM-deriving CLI converging on this helper keeps the writer
+// invariant intact even when those CLIs still do their own
+// enrichment reads.
 func runCachedLLM(
 	ctx context.Context,
-	s *store.Store,
+	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	in cachedLLMInput,
 ) (int64, error) {
 	if !in.force {
-		cached, err := store.LoadLLMOutputByHash(ctx, s.DB(), in.kind, in.hash)
-		if err != nil {
-			return 0, fmt.Errorf("%s: cache lookup: %w", in.kind, err)
-		}
-		if cached != nil {
+		cached, err := c.LLMOutputByHash(ctx, string(in.kind), in.hash)
+		switch {
+		case err == nil:
 			// Populate in.result from the cached body so callers
 			// can read the parsed result uniformly across hit and
 			// miss paths (the miss path populates it via
@@ -292,6 +313,10 @@ func runCachedLLM(
 				return cached.ID, fmt.Errorf("%s: render cached body: %w", in.kind, renderErr)
 			}
 			return cached.ID, nil
+		case errors.Is(err, apiclient.ErrNotFound):
+			// fall through to the LLM call
+		default:
+			return 0, fmt.Errorf("%s: cache lookup: %w", in.kind, err)
 		}
 	}
 
@@ -316,24 +341,35 @@ func runCachedLLM(
 		return 0, fmt.Errorf("%s: marshal result: %w", in.kind, err)
 	}
 
-	id, err := persistSummary(ctx, s, &persistInput{
+	saveReq := api.SaveLLMOutputRequest{
 		// session_id intentionally empty for reflect/propose:
 		// they span many sessions. Single-session callers
-		// (summary, induction) populate it.
-		sessionID:  in.sessionID,
-		kind:       in.kind,
-		hash:       in.hash,
-		model:      resp.Model,
-		inputToks:  resp.Usage.InputTokens,
-		outputToks: resp.Usage.OutputTokens,
-		body:       body,
-	})
+		// (summary, induction, facts) populate it.
+		Kind:        string(in.kind),
+		Model:       resp.Model,
+		PromptHash:  in.hash,
+		Body:        body,
+		CreatedAtMs: time.Now().UnixMilli(),
+	}
+	if in.sessionID != "" {
+		sid := in.sessionID
+		saveReq.SessionID = &sid
+	}
+	if resp.Usage.InputTokens > 0 {
+		v := int64(resp.Usage.InputTokens)
+		saveReq.InputTokens = &v
+	}
+	if resp.Usage.OutputTokens > 0 {
+		v := int64(resp.Usage.OutputTokens)
+		saveReq.OutputTokens = &v
+	}
+	saveResp, err := c.SaveLLMOutput(ctx, saveReq)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("%s: persist: %w", in.kind, err)
 	}
 
 	if renderErr := emitLLMBody(in.output, in.kind, body, in.jsonRaw); renderErr != nil {
-		return id, fmt.Errorf("%s: render body: %w", in.kind, renderErr)
+		return saveResp.ID, fmt.Errorf("%s: render body: %w", in.kind, renderErr)
 	}
-	return id, nil
+	return saveResp.ID, nil
 }

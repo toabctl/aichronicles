@@ -54,7 +54,7 @@ func TestRunInductionForSession_RequiresSummary(t *testing.T) {
 	s, sessID := seedSessionForSummarize(t)
 	// No summary planted.
 	f := &fakeLLM{reply: "should not be called"}
-	_, err := RunInductionForSession(context.Background(), s,
+	_, err := RunInductionForSession(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		InductionRunOptions{SessionID: sessID}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "no summary") {
@@ -92,7 +92,7 @@ func TestRunInductionForSession_PersistsSkillProposal(t *testing.T) {
 	f := &fakeLLM{toolInput: toolInput}
 
 	var out bytes.Buffer
-	id, err := RunInductionForSession(context.Background(), s,
+	id, err := RunInductionForSession(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		InductionRunOptions{SessionID: sessID}, &out)
 	if err != nil {
@@ -139,7 +139,7 @@ func TestRunInductionForSession_HandlesNoSkillVerdict(t *testing.T) {
 	f := &fakeLLM{toolInput: toolInput}
 
 	var out bytes.Buffer
-	if _, err := RunInductionForSession(context.Background(), s,
+	if _, err := RunInductionForSession(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		InductionRunOptions{SessionID: sessID}, &out); err != nil {
 		t.Fatalf("RunInductionForSession: %v", err)
@@ -174,7 +174,7 @@ func TestRunInductionSweep_ProcessesIdleSessionsAndIsIdempotent(t *testing.T) {
 	f := &fakeLLM{toolInput: toolInput}
 
 	var out, errOut bytes.Buffer
-	if err := RunInductionSweep(context.Background(), s,
+	if err := RunInductionSweep(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		// Skip facts + workflow for this test; their behaviour is
 		// covered by dedicated tests below. Leaving them on would
@@ -195,7 +195,7 @@ func TestRunInductionSweep_ProcessesIdleSessionsAndIsIdempotent(t *testing.T) {
 
 	// Re-running must skip the already-induced session.
 	f2 := &fakeLLM{toolInput: toolInput}
-	if err := RunInductionSweep(context.Background(), s,
+	if err := RunInductionSweep(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f2, nil },
 		InductionSweepOptions{
 			Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
@@ -240,7 +240,7 @@ func TestRunInductionSweep_DefaultAutoExtractsAllMemoryTypes(t *testing.T) {
 	f := &fakeLLM{toolInput: toolInput}
 
 	var out, errOut bytes.Buffer
-	if err := RunInductionSweep(context.Background(), s,
+	if err := RunInductionSweep(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		InductionSweepOptions{Idle: 30 * time.Minute, MinEvents: 5, Limit: 10},
 		&out, &errOut); err != nil {
@@ -289,7 +289,7 @@ func TestRunInductionSweep_SkipFactsSuppressesFactsLayer(t *testing.T) {
 	toolInput, _ := json.Marshal(indResult)
 	f := &fakeLLM{toolInput: toolInput}
 
-	if err := RunInductionSweep(context.Background(), s,
+	if err := RunInductionSweep(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		InductionSweepOptions{
 			Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
@@ -344,7 +344,7 @@ func TestRunInductionSweep_AutoSummarizesSessionsWithoutSummary(t *testing.T) {
 	f := &fakeLLM{toolInput: toolInput}
 
 	var out, errOut bytes.Buffer
-	if err := RunInductionSweep(context.Background(), s,
+	if err := RunInductionSweep(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		InductionSweepOptions{Idle: 30 * time.Minute, MinEvents: 5, Limit: 10},
 		&out, &errOut); err != nil {
@@ -393,7 +393,7 @@ func TestRunInductionSweep_AlreadySummarizedSessionSkipsPhase1(t *testing.T) {
 	toolInput, _ := json.Marshal(indResult)
 	f := &fakeLLM{toolInput: toolInput}
 
-	if err := RunInductionSweep(context.Background(), s,
+	if err := RunInductionSweep(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		InductionSweepOptions{Idle: 30 * time.Minute, MinEvents: 5, Limit: 10},
 		&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -423,7 +423,7 @@ func TestRunInductionSweep_SkipSummarizeBypassesPhase1(t *testing.T) {
 
 	f := &fakeLLM{reply: "should not be reached"}
 
-	if err := RunInductionSweep(context.Background(), s,
+	if err := RunInductionSweep(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		InductionSweepOptions{
 			Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
@@ -471,7 +471,7 @@ func TestRunInductionSweep_SummarizeFailureSkipsDownstream(t *testing.T) {
 	f := &fakeLLM{err: errors.New("simulated LLM outage")}
 
 	var errOut bytes.Buffer
-	if err := RunInductionSweep(context.Background(), s,
+	if err := RunInductionSweep(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		InductionSweepOptions{Idle: 30 * time.Minute, MinEvents: 5, Limit: 10},
 		&bytes.Buffer{}, &errOut); err != nil {
@@ -524,7 +524,7 @@ func TestRunInductionSweep_FactsLayerErrorDoesNotAbortSweep(t *testing.T) {
 	f := &fakeLLM{err: errors.New("simulated LLM outage")}
 
 	var errOut bytes.Buffer
-	err := RunInductionSweep(context.Background(), s,
+	err := RunInductionSweep(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		InductionSweepOptions{Idle: 30 * time.Minute, MinEvents: 5, Limit: 10},
 		&bytes.Buffer{}, &errOut)
@@ -579,7 +579,7 @@ func TestRunInductionSweep_PerPhaseTimeoutsAreIndependent(t *testing.T) {
 	const inductionTO = 200 * time.Millisecond
 	const factsTO = 50 * time.Millisecond
 
-	if err := RunInductionSweep(context.Background(), s,
+	if err := RunInductionSweep(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		InductionSweepOptions{
 			Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
@@ -686,7 +686,7 @@ func TestRunInductionSweep_SegmentsEpisodesByDefault(t *testing.T) {
 	toolInput, _ := json.Marshal(indResult)
 	f := &fakeLLM{toolInput: toolInput}
 
-	if err := RunInductionSweep(context.Background(), s,
+	if err := RunInductionSweep(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		InductionSweepOptions{
 			Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
@@ -721,7 +721,7 @@ func TestRunInductionSweep_SkipEpisodesSuppressesPhase0(t *testing.T) {
 	toolInput, _ := json.Marshal(indResult)
 	f := &fakeLLM{toolInput: toolInput}
 
-	if err := RunInductionSweep(context.Background(), s,
+	if err := RunInductionSweep(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		InductionSweepOptions{
 			Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
@@ -757,7 +757,7 @@ func TestRunInductionSweep_EpisodeSegmentationIsIdempotent(t *testing.T) {
 
 	run := func() {
 		f := &fakeLLM{toolInput: toolInput}
-		if err := RunInductionSweep(context.Background(), s,
+		if err := RunInductionSweep(context.Background(), s, apiForStore(t, s),
 			func() (llm.Client, error) { return f, nil },
 			InductionSweepOptions{
 				Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
@@ -809,7 +809,7 @@ func TestRunInductionSweep_ReSegmentsAfterLateEvents(t *testing.T) {
 	indResult := prompts.InductionResult{Rationale: "x"}
 	toolInput, _ := json.Marshal(indResult)
 	f1 := &fakeLLM{toolInput: toolInput}
-	if err := RunInductionSweep(context.Background(), s,
+	if err := RunInductionSweep(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f1, nil },
 		InductionSweepOptions{
 			Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
@@ -865,7 +865,7 @@ func TestRunInductionSweep_ReSegmentsAfterLateEvents(t *testing.T) {
 	// time. Pre-fix this would skip phase 0 entirely; post-fix the
 	// sweep-wide pass picks up the lag.
 	f2 := &fakeLLM{toolInput: toolInput}
-	if err := RunInductionSweep(context.Background(), s,
+	if err := RunInductionSweep(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f2, nil },
 		InductionSweepOptions{
 			Idle: 30 * time.Minute, MinEvents: 5, Limit: 10,
@@ -897,7 +897,7 @@ func TestRunInductionSweep_NoCandidatesReturnsCleanly(t *testing.T) {
 	f := &fakeLLM{reply: "noop"}
 
 	var out, errOut bytes.Buffer
-	if err := RunInductionSweep(context.Background(), s,
+	if err := RunInductionSweep(context.Background(), s, apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		InductionSweepOptions{Idle: 30 * time.Minute, MinEvents: 5, Limit: 10},
 		&out, &errOut); err != nil {

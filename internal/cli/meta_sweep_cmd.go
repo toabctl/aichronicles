@@ -38,7 +38,10 @@ func newMetaCmd() *cobra.Command {
 // touching the daemon. Per-kind failure isolation and the empty-
 // window-isn't-an-error semantics live in RunMetaAnalysisSweep.
 func newMetaSweepCmd() *cobra.Command {
-	var dbPath string
+	var (
+		dbPath   string
+		sockFlag string
+	)
 	cmd := &cobra.Command{
 		Use:   "sweep",
 		Short: "Fire every overdue meta-analysis kind in one pass",
@@ -62,6 +65,10 @@ func newMetaSweepCmd() *cobra.Command {
 				return err
 			}
 			defer func() { _ = s.Close() }()
+			c, err := openAPIClient(sockFlag)
+			if err != nil {
+				return err
+			}
 
 			cfg, err := config.Load()
 			if err != nil {
@@ -71,12 +78,14 @@ func newMetaSweepCmd() *cobra.Command {
 			opts := MetaAnalysisSweepOptionsFromConfig(cfg.MetaAnalysis)
 
 			ctx := cmd.Context()
-			return RunMetaAnalysisSweep(ctx, s,
+			return RunMetaAnalysisSweep(ctx, s, c,
 				func() (llm.Client, error) { return llm.FromConfig(ctx, llmCfg) },
 				opts, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	cmd.Flags().StringVar(&dbPath, "db", "",
 		"SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	return cmd
 }

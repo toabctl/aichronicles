@@ -463,7 +463,7 @@ func TestRunSummariesFill_StreamsAndTallies(t *testing.T) {
 	newClient := func() (llm.Client, error) { return f, nil }
 
 	var out bytes.Buffer
-	if err := runSummariesFill(t.Context(), s, newClient,
+	if err := runSummariesFill(t.Context(), s, apiForStore(t, s), newClient,
 		rows, "", 5*time.Second, FormatTable, &out); err != nil {
 		t.Fatalf("runSummariesFill: %v", err)
 	}
@@ -509,7 +509,7 @@ func TestRunSummariesFill_JSONFormatShape(t *testing.T) {
 	newClient := func() (llm.Client, error) { return f, nil }
 
 	var out bytes.Buffer
-	if err := runSummariesFill(t.Context(), s, newClient,
+	if err := runSummariesFill(t.Context(), s, apiForStore(t, s), newClient,
 		[]store.SessionDigestRow{{ID: id}}, "", 5*time.Second, FormatJSON, &out); err != nil {
 		t.Fatalf("runSummariesFill: %v", err)
 	}

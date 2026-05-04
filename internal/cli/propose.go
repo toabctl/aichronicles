@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
@@ -41,6 +42,7 @@ func newProposeCmd() *cobra.Command {
 		model     string
 		force     bool
 		dbPath    string
+		sockFlag  string
 		formatIn  string
 		challenge bool
 	)
@@ -71,6 +73,10 @@ func newProposeCmd() *cobra.Command {
 				return err
 			}
 			defer func() { _ = s.Close() }()
+			c, err := openAPIClient(sockFlag)
+			if err != nil {
+				return err
+			}
 
 			cfg, cfgErr := config.Load()
 			if cfgErr != nil {
@@ -96,7 +102,7 @@ func newProposeCmd() *cobra.Command {
 					providerLabel(llmCfg))
 			}
 
-			_, err = RunPropose(ctx, s,
+			_, err = RunPropose(ctx, s, c,
 				func() (llm.Client, error) {
 					return llm.FromConfig(ctx, llmCfg)
 				},
@@ -117,6 +123,8 @@ func newProposeCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&challenge, "challenge", false,
 		"forward-looking mode: propose what to tackle NEXT (Voyager-style curriculum)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
 	cmd.AddCommand(newProposeAddCmd())
 	cmd.AddCommand(newProposeMergeCmd())
@@ -156,6 +164,7 @@ type ProposeOptions struct {
 func RunPropose(
 	ctx context.Context,
 	s *store.Store,
+	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts ProposeOptions,
 	out io.Writer,
@@ -216,7 +225,7 @@ func RunPropose(
 		len(installed), len(invoked))
 
 	if opts.Challenge {
-		return runChallenge(ctx, s, newClient, opts, digests, installed, invoked, out, progress)
+		return runChallenge(ctx, s, c, newClient, opts, digests, installed, invoked, out, progress)
 	}
 
 	priorProposals, perr := loadPriorProposalsForPrompt(ctx, s, sinceMs)
@@ -248,7 +257,7 @@ func RunPropose(
 
 	_, _ = fmt.Fprintf(progress, "calling LLM (this is the long part — typically 10–30s)...\n")
 	result := new(prompts.ProposalResult)
-	id, err := runCachedLLM(ctx, s, newClient, cachedLLMInput{
+	id, err := runCachedLLM(ctx, c, newClient, cachedLLMInput{
 		kind:     store.LLMKindPropose,
 		toolName: prompts.ToolNameProposal,
 		result:   result,
@@ -462,6 +471,7 @@ func skillMetadataFromProposed(sk prompts.ProposedSkill) store.SkillCandidateMet
 func runChallenge(
 	ctx context.Context,
 	s *store.Store,
+	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts ProposeOptions,
 	digests []prompts.SessionDigest,
@@ -524,7 +534,7 @@ func runChallenge(
 	}
 
 	_, _ = fmt.Fprintf(progress, "calling LLM (challenge mode)...\n")
-	return runCachedLLM(ctx, s, newClient, cachedLLMInput{
+	return runCachedLLM(ctx, c, newClient, cachedLLMInput{
 		kind:     store.LLMKindChallenge,
 		toolName: prompts.ToolNameChallenge,
 		result:   new(prompts.ChallengeResult),

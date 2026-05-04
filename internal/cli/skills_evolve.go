@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/llm"
@@ -33,6 +34,7 @@ func newSkillsEvolveCmd() *cobra.Command {
 		skillName   string
 		skillsDir   string
 		dbPath      string
+		sockFlag    string
 		since       time.Duration
 		window      time.Duration
 		maxExamples int
@@ -70,6 +72,10 @@ func newSkillsEvolveCmd() *cobra.Command {
 				return err
 			}
 			defer func() { _ = s.Close() }()
+			c, err := openAPIClient(sockFlag)
+			if err != nil {
+				return err
+			}
 
 			cfg, cfgErr := config.Load()
 			if cfgErr != nil {
@@ -83,7 +89,7 @@ func newSkillsEvolveCmd() *cobra.Command {
 				return llm.FromConfig(ctx, llmCfg)
 			}
 
-			return runSkillsEvolve(ctx, s, newClient, skillsEvolveOptions{
+			return runSkillsEvolve(ctx, s, c, newClient, skillsEvolveOptions{
 				SkillName:   skillName,
 				SkillsDir:   resolveSkillsDir(skillsDir),
 				Since:       since,
@@ -106,6 +112,8 @@ func newSkillsEvolveCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&force, "force", false,
 		"bypass the cache and re-call the LLM even if a revision was already drafted")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	return cmd
 }
 
@@ -136,16 +144,18 @@ type SkillsEvolveOptions = skillsEvolveOptions
 func RunSkillsEvolve(
 	ctx context.Context,
 	s *store.Store,
+	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts SkillsEvolveOptions,
 	out, errOut io.Writer,
 ) error {
-	return runSkillsEvolve(ctx, s, newClient, opts, out, errOut)
+	return runSkillsEvolve(ctx, s, c, newClient, opts, out, errOut)
 }
 
 func runSkillsEvolve(
 	ctx context.Context,
 	s *store.Store,
+	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts skillsEvolveOptions,
 	out, errOut io.Writer,
@@ -218,7 +228,7 @@ func runSkillsEvolve(
 	// Cache hash: built.Hash already factors in skill name +
 	// SKILL.md body via the prompt text, so two runs on the same
 	// SKILL hit the cache for free; a hand-edit invalidates it.
-	id, err := runCachedLLM(ctx, s, newClient, cachedLLMInput{
+	id, err := runCachedLLM(ctx, c, newClient, cachedLLMInput{
 		kind:     store.LLMKindSkillRevision,
 		toolName: prompts.ToolNameSkillRevision,
 		result:   new(prompts.SkillRevision),

@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/llm"
@@ -46,6 +47,7 @@ func newDigestWeeklyCmd() *cobra.Command {
 		weekOf   string
 		force    bool
 		dbPath   string
+		sockFlag string
 		formatIn string
 		model    string
 	)
@@ -72,6 +74,10 @@ func newDigestWeeklyCmd() *cobra.Command {
 				return err
 			}
 			defer func() { _ = s.Close() }()
+			c, err := openAPIClient(sockFlag)
+			if err != nil {
+				return err
+			}
 
 			cfg, cfgErr := config.Load()
 			if cfgErr != nil {
@@ -88,7 +94,7 @@ func newDigestWeeklyCmd() *cobra.Command {
 				cfg.Limits.ReflectTimeout.Or(defaultMetaLLMTimeout))
 			defer cancel()
 
-			_, err = RunDigestWeekly(ctx, s,
+			_, err = RunDigestWeekly(ctx, s, c,
 				func() (llm.Client, error) { return llm.FromConfig(ctx, llmCfg) },
 				DigestWeeklyOptions{
 					PeriodStart: start,
@@ -108,6 +114,8 @@ func newDigestWeeklyCmd() *cobra.Command {
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().StringVar(&dbPath, "db", "",
 		"SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
@@ -174,6 +182,7 @@ type WeeklyDigestEnvelope = prompts.WeeklyDigestEnvelope
 func RunDigestWeekly(
 	ctx context.Context,
 	s *store.Store,
+	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts DigestWeeklyOptions,
 	out io.Writer,
@@ -215,7 +224,7 @@ func RunDigestWeekly(
 			"patterns", strings.Join(built.Patterns, ","))
 	}
 
-	id, err := runCachedLLM(ctx, s, newClient, cachedLLMInput{
+	id, err := runCachedLLM(ctx, c, newClient, cachedLLMInput{
 		kind:     store.LLMKindReflectWeekly,
 		toolName: prompts.ToolNameReflection,
 		result:   new(prompts.ReflectionResult),

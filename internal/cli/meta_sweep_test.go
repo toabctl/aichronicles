@@ -34,7 +34,7 @@ func TestRunMetaAnalysisSweep_FiresOverdueKinds(t *testing.T) {
 	f := &fakeLLM{reply: "ok"}
 	newClient := func() (llm.Client, error) { return f, nil }
 
-	err := RunMetaAnalysisSweep(t.Context(), s, newClient,
+	err := RunMetaAnalysisSweep(t.Context(), s, apiForStore(t, s), newClient,
 		MetaAnalysisSweepOptions{
 			ProposeCadence:       24 * time.Hour,
 			ProposeSinceWindow:   10 * time.Hour,
@@ -78,7 +78,7 @@ func TestRunMetaAnalysisSweep_SkipFlagsBypassDispatch(t *testing.T) {
 	f := &fakeLLM{reply: "ok"}
 	newClient := func() (llm.Client, error) { return f, nil }
 
-	err := RunMetaAnalysisSweep(t.Context(), s, newClient,
+	err := RunMetaAnalysisSweep(t.Context(), s, apiForStore(t, s), newClient,
 		MetaAnalysisSweepOptions{
 			ProposeCadence: 24 * time.Hour, ProposeSkip: true,
 			ReflectCadence: 24 * time.Hour, ReflectSkip: true,
@@ -106,7 +106,7 @@ func TestRunMetaAnalysisSweep_ZeroCadenceDisablesKind(t *testing.T) {
 	f := &fakeLLM{reply: "ok"}
 	newClient := func() (llm.Client, error) { return f, nil }
 
-	err := RunMetaAnalysisSweep(t.Context(), s, newClient,
+	err := RunMetaAnalysisSweep(t.Context(), s, apiForStore(t, s), newClient,
 		MetaAnalysisSweepOptions{
 			// Only propose has a positive cadence.
 			ProposeCadence:     24 * time.Hour,
@@ -135,13 +135,13 @@ func TestRunMetaAnalysisSweep_RecentRowSkipsKind(t *testing.T) {
 	f := &fakeLLM{reply: "ok"}
 	newClient := func() (llm.Client, error) { return f, nil }
 
-	if _, err := RunPropose(t.Context(), s, newClient,
+	if _, err := RunPropose(t.Context(), s, apiForStore(t, s), newClient,
 		ProposeOptions{Since: 10 * time.Hour, Limit: 10},
 		&bytes.Buffer{}); err != nil {
 		t.Fatalf("seed propose: %v", err)
 	}
 	calls := f.called
-	err := RunMetaAnalysisSweep(t.Context(), s, newClient,
+	err := RunMetaAnalysisSweep(t.Context(), s, apiForStore(t, s), newClient,
 		MetaAnalysisSweepOptions{
 			ProposeCadence:     24 * time.Hour,
 			ProposeSinceWindow: 10 * time.Hour,
@@ -171,7 +171,7 @@ func TestRunMetaAnalysisSweep_PerKindFailureIsolation(t *testing.T) {
 	f := &flakeyLLM{firstErr: errors.New("transient propose failure"), reply: "ok"}
 	newClient := func() (llm.Client, error) { return f, nil }
 
-	err := RunMetaAnalysisSweep(t.Context(), s, newClient,
+	err := RunMetaAnalysisSweep(t.Context(), s, apiForStore(t, s), newClient,
 		MetaAnalysisSweepOptions{
 			ProposeCadence:     24 * time.Hour,
 			ProposeSinceWindow: 10 * time.Hour,
@@ -208,7 +208,7 @@ func TestRunMetaAnalysisSweep_EmptyWindowIsNotAFailure(t *testing.T) {
 	f := &fakeLLM{reply: "ok"}
 	newClient := func() (llm.Client, error) { return f, nil }
 
-	err := RunMetaAnalysisSweep(t.Context(), s, newClient,
+	err := RunMetaAnalysisSweep(t.Context(), s, apiForStore(t, s), newClient,
 		MetaAnalysisSweepOptions{
 			ProposeCadence:     24 * time.Hour,
 			ProposeSinceWindow: 10 * time.Hour,
@@ -257,7 +257,7 @@ func TestRunMetaAnalysisSweep_CtxCancelStopsSweep(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel() // cancelled before we even start
 
-	err := RunMetaAnalysisSweep(ctx, s, newClient,
+	err := RunMetaAnalysisSweep(ctx, s, apiForStore(t, s), newClient,
 		MetaAnalysisSweepOptions{
 			ProposeCadence:     24 * time.Hour,
 			ProposeSinceWindow: 10 * time.Hour,

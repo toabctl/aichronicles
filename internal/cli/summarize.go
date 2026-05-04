@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,8 +13,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
@@ -31,6 +34,7 @@ func newSummarizeCmd() *cobra.Command {
 		dbPath   string
 		formatIn string
 	)
+	var sockFlag string
 	cmd := &cobra.Command{
 		Use:   "summarize <session>",
 		Short: "Generate an LLM summary for one session",
@@ -60,6 +64,10 @@ func newSummarizeCmd() *cobra.Command {
 				return err
 			}
 			defer func() { _ = s.Close() }()
+			c, err := openAPIClient(sockFlag)
+			if err != nil {
+				return err
+			}
 
 			// Only build the client lazily — the user should be able
 			// to re-print a cached summary without an API key.
@@ -75,7 +83,7 @@ func newSummarizeCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(),
 				cfg.Limits.SummarizeTimeout.Or(defaultSummarizeTimeout))
 			defer cancel()
-			_, err = RunSummarize(ctx, s, newClient, SummarizeOptions{
+			_, err = RunSummarize(ctx, s, c, newClient, SummarizeOptions{
 				SessionID: sessionID, Model: model, Force: force, JSON: format == FormatJSON,
 			}, cmd.OutOrStdout())
 			return err
@@ -84,6 +92,8 @@ func newSummarizeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
@@ -107,6 +117,7 @@ type SummarizeOptions struct {
 func RunSummarize(
 	ctx context.Context,
 	s *store.Store,
+	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts SummarizeOptions,
 	out io.Writer,
@@ -201,11 +212,16 @@ func RunSummarize(
 	}
 
 	if !opts.Force {
-		cached, err := store.LoadLLMOutputByHash(ctx, s.DB(), store.LLMKindSummary, built.Hash)
-		if err != nil {
+		cached, err := c.LLMOutputByHash(ctx, string(store.LLMKindSummary), built.Hash)
+		switch {
+		case err == nil:
+			// fall through with cached populated below
+		case errors.Is(err, apiclient.ErrNotFound):
+			cached.ID = 0 // sentinel for "no cache" — render-time check uses cached.ID > 0
+		default:
 			return 0, fmt.Errorf("summarize: cache lookup: %w", err)
 		}
-		if cached != nil {
+		if cached.ID > 0 {
 			// On cache hit we still re-derive session_links from the
 			// stored body. The links table is a projection, not the
 			// source of truth — a user who ran summarize before the
@@ -243,18 +259,27 @@ func RunSummarize(
 		return 0, fmt.Errorf("summarize: marshal result: %w", err)
 	}
 
-	id, err := persistSummary(ctx, s, &persistInput{
-		sessionID:  sessionID,
-		kind:       store.LLMKindSummary,
-		hash:       built.Hash,
-		model:      resp.Model,
-		inputToks:  resp.Usage.InputTokens,
-		outputToks: resp.Usage.OutputTokens,
-		body:       body,
-	})
-	if err != nil {
-		return 0, err
+	saveReq := api.SaveLLMOutputRequest{
+		SessionID:   &sessionID,
+		Kind:        string(store.LLMKindSummary),
+		Model:       resp.Model,
+		PromptHash:  built.Hash,
+		Body:        body,
+		CreatedAtMs: time.Now().UnixMilli(),
 	}
+	if resp.Usage.InputTokens > 0 {
+		v := int64(resp.Usage.InputTokens)
+		saveReq.InputTokens = &v
+	}
+	if resp.Usage.OutputTokens > 0 {
+		v := int64(resp.Usage.OutputTokens)
+		saveReq.OutputTokens = &v
+	}
+	saveResp, err := c.SaveLLMOutput(ctx, saveReq)
+	if err != nil {
+		return 0, fmt.Errorf("summarize: persist: %w", err)
+	}
+	id := saveResp.ID
 
 	// Persist session_links derived from result.SessionLinks. Done
 	// after persistSummary so the FK to sessions(id) is irrelevant

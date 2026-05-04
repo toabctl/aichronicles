@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
@@ -66,6 +67,7 @@ func newInductionSweepCmd() *cobra.Command {
 		limit         int
 		model         string
 		dbPath        string
+		sockFlag      string
 		skipSummarize bool
 		skipFacts     bool
 		skipEpisodes  bool
@@ -100,6 +102,10 @@ func newInductionSweepCmd() *cobra.Command {
 				return err
 			}
 			defer func() { _ = s.Close() }()
+			c, err := openAPIClient(sockFlag)
+			if err != nil {
+				return err
+			}
 
 			cfg, cfgErr := config.Load()
 			if cfgErr != nil {
@@ -112,7 +118,7 @@ func newInductionSweepCmd() *cobra.Command {
 			// after the budget elapses, regardless of which session
 			// is in flight — the bug session 9ec75b11 tripped.
 			ctx := cmd.Context()
-			return RunInductionSweep(ctx, s,
+			return RunInductionSweep(ctx, s, c,
 				func() (llm.Client, error) { return llm.FromConfig(ctx, llmCfg) },
 				InductionSweepOptions{
 					Idle:             idle,
@@ -142,6 +148,8 @@ func newInductionSweepCmd() *cobra.Command {
 		"skip phase 3 (semantic-facts induction); saves one LLM call per candidate")
 	cmd.Flags().BoolVar(&skipEpisodes, "skip-episodes", false,
 		"skip phase 0 (episode segmentation); episode-keyed retrieval will have no rows for new candidates")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	return cmd
 }
 
@@ -151,6 +159,7 @@ func newInductionRunCmd() *cobra.Command {
 		model    string
 		force    bool
 		dbPath   string
+		sockFlag string
 		formatIn string
 	)
 	cmd := &cobra.Command{
@@ -173,6 +182,10 @@ func newInductionRunCmd() *cobra.Command {
 				return err
 			}
 			defer func() { _ = s.Close() }()
+			c, err := openAPIClient(sockFlag)
+			if err != nil {
+				return err
+			}
 
 			cfg, cfgErr := config.Load()
 			if cfgErr != nil {
@@ -183,7 +196,7 @@ func newInductionRunCmd() *cobra.Command {
 				cfg.Limits.SummarizeTimeout.Or(defaultSummarizeTimeout))
 			defer cancel()
 
-			_, err = RunInductionForSession(ctx, s,
+			_, err = RunInductionForSession(ctx, s, c,
 				func() (llm.Client, error) { return llm.FromConfig(ctx, llmCfg) },
 				InductionRunOptions{
 					SessionID: session,
@@ -301,6 +314,7 @@ type InductionSweepOptions struct {
 func RunInductionSweep(
 	ctx context.Context,
 	s *store.Store,
+	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts InductionSweepOptions,
 	out, errOut io.Writer,
@@ -392,7 +406,7 @@ func RunInductionSweep(
 		factsTO = defaultSummarizeTimeout
 	}
 
-	for _, c := range candidates {
+	for _, cand := range candidates {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -413,25 +427,25 @@ func RunInductionSweep(
 		// the kind=summary row is genuinely missing.
 		summaryAvailable := true
 		if !opts.SkipSummarize {
-			has, herr := store.HasLLMOutputForSession(ctx, s.DB(), c.ID, store.LLMKindSummary)
+			has, herr := store.HasLLMOutputForSession(ctx, s.DB(), cand.ID, store.LLMKindSummary)
 			if herr != nil {
 				slog.Warn("induction sweep: summary existence check failed",
-					"session_id", c.ID, "err", herr)
+					"session_id", cand.ID, "err", herr)
 				// Best-effort: try downstream phases — they have
 				// their own "no summary" branch and will bail with
 				// a clear error if needed.
 			} else if !has {
 				phaseCtx, cancel := context.WithTimeout(ctx, summarizeTO)
-				_, serr := RunSummarize(phaseCtx, s, newClient, SummarizeOptions{
-					SessionID: c.ID,
+				_, serr := RunSummarize(phaseCtx, s, c, newClient, SummarizeOptions{
+					SessionID: cand.ID,
 					Model:     opts.Model,
 				}, io.Discard)
 				cancel()
 				if serr != nil {
 					slog.Warn("induction sweep: summarize failed",
-						"session_id", c.ID, "err", serr)
+						"session_id", cand.ID, "err", serr)
 					_, _ = fmt.Fprintf(errOut,
-						"  ✗ summarize %s: %v\n", c.ID[:8], serr)
+						"  ✗ summarize %s: %v\n", cand.ID[:8], serr)
 					summaryAvailable = false
 				}
 			}
@@ -443,8 +457,8 @@ func RunInductionSweep(
 
 		// Phase 2: induction (skill+workflow merged after Round 8).
 		phaseCtx, cancel := context.WithTimeout(ctx, inductionTO)
-		_, err := RunInductionForSession(phaseCtx, s, newClient, InductionRunOptions{
-			SessionID: c.ID,
+		_, err := RunInductionForSession(phaseCtx, s, c, newClient, InductionRunOptions{
+			SessionID: cand.ID,
 			Model:     opts.Model,
 		}, out)
 		cancel()
@@ -453,9 +467,9 @@ func RunInductionSweep(
 			// it and continue. The next sweep retries this session
 			// (no induction row was written).
 			slog.Warn("induction sweep: session failed",
-				"session_id", c.ID, "err", err)
+				"session_id", cand.ID, "err", err)
 			_, _ = fmt.Fprintf(errOut,
-				"  ✗ %s: %v\n", c.ID[:8], err)
+				"  ✗ %s: %v\n", cand.ID[:8], err)
 		}
 
 		// Phase 3: auto-extract semantic facts from the same
@@ -464,16 +478,16 @@ func RunInductionSweep(
 		// induction row, so it runs even if induction failed.
 		if !opts.SkipFacts {
 			phaseCtx, cancel := context.WithTimeout(ctx, factsTO)
-			_, ferr := RunFactsForSession(phaseCtx, s, newClient, FactsRunOptions{
-				SessionID: c.ID,
+			_, ferr := RunFactsForSession(phaseCtx, s, c, newClient, FactsRunOptions{
+				SessionID: cand.ID,
 				Model:     opts.Model,
 			}, io.Discard)
 			cancel()
 			if ferr != nil {
 				slog.Warn("induction sweep: facts failed",
-					"session_id", c.ID, "err", ferr)
+					"session_id", cand.ID, "err", ferr)
 				_, _ = fmt.Fprintf(errOut,
-					"  ✗ facts %s: %v\n", c.ID[:8], ferr)
+					"  ✗ facts %s: %v\n", cand.ID[:8], ferr)
 			}
 		}
 	}
@@ -533,6 +547,7 @@ type InductionRunOptions struct {
 func RunInductionForSession(
 	ctx context.Context,
 	s *store.Store,
+	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts InductionRunOptions,
 	out io.Writer,
@@ -624,7 +639,7 @@ func RunInductionForSession(
 			"patterns", strings.Join(built.Patterns, ","))
 	}
 
-	id, err := runCachedLLM(ctx, s, newClient, cachedLLMInput{
+	id, err := runCachedLLM(ctx, c, newClient, cachedLLMInput{
 		kind:      store.LLMKindInduction,
 		toolName:  prompts.ToolNameInduction,
 		result:    new(prompts.InductionResult),

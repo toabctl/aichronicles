@@ -116,6 +116,7 @@ func newSummariesFillCmd() *cobra.Command {
 		agent    string
 		model    string
 		dbPath   string
+		sockFlag string
 		formatIn string
 	)
 	cmd := &cobra.Command{
@@ -140,6 +141,10 @@ func newSummariesFillCmd() *cobra.Command {
 				return err
 			}
 			defer func() { _ = s.Close() }()
+			c, err := openAPIClient(sockFlag)
+			if err != nil {
+				return err
+			}
 
 			cfg, cfgErr := config.Load()
 			if cfgErr != nil {
@@ -173,7 +178,7 @@ func newSummariesFillCmd() *cobra.Command {
 					resolveModelLabel(llmCfg, model),
 					providerLabel(llmCfg))
 			}
-			return runSummariesFill(cmd.Context(), s, newClient,
+			return runSummariesFill(cmd.Context(), s, c, newClient,
 				rows, model, cfg.Limits.SummarizeTimeout.Or(defaultSummarizeTimeout),
 				format, cmd.OutOrStdout())
 		},
@@ -185,6 +190,8 @@ func newSummariesFillCmd() *cobra.Command {
 	cmd.Flags().StringVar(&agent, "agent", "", "filter by source_agent (claude-code | codex)")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
@@ -214,6 +221,7 @@ type fillStatus struct {
 func runSummariesFill(
 	ctx context.Context,
 	s *store.Store,
+	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	rows []store.SessionDigestRow,
 	model string,
@@ -274,7 +282,7 @@ func runSummariesFill(
 		// arg; we discard that here because the per-row line
 		// is what the user reads. The cached body is also
 		// available via `summaries show` after the run.
-		_, err := RunSummarize(callCtx, s, newClient, SummarizeOptions{
+		_, err := RunSummarize(callCtx, s, c, newClient, SummarizeOptions{
 			SessionID: row.ID,
 			Model:     model,
 		}, io.Discard)
