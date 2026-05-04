@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/pricing"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 )
 
 func TestHumanInt(t *testing.T) {
@@ -38,7 +40,7 @@ func TestHumanInt(t *testing.T) {
 func TestRenderUsage_EmptyStorePrintsPlaceholder(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
-	err := renderUsage(&buf, nil, nil, defaultUsageWindow, FormatTable)
+	err := renderUsage(&buf, api.UsageResponse{}, nil, defaultUsageWindow, FormatTable)
 	if err != nil {
 		t.Fatalf("renderUsage: %v", err)
 	}
@@ -49,12 +51,15 @@ func TestRenderUsage_EmptyStorePrintsPlaceholder(t *testing.T) {
 
 func TestRenderUsage_TableWithoutPricesShowsHint(t *testing.T) {
 	t.Parallel()
-	rows := []store.TokenUsageRow{
-		{Day: "2026-04-28", Kind: "summary", Model: "claude-sonnet-4-6",
-			InputTokens: 12_345, OutputTokens: 6_789, RowCount: 3},
+	resp := api.UsageResponse{
+		Rows: []api.UsageRow{
+			{Day: "2026-04-28", Kind: "summary", Model: "claude-sonnet-4-6",
+				InputTokens: 12_345, OutputTokens: 6_789, RowCount: 3},
+		},
+		Totals: api.UsageTotals{InputTokens: 12_345, OutputTokens: 6_789, RowCount: 3},
 	}
 	var buf bytes.Buffer
-	if err := renderUsage(&buf, rows, nil, defaultUsageWindow, FormatTable); err != nil {
+	if err := renderUsage(&buf, resp, nil, defaultUsageWindow, FormatTable); err != nil {
 		t.Fatalf("renderUsage: %v", err)
 	}
 	out := buf.String()
@@ -63,9 +68,6 @@ func TestRenderUsage_TableWithoutPricesShowsHint(t *testing.T) {
 			t.Errorf("table output missing %q\n--- output ---\n%s", want, out)
 		}
 	}
-	// COST column header should NOT appear without a prices file.
-	// The hint line ("add a COST column") legitimately mentions COST,
-	// so check the table header line specifically.
 	headerLine := strings.SplitN(out, "\n", 2)[0]
 	if strings.Contains(headerLine, "COST") {
 		t.Errorf("COST column should be hidden without prices, header=%q", headerLine)
@@ -74,15 +76,18 @@ func TestRenderUsage_TableWithoutPricesShowsHint(t *testing.T) {
 
 func TestRenderUsage_TableWithPricesShowsCost(t *testing.T) {
 	t.Parallel()
-	rows := []store.TokenUsageRow{
-		{Day: "2026-04-28", Kind: "summary", Model: "claude-sonnet-4-6",
-			InputTokens: 1_000_000, OutputTokens: 500_000, RowCount: 1},
+	resp := api.UsageResponse{
+		Rows: []api.UsageRow{
+			{Day: "2026-04-28", Kind: "summary", Model: "claude-sonnet-4-6",
+				InputTokens: 1_000_000, OutputTokens: 500_000, RowCount: 1},
+		},
+		Totals: api.UsageTotals{InputTokens: 1_000_000, OutputTokens: 500_000, RowCount: 1},
 	}
 	prices := pricing.Prices{
 		"claude-sonnet-4-6": {InputPerMTok: 3.00, OutputPerMTok: 15.00},
 	}
 	var buf bytes.Buffer
-	if err := renderUsage(&buf, rows, prices, defaultUsageWindow, FormatTable); err != nil {
+	if err := renderUsage(&buf, resp, prices, defaultUsageWindow, FormatTable); err != nil {
 		t.Fatalf("renderUsage: %v", err)
 	}
 	out := buf.String()
@@ -97,17 +102,20 @@ func TestRenderUsage_TableWithPricesShowsCost(t *testing.T) {
 
 func TestRenderUsage_JSONIncludesCostWhenKnown(t *testing.T) {
 	t.Parallel()
-	rows := []store.TokenUsageRow{
-		{Day: "2026-04-28", Kind: "summary", Model: "claude-sonnet-4-6",
-			InputTokens: 1_000_000, OutputTokens: 500_000, RowCount: 1},
-		{Day: "2026-04-28", Kind: "reflect", Model: "unknown-model",
-			InputTokens: 100, OutputTokens: 50, RowCount: 1},
+	resp := api.UsageResponse{
+		Rows: []api.UsageRow{
+			{Day: "2026-04-28", Kind: "summary", Model: "claude-sonnet-4-6",
+				InputTokens: 1_000_000, OutputTokens: 500_000, RowCount: 1},
+			{Day: "2026-04-28", Kind: "reflect", Model: "unknown-model",
+				InputTokens: 100, OutputTokens: 50, RowCount: 1},
+		},
+		Totals: api.UsageTotals{InputTokens: 1_000_100, OutputTokens: 500_050, RowCount: 2},
 	}
 	prices := pricing.Prices{
 		"claude-sonnet-4-6": {InputPerMTok: 3.00, OutputPerMTok: 15.00},
 	}
 	var buf bytes.Buffer
-	if err := renderUsage(&buf, rows, prices, 7*24*time.Hour, FormatJSON); err != nil {
+	if err := renderUsage(&buf, resp, prices, 7*24*time.Hour, FormatJSON); err != nil {
 		t.Fatalf("renderUsage: %v", err)
 	}
 
@@ -152,18 +160,13 @@ func TestLoadUsagePrices_FlagOverridesXDG(t *testing.T) {
 	}
 }
 
-// TestRunUsage_EndToEnd seeds a few llm_outputs rows and runs the
-// command via the cobra entry point, asserting that the expected
-// token counts surface in the output. Doesn't exercise prices —
-// pricing.Prices is independently tested.
+// TestRunUsage_EndToEnd seeds a few llm_outputs rows and runs
+// runUsage against an apiForStore client, asserting that the
+// expected token counts surface in the JSON output. Pricing path
+// is independently tested.
 func TestRunUsage_EndToEnd(t *testing.T) {
 	t.Parallel()
-	dbPath := filepath.Join(t.TempDir(), "store.db")
-	s, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	defer func() { _ = s.Close() }()
+	s := testStore(t)
 
 	now := time.Now().Add(-time.Hour)
 	tx, err := s.DB().Begin()
@@ -186,12 +189,15 @@ func TestRunUsage_EndToEnd(t *testing.T) {
 		t.Fatalf("commit: %v", err)
 	}
 
-	cmd := newUsageCmd()
-	cmd.SetArgs([]string{"--db", dbPath, "--prices", "/nonexistent.toml", "--format", "json"})
+	c := apiForStore(t, s)
 	var out bytes.Buffer
-	cmd.SetOut(&out)
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("execute: %v", err)
+	if err := runUsage(context.Background(), c, runUsageOpts{
+		Since:      defaultUsageWindow,
+		PricesPath: "/nonexistent.toml",
+		Format:     FormatJSON,
+		Out:        &out,
+	}); err != nil {
+		t.Fatalf("runUsage: %v", err)
 	}
 
 	var report UsageReportJSON

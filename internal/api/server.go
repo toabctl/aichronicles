@@ -128,6 +128,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/skills/impact", s.handleSkillsImpact)
 	mux.HandleFunc("GET /v1/skills/invoked", s.handleSkillsInvoked)
 	mux.HandleFunc("GET /v1/audit", s.handleAudit)
+	mux.HandleFunc("GET /v1/usage", s.handleUsage)
 	mux.HandleFunc("GET /v1/summaries", s.handleSummariesGet)
 	mux.HandleFunc("GET /v1/llm-outputs", s.handleLLMOutputGet)
 	mux.HandleFunc("GET /v1/unresolved", s.handleUnresolvedForCwd)
