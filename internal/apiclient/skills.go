@@ -32,6 +32,24 @@ func (c *Client) SkillImpact(ctx context.Context, req api.SkillImpactRequest) (a
 	return out, nil
 }
 
+// InvokedSkills queries GET /v1/skills/invoked. sinceMs of 0
+// means "all time". Returns skills sorted by descending count.
+func (c *Client) InvokedSkills(ctx context.Context, sinceMs int64) (api.InvokedSkillsResponse, error) {
+	q := url.Values{}
+	if sinceMs > 0 {
+		q.Set("since_ms", strconv.FormatInt(sinceMs, 10))
+	}
+	path := "/v1/skills/invoked"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out api.InvokedSkillsResponse
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return api.InvokedSkillsResponse{}, err
+	}
+	return out, nil
+}
+
 // SkillStaleness queries GET /v1/skills/staleness.
 func (c *Client) SkillStaleness(ctx context.Context, req api.SkillStalenessRequest) (api.SkillStalenessResponse, error) {
 	q := url.Values{}

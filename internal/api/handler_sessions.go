@@ -103,7 +103,7 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 // dedicated store helper later.
 func loadSessionsForListEndpoint(ctx context.Context, db *sql.DB, cwd string, sinceMs int64, limit int) ([]api.SessionDigest, error) {
 	q := `SELECT s.id, s.started_at_ms, s.ended_at_ms, s.event_count,
-		s.cwd, s.first_prompt_text
+		s.cwd, s.first_prompt_text, s.summary_topic
 		FROM sessions s
 		WHERE s.cwd = ? AND ` + store.EffectiveTsExpr + ` >= ?
 		ORDER BY ` + store.EffectiveTsExpr + ` DESC
@@ -118,17 +118,18 @@ func loadSessionsForListEndpoint(ctx context.Context, db *sql.DB, cwd string, si
 		var id string
 		var started, ended sql.NullInt64
 		var ec int
-		var cwdN, fp sql.NullString
-		if err := rows.Scan(&id, &started, &ended, &ec, &cwdN, &fp); err != nil {
+		var cwdN, fp, topic sql.NullString
+		if err := rows.Scan(&id, &started, &ended, &ec, &cwdN, &fp, &topic); err != nil {
 			return nil, err
 		}
 		out = append(out, api.SessionDigest{
-			ID:          id,
-			StartedAtMs: sqlNullInt64ToPtr(started),
-			EndedAtMs:   sqlNullInt64ToPtr(ended),
-			Cwd:         sqlNullToPtr(cwdN),
-			FirstPrompt: sqlNullToPtr(fp),
-			EventCount:  ec,
+			ID:            id,
+			StartedAtMs:   sqlNullInt64ToPtr(started),
+			EndedAtMs:     sqlNullInt64ToPtr(ended),
+			Cwd:           sqlNullToPtr(cwdN),
+			FirstPrompt:   sqlNullToPtr(fp),
+			LatestSummary: sqlNullToPtr(topic),
+			EventCount:    ec,
 		})
 	}
 	return out, rows.Err()

@@ -51,3 +51,22 @@ type SkillImpactRequest struct {
 type SkillImpactResponse struct {
 	Skills []SkillImpact `json:"skills"`
 }
+
+// InvokedSkill is the wire shape for one /v1/skills/invoked row:
+// a skill name and how many times it was loaded in the window.
+// Mirrors prompts.InvokedSkill so callers don't need a separate
+// projection on the consumer side.
+type InvokedSkill struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+// InvokedSkillsRequest is the query-shape for GET /v1/skills/invoked.
+type InvokedSkillsRequest struct {
+	SinceMs int64 `json:"since_ms,omitempty"`
+}
+
+// InvokedSkillsResponse is the body for /v1/skills/invoked.
+type InvokedSkillsResponse struct {
+	Skills []InvokedSkill `json:"skills"`
+}

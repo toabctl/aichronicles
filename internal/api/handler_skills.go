@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
 )
@@ -123,6 +124,40 @@ func (s *Server) handleSkillsImpact(w http.ResponseWriter, r *http.Request) {
 			FailedLoads:  r.FailedLoads,
 			SuccessRate:  r.SuccessRate,
 			LastLoadedMs: r.LastLoadedMs,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleSkillsInvoked serves GET /v1/skills/invoked: per-skill
+// invocation counts derived from skill_load extractions in a
+// window. Backed by skills.LoadInvoked. since_ms is optional;
+// zero means "all time".
+func (s *Server) handleSkillsInvoked(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	var sinceMs int64
+	if v := q.Get("since_ms"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			writeProblem(w, http.StatusBadRequest, "Invalid since_ms", "")
+			return
+		}
+		sinceMs = n
+	}
+
+	rows, err := skills.LoadInvoked(r.Context(), s.store.DB(), sinceMs)
+	if err != nil {
+		s.slog.Error("skills.LoadInvoked", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+
+	out := api.InvokedSkillsResponse{Skills: make([]api.InvokedSkill, 0, len(rows))}
+	for _, r := range rows {
+		out.Skills = append(out.Skills, api.InvokedSkill{
+			Name:  r.Name,
+			Count: r.Count,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

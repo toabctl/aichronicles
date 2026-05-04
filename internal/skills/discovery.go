@@ -76,6 +76,40 @@ func CollectInstalled(ctx context.Context, db *sql.DB, sinceMs int64) ([]prompts
 	return out, nil
 }
 
+// CollectInstalledForCwd returns global SKILL.md plus the
+// project-local SKILL.md set discoverable from a single cwd.
+// Mirrors CollectInstalled's de-dup-and-sort contract but skips
+// the LoadDistinctSessionStartCwds query — caller already knows
+// the cwd. Used by MCP get_project_context, where the agent
+// passes its current cwd in the tool args and we don't need a
+// store-side discovery walk.
+//
+// cwd may be empty: that yields global-only.
+func CollectInstalledForCwd(cwd string) []prompts.InstalledSkill {
+	byName := make(map[string]prompts.InstalledSkill)
+
+	if home, err := os.UserHomeDir(); err == nil {
+		for _, s := range ScanDir(filepath.Join(home, ClaudeSkillsDirName), "global") {
+			byName[s.Name] = s
+		}
+	}
+
+	if cwd != "" {
+		if root := FindProjectRoot(cwd); root != "" {
+			for _, s := range ScanDir(filepath.Join(root, ClaudeSkillsDirName), "project:"+root) {
+				byName[s.Name] = s // project-local wins on collision
+			}
+		}
+	}
+
+	out := make([]prompts.InstalledSkill, 0, len(byName))
+	for _, s := range byName {
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
 // FindProjectRoot walks upward from cwd looking for the first
 // ancestor that contains .claude/skills/. Returns "" when no such
 // ancestor exists. Stops at the filesystem root.

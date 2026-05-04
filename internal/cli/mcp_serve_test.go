@@ -66,7 +66,7 @@ func TestMCPServe_EndToEnd(t *testing.T) {
 
 	srv := mcp.New(mcp.ServerInfo{Name: mcpServerName, Version: mcpServerVersion}, nil)
 	mcp.RegisterAichroniclesTools(srv, s)
-	mcp.RegisterAichroniclesAnalyticsTools(srv, s)
+	mcp.RegisterAichroniclesAnalyticsTools(srv, apiC)
 	mcp.RegisterAichroniclesAPITools(srv, apiC)
 
 	in, inW := io.Pipe()

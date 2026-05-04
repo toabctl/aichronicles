@@ -70,7 +70,7 @@ func newMCPServeCmd() *cobra.Command {
 				Version: mcpServerVersion,
 			}, log)
 			mcp.RegisterAichroniclesTools(srv, s)
-			mcp.RegisterAichroniclesAnalyticsTools(srv, s)
+			mcp.RegisterAichroniclesAnalyticsTools(srv, apiC)
 			mcp.RegisterAichroniclesAPITools(srv, apiC)
 
 			// Register LLM-backed tools (search_with_summary) only
@@ -81,7 +81,7 @@ func newMCPServeCmd() *cobra.Command {
 			cfg, cfgErr := config.Load()
 			if cfgErr == nil {
 				llmCfg := LLMConfigFromFile(cfg.LLM)
-				mcp.RegisterAichroniclesLLMTools(srv, s,
+				mcp.RegisterAichroniclesLLMTools(srv, apiC,
 					func() (llm.Client, error) { return llm.FromConfig(cmd.Context(), llmCfg) })
 			} else {
 				log.Warn("mcp: skipping LLM-backed tools (no config)", "err", cfgErr)

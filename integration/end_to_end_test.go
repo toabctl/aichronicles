@@ -128,7 +128,7 @@ func TestE2E_IngestSummarizeFetchViaMCP(t *testing.T) {
 
 	mcpSrv := mcp.New(mcp.ServerInfo{Name: "e2e", Version: "0.0.1"}, nil)
 	mcp.RegisterAichroniclesTools(mcpSrv, s)
-	mcp.RegisterAichroniclesAnalyticsTools(mcpSrv, s)
+	mcp.RegisterAichroniclesAnalyticsTools(mcpSrv, apiC)
 	mcp.RegisterAichroniclesAPITools(mcpSrv, apiC)
 
 	// Drive the MCP server through the JSON-RPC wire as a real

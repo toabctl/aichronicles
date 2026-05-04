@@ -3,27 +3,26 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/skills"
-	"github.com/toabctl/aichronicles/internal/store"
 )
 
-// RegisterAichroniclesAnalyticsTools wires up the read-only
-// analytics tools the agent can use to introspect its own past
-// work: insights, installed/invoked skills, and skill staleness.
+// RegisterAichroniclesAnalyticsTools wires up the LLM-free analytics
+// tools that don't fit cleanly under RegisterAichroniclesAPITools
+// because they mix filesystem discovery with api reads.
 //
-// Pure SQL paths (no LLM), so they have no API-key dependency
-// and slot in alongside the search/list tools that already exist.
-// Mirror the data shapes the CLI prints for `aichronicles
-// insights`, `aichronicles propose list` (skills section), and
-// `aichronicles skills stale`.
-func RegisterAichroniclesAnalyticsTools(s *Server, st *store.Store) {
-	// get_insights and get_skill_staleness are registered by
-	// RegisterAichroniclesAPITools (tools_apiclient.go) — they
-	// read through the apiclient now.
+// list_skills is the only resident here today — it walks the
+// filesystem for SKILL.md inventory (global ~/.claude/skills/ +
+// project-local <project>/.claude/skills/) and queries
+// /v1/skills/invoked for invocation counts. The split is necessary
+// because skill bodies live on disk; the api can't read them
+// without an upload step we don't have.
+func RegisterAichroniclesAnalyticsTools(s *Server, c *apiclient.Client) {
 	s.RegisterTool(Tool{
 		Name: "list_skills",
 		Description: "List the user's Claude Code skills: which SKILL.md files exist on disk " +
@@ -35,21 +34,19 @@ func RegisterAichroniclesAnalyticsTools(s *Server, st *store.Store) {
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
+				"cwd":        {"type": "string", "description": "Optional working-directory path. When set, project-local skills are limited to this cwd; when unset, only global skills are listed."},
 				"since_days": {"type": "integer", "minimum": 1, "maximum": 365, "default": 30}
 			}
 		}`),
-		Handler: listSkillsHandler(st),
+		Handler: listSkillsHandler(c),
 	})
 }
 
-// get_insights migrated to tools_apiclient.go.
-
-// --- list_skills ---
-
-func listSkillsHandler(st *store.Store) ToolHandler {
+func listSkillsHandler(c *apiclient.Client) ToolHandler {
 	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
 		var req struct {
-			SinceDays int `json:"since_days"`
+			Cwd       string `json:"cwd"`
+			SinceDays int    `json:"since_days"`
 		}
 		if len(args) > 0 {
 			if err := json.Unmarshal(args, &req); err != nil {
@@ -62,14 +59,23 @@ func listSkillsHandler(st *store.Store) ToolHandler {
 		}
 		sinceMs := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
 
-		installed, err := skills.CollectInstalled(ctx, st.DB(), sinceMs)
+		// Filesystem-side: SKILL.md inventory. cwd-scoped — global
+		// SKILL.md plus the named project's .claude/skills/ when
+		// req.Cwd is set. Without cwd we get global-only, which is
+		// the safe default for an MCP server invoked without
+		// project context.
+		installed := skills.CollectInstalledForCwd(req.Cwd)
+
+		// Api-side: invocation counts derived from skill_load
+		// extractions in the window.
+		invokedResp, err := c.InvokedSkills(ctx, sinceMs)
 		if err != nil {
-			return nil, &Error{Code: InternalError, Message: "list_skills: collect installed: " + err.Error()}
+			if errors.Is(err, apiclient.ErrSocketUnavailable) {
+				return TextError("list_skills: aichronicles-api unreachable: %v", err), nil
+			}
+			return nil, &Error{Code: InternalError, Message: "list_skills: invoked: " + err.Error()}
 		}
-		invoked, err := skills.LoadInvoked(ctx, st.DB(), sinceMs)
-		if err != nil {
-			return nil, &Error{Code: InternalError, Message: "list_skills: load invoked: " + err.Error()}
-		}
+		invoked := invokedResp.Skills
 
 		var b strings.Builder
 		fmt.Fprintf(&b, "Installed skills (%d):\n", len(installed))
@@ -89,5 +95,3 @@ func listSkillsHandler(st *store.Store) ToolHandler {
 		return TextResult(b.String()), nil
 	}
 }
-
-// get_skill_staleness migrated to tools_apiclient.go.

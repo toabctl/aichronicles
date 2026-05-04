@@ -31,7 +31,7 @@ func TestRegisterAichroniclesLLMTools_RegistersSearchWithSummary(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesLLMTools(srv, st,
+	RegisterAichroniclesLLMTools(srv, newAPITestClient(t, st),
 		func() (llm.Client, error) { return &fakeLLMClient{}, nil })
 
 	if _, ok := srv.tools["search_with_summary"]; !ok {
@@ -47,7 +47,7 @@ func TestSearchWithSummary_NoHits(t *testing.T) {
 
 	client := &fakeLLMClient{reply: "should not be reached"}
 	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesLLMTools(srv, st, func() (llm.Client, error) { return client, nil })
+	RegisterAichroniclesLLMTools(srv, newAPITestClient(t, st), func() (llm.Client, error) { return client, nil })
 
 	res := callTool(t, srv, "search_with_summary", `{"query":"nothingmatchesatallzzz"}`)
 	if res == nil || len(res.Content) == 0 || !strings.Contains(res.Content[0].Text, "(no hits)") {
@@ -66,7 +66,7 @@ func TestSearchWithSummary_GroundsAndCites(t *testing.T) {
 	st := openSeededStore(t)
 	client := &fakeLLMClient{reply: "Bufio works for jsonl, see [session=abc12345]."}
 	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesLLMTools(srv, st, func() (llm.Client, error) { return client, nil })
+	RegisterAichroniclesLLMTools(srv, newAPITestClient(t, st), func() (llm.Client, error) { return client, nil })
 
 	res := callTool(t, srv, "search_with_summary", `{"query":"jsonl"}`)
 	if client.called != 1 {
@@ -91,7 +91,7 @@ func TestSearchWithSummary_LLMErrorBubblesAsTextResult(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesLLMTools(srv, st,
+	RegisterAichroniclesLLMTools(srv, newAPITestClient(t, st),
 		func() (llm.Client, error) { return nil, errors.New("no api key") })
 
 	res := callTool(t, srv, "search_with_summary", `{"query":"jsonl"}`)
@@ -110,7 +110,7 @@ func TestSearchWithSummary_TopNCappedAtMax(t *testing.T) {
 	st := openSeededStore(t)
 	client := &fakeLLMClient{reply: "ok"}
 	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
-	RegisterAichroniclesLLMTools(srv, st, func() (llm.Client, error) { return client, nil })
+	RegisterAichroniclesLLMTools(srv, newAPITestClient(t, st), func() (llm.Client, error) { return client, nil })
 
 	res := callTool(t, srv, "search_with_summary", `{"query":"jsonl","top_n":999}`)
 	if res == nil || len(res.Content) == 0 {

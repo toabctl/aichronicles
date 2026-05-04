@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/toabctl/aichronicles/internal/searchquery"
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
@@ -33,7 +33,12 @@ const (
 // constructed at server startup. This matches the pattern in
 // internal/cli where the API key is only required when an LLM
 // path actually runs.
-func RegisterAichroniclesLLMTools(s *Server, st *store.Store, newClient func() (llm.Client, error)) {
+//
+// The FTS search is delegated to aichronicles-api (GET /v1/search);
+// the api parses the query server-side and returns hits with
+// content snippets. Only the LLM completion stays client-side —
+// the api does not proxy LLM calls.
+func RegisterAichroniclesLLMTools(s *Server, c *apiclient.Client, newClient func() (llm.Client, error)) {
 	s.RegisterTool(Tool{
 		Name: "search_with_summary",
 		Description: "Like search_events, but returns ONE LLM-synthesised answer grounded in the top-N hits " +
@@ -55,11 +60,11 @@ func RegisterAichroniclesLLMTools(s *Server, st *store.Store, newClient func() (
 			},
 			"required": ["query"]
 		}`),
-		Handler: searchWithSummaryHandler(st, newClient),
+		Handler: searchWithSummaryHandler(c, newClient),
 	})
 }
 
-func searchWithSummaryHandler(st *store.Store, newClient func() (llm.Client, error)) ToolHandler {
+func searchWithSummaryHandler(c *apiclient.Client, newClient func() (llm.Client, error)) ToolHandler {
 	return func(ctx context.Context, args json.RawMessage) (*ToolResult, *Error) {
 		var req struct {
 			Query      string `json:"query"`
@@ -82,31 +87,29 @@ func searchWithSummaryHandler(st *store.Store, newClient func() (llm.Client, err
 			topN = summaryTopNMax
 		}
 
-		ftsQuery, err := searchquery.ToFTS5(req.Query)
-		if err != nil {
-			switch {
-			case errors.Is(err, searchquery.ErrEmpty):
-				return TextError("search_with_summary: query is required"), nil
-			case errors.Is(err, searchquery.ErrSyntax):
-				return TextError("search_with_summary: %v", err), nil
-			default:
-				return nil, &Error{Code: InvalidParams, Message: "search_with_summary: parse query: " + err.Error()}
-			}
-		}
-
-		opts := store.SearchEventOpts{
-			Query: ftsQuery,
+		searchReq := api.SearchRequest{
+			Q:     req.Query,
 			Kind:  req.Kind,
 			Limit: topN,
-			Order: store.OrderRank,
 		}
 		if req.SinceHours > 0 {
-			opts.SinceMs = nowMs() - int64(req.SinceHours)*60*60*1000
+			searchReq.SinceMs = nowMs() - int64(req.SinceHours)*60*60*1000
 		}
-		hits, err := store.SearchEvents(ctx, st.DB(), opts)
+		resp, err := c.Search(ctx, searchReq)
 		if err != nil {
+			// 400 from the api means a parse failure or empty query;
+			// surface it as a TextError so the agent gets the
+			// reason without an MCP-level error.
+			if errors.Is(err, apiclient.ErrSocketUnavailable) {
+				return TextError("search_with_summary: aichronicles-api unreachable: %v", err), nil
+			}
+			var herr *apiclient.HTTPError
+			if errors.As(err, &herr) && herr.Status >= 400 && herr.Status < 500 {
+				return TextError("search_with_summary: %v", err), nil
+			}
 			return nil, &Error{Code: InternalError, Message: "search_with_summary: query: " + err.Error()}
 		}
+		hits := resp.Hits
 		if len(hits) == 0 {
 			return TextResult("(no hits)"), nil
 		}
@@ -114,12 +117,12 @@ func searchWithSummaryHandler(st *store.Store, newClient func() (llm.Client, err
 		promptHits := make([]prompts.SearchHit, 0, len(hits))
 		for _, h := range hits {
 			cwd := ""
-			if h.Cwd.Valid {
-				cwd = h.Cwd.String
+			if h.Cwd != nil {
+				cwd = *h.Cwd
 			}
 			snip := ""
-			if h.Content.Valid {
-				snip = h.Content.String
+			if h.Content != nil {
+				snip = *h.Content
 			}
 			promptHits = append(promptHits, prompts.SearchHit{
 				SessionID:  h.SessionID,
@@ -139,7 +142,7 @@ func searchWithSummaryHandler(st *store.Store, newClient func() (llm.Client, err
 		if err != nil {
 			return TextError("search_with_summary: LLM client unavailable: %v", err), nil
 		}
-		resp, err := client.Complete(ctx, built.Request)
+		llmResp, err := client.Complete(ctx, built.Request)
 		if err != nil {
 			return nil, &Error{Code: InternalError, Message: "search_with_summary: LLM call: " + err.Error()}
 		}
@@ -150,7 +153,7 @@ func searchWithSummaryHandler(st *store.Store, newClient func() (llm.Client, err
 		// drilldown). Keeps the model's prose tight while still
 		// surfacing the hit set deterministically.
 		var b strings.Builder
-		b.WriteString(strings.TrimRight(resp.Text, "\n"))
+		b.WriteString(strings.TrimRight(llmResp.Text, "\n"))
 		b.WriteString("\n\nGrounded in:\n")
 		for _, h := range hits {
 			id := h.SessionID
