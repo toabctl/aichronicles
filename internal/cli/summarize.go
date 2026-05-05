@@ -31,7 +31,6 @@ func newSummarizeCmd() *cobra.Command {
 	var (
 		model    string
 		force    bool
-		dbPath   string
 		formatIn string
 	)
 	var sockFlag string
@@ -59,11 +58,6 @@ func newSummarizeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := openStore(dbPath)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = s.Close() }()
 			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
@@ -83,7 +77,7 @@ func newSummarizeCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(),
 				cfg.Limits.SummarizeTimeout.Or(defaultSummarizeTimeout))
 			defer cancel()
-			_, err = RunSummarize(ctx, s, c, newClient, SummarizeOptions{
+			_, err = RunSummarize(ctx, c, newClient, SummarizeOptions{
 				SessionID: sessionID, Model: model, Force: force, JSON: format == FormatJSON,
 			}, cmd.OutOrStdout())
 			return err
@@ -91,7 +85,6 @@ func newSummarizeCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	cmd.Flags().StringVar(&sockFlag, "socket", "",
 		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
@@ -116,7 +109,6 @@ type SummarizeOptions struct {
 // LLM do we ask for credentials.
 func RunSummarize(
 	ctx context.Context,
-	s *store.Store,
 	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts SummarizeOptions,

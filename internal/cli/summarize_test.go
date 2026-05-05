@@ -177,7 +177,7 @@ func TestRunSummarize_HappyPathCallsLLMAndPersists(t *testing.T) {
 	var out bytes.Buffer
 
 	id, err := RunSummarize(
-		context.Background(), s, apiForStore(t, s),
+		context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		SummarizeOptions{SessionID: sessID},
 		&out,
@@ -217,14 +217,14 @@ func TestRunSummarize_CacheHitSkipsLLM(t *testing.T) {
 	newClient := func() (llm.Client, error) { return f, nil }
 
 	// First call: populates the cache.
-	if _, err := RunSummarize(context.Background(), s, apiForStore(t, s), newClient,
+	if _, err := RunSummarize(context.Background(), apiForStore(t, s), newClient,
 		SummarizeOptions{SessionID: sessID}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("first: %v", err)
 	}
 
 	// Second call with the same input: must NOT call the LLM.
 	var out bytes.Buffer
-	if _, err := RunSummarize(context.Background(), s, apiForStore(t, s), newClient,
+	if _, err := RunSummarize(context.Background(), apiForStore(t, s), newClient,
 		SummarizeOptions{SessionID: sessID}, &out); err != nil {
 		t.Fatalf("second: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestRunSummarize_ForceBypassesCache(t *testing.T) {
 	f := &fakeLLM{reply: "first body"}
 	newClient := func() (llm.Client, error) { return f, nil }
 
-	if _, err := RunSummarize(context.Background(), s, apiForStore(t, s), newClient,
+	if _, err := RunSummarize(context.Background(), apiForStore(t, s), newClient,
 		SummarizeOptions{SessionID: sessID}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("first: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestRunSummarize_ForceBypassesCache(t *testing.T) {
 	// --force should re-call. Change the reply to prove it ran.
 	f.reply = "second body"
 	var out bytes.Buffer
-	if _, err := RunSummarize(context.Background(), s, apiForStore(t, s), newClient,
+	if _, err := RunSummarize(context.Background(), apiForStore(t, s), newClient,
 		SummarizeOptions{SessionID: sessID, Force: true}, &out); err != nil {
 		t.Fatalf("second: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestRunSummarize_CacheHitDoesNotRequireAPIKey(t *testing.T) {
 
 	// Populate cache with a working fake client.
 	goodClient := &fakeLLM{reply: "warm"}
-	if _, err := RunSummarize(context.Background(), s, apiForStore(t, s),
+	if _, err := RunSummarize(context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return goodClient, nil },
 		SummarizeOptions{SessionID: sessID}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("warm: %v", err)
@@ -281,7 +281,7 @@ func TestRunSummarize_CacheHitDoesNotRequireAPIKey(t *testing.T) {
 	// Second call uses a constructor that would error — but shouldn't
 	// be invoked because the cache hit comes first.
 	var out bytes.Buffer
-	if _, err := RunSummarize(context.Background(), s, apiForStore(t, s),
+	if _, err := RunSummarize(context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return nil, errors.New("no api key") },
 		SummarizeOptions{SessionID: sessID}, &out); err != nil {
 		t.Fatalf("cache-hit path invoked the API-key-requiring constructor: %v", err)
@@ -298,7 +298,7 @@ func TestRunSummarize_UnknownSessionIsError(t *testing.T) {
 	// The prefix resolver rejects it before we ever try to load
 	// events, so the diagnostic is "no such session", not
 	// "no events" — more useful for the user.
-	_, err := RunSummarize(context.Background(), s, apiForStore(t, s),
+	_, err := RunSummarize(context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return &fakeLLM{}, nil },
 		SummarizeOptions{SessionID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
 		&bytes.Buffer{},
@@ -318,7 +318,7 @@ func TestRunSummarize_AcceptsSessionPrefix(t *testing.T) {
 
 	// Pass only the 8-char preview — the resolver must expand it
 	// to the full id before the loader runs.
-	if _, err := RunSummarize(context.Background(), s, apiForStore(t, s),
+	if _, err := RunSummarize(context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		SummarizeOptions{SessionID: sessID[:8]}, &out); err != nil {
 		t.Fatalf("prefix should resolve: %v", err)
@@ -347,7 +347,7 @@ func TestRunSummarize_PersistsJSONBodyAndRendersTopic(t *testing.T) {
 	f := &fakeLLM{toolInput: raw}
 
 	var out bytes.Buffer
-	id, err := RunSummarize(context.Background(), s, apiForStore(t, s),
+	id, err := RunSummarize(context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		SummarizeOptions{SessionID: sessID}, &out)
 	if err != nil {
@@ -390,7 +390,7 @@ func TestRunSummarize_JSONFlagEmitsRawBody(t *testing.T) {
 	f := &fakeLLM{reply: "t"}
 
 	var out bytes.Buffer
-	if _, err := RunSummarize(context.Background(), s, apiForStore(t, s),
+	if _, err := RunSummarize(context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		SummarizeOptions{SessionID: sessID, JSON: true}, &out); err != nil {
 		t.Fatalf("RunSummarize: %v", err)
@@ -414,7 +414,7 @@ func TestRunSummarize_ModelRefusesToolIsClearError(t *testing.T) {
 	// this into a user-visible error, not a silent pass-through.
 	textOnly := &textOnlyFakeLLM{text: "I refuse"}
 
-	_, err := RunSummarize(context.Background(), s, apiForStore(t, s),
+	_, err := RunSummarize(context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return textOnly, nil },
 		SummarizeOptions{SessionID: sessID}, &bytes.Buffer{})
 	if err == nil {
@@ -453,7 +453,7 @@ func TestRunSummarize_LoadsAndPassesLinksToPromptBuilder(t *testing.T) {
 	}
 
 	f := &fakeLLM{reply: "t"}
-	if _, err := RunSummarize(context.Background(), s, apiForStore(t, s),
+	if _, err := RunSummarize(context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		SummarizeOptions{SessionID: sessID}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("RunSummarize: %v", err)
@@ -478,7 +478,7 @@ func TestRunSummarize_LLMErrorSurfaces(t *testing.T) {
 	t.Parallel()
 	s, sessID := seedSessionForSummarize(t)
 	f := &fakeLLM{err: errors.New("boom")}
-	_, err := RunSummarize(context.Background(), s, apiForStore(t, s),
+	_, err := RunSummarize(context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		SummarizeOptions{SessionID: sessID},
 		&bytes.Buffer{},
@@ -499,7 +499,7 @@ func TestRunSummarize_ModelOverrideFlowsThroughRequest(t *testing.T) {
 	t.Parallel()
 	s, sessID := seedSessionForSummarize(t)
 	f := &fakeLLM{reply: "ok"}
-	if _, err := RunSummarize(context.Background(), s, apiForStore(t, s),
+	if _, err := RunSummarize(context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		SummarizeOptions{SessionID: sessID, Model: "claude-opus-4-7"},
 		&bytes.Buffer{},

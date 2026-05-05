@@ -49,7 +49,6 @@ func newFactsInduceCmd() *cobra.Command {
 		session  string
 		model    string
 		force    bool
-		dbPath   string
 		sockFlag string
 		formatIn string
 	)
@@ -75,11 +74,6 @@ func newFactsInduceCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := openStore(dbPath)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = s.Close() }()
 			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
@@ -94,7 +88,7 @@ func newFactsInduceCmd() *cobra.Command {
 				cfg.Limits.SummarizeTimeout.Or(defaultSummarizeTimeout))
 			defer cancel()
 
-			_, err = RunFactsForSession(ctx, s, c,
+			_, err = RunFactsForSession(ctx, c,
 				func() (llm.Client, error) { return llm.FromConfig(ctx, llmCfg) },
 				FactsRunOptions{
 					SessionID: session,
@@ -108,7 +102,6 @@ func newFactsInduceCmd() *cobra.Command {
 	cmd.Flags().StringVar(&session, "session", "", "session id (full or unique prefix) to induce facts from")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the cache and re-call the LLM")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	cmd.Flags().StringVar(&sockFlag, "socket", "",
 		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
@@ -210,7 +203,6 @@ type FactsRunOptions struct {
 // re-run rather than producing a half-state.
 func RunFactsForSession(
 	ctx context.Context,
-	s *store.Store,
 	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts FactsRunOptions,

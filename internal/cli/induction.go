@@ -444,7 +444,7 @@ func RunInductionSweep(
 				// a clear error if needed.
 			} else if !has {
 				phaseCtx, cancel := context.WithTimeout(ctx, summarizeTO)
-				_, serr := RunSummarize(phaseCtx, s, c, newClient, SummarizeOptions{
+				_, serr := RunSummarize(phaseCtx, c, newClient, SummarizeOptions{
 					SessionID: cand.ID,
 					Model:     opts.Model,
 				}, io.Discard)
@@ -486,7 +486,7 @@ func RunInductionSweep(
 		// induction row, so it runs even if induction failed.
 		if !opts.SkipFacts {
 			phaseCtx, cancel := context.WithTimeout(ctx, factsTO)
-			_, ferr := RunFactsForSession(phaseCtx, s, c, newClient, FactsRunOptions{
+			_, ferr := RunFactsForSession(phaseCtx, c, newClient, FactsRunOptions{
 				SessionID: cand.ID,
 				Model:     opts.Model,
 			}, io.Discard)

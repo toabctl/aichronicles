@@ -225,7 +225,7 @@ func RunPropose(
 		len(installed), len(invoked))
 
 	if opts.Challenge {
-		return runChallenge(ctx, s, c, newClient, opts, digests, installed, invoked, out, progress)
+		return runChallenge(ctx, c, newClient, opts, digests, installed, invoked, out, progress)
 	}
 
 	priorProposals, perr := loadPriorProposalsForPrompt(ctx, c, sinceMs)
@@ -485,7 +485,6 @@ func skillMetadataFromProposed(sk prompts.ProposedSkill) api.SkillCandidateMetad
 // an "open thread".
 func runChallenge(
 	ctx context.Context,
-	s *store.Store,
 	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts ProposeOptions,

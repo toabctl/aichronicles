@@ -219,7 +219,7 @@ func RunMetaAnalysisSweep(
 		if due, err := overdue(ctx, c, store.LLMKindReflect, opts.ReflectCadence, now); err != nil {
 			record(err)
 		} else if due {
-			if err := runReflectForSweep(ctx, s, c, newClient, opts, out, errOut); err != nil {
+			if err := runReflectForSweep(ctx, c, newClient, opts, out, errOut); err != nil {
 				slog.Warn("meta sweep: reflect failed", "err", err)
 				record(err)
 			}
@@ -249,7 +249,7 @@ func RunMetaAnalysisSweep(
 		if due, err := overdue(ctx, c, store.LLMKindReflectWeekly, opts.ReflectWeeklyCadence, now); err != nil {
 			record(err)
 		} else if due {
-			if err := runReflectWeeklyForSweep(ctx, s, c, newClient, opts, out, errOut, now); err != nil {
+			if err := runReflectWeeklyForSweep(ctx, c, newClient, opts, out, errOut, now); err != nil {
 				slog.Warn("meta sweep: reflect_weekly failed", "err", err)
 				record(err)
 			}
@@ -264,7 +264,7 @@ func RunMetaAnalysisSweep(
 		if due, err := overdue(ctx, c, store.LLMKindSkillRevision, opts.SkillRevisionCadence, now); err != nil {
 			record(err)
 		} else if due {
-			if err := runSkillRevisionForSweep(ctx, s, c, newClient, opts, out, errOut); err != nil {
+			if err := runSkillRevisionForSweep(ctx, c, newClient, opts, out, errOut); err != nil {
 				slog.Warn("meta sweep: skill_revision failed", "err", err)
 				record(err)
 			}
@@ -332,7 +332,6 @@ func runProposeForSweep(
 
 func runReflectForSweep(
 	ctx context.Context,
-	s *store.Store,
 	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts MetaAnalysisSweepOptions,
@@ -347,7 +346,7 @@ func runReflectForSweep(
 		limit = defaultReflectLimit
 	}
 	_, _ = fmt.Fprintln(errOut, "meta sweep: dispatching reflect")
-	_, err := RunReflect(ctx, s, c, newClient, ReflectOptions{
+	_, err := RunReflect(ctx, c, newClient, ReflectOptions{
 		Since: since,
 		Limit: limit,
 		Model: opts.Model,
@@ -392,7 +391,6 @@ func runChallengeForSweep(
 
 func runReflectWeeklyForSweep(
 	ctx context.Context,
-	s *store.Store,
 	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts MetaAnalysisSweepOptions,
@@ -405,7 +403,7 @@ func runReflectWeeklyForSweep(
 	}
 	_, _ = fmt.Fprintf(errOut, "meta sweep: dispatching reflect_weekly week=%s\n",
 		start.Format("2006-01-02"))
-	_, err = RunDigestWeekly(ctx, s, c, newClient, DigestWeeklyOptions{
+	_, err = RunDigestWeekly(ctx, c, newClient, DigestWeeklyOptions{
 		PeriodStart: start,
 		PeriodEnd:   end,
 		Limit:       weeklyDigestSessionLimit,
@@ -426,7 +424,6 @@ func runReflectWeeklyForSweep(
 // since the last sweep.
 func runSkillRevisionForSweep(
 	ctx context.Context,
-	s *store.Store,
 	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts MetaAnalysisSweepOptions,
@@ -476,7 +473,7 @@ func runSkillRevisionForSweep(
 			"meta sweep: dispatching skill_revision skill=%s rate=%.0f%% lb=%.0f%%\n",
 			st.Name, st.Rate*100, st.RateLowerBound*100)
 		dispatched++
-		if err := RunSkillsEvolve(ctx, s, c, newClient, SkillsEvolveOptions{
+		if err := RunSkillsEvolve(ctx, c, newClient, SkillsEvolveOptions{
 			SkillName: st.Name,
 			SkillsDir: skillsDir,
 			Since:     since,

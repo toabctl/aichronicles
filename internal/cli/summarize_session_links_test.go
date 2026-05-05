@@ -74,7 +74,7 @@ func TestRunSummarize_PersistsValidSessionLinks(t *testing.T) {
 	f := &fakeLLM{toolInput: toolInput}
 
 	var out bytes.Buffer
-	if _, err := RunSummarize(context.Background(), s, apiForStore(t, s),
+	if _, err := RunSummarize(context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		SummarizeOptions{SessionID: sessID}, &out); err != nil {
 		t.Fatalf("RunSummarize: %v", err)
@@ -125,7 +125,7 @@ func TestRunSummarize_NoCandidatesMeansNoLinkRows(t *testing.T) {
 	})
 	f := &fakeLLM{toolInput: toolInput}
 
-	if _, err := RunSummarize(context.Background(), s, apiForStore(t, s),
+	if _, err := RunSummarize(context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		SummarizeOptions{SessionID: sessID}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("RunSummarize: %v", err)
@@ -165,7 +165,7 @@ func TestRunSummarize_CacheHitReprojectsLinks(t *testing.T) {
 		},
 	})
 	f := &fakeLLM{toolInput: toolInput}
-	if _, err := RunSummarize(context.Background(), s, apiForStore(t, s),
+	if _, err := RunSummarize(context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		SummarizeOptions{SessionID: sessID}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("first: %v", err)
@@ -179,7 +179,7 @@ func TestRunSummarize_CacheHitReprojectsLinks(t *testing.T) {
 
 	// Second call: cache hit, must NOT call the LLM, but MUST
 	// reproject the links.
-	if _, err := RunSummarize(context.Background(), s, apiForStore(t, s),
+	if _, err := RunSummarize(context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		SummarizeOptions{SessionID: sessID}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("second: %v", err)

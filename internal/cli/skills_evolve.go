@@ -34,7 +34,6 @@ func newSkillsEvolveCmd() *cobra.Command {
 	var (
 		skillName   string
 		skillsDir   string
-		dbPath      string
 		sockFlag    string
 		since       time.Duration
 		window      time.Duration
@@ -68,11 +67,6 @@ func newSkillsEvolveCmd() *cobra.Command {
 			if skillName == "" {
 				return errors.New("--skill <name> is required (run `aichronicles skills stale` to find candidates)")
 			}
-			s, err := openStore(dbPath)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = s.Close() }()
 			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
@@ -90,7 +84,7 @@ func newSkillsEvolveCmd() *cobra.Command {
 				return llm.FromConfig(ctx, llmCfg)
 			}
 
-			return runSkillsEvolve(ctx, s, c, newClient, skillsEvolveOptions{
+			return runSkillsEvolve(ctx, c, newClient, skillsEvolveOptions{
 				SkillName:   skillName,
 				SkillsDir:   resolveSkillsDir(skillsDir),
 				Since:       since,
@@ -103,7 +97,6 @@ func newSkillsEvolveCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&skillName, "skill", "", "name of the SKILL to revise (must exist under --skills-dir)")
 	cmd.Flags().StringVar(&skillsDir, "skills-dir", "", "override target directory (default: ~/.claude/skills)")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	addFlexDurationFlag(cmd, &since, "since", defaultEvolveSinceWindow,
 		"only consider failures within this window (e.g. 14d, 30d)")
 	addFlexDurationFlag(cmd, &window, "window", defaultSkillStaleWindow,
@@ -144,18 +137,16 @@ type SkillsEvolveOptions = skillsEvolveOptions
 // free.
 func RunSkillsEvolve(
 	ctx context.Context,
-	s *store.Store,
 	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts SkillsEvolveOptions,
 	out, errOut io.Writer,
 ) error {
-	return runSkillsEvolve(ctx, s, c, newClient, opts, out, errOut)
+	return runSkillsEvolve(ctx, c, newClient, opts, out, errOut)
 }
 
 func runSkillsEvolve(
 	ctx context.Context,
-	s *store.Store,
 	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts skillsEvolveOptions,

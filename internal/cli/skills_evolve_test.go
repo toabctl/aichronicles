@@ -113,7 +113,7 @@ func TestSkillsEvolve_WritesV2WhenLLMReturnsRevision(t *testing.T) {
 	fake := &fakeLLM{toolInput: revisionJSON}
 
 	var out, errOut bytes.Buffer
-	if err := runSkillsEvolve(t.Context(), st, apiForStore(t, st), fakeLLMClientFn(fake),
+	if err := runSkillsEvolve(t.Context(), apiForStore(t, st), fakeLLMClientFn(fake),
 		skillsEvolveOptions{
 			SkillName:   skill,
 			SkillsDir:   skillsDir,
@@ -171,7 +171,7 @@ func TestSkillsEvolve_NoChangeNeededDoesNotWriteV2(t *testing.T) {
 	fake := &fakeLLM{toolInput: revisionJSON}
 
 	var out, errOut bytes.Buffer
-	if err := runSkillsEvolve(t.Context(), st, apiForStore(t, st), fakeLLMClientFn(fake),
+	if err := runSkillsEvolve(t.Context(), apiForStore(t, st), fakeLLMClientFn(fake),
 		skillsEvolveOptions{
 			SkillName: skill, SkillsDir: skillsDir,
 			Since: 30 * 24 * time.Hour, Window: 10 * time.Minute, MaxExamples: 5,
@@ -201,7 +201,7 @@ func TestSkillsEvolve_NoFailureEvidenceShortCircuits(t *testing.T) {
 	fake := &fakeLLM{}
 
 	var out, errOut bytes.Buffer
-	if err := runSkillsEvolve(t.Context(), st, apiForStore(t, st), fakeLLMClientFn(fake),
+	if err := runSkillsEvolve(t.Context(), apiForStore(t, st), fakeLLMClientFn(fake),
 		skillsEvolveOptions{
 			SkillName: skill, SkillsDir: skillsDir,
 			Since: 30 * 24 * time.Hour, Window: 10 * time.Minute, MaxExamples: 5,

@@ -47,7 +47,6 @@ func newDigestWeeklyCmd() *cobra.Command {
 	var (
 		weekOf   string
 		force    bool
-		dbPath   string
 		sockFlag string
 		formatIn string
 		model    string
@@ -70,11 +69,6 @@ func newDigestWeeklyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := openStore(dbPath)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = s.Close() }()
 			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
@@ -95,7 +89,7 @@ func newDigestWeeklyCmd() *cobra.Command {
 				cfg.Limits.ReflectTimeout.Or(defaultMetaLLMTimeout))
 			defer cancel()
 
-			_, err = RunDigestWeekly(ctx, s, c,
+			_, err = RunDigestWeekly(ctx, c,
 				func() (llm.Client, error) { return llm.FromConfig(ctx, llmCfg) },
 				DigestWeeklyOptions{
 					PeriodStart: start,
@@ -113,8 +107,6 @@ func newDigestWeeklyCmd() *cobra.Command {
 		"target a specific Monday (YYYY-MM-DD); default is the previous completed week")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
-	cmd.Flags().StringVar(&dbPath, "db", "",
-		"SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	cmd.Flags().StringVar(&sockFlag, "socket", "",
 		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
@@ -179,7 +171,6 @@ type WeeklyDigestEnvelope = prompts.WeeklyDigestEnvelope
 // persists it under kind=reflect_weekly.
 func RunDigestWeekly(
 	ctx context.Context,
-	s *store.Store,
 	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts DigestWeeklyOptions,

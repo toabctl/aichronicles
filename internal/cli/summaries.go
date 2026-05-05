@@ -290,7 +290,7 @@ func runSummariesFill(
 		// arg; we discard that here because the per-row line
 		// is what the user reads. The cached body is also
 		// available via `summaries show` after the run.
-		_, err := RunSummarize(callCtx, s, c, newClient, SummarizeOptions{
+		_, err := RunSummarize(callCtx, c, newClient, SummarizeOptions{
 			SessionID: row.ID,
 			Model:     model,
 		}, io.Discard)

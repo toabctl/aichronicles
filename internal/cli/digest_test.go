@@ -153,7 +153,7 @@ func TestRunDigestWeekly_PersistsArtefactWithCorrectKind(t *testing.T) {
 
 	f := &fakeLLM{reply: "use the planner more"}
 	var buf bytes.Buffer
-	id, err := RunDigestWeekly(context.Background(), s, apiForStore(t, s),
+	id, err := RunDigestWeekly(context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		DigestWeeklyOptions{
 			PeriodStart: weekStart,
@@ -200,7 +200,7 @@ func TestRunDigestWeekly_NoSessionsIsError(t *testing.T) {
 	weekEnd := weekStart.AddDate(0, 0, 7)
 
 	f := &fakeLLM{reply: "should not be reached"}
-	_, err := RunDigestWeekly(context.Background(), s, apiForStore(t, s),
+	_, err := RunDigestWeekly(context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		DigestWeeklyOptions{
 			PeriodStart: weekStart,
@@ -236,7 +236,7 @@ func TestRunDigestWeekly_FiltersToWindow(t *testing.T) {
 		weekEnd.Add(7*24*time.Hour))
 
 	f := &fakeLLM{reply: "ok"}
-	if _, err := RunDigestWeekly(context.Background(), s, apiForStore(t, s),
+	if _, err := RunDigestWeekly(context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		DigestWeeklyOptions{PeriodStart: weekStart, PeriodEnd: weekEnd, Limit: 25},
 		&bytes.Buffer{},
@@ -264,7 +264,7 @@ func TestRunDigestWeekly_RerunSameWeekHitsCache(t *testing.T) {
 
 	f := &fakeLLM{reply: "first"}
 	for i := 0; i < 3; i++ {
-		_, err := RunDigestWeekly(context.Background(), s, apiForStore(t, s),
+		_, err := RunDigestWeekly(context.Background(), apiForStore(t, s),
 			func() (llm.Client, error) { return f, nil },
 			DigestWeeklyOptions{PeriodStart: weekStart, PeriodEnd: weekEnd, Limit: 25},
 			&bytes.Buffer{})

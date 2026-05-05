@@ -41,7 +41,6 @@ func newReflectCmd() *cobra.Command {
 		limit    int
 		model    string
 		force    bool
-		dbPath   string
 		sockFlag string
 		formatIn string
 	)
@@ -62,11 +61,6 @@ func newReflectCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := openStore(dbPath)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = s.Close() }()
 			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
@@ -82,7 +76,7 @@ func newReflectCmd() *cobra.Command {
 				cfg.Limits.ReflectTimeout.Or(defaultMetaLLMTimeout))
 			defer cancel()
 
-			_, err = RunReflect(ctx, s, c,
+			_, err = RunReflect(ctx, c,
 				func() (llm.Client, error) {
 					return llm.FromConfig(ctx, llmCfg)
 				},
@@ -95,7 +89,6 @@ func newReflectCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", defaultReflectLimit, "max sessions to feed the LLM, newest first")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
 	cmd.Flags().StringVar(&sockFlag, "socket", "",
 		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
@@ -118,13 +111,8 @@ type ReflectOptions struct {
 // backfill) go through aichronicles-api. The cache lookup + persist
 // also routes through the api so the single-writer invariant on
 // llm_outputs is preserved.
-//
-// The *store.Store parameter is still threaded through for the
-// backwards-compat parts of the call graph that haven't migrated
-// yet; this function itself no longer touches it.
 func RunReflect(
 	ctx context.Context,
-	s *store.Store,
 	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts ReflectOptions,
