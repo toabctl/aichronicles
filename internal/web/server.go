@@ -256,6 +256,12 @@ func (s *Server) renderFragment(w http.ResponseWriter, name string, data any) {
 	}
 }
 
+// Handler returns the server's mux so callers (e.g. the unified
+// aichronicles-api daemon) can mount the web routes on their own
+// listener instead of going through Run. Side-effect free; the
+// returned handler stays valid for the Server's lifetime.
+func (s *Server) Handler() http.Handler { return s.mux }
+
 // Addr returns the address the server is configured to listen on.
 // Useful for tests that didn't supply a Listener and want to know
 // where to point a client.

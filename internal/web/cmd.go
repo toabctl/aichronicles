@@ -21,10 +21,16 @@ import (
 // every tab". Tunable via --idle-timeout.
 const defaultIdleTimeout = 5 * time.Minute
 
-// NewCommand returns the `aichronicles web` cobra command. Lives
-// in this package (not internal/cli) so the web feature is
-// self-contained — the cli package just forwards to this
-// constructor.
+// NewCommand returns the `aichronicles web` cobra command.
+//
+// As of the Phase B daemon fold-in, the unified aichronicles-api
+// daemon serves the HTML browser on its own TCP listener
+// (default 127.0.0.1:7474). This standalone subcommand stays for
+// operators who want to run the browser in a separate process
+// (e.g. a different uid, or against a read-only DB clone) — it
+// opens the SQLite file directly, just like the api does, and
+// reads the same shape. New deployments should prefer the api
+// daemon's built-in web surface.
 func NewCommand() *cobra.Command {
 	var cfg Config
 	var dbPath string
