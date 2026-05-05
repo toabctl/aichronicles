@@ -9,6 +9,49 @@ import (
 	"github.com/toabctl/aichronicles/pkg/api"
 )
 
+// LLMOutputByID fetches one llm_outputs row by primary key.
+// ErrNotFound when the row does not exist.
+func (c *Client) LLMOutputByID(ctx context.Context, id int64) (api.LLMOutput, error) {
+	var out api.LLMOutput
+	if err := c.do(ctx, http.MethodGet, "/v1/llm-outputs/"+strconv.FormatInt(id, 10), nil, &out); err != nil {
+		return api.LLMOutput{}, err
+	}
+	return out, nil
+}
+
+// LLMOutputLastCreatedAt queries
+// GET /v1/llm-outputs/last-created-at?kind=. Returns the most-recent
+// created_at_ms for a given kind, or 0 when no rows match. Drives
+// the meta sweeper's per-kind cadence gate.
+func (c *Client) LLMOutputLastCreatedAt(ctx context.Context, kind string) (int64, error) {
+	q := url.Values{}
+	q.Set("kind", kind)
+	var out struct {
+		LastCreatedAtMs int64 `json:"last_created_at_ms"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/llm-outputs/last-created-at?"+q.Encode(), nil, &out); err != nil {
+		return 0, err
+	}
+	return out.LastCreatedAtMs, nil
+}
+
+// LLMOutputExistsForSession probes whether a kind-row already
+// exists for the named session. Used by the induction sweeper to
+// short-circuit phase 1 (auto-summarize) when the row is already
+// there.
+func (c *Client) LLMOutputExistsForSession(ctx context.Context, sessionID, kind string) (bool, error) {
+	q := url.Values{}
+	q.Set("session_id", sessionID)
+	q.Set("kind", kind)
+	var out struct {
+		Exists bool `json:"exists"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/llm-outputs/exists?"+q.Encode(), nil, &out); err != nil {
+		return false, err
+	}
+	return out.Exists, nil
+}
+
 // SessionLLMOutputs fetches every llm_outputs row for a session,
 // optionally filtered by kind. Used by MCP get_summary (when
 // kind != summary).

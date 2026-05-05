@@ -356,3 +356,70 @@ func positiveOrZero(v string) int {
 	}
 	return n
 }
+
+// handleLLMOutputByID serves GET /v1/llm-outputs/{id}. Returns the
+// row by primary key or 404. Used by reflect / propose / facts /
+// induction to re-load the row they just persisted (the cached
+// caller doesn't ship the whole body to runCachedLLM's hooks).
+func (s *Server) handleLLMOutputByID(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		writeProblem(w, http.StatusBadRequest, "Invalid id", "")
+		return
+	}
+	row, err := store.LoadLLMOutputByID(r.Context(), s.store.DB(), id)
+	if err != nil {
+		s.slog.Error("LoadLLMOutputByID", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	if row == nil {
+		writeProblem(w, http.StatusNotFound, "LLM output not found", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, llmOutputToWire(*row))
+}
+
+// handleLLMOutputsLastCreated serves
+// GET /v1/llm-outputs/last-created-at?kind=. Used by the meta
+// sweeper's cadence gate — last fired-at per kind.
+func (s *Server) handleLLMOutputsLastCreated(w http.ResponseWriter, r *http.Request) {
+	kind := r.URL.Query().Get("kind")
+	if kind == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing kind", "")
+		return
+	}
+	last, err := store.LastLLMOutputCreatedAt(r.Context(), s.store.DB(), store.LLMOutputKind(kind))
+	if err != nil {
+		s.slog.Error("LastLLMOutputCreatedAt", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		LastCreatedAtMs int64 `json:"last_created_at_ms"`
+	}{LastCreatedAtMs: last})
+}
+
+// handleLLMOutputExistsForSession serves
+// GET /v1/llm-outputs/exists?session_id=&kind=. A cheap row-exists
+// probe used by the induction sweeper to decide whether phase 1
+// (auto-summarize) needs to fire.
+func (s *Server) handleLLMOutputExistsForSession(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	sessionID := q.Get("session_id")
+	kind := q.Get("kind")
+	if sessionID == "" || kind == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing session_id or kind", "")
+		return
+	}
+	has, err := store.HasLLMOutputForSession(r.Context(), s.store.DB(), sessionID, store.LLMOutputKind(kind))
+	if err != nil {
+		s.slog.Error("HasLLMOutputForSession", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Exists bool `json:"exists"`
+	}{Exists: has})
+}

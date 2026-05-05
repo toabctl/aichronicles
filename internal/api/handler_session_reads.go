@@ -1,0 +1,223 @@
+package api
+
+import (
+	"net/http"
+	"strconv"
+
+	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/pkg/events"
+)
+
+// handleSessionEvents serves GET /v1/sessions/{id}/events. Returns
+// every event row for the session in chronological order.
+//
+// Query params:
+//   - limit:     positive integer, defaults to store.DefaultEventsPerSessionLimit
+//   - unbounded: "true" returns every event with no LIMIT (used by
+//     the segmenter, where a missing tail event would silently fix
+//     the final episode's ended_at_ms at the wrong wall clock)
+//
+// The full content_text is shipped on the wire — callers building
+// LLM prompts need it. Snippets are not generated here.
+func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing session id", "")
+		return
+	}
+	q := r.URL.Query()
+
+	var limit int
+	if q.Get("unbounded") == "true" {
+		limit = store.LoadEventsForSessionUnbounded
+	} else if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+			return
+		}
+		limit = n
+	}
+
+	rows, err := store.LoadEventsForSession(r.Context(), s.store.DB(), id, limit)
+	if err != nil {
+		s.slog.Error("LoadEventsForSession", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	out := api.SessionEventsResponse{Events: make([]api.EventView, 0, len(rows))}
+	for _, e := range rows {
+		out.Events = append(out.Events, eventViewToWire(e))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func eventViewToWire(e events.EventView) api.EventView {
+	out := api.EventView{
+		EventID:    e.EventID,
+		Kind:       e.Kind,
+		TsSourceMs: e.TsSourceMs,
+	}
+	if e.Role.Valid {
+		v := e.Role.String
+		out.Role = &v
+	}
+	if e.ContentText.Valid {
+		v := e.ContentText.String
+		out.ContentText = &v
+	}
+	if e.ToolName.Valid {
+		v := e.ToolName.String
+		out.ToolName = &v
+	}
+	if e.SubagentID.Valid {
+		v := e.SubagentID.String
+		out.SubagentID = &v
+	}
+	if e.SubagentType.Valid {
+		v := e.SubagentType.String
+		out.SubagentType = &v
+	}
+	if e.Cwd.Valid {
+		v := e.Cwd.String
+		out.Cwd = &v
+	}
+	return out
+}
+
+// handleSessionExtractions serves GET /v1/sessions/{id}/extractions?kind=.
+// kind is required ("url", "file_path", "shell_command", ...) — the
+// store helper rejects empty.
+func (s *Server) handleSessionExtractions(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing session id", "")
+		return
+	}
+	kind := r.URL.Query().Get("kind")
+	if kind == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing kind", "kind query param is required")
+		return
+	}
+	rows, err := store.LoadExtractionsForSession(r.Context(), s.store.DB(), id, kind)
+	if err != nil {
+		s.slog.Error("LoadExtractionsForSession", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	out := api.SessionExtractionsResponse{Extractions: make([]api.Extraction, 0, len(rows))}
+	for _, x := range rows {
+		out.Extractions = append(out.Extractions, api.Extraction{Kind: x.Kind, Value: x.Value})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleSessionCandidatePriors serves
+// GET /v1/sessions/{id}/candidate-priors?limit=. Returns same-cwd
+// prior sessions the LLM can emit session_links for; bounded so a
+// rogue candidate id from the model is silently dropped at filter
+// time.
+func (s *Server) handleSessionCandidatePriors(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing session id", "")
+		return
+	}
+	limit := 10
+	if v := r.URL.Query().Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+			return
+		}
+		limit = n
+	}
+	rows, err := store.LoadCandidatePriorSessions(r.Context(), s.store.DB(), id, limit)
+	if err != nil {
+		s.slog.Error("LoadCandidatePriorSessions", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	out := api.CandidateSessionListResponse{Candidates: make([]api.CandidateSession, 0, len(rows))}
+	for _, c := range rows {
+		out.Candidates = append(out.Candidates, api.CandidateSession{
+			ID: c.ID, Cwd: c.Cwd, StartedAtMs: c.StartedAtMs, EndedAtMs: c.EndedAtMs, Topic: c.Topic,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleSessionOutcome serves GET /v1/sessions/{id}/outcome. Read-
+// or-backfill: the first read computes + persists; subsequent reads
+// hit the cached row.
+func (s *Server) handleSessionOutcome(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing session id", "")
+		return
+	}
+	row, err := store.EnsureSessionOutcome(r.Context(), s.store.DB(), id)
+	if err != nil {
+		s.slog.Error("EnsureSessionOutcome", "session_id", id, "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	out := api.SessionOutcome{
+		SessionID:         row.SessionID,
+		ComputedAtMs:      row.ComputedAtMs,
+		UserPromptCount:   row.UserPromptCount,
+		ToolUseCount:      row.ToolUseCount,
+		ToolFailureCount:  row.ToolFailureCount,
+		ErrorCount:        row.ErrorCount,
+		CompactCount:      row.CompactCount,
+		GitUndoCount:      row.GitUndoCount,
+		PromptRepeatCount: row.PromptRepeatCount,
+		Outcome:           string(row.Outcome),
+	}
+	if row.LastEventKind.Valid {
+		v := row.LastEventKind.String
+		out.LastEventKind = &v
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleSessionDigests serves GET /v1/sessions/digests?since_ms=&limit=.
+// Returns the LoadRecentSessionDigests result — every session with
+// its summary topic + first prompt + cwd, used by reflect/propose
+// to build a window of cross-session input.
+func (s *Server) handleSessionDigests(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	var sinceMs int64
+	if v := q.Get("since_ms"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			writeProblem(w, http.StatusBadRequest, "Invalid since_ms", "")
+			return
+		}
+		sinceMs = n
+	}
+	limit := api.DefaultPageLimit
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+			return
+		}
+		if n > api.MaxPageLimit {
+			n = api.MaxPageLimit
+		}
+		limit = n
+	}
+	rows, err := store.LoadRecentSessionDigests(r.Context(), s.store.DB(), sinceMs, limit)
+	if err != nil {
+		s.slog.Error("LoadRecentSessionDigests", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	out := api.SessionDigestsResponse{Digests: make([]api.SessionDigest, 0, len(rows))}
+	for _, row := range rows {
+		out.Digests = append(out.Digests, sessionDigestRowToWire(row))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
