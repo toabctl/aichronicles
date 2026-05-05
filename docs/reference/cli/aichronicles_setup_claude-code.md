@@ -10,7 +10,7 @@ keeps hook config and MCP-server config in different places:
   1. Hooks → ~/.claude/settings.json: merges six entries
      (UserPromptSubmit, Stop, PostToolUse, PostToolUseFailure,
      SessionStart, SessionEnd) each pointing at
-     `aichronicles ingest`.
+     `aichronicles hook`.
   2. MCP server → ~/.claude.json: registers
      mcpServers.aichronicles pointing at `aichronicles
      mcp-serve`, so Claude can query past sessions / cached
@@ -32,7 +32,7 @@ aichronicles setup claude-code [flags]
 ### Options
 
 ```
-      --command string       command to run from each hook (default "aichronicles ingest")
+      --command string       command to run from each hook (default "aichronicles hook")
   -h, --help                 help for claude-code
       --mcp-command string   command to register as the aichronicles MCP server (default "aichronicles")
       --settings string      path to Claude Code settings.json for HOOKS (default: ~/.claude/settings.json)

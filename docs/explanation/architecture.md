@@ -99,21 +99,34 @@ Why this shape:
   catch-up via `Persistent=true` are properties the
   in-process ticker couldn't give.
 
-### Phase B transition status
+### Read-migration: complete
 
-Several CLI subcommands and the MCP server still open SQLite
-directly. They will migrate to `internal/apiclient` over time;
-the property "every read goes through the api" is not yet a
-hard invariant. The order so far:
+Every non-test file under `internal/cli/` now reads and writes
+through `internal/apiclient`. "Every read goes through the api"
+is a hard invariant, enforced by `tools/depcheck`:
 
-- `aichronicles hook` — migrated.
-- `aichronicles unresolved` — migrated.
-- Everything else — open store directly. WAL mode tolerates
-  the concurrent readers; the api is unaffected.
+- An import-graph rule blocks `internal/apiclient` from importing
+  `internal/store` (apiclient is wire-only).
+- A code-pattern rule scans non-test `.go` files under
+  `internal/cli/` for `store.(Load|Save|Insert|Update|Delete|Has|
+  Last|Query|Vacuum|Segment)\w*\(` calls and fails CI on a hit.
+  Test files are exempt because they exercise the store directly
+  for fixture setup and state assertions; doc-comment lines are
+  also skipped.
 
-The CI dependency-direction guard (Phase D) will enforce that
-no NEW CLI subcommand or MCP tool reaches into `internal/store`
-once it's in place.
+CLI subcommands no longer accept a `--db` flag (they don't open
+the SQLite file). They take `--socket` to point at the
+aichronicles-api UDS instead. `internal/cli` still imports
+`internal/store` for type/enum constants (`LLMOutputKind`,
+`SkillKind`, `OutcomeLabel`, error sentinels) — those are
+package-level values, not CRUD calls, and the depcheck regex
+ignores them.
+
+Two write paths intentionally still touch the store directly:
+`RunScrub` (one-off destructive maintenance) and
+`RunBackfillExtractions` (bulk migration tool). They run as
+short-lived subcommands while the api is stopped, so the
+single-writer invariant holds by exclusion.
 
 ## Package map
 

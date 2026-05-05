@@ -4,7 +4,7 @@ Capture AI coding agent session events
 
 ### Synopsis
 
-aichronicles is the client binary for the aichroniclesd ingest daemon. It receives hook payloads, wraps them in the canonical Envelope, and forwards to the daemon over a Unix domain socket.
+aichronicles is the CLI for the aichronicles-api daemon. The `hook` subcommand receives hook payloads from Claude Code / Gemini CLI, wraps them in the canonical Envelope, and forwards to the api over a Unix domain socket; other subcommands (summarize, reflect, propose, sessions, search, ...) read and write through the same UDS.
 
 ### Options
 
@@ -17,13 +17,13 @@ aichronicles is the client binary for the aichroniclesd ingest daemon. It receiv
 * [aichronicles audit](./aichronicles_audit.md)	 - Scan stored events for credential patterns (read-only)
 * [aichronicles backfill-extractions](./aichronicles_backfill-extractions.md)	 - Re-run extractors over every raw envelope and rewrite the extractions table
 * [aichronicles digest](./aichronicles_digest.md)	 - Periodic LLM-driven digests stored as queryable artefacts
-* [aichronicles doctor](./aichronicles_doctor.md)	 - Probe the running daemon and report whether it is accepting events
+* [aichronicles doctor](./aichronicles_doctor.md)	 - Probe the running aichronicles-api daemon and report health
 * [aichronicles facts](./aichronicles_facts.md)	 - Typed semantic-fact memory induced from sessions (MIRIX semantic layer)
-* [aichronicles import-claude](./aichronicles_import-claude.md)	 - Import Claude Code's own ~/.claude transcripts into the store
+* [aichronicles hook](./aichronicles_hook.md)	 - Read a hook payload on stdin and forward as an envelope to aichronicles-api
+* [aichronicles import-claude](./aichronicles_import-claude.md)	 - Walk Claude Code .jsonl transcripts and stream them into aichronicles-api
 * [aichronicles import-gemini](./aichronicles_import-gemini.md)	 - Import gemini-cli session JSON files into the store
-* [aichronicles import-jsonl](./aichronicles_import-jsonl.md)	 - Replay events.jsonl into the SQLite store
+* [aichronicles import-jsonl](./aichronicles_import-jsonl.md)	 - Replay events.jsonl into the SQLite store via aichronicles-api
 * [aichronicles induction](./aichronicles_induction.md)	 - Online single-session induction (AWM-style auto-skill-extraction)
-* [aichronicles ingest](./aichronicles_ingest.md)	 - Read a hook payload on stdin and forward as an envelope
 * [aichronicles insights](./aichronicles_insights.md)	 - Cross-session usage digest (sessions, top tools, top skills, activity-by-hour)
 * [aichronicles mcp-serve](./aichronicles_mcp-serve.md)	 - Run an MCP server over stdio exposing the user's session history
 * [aichronicles meta](./aichronicles_meta.md)	 - Cadence-gated meta-analyses (propose / reflect / challenge / reflect_weekly / skill_revision)

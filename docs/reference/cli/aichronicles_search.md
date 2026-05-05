@@ -11,6 +11,9 @@ quotes (`"panic stack"`). Identifiers and paths can be
 typed verbatim (`migrate.go`). Pass --format=json for a
 structured payload suitable for jq.
 
+Talks to aichronicles-api over its UDS (override with
+--socket or $AICHRONICLES_API_SOCKET).
+
 ```
 aichronicles search <query> [flags]
 ```
@@ -19,7 +22,6 @@ aichronicles search <query> [flags]
 
 ```
       --agent string     filter by source agent (claude-code | gemini-cli)
-      --db string        SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
       --file string      filter to sessions that touched a file matching this substring
       --format string    output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help             help for search
@@ -30,6 +32,7 @@ aichronicles search <query> [flags]
       --session string   filter by session id or unique prefix
       --since duration   only events within this duration (e.g. 24h, 7d) (default 0s)
       --skill string     filter to sessions that loaded this skill
+      --socket string    aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
       --summarize        synthesise an LLM-written answer from the top hits instead of printing rows (requires ANTHROPIC_API_KEY)
       --tool string      filter by tool name (e.g. Bash, run_shell_command)
       --top int          with --summarize: max hits fed to the LLM as grounding context (default 5)

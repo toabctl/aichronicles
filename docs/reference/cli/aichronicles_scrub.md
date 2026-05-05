@@ -15,6 +15,10 @@ This is IRREVERSIBLE. raw_envelopes is aichronicles' source-of-
 truth layer; once rewritten, the original bytes are gone. Take a
 backup of the DB file first if you care about forensics.
 
+Talks to aichronicles-api over its UDS so the scrub holds the
+single SQLite writer lock cleanly (no contention with the live
+ingest path).
+
 ```
 aichronicles scrub [flags]
 ```
@@ -22,9 +26,9 @@ aichronicles scrub [flags]
 ### Options
 
 ```
-      --db string   SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
-  -h, --help        help for scrub
-      --yes         confirm irreversible writes (required to mutate the DB)
+  -h, --help            help for scrub
+      --socket string   aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
+      --yes             confirm irreversible writes (required to mutate the DB)
 ```
 
 ### SEE ALSO

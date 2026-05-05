@@ -9,10 +9,10 @@ aichronicles digest list [flags]
 ### Options
 
 ```
-      --db string       SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
       --format string   output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help            help for list
       --limit int       max digests to list, newest first (default 20)
+      --socket string   aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 ```
 
 ### SEE ALSO

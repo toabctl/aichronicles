@@ -35,7 +35,6 @@ aichronicles skills evolve --skill <name> [flags]
 ### Options
 
 ```
-      --db string           SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
       --examples int        how many failure examples to include in the prompt (default 5)
       --force               bypass the cache and re-call the LLM even if a revision was already drafted
   -h, --help                help for evolve
@@ -43,6 +42,7 @@ aichronicles skills evolve --skill <name> [flags]
       --since duration      only consider failures within this window (e.g. 14d, 30d) (default 720h0m0s)
       --skill string        name of the SKILL to revise (must exist under --skills-dir)
       --skills-dir string   override target directory (default: ~/.claude/skills)
+      --socket string       aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
       --window duration     how long after a skill load to look for a tool_failure (e.g. 5m, 10m) (default 10m0s)
 ```
 

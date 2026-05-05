@@ -13,26 +13,26 @@ context from past work, and generates structured summaries on demand.
 ```mermaid
 flowchart LR
     cc[Claude Code]
-    api[(Anthropic / OpenAI<br/>HTTPS, on-demand)]
+    llm[(Anthropic / OpenAI<br/>HTTPS, on-demand)]
 
     subgraph local["Your machine — single user, local disk"]
         direction LR
-        ingest["aichronicles ingest<br/><i>hook subprocess</i>"]
-        daemon["aichroniclesd<br/><i>systemd --user · UDS 0600</i>"]
+        hook["aichronicles hook<br/><i>hook subprocess</i>"]
+        api["aichronicles-api<br/><i>systemd --user · UDS 0600</i>"]
         db[("SQLite store<br/>raw_envelopes ▸ events ▸<br/>extractions ▸ llm_outputs")]
         mcp["aichronicles mcp-serve<br/><i>stdio</i>"]
         cli["aichronicles summarize<br/>/ reflect / propose"]
     end
 
-    cc -- "hook fires" --> ingest
-    ingest -- "edge redact<br/>POST /v1/ingest" --> daemon
-    daemon -- "verify + persist" --> db
+    cc -- "hook fires" --> hook
+    hook -- "POST /v1/ingest" --> api
+    api -- "redact + verify + persist" --> db
     cc <-- "tools/call (stdio)" --> mcp
-    mcp -- "read-only SQL" --> db
-    cli -- "read events + cache" --> db
-    cli -.->|"egress redact ▸ tool use"| api
-    api -.-> cli
-    cli -- "write llm_outputs" --> db
+    mcp -- "GET /v1/* (UDS)" --> api
+    cli -- "GET /v1/* (UDS)" --> api
+    cli -.->|"egress redact ▸ tool use"| llm
+    llm -.-> cli
+    cli -- "POST /v1/llm-outputs" --> api
 ```
 
 **Legend.** Solid arrow: data flows in this direction. Dashed arrow:

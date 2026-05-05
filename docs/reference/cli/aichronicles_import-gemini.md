@@ -30,8 +30,8 @@ aichronicles import-gemini [path] [flags]
 ### Options
 
 ```
-      --db string   SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
-  -h, --help        help for import-gemini
+  -h, --help            help for import-gemini
+      --socket string   aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 ```
 
 ### SEE ALSO

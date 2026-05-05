@@ -29,8 +29,9 @@ aichronicles meta sweep [flags]
 ### Options
 
 ```
-      --db string   SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
-  -h, --help        help for sweep
+      --db string       SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
+  -h, --help            help for sweep
+      --socket string   aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 ```
 
 ### SEE ALSO

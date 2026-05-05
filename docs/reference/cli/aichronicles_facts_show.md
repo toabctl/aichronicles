@@ -17,10 +17,10 @@ aichronicles facts show --subject <cwd|name> [flags]
 ### Options
 
 ```
-      --db string        SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
       --format string    output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help             help for show
       --limit int        max facts to return (default 100)
+      --socket string    aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
       --subject string   subject (cwd path or other anchor) to load facts for
 ```
 

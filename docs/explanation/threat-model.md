@@ -30,20 +30,19 @@ that data.
 ┌─────────────────────────────────────────────────────────────┐
 │  YOUR MACHINE — single user, local disk                     │
 │                                                             │
-│   Claude Code  ──hook──▶  ingest CLI                        │
-│                              │ edge redact                  │
-│                              ▼                              │
-│   MCP client  ◀────stdio────▶  mcp-serve                    │
-│                                  │                          │
-│   browser    ◀──HTTP/127.0.0.1──▶  aichronicles web         │
-│                                  │                          │
-│                              ▼   │ read-only                │
-│                           SQLite store                      │
-│                              ▲   ▲                          │
-│                              │   │                          │
-│   summarize/reflect/propose ─┘   └─ aichroniclesd ◀──UDS──  │
-│        │                            (0600 socket,             │
-│        │ egress redact              0700 parent dir)         │
+│   Claude Code  ──hook──▶  aichronicles hook ──UDS──▶ api    │
+│                                                       │     │
+│   MCP client  ◀──stdio─▶  mcp-serve  ──UDS──▶  aichronicles-api
+│                                                       │     │
+│   browser  ◀── HTTP/127.0.0.1 ──▶ aichronicles-api    │     │
+│                                                       │     │
+│                                              redact + persist
+│                                                       ▼     │
+│                                                 SQLite store│
+│                                                             │
+│   summarize/reflect/propose  ──UDS──▶  aichronicles-api     │
+│        │                              (0600 socket,         │
+│        │ egress redact                 0700 parent dir)     │
 │        ▼                                                    │
 └────────┼────────────────────────────────────────────────────┘
          │
@@ -51,52 +50,56 @@ that data.
    Anthropic / OpenAI HTTPS  ◀── only on summarize/reflect/propose
 ```
 
-`aichronicles web` is a short-lived CLI subprocess (same shape as
-`mcp-serve`) that boots a small HTTP server on `127.0.0.1` and
-opens the SQLite store read-only. Localhost is the auth boundary
-— no authentication, no TLS — mirroring the daemon's choice of
-0600 UDS rather than network sockets. Binding to a non-loopback
-address is opt-in (`--bind 0.0.0.0`) and surfaces a startup
-warning; it explicitly leaves the single-user trust model and is
-not a supported posture.
+`aichronicles-api` is the single SQLite-handling process: every
+read and every write goes through it over the 0600 UDS. The
+browser-facing web UI rides the same daemon (HTML on TCP
+127.0.0.1, JSON+SSE on the UDS). Localhost is the auth boundary
+— no authentication, no TLS — mirroring the api's choice of 0600
+UDS rather than network sockets. Binding the web UI to a
+non-loopback address is opt-in (`--bind 0.0.0.0`) and surfaces a
+startup warning; it explicitly leaves the single-user trust model
+and is not a supported posture.
 
-Inside the box: untrusted *between* boundaries (the daemon doesn't
-trust the CLI's redaction claim; the egress redactor scrubs again
-before talking to a third-party LLM), but unauthenticated *across
-UID* — any process running as your UID can read everything
-aichronicles writes. We don't defend against an attacker already
-on your account.
+Inside the box: untrusted *between* boundaries (hook clients
+cannot smuggle pre-redacted bytes — the api re-scans server-side;
+the egress redactor scrubs again before talking to a third-party
+LLM), but unauthenticated *across UID* — any process running as
+your UID can read everything aichronicles writes. We don't defend
+against an attacker already on your account.
 
 ## What aichronicles promises
 
-### 1. Ingest is the single point of redaction truth
+### 1. The api is the single point of redaction truth
 
-The store has two distinct write paths, each with its own
-enforcement layer. Read paths (MCP `tools/call`, the CLI's
-`search` / `sessions` / `summaries show`, the `aichronicles web`
-server) render content directly without re-scanning. A separate
-egress layer protects the read path that *does* leave the local
-trust boundary — the LLM call.
+Redaction runs server-side in `aichronicles-api` on every write
+path. Hook clients send raw bytes; the api scrubs before the
+envelope hits disk. There is no client-side redaction the api
+trusts: `redaction.applied=true` from a hook is ignored — the
+server applies its own scrub regardless. A malicious or buggy
+hook subprocess therefore cannot smuggle secrets past the gate.
+
+Read paths (MCP `tools/call`, the CLI's `search` / `sessions` /
+`summaries show`, the `aichronicles web` UI) render content
+directly without re-scanning — the bytes on disk are already
+scrubbed. A separate egress layer protects the read path that
+*does* leave the local trust boundary — the LLM call.
 
 **Hook write path** — events:
 
-- **Edge (in `aichronicles ingest`):** Every hook payload is
-  scrubbed via `redact.Default()` *before* the envelope is
-  serialized for the daemon. Source-of-truth: the patterns in
-  `internal/redact/redact.go:builtinDetectors`. Patterns that
-  fired land in `envelope.Redaction.Patterns`.
-- **Daemon (`aichroniclesd`):** Refuses any envelope where
-  `redaction.applied != true`. The daemon does not silently
-  re-scrub — that would mask a broken client. It rejects with
-  HTTP 400 and logs the source agent.
+- **Server-side (`internal/api` + `pkg/events.Pipeline.Redactor`):**
+  Every envelope routed through `POST /v1/ingest` runs through
+  `redact.Default()` inside the api before being written to the
+  store. Source-of-truth: the patterns in
+  `pkg/redact/builtin.go`. Patterns that fired land in
+  `envelope.Redaction.Patterns`.
 
 **LLM-response write path** — `llm_outputs`:
 
-- **Store (`SaveLLMOutput` in `internal/store/llm_outputs.go`):**
-  Body is run through `redact.Outbound` before insertion. The
-  edge redactor never sees an LLM response — it lands here, not
-  via /v1/ingest — so the store is the enforcement point. An
-  LLM that hallucinates a credential into its `summarize` reply
+- **Server-side (`POST /v1/llm-outputs` in `internal/api`):**
+  Body is run through `redact.Outbound` before insertion. CLI
+  callers never write to the store directly; they POST the
+  candidate body to the api, which scrubs and persists. An LLM
+  that hallucinates a credential into its `summarize` reply
   cannot land it in the store unscrubbed.
 
 **LLM-egress to third party** — outbound network:

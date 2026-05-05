@@ -25,12 +25,12 @@ aichronicles facts induce --session <id> [flags]
 ### Options
 
 ```
-      --db string        SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
       --force            bypass the cache and re-call the LLM
       --format string    output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help             help for induce
       --model string     LLM model id (default: provider's default)
       --session string   session id (full or unique prefix) to induce facts from
+      --socket string    aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 ```
 
 ### SEE ALSO

@@ -45,6 +45,7 @@ aichronicles propose add --skill <name> [flags]
       --output-id int       specific llm_outputs row id (default: latest propose row)
       --skill string        name of a skill from the proposal to materialise
       --skills-dir string   override target directory (default: ~/.claude/skills)
+      --socket string       aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 ```
 
 ### SEE ALSO

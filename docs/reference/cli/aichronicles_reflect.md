@@ -23,13 +23,13 @@ aichronicles reflect [flags]
 ### Options
 
 ```
-      --db string        SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
       --force            bypass the llm_outputs cache and re-call the LLM
       --format string    output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help             help for reflect
       --limit int        max sessions to feed the LLM, newest first (default 25)
       --model string     LLM model id (default: provider's default)
       --since duration   only consider sessions whose ended_at is within this window (e.g. 24h, 7d) (default 168h0m0s)
+      --socket string    aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 ```
 
 ### SEE ALSO

@@ -24,9 +24,9 @@ aichronicles vacuum [flags]
 ### Options
 
 ```
-      --db string   SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
-  -h, --help        help for vacuum
-      --yes         actually vacuum; without --yes the command prints current size and exits
+  -h, --help            help for vacuum
+      --socket string   aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
+      --yes             actually vacuum; without --yes the command prints current size and exits
 ```
 
 ### SEE ALSO

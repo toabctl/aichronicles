@@ -11,7 +11,9 @@ One row per session, columns:
 On a TTY columns are aligned for reading; when piped or
 redirected they emit as tab-separated values for awk/cut.
 Pass --format=json for a structured payload suitable for jq.
-Filters stack.
+
+Talks to aichronicles-api over its UDS (override with
+--socket or $AICHRONICLES_API_SOCKET).
 
 ```
 aichronicles sessions [flags]
@@ -20,13 +22,12 @@ aichronicles sessions [flags]
 ### Options
 
 ```
-      --agent string     filter by source_agent (e.g. claude-code)
       --cwd string       filter by cwd (exact match)
-      --db string        SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
       --format string    output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help             help for sessions
       --limit int        max sessions to return (default 30)
       --since duration   only sessions whose ended_at is within this duration (e.g. 24h, 7d) (default 0s)
+      --socket string    aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 ```
 
 ### SEE ALSO

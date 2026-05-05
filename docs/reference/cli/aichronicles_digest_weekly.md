@@ -24,11 +24,11 @@ aichronicles digest weekly [flags]
 ### Options
 
 ```
-      --db string        SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
       --force            bypass the llm_outputs cache and re-call the LLM
       --format string    output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help             help for weekly
       --model string     LLM model id (default: provider's default)
+      --socket string    aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
       --week-of string   target a specific Monday (YYYY-MM-DD); default is the previous completed week
 ```
 

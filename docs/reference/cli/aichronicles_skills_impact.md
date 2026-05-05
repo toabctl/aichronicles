@@ -21,6 +21,9 @@ hook fills tool_failure events, so a high success rate doesn't
 mean the skill is perfect — just that this signal hasn't
 fired. Output is sorted most-loaded first.
 
+Talks to aichronicles-api over its UDS (override with
+--socket or $AICHRONICLES_API_SOCKET).
+
 ```
 aichronicles skills impact [flags]
 ```
@@ -28,10 +31,10 @@ aichronicles skills impact [flags]
 ### Options
 
 ```
-      --db string         SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
       --format string     output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help              help for impact
       --since duration    only consider skill loads within this window (e.g. 24h, 7d, 30d) (default 720h0m0s)
+      --socket string     aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
       --window duration   how long after a skill load to look for a tool_failure (e.g. 5m, 10m, 30m) (default 10m0s)
 ```
 

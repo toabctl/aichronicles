@@ -1,12 +1,12 @@
 ## aichronicles setup gemini-cli
 
-Install Gemini CLI hooks that forward events to aichroniclesd
+Install Gemini CLI hooks that forward events to aichronicles-api
 
 ### Synopsis
 
 Idempotently merges five hook entries (BeforeAgent, AfterModel,
 AfterTool, SessionStart, SessionEnd) into the target
-settings.json, each pointing at `aichronicles ingest --agent
+settings.json, each pointing at `aichronicles hook --agent
 gemini-cli`. Existing hook entries from other tools are
 preserved; running twice is a no-op.
 
@@ -27,7 +27,7 @@ aichronicles setup gemini-cli [flags]
 ### Options
 
 ```
-      --command string    command to run from each hook (default "aichronicles ingest --agent gemini-cli")
+      --command string    command to run from each hook (default "aichronicles hook --agent gemini-cli")
   -h, --help              help for gemini-cli
       --settings string   path to Gemini settings.json (default: ~/.gemini/settings.json)
 ```

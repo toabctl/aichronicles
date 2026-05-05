@@ -47,6 +47,7 @@ aichronicles induction sweep [flags]
       --skip-episodes    skip phase 0 (episode segmentation); episode-keyed retrieval will have no rows for new candidates
       --skip-facts       skip phase 3 (semantic-facts induction); saves one LLM call per candidate
       --skip-summarize   skip phase 1 (auto-summarize). Sessions without summaries will be skipped — keeps summarize manual.
+      --socket string    aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 ```
 
 ### SEE ALSO

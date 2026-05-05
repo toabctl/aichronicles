@@ -54,7 +54,7 @@ func NewRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "aichronicles",
 		Short:         "Capture AI coding agent session events",
-		Long:          "aichronicles is the client binary for the aichroniclesd ingest daemon. It receives hook payloads, wraps them in the canonical Envelope, and forwards to the daemon over a Unix domain socket.",
+		Long:          "aichronicles is the CLI for the aichronicles-api daemon. The `hook` subcommand receives hook payloads from Claude Code / Gemini CLI, wraps them in the canonical Envelope, and forwards to the api over a Unix domain socket; other subcommands (summarize, reflect, propose, sessions, search, ...) read and write through the same UDS.",
 		Version:       Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,

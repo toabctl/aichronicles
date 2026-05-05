@@ -13,6 +13,9 @@ Errors with `no output for session …/type …` when the session
 exists but has never been summarized/reflected/proposed under
 the requested type.
 
+Talks to aichronicles-api over its UDS (override with
+--socket or $AICHRONICLES_API_SOCKET).
+
 ```
 aichronicles summaries show <session> [flags]
 ```
@@ -20,9 +23,9 @@ aichronicles summaries show <session> [flags]
 ### Options
 
 ```
-      --db string       SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
       --format string   output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help            help for show
+      --socket string   aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
       --type string     output type (summary | reflect | propose) (default "summary")
 ```
 

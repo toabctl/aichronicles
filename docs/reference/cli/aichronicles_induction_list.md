@@ -9,10 +9,10 @@ aichronicles induction list [flags]
 ### Options
 
 ```
-      --db string       SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
       --format string   output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help            help for list
       --limit int       max rows to render, newest first (default 50)
+      --socket string   aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 ```
 
 ### SEE ALSO

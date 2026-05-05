@@ -17,7 +17,7 @@ aichronicles teardown gemini-cli [flags]
 ### Options
 
 ```
-      --command string    command to strip from each hook (default "aichronicles ingest --agent gemini-cli")
+      --command string    command to strip from each hook (default "aichronicles hook --agent gemini-cli")
   -h, --help              help for gemini-cli
       --settings string   path to Gemini settings.json (default: ~/.gemini/settings.json)
       --yes               confirm the removal (required to modify the file)

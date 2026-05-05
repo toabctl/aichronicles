@@ -35,48 +35,49 @@ manual flow (B, E), plus the read-only MCP path (C).
 
 Claude Code fires a hook subprocess for each interesting event
 (`UserPromptSubmit`, `PostToolUse`, etc.). The subprocess is
-`aichronicles ingest`, which reads the hook payload from stdin,
-edge-redacts it, wraps it in our canonical envelope, and POSTs to
-the daemon over UDS.
+`aichronicles hook`, which reads the hook payload from stdin,
+translates it into our canonical envelope, and POSTs to the api
+over UDS. Redaction runs server-side in the api — the hook
+subprocess sends the raw envelope.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant CC as Claude Code
-    participant IC as aichronicles ingest<br/>(subprocess)
-    participant D as aichroniclesd<br/>(daemon)
+    participant HK as aichronicles hook<br/>(subprocess)
+    participant API as aichronicles-api<br/>(daemon)
     participant SQ as SQLite<br/>(store.db)
 
-    CC->>IC: spawn + pipe hook JSON to stdin
-    IC->>IC: claude.HookTranslator (or gemini.HookTranslator).Translate
-    Note over IC: builds Envelope, applies Redactor.<br/>redaction.applied=true on return
-    IC->>D: POST /v1/ingest (UDS, 250ms ctx deadline)
-    D->>D: validate envelope (V==1, slug, UUID)
-    D->>D: events.Pipeline.Process: redaction-required gate
-    D->>D: events.Pipeline: run ExtractorRegistry (URL / Bash / FilePath / WebFetch / Skill)
-    D->>SQ: store.Sink.Write — BeginTx
-    D->>SQ: INSERT raw_envelopes (verbatim JSON)
+    CC->>HK: spawn + pipe hook JSON to stdin
+    HK->>HK: claude.HookTranslator (or gemini.HookTranslator).Translate
+    Note over HK: builds Envelope (raw bytes — no redaction)
+    HK->>API: POST /v1/ingest (UDS, 250ms ctx deadline)
+    API->>API: validate envelope (V==1, slug, UUID)
+    API->>API: events.Pipeline.Redactor: scrub server-side
+    API->>API: events.Pipeline: run ExtractorRegistry (URL / Bash / FilePath / WebFetch / Skill)
+    API->>SQ: store.Sink.Write — BeginTx
+    API->>SQ: INSERT raw_envelopes (post-redaction JSON)
     SQ->>SQ: trigger: update sessions agg
-    D->>SQ: INSERT events (typed projection)
+    API->>SQ: INSERT events (typed projection)
     SQ->>SQ: trigger: events_fts insert
-    D->>SQ: INSERT extractions (per-event Extractions slice)
-    D->>SQ: Commit
-    D-->>IC: 200 + Ack {event_id, session_id, deduped}
-    IC-->>CC: exit 0
+    API->>SQ: INSERT extractions (per-event Extractions slice)
+    API->>SQ: Commit
+    API-->>HK: 200 + Ack {event_id, session_id, deduped}
+    HK-->>CC: exit 0
 ```
 
 A few non-obvious properties of this flow:
 
 - **The 250 ms context deadline on step 4 is a hard cap on how long
-  ingest can hold up the hook.** If the daemon is wedged or slow,
-  the POST aborts, ingest logs a warning, exits 0, and Claude Code
-  carries on. The hook never blocks the user.
-- **Step 6 is defense-in-depth.** The daemon doesn't trust the
-  CLI's edge-redaction claim; it explicitly verifies
-  `Redaction.Applied == true` on the envelope. A forgetful or
-  third-party client gets HTTP 400. The daemon does *not*
-  silently re-scrub — that would mask a broken client from
-  operator view.
+  the hook subprocess can hold up the agent.** If the api is
+  wedged or slow, the POST aborts, the hook logs a warning, exits
+  0, and Claude Code carries on. The hook never blocks the user.
+- **Step 6 is the redaction gate.** The api owns redaction —
+  hook clients send raw bytes and a `redaction.applied=true`
+  claim from a client is ignored. The api applies its own
+  scrub and overwrites `envelope.Redaction` with the result. A
+  malicious or buggy hook subprocess therefore cannot smuggle
+  secrets past the gate.
 - **Steps 8-13 run in one transaction** so a partial failure
   (e.g. an extractor bug crashing step 13) rolls back the entire
   envelope. `raw_envelopes` only ever contains rows whose
@@ -94,14 +95,13 @@ A few non-obvious properties of this flow:
 
 | Outcome | Cause | What you see |
 |---|---|---|
-| HTTP 400 "Envelope validation failed" | Bad UUID, bad agent slug, missing required field | ingest warns to stderr; event lost |
-| HTTP 400 "Redaction required" | `redaction.applied != true` | ingest warns; event lost |
+| HTTP 400 "Envelope validation failed" | Bad UUID, bad agent slug, missing required field | hook warns to stderr; event lost |
 | HTTP 413 "Envelope too large" | Body > 128 MiB | Rare; usually a runaway tool result |
-| HTTP 500 "Storage error" | SQLite locked, disk full | ingest warns; daemon journal has detail |
-| Connection refused | Daemon not running | ingest warns; outage notification fires once per outage |
-| ctx deadline exceeded | Daemon slow | ingest warns; event lost (no retry on the hook path by design) |
+| HTTP 500 "Storage error" | SQLite locked, disk full | hook warns; api journal has detail |
+| Connection refused | api not running | hook warns; outage notification fires once per outage |
+| ctx deadline exceeded | api slow | hook warns; event lost (no retry on the hook path by design) |
 
-The ingest CLI never returns a non-zero exit code, no matter what
+The hook CLI never returns a non-zero exit code, no matter what
 goes wrong. That's load-bearing for the "never block Claude Code"
 contract.
 
@@ -383,7 +383,7 @@ Non-obvious properties:
   details.
 - **Daemon graceful shutdown.** `srv.Shutdown(ctx)` with a 10s
   drain budget; in-flight POSTs finish. See
-  `cmd/aichroniclesd/main.go:run`.
+  `cmd/aichronicles-api/main.go:run`.
 
 ## Related
 

@@ -24,10 +24,10 @@ aichronicles prune [flags]
 ### Options
 
 ```
-      --db string             SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
   -h, --help                  help for prune
       --include-llm-outputs   also delete llm_outputs rows older than the cutoff (summaries, reflections)
       --older-than duration   prune sessions whose ended_at is older than this (e.g. 30d, 180d, 24h) (default 4320h0m0s)
+      --socket string         aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
       --yes                   actually delete; without --yes the command runs as dry-run
 ```
 

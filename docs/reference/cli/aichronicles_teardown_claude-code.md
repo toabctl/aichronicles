@@ -24,7 +24,7 @@ aichronicles teardown claude-code [flags]
 ### Options
 
 ```
-      --command string       command to strip from each hook (default "aichronicles ingest")
+      --command string       command to strip from each hook (default "aichronicles hook")
   -h, --help                 help for claude-code
       --settings string      path to Claude Code settings.json for HOOKS (default: ~/.claude/settings.json)
       --user-config string   path to Claude Code user-config json for MCP SERVERS (default: ~/.claude.json)

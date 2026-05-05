@@ -23,6 +23,9 @@ Schema for prices.toml:
 --format=json emits the rows + totals as a structured
 payload suitable for jq.
 
+Talks to aichronicles-api over its UDS (override with
+--socket or $AICHRONICLES_API_SOCKET).
+
 ```
 aichronicles usage [flags]
 ```
@@ -30,11 +33,11 @@ aichronicles usage [flags]
 ### Options
 
 ```
-      --db string        SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
       --format string    output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help             help for usage
       --prices string    path to prices.toml (default: $XDG_CONFIG_HOME/aichronicles/prices.toml)
       --since duration   only consider llm_outputs within this window (e.g. 7d, 30d, 24h) (default 720h0m0s)
+      --socket string    aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 ```
 
 ### SEE ALSO

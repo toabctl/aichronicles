@@ -12,6 +12,9 @@ histogram, and the highest-event-count sessions.
 No LLM call — pure SQL aggregation, fast even on large stores.
 For LLM-derived analysis, see `reflect` and `propose`.
 
+Talks to aichronicles-api over its UDS (override with
+--socket or $AICHRONICLES_API_SOCKET).
+
 ```
 aichronicles insights [flags]
 ```
@@ -19,10 +22,10 @@ aichronicles insights [flags]
 ### Options
 
 ```
-      --db string        SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
       --format string    output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help             help for insights
       --since duration   only consider sessions/events within this window (e.g. 24h, 7d, 30d) (default 720h0m0s)
+      --socket string    aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 ```
 
 ### SEE ALSO

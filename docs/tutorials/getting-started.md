@@ -17,29 +17,29 @@ add the LLM-using flow in [Your first summary](first-summary.md).
 
 ```fish
 go install github.com/toabctl/aichronicles/cmd/aichronicles@latest
-go install github.com/toabctl/aichronicles/cmd/aichroniclesd@latest
-ln -sf ~/go/bin/aichronicles  ~/.local/bin/aichronicles
-ln -sf ~/go/bin/aichroniclesd ~/.local/bin/aichroniclesd
+go install github.com/toabctl/aichronicles/cmd/aichronicles-api@latest
+ln -sf ~/go/bin/aichronicles      ~/.local/bin/aichronicles
+ln -sf ~/go/bin/aichronicles-api  ~/.local/bin/aichronicles-api
 ```
 
-The systemd unit expects `aichroniclesd` at `~/.local/bin/`, hence
-the symlink. Confirm both are on `$PATH`:
+The systemd unit expects `aichronicles-api` at `~/.local/bin/`,
+hence the symlink. Confirm both are on `$PATH`:
 
 ```fish
-which aichronicles aichroniclesd
+which aichronicles aichronicles-api
 # /home/you/.local/bin/aichronicles
-# /home/you/.local/bin/aichroniclesd
+# /home/you/.local/bin/aichronicles-api
 ```
 
 ## 2. Bring up the daemon (≈15s)
 
 ```fish
 aichronicles setup systemd
-systemctl --user start aichronicles.socket
+systemctl --user start aichronicles-api.socket
 ```
 
 What happened: `setup systemd` wrote two unit files
-(`aichronicles.socket`, `aichronicles.service`) to
+(`aichronicles-api.socket`, `aichronicles-api.service`) to
 `~/.config/systemd/user/`, told systemd to reload, and enabled the
 socket so it starts on every login. Starting the socket gets the
 listener up; the service starts on demand the first time anything
@@ -48,10 +48,10 @@ connects.
 Checkpoint:
 
 ```fish
-systemctl --user is-active aichronicles.socket
+systemctl --user is-active aichronicles-api.socket
 # active
 
-curl --silent --unix-socket /run/user/(id -u)/aichronicles/sock \
+curl --silent --unix-socket /run/user/(id -u)/aichronicles/api.sock \
      http://unix/v1/healthz
 # {"status":"ok"}
 ```
@@ -74,13 +74,15 @@ For Claude Code, this merges six hook entries
 `SessionEnd`, `PostToolUseFailure`). For Gemini, the event-name
 set is the agent's equivalent (`BeforeAgent`, `AfterModel`,
 `AfterTool`, `SessionStart`, `SessionEnd`). Each hook runs
-`aichronicles ingest --agent <slug>` as a subprocess, which pipes
-the hook payload through the edge redactor and POSTs the envelope
-to the daemon over the UDS.
+`aichronicles hook --agent <slug>` as a subprocess, which
+translates the hook payload to an envelope and POSTs it to the
+api over the UDS. Redaction runs server-side in the api — the
+hook subprocess sends raw bytes; the api scrubs secrets before
+the envelope hits disk.
 
-The hook never fails the agent: ingest exits 0 even if the daemon
-is unreachable. Outages fire one desktop notification per outage
-so you find out without it blocking your session.
+The hook never fails the agent: it exits 0 even if the api is
+unreachable. Outages fire one desktop notification per outage so
+you find out without it blocking your session.
 
 
 ## 4. Verify capture (≈15s)
@@ -112,8 +114,8 @@ This is FTS5 — query syntax follows
 
 You now have a corpus that grows automatically as you use Claude
 Code. Every prompt, tool call, and response is in SQLite at
-`~/.local/state/aichronicles/store.db`, with secrets scrubbed at
-ingest time.
+`~/.local/state/aichronicles/store.db`, with secrets scrubbed
+server-side by the api before they hit disk.
 
 ## What's next
 
@@ -129,16 +131,16 @@ ingest time.
 
 ## If something broke
 
-- **`systemctl --user is-active aichronicles.socket` returns
-  `inactive`** — `journalctl --user -u aichronicles.socket -n 30`
-  usually has the cause. Most often: `~/.local/bin/aichroniclesd`
+- **`systemctl --user is-active aichronicles-api.socket` returns
+  `inactive`** — `journalctl --user -u aichronicles-api.socket -n 30`
+  usually has the cause. Most often: `~/.local/bin/aichronicles-api`
   isn't where the unit expects it. Check the symlink.
 - **`aichronicles sessions` returns no rows after triggering a
-  hook** — the hook is silently failing. Look for ingest errors in
-  Claude Code's debug output, or check the daemon's logs:
-  `journalctl --user -u aichronicles.service -n 30`.
-- **A red desktop notification "aichronicles: daemon unreachable"** —
-  the daemon stopped. `systemctl --user restart aichronicles.service`
+  hook** — the hook is silently failing. Look for hook errors in
+  Claude Code's debug output, or check the api's logs:
+  `journalctl --user -u aichronicles-api.service -n 30`.
+- **A red desktop notification "aichronicles: api unreachable"** —
+  the api stopped. `systemctl --user restart aichronicles-api.service`
   and check the journal.
 - **Anything else** — see
   [troubleshooting](../how-to/troubleshooting.md) (TODO).

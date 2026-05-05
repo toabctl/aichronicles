@@ -128,7 +128,7 @@ func newSetupGeminiCLICmd() *cobra.Command {
 	var hookCommand string
 	cmd := &cobra.Command{
 		Use:   "gemini-cli",
-		Short: "Install Gemini CLI hooks that forward events to aichroniclesd",
+		Short: "Install Gemini CLI hooks that forward events to aichronicles-api",
 		Long: "Idempotently merges five hook entries (BeforeAgent, AfterModel,\n" +
 			"AfterTool, SessionStart, SessionEnd) into the target\n" +
 			"settings.json, each pointing at `aichronicles hook --agent\n" +
