@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -315,7 +314,7 @@ func RunFactsForSession(
 	if err := json.Unmarshal([]byte(row.Body), &result); err != nil {
 		return id, fmt.Errorf("facts: parse persisted body: %w", err)
 	}
-	persistedCount := persistInducedFacts(ctx, s, id, sessionID, &result)
+	persistedCount := persistInducedFacts(ctx, c, id, sessionID, &result)
 
 	if opts.JSON {
 		_, _ = io.WriteString(out, row.Body)
@@ -333,23 +332,30 @@ func RunFactsForSession(
 // typically equals len(result.Facts) but may be lower if individual
 // rows fail validation. Uses asserted_at_ms = now() so re-runs
 // against the same session refresh the timestamp.
-func persistInducedFacts(ctx context.Context, s *store.Store, llmOutputID int64, sessionID string, result *prompts.FactsResult) int {
+func persistInducedFacts(ctx context.Context, c *apiclient.Client, llmOutputID int64, sessionID string, result *prompts.FactsResult) int {
 	if result == nil || !result.Found || len(result.Facts) == 0 {
 		return 0
 	}
 	now := time.Now().UnixMilli()
 	persisted := 0
 	for _, f := range result.Facts {
-		if _, err := store.SaveSemanticFact(ctx, s.DB(), store.SemanticFact{
+		req := api.SaveSemanticFactRequest{
 			SourceLLMOutputID: llmOutputID,
 			Subject:           f.Subject,
 			Predicate:         f.Predicate,
 			Object:            f.Object,
 			Confidence:        f.Confidence,
-			EvidenceSessionID: sql.NullString{String: sessionID, Valid: sessionID != ""},
-			EvidenceQuote:     sql.NullString{String: f.Quote, Valid: f.Quote != ""},
 			AssertedAtMs:      now,
-		}); err != nil {
+		}
+		if sessionID != "" {
+			sid := sessionID
+			req.EvidenceSessionID = &sid
+		}
+		if f.Quote != "" {
+			q := f.Quote
+			req.EvidenceQuote = &q
+		}
+		if _, err := c.SaveSemanticFact(ctx, req); err != nil {
 			slog.Warn("facts: failed to persist induced fact",
 				"llm_output_id", llmOutputID,
 				"subject", f.Subject,

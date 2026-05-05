@@ -216,11 +216,10 @@ func RunPropose(
 	// same window so the model can see which invoked skills are
 	// actually working vs. correlated with tool_failure. Failures
 	// here are non-fatal — propose proceeds with bare counts.
-	if impact, ierr := store.LoadSkillImpact(ctx, s.DB(), sinceMs,
-		0 /* default 10-minute failure window */, store.SkillImpactLimits{}); ierr != nil {
+	if impactResp, ierr := c.SkillImpact(ctx, api.SkillImpactRequest{SinceMs: sinceMs}); ierr != nil {
 		slog.Warn("propose: skipping skill-impact enrichment", "err", ierr)
 	} else {
-		invoked = mergeImpactIntoInvoked(invoked, impact)
+		invoked = mergeImpactIntoInvoked(invoked, impactResp.Skills)
 	}
 	_, _ = fmt.Fprintf(progress, "  skills enrichment: %d installed, %d invoked\n",
 		len(installed), len(invoked))
@@ -580,11 +579,11 @@ func runChallenge(
 // independent means LoadInvoked stays small and reusable, and
 // adding the impact source is a 5-line splice in propose.go
 // rather than a new shape parameter on every caller of LoadInvoked.
-func mergeImpactIntoInvoked(invoked []prompts.InvokedSkill, impact []store.SkillImpact) []prompts.InvokedSkill {
+func mergeImpactIntoInvoked(invoked []prompts.InvokedSkill, impact []api.SkillImpact) []prompts.InvokedSkill {
 	if len(impact) == 0 {
 		return invoked
 	}
-	byName := make(map[string]store.SkillImpact, len(impact))
+	byName := make(map[string]api.SkillImpact, len(impact))
 	for _, im := range impact {
 		byName[im.Name] = im
 	}

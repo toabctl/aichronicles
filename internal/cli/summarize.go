@@ -228,7 +228,7 @@ func RunSummarize(
 			// source of truth — a user who ran summarize before the
 			// links migration shipped should see them populate on
 			// the next no-op re-run.
-			if err := saveSessionLinksFromBody(ctx, s, sessionID, cached.Body, candidateIDs); err != nil {
+			if err := saveSessionLinksFromBody(ctx, c, sessionID, cached.Body, candidateIDs); err != nil {
 				return cached.ID, fmt.Errorf("summarize: persist session_links from cache: %w", err)
 			}
 			if renderErr := emitLLMBody(out, store.LLMKindSummary, cached.Body, opts.JSON); renderErr != nil {
@@ -287,7 +287,7 @@ func RunSummarize(
 	// (we link to candidates, not to this summary row), but we keep
 	// it inside the same RunSummarize call so a partial failure
 	// surfaces here rather than as an orphaned summary.
-	if err := persistSessionLinks(ctx, s, sessionID, result.SessionLinks, candidateIDs); err != nil {
+	if err := persistSessionLinks(ctx, c, sessionID, result.SessionLinks, candidateIDs); err != nil {
 		return id, fmt.Errorf("summarize: persist session_links: %w", err)
 	}
 
@@ -313,12 +313,12 @@ func RunSummarize(
 // degenerate behaviour: no candidates → no permitted targets.
 func persistSessionLinks(
 	ctx context.Context,
-	s *store.Store,
+	c *apiclient.Client,
 	from string,
 	emitted []prompts.SessionLinkAnnotation,
 	allowed map[string]struct{},
 ) error {
-	links := make([]store.SessionLink, 0, len(emitted))
+	links := make([]api.SessionLink, 0, len(emitted))
 	dropped := 0
 	for _, l := range emitted {
 		if _, ok := allowed[l.ToSessionID]; !ok {
@@ -329,7 +329,7 @@ func persistSessionLinks(
 			dropped++
 			continue
 		}
-		links = append(links, store.SessionLink{
+		links = append(links, api.SessionLink{
 			ToSessionID: l.ToSessionID,
 			Kind:        l.Kind,
 			Rationale:   l.Rationale,
@@ -342,7 +342,10 @@ func persistSessionLinks(
 	// Always call SaveSessionLinks (even with empty links) so a
 	// re-summarize that emits nothing clears stale rows from a
 	// previous run.
-	return store.SaveSessionLinks(ctx, s.DB(), from, links)
+	return c.SaveSessionLinks(ctx, api.SaveSessionLinksRequest{
+		FromSessionID: from,
+		Links:         links,
+	})
 }
 
 // saveSessionLinksFromBody re-projects session_links from a stored
@@ -351,7 +354,7 @@ func persistSessionLinks(
 // the LLM. Tolerates malformed bodies (logs and returns nil).
 func saveSessionLinksFromBody(
 	ctx context.Context,
-	s *store.Store,
+	c *apiclient.Client,
 	from, body string,
 	allowed map[string]struct{},
 ) error {
@@ -361,7 +364,7 @@ func saveSessionLinksFromBody(
 			"from_session_id", from, "err", err)
 		return nil
 	}
-	return persistSessionLinks(ctx, s, from, result.SessionLinks, allowed)
+	return persistSessionLinks(ctx, c, from, result.SessionLinks, allowed)
 }
 
 // marshalLLMBody is the canonical serializer for a tool result we're
