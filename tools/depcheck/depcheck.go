@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -70,6 +72,26 @@ var rules = []rule{
 	},
 }
 
+// callRule expresses a code-pattern invariant: in non-test files
+// under Dir, the regex Forbidden must not appear. Used to enforce
+// "all reads/writes go through apiclient" without forbidding the
+// package from importing internal/store entirely (cli still
+// legitimately imports type/enum constants from store).
+type callRule struct {
+	Dir       string         // directory relative to repo root
+	Forbidden *regexp.Regexp // pattern that signals a violation
+	Reason    string
+}
+
+var callRules = []callRule{
+	{
+		Dir: "internal/cli",
+		Forbidden: regexp.MustCompile(
+			`\bstore\.(Load|Save|Insert|Update|Delete|Has|Last|Query|Vacuum|Segment)\w*\(`),
+		Reason: "internal/cli must read/write through apiclient, not store directly (test files exempt)",
+	},
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -92,6 +114,21 @@ func run() error {
 			}
 		}
 	}
+	root, err := moduleRoot()
+	if err != nil {
+		return fmt.Errorf("locate module root: %w", err)
+	}
+	for _, r := range callRules {
+		hits, err := scanForbiddenCalls(filepath.Join(root, r.Dir), r.Forbidden)
+		if err != nil {
+			return fmt.Errorf("scan %s: %w", r.Dir, err)
+		}
+		for _, h := range hits {
+			violations = append(violations,
+				fmt.Sprintf("✗ %s: forbidden call %q\n  reason: %s",
+					h.location, h.match, r.Reason))
+		}
+	}
 	if len(violations) > 0 {
 		sort.Strings(violations)
 		return fmt.Errorf("dependency-direction violations:\n%s",
@@ -99,6 +136,74 @@ func run() error {
 	}
 	fmt.Println("depcheck: all dependency-direction invariants hold")
 	return nil
+}
+
+type callHit struct {
+	location string // file:line
+	match    string
+}
+
+// moduleRoot returns the directory containing go.mod, so callRules
+// can be defined relative to the module root and resolved no matter
+// where depcheck runs from (`go run ./tools/depcheck` from root vs
+// `go test ./tools/depcheck` inside the package dir).
+func moduleRoot() (string, error) {
+	cmd := exec.Command("go", "env", "GOMOD")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("go env GOMOD: %w (stderr=%q)", err, stderr.String())
+	}
+	gomod := strings.TrimSpace(stdout.String())
+	if gomod == "" || gomod == os.DevNull {
+		return "", fmt.Errorf("not in a module (go env GOMOD = %q)", gomod)
+	}
+	return filepath.Dir(gomod), nil
+}
+
+// scanForbiddenCalls walks dir's non-test .go files (top level only —
+// the architecture rule is per-package, not recursive) and returns
+// every line that matches the forbidden pattern. Test files are
+// exempt because they exercise the store directly to set up
+// fixtures and verify state.
+func scanForbiddenCalls(dir string, pat *regexp.Regexp) ([]callHit, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read dir %s: %w", dir, err)
+	}
+	var hits []callHit
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", path, err)
+		}
+		var i int
+		for line := range strings.SplitSeq(string(data), "\n") {
+			i++
+			// Skip comments — references in doc comments aren't
+			// real call sites.
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") {
+				continue
+			}
+			if m := pat.FindString(line); m != "" {
+				hits = append(hits, callHit{
+					location: fmt.Sprintf("%s:%d", path, i),
+					match:    m,
+				})
+			}
+		}
+	}
+	return hits, nil
 }
 
 // deps returns the set of imports of `pkgPath` as resolved by
@@ -119,7 +224,7 @@ func deps(pkgPath string, direct bool) (map[string]struct{}, error) {
 		return nil, fmt.Errorf("go list %s: %w (stderr=%q)", pkgPath, err, stderr.String())
 	}
 	out := map[string]struct{}{}
-	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(stdout.String()), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || line == pkgPath {
 			continue

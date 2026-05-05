@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -40,5 +43,46 @@ func TestRulesProvideUsefulErrors(t *testing.T) {
 		if strings.TrimSpace(r.Reason) == "" {
 			t.Errorf("rule %s -> %v has empty Reason", r.From, r.Forbidden)
 		}
+	}
+	for _, r := range callRules {
+		if strings.TrimSpace(r.Reason) == "" {
+			t.Errorf("call rule %s -> %v has empty Reason", r.Dir, r.Forbidden)
+		}
+	}
+}
+
+// TestScanForbiddenCalls_DetectsViolation seeds a temp dir with one
+// .go file containing a forbidden call and one _test.go file with
+// the same call (which must be skipped). Acts as a positive control
+// for the call-pattern engine: if a regression silently no-ops the
+// scan, this trips before reaching CI.
+func TestScanForbiddenCalls_DetectsViolation(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "bad.go"),
+		[]byte("package x\n\nfunc f() { _ = store.LoadLLMOutputs(nil) }\n"), 0o600); err != nil {
+		t.Fatalf("write bad.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bad_test.go"),
+		[]byte("package x\n\nfunc g() { _ = store.LoadLLMOutputs(nil) }\n"), 0o600); err != nil {
+		t.Fatalf("write bad_test.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "doc.go"),
+		[]byte("package x\n\n// store.LoadLLMOutputs lives in the comment, must be skipped\n"), 0o600); err != nil {
+		t.Fatalf("write doc.go: %v", err)
+	}
+	pat := regexp.MustCompile(`\bstore\.(Load|Save)\w*\(`)
+	hits, err := scanForbiddenCalls(dir, pat)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("expected exactly 1 hit (bad.go), got %d: %+v", len(hits), hits)
+	}
+	if !strings.HasSuffix(hits[0].location, "bad.go:3") {
+		t.Errorf("expected hit at bad.go:3, got %q", hits[0].location)
+	}
+	if hits[0].match != "store.LoadLLMOutputs(" {
+		t.Errorf("expected match %q, got %q", "store.LoadLLMOutputs(", hits[0].match)
 	}
 }
