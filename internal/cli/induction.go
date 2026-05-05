@@ -16,6 +16,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
@@ -673,8 +674,12 @@ func RunInductionForSession(
 	// recordSkillCandidatesFromProposal.
 	if result.Skill != nil && result.Skill.Name != "" {
 		meta := skillMetadataFromProposed(*result.Skill)
-		if rerr := store.RecordSkillCandidateWithMetadata(ctx, s.DB(),
-			id, result.Skill.Name, row.CreatedAtMs, meta); rerr != nil {
+		if _, rerr := c.RecordSkillCandidate(ctx, api.RecordSkillCandidateRequest{
+			LLMOutputID:  id,
+			SkillName:    result.Skill.Name,
+			ProposedAtMs: row.CreatedAtMs,
+			Metadata:     meta,
+		}); rerr != nil {
 			slog.Warn("induction: failed to record skill candidate",
 				"llm_output_id", id, "skill", result.Skill.Name, "err", rerr)
 		}

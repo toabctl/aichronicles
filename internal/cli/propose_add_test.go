@@ -113,7 +113,7 @@ func TestProposeAdd_SkillWritesScaffoldAndScripts(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := addSkillCandidate(t.Context(), s, result, output.ID, "build-test", dir, false, true, nilLLMClient, &out); err != nil {
+	if err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result, output.ID, output.CreatedAtMs, "build-test", dir, false, true, nilLLMClient, &out); err != nil {
 		t.Fatalf("addSkillCandidate: %v", err)
 	}
 
@@ -190,7 +190,7 @@ func TestProposeAdd_RecordsLifecycle(t *testing.T) {
 
 	dir := t.TempDir()
 	var out bytes.Buffer
-	if err := addSkillCandidate(t.Context(), s, result, id, "build-test", dir, false, true, nilLLMClient, &out); err != nil {
+	if err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result, id, 0, "build-test", dir, false, true, nilLLMClient, &out); err != nil {
 		t.Fatalf("addSkillCandidate: %v", err)
 	}
 
@@ -234,7 +234,7 @@ func TestProposeAdd_RecordsLifecycle(t *testing.T) {
 	result2, _, _ := loadLatestProposal(context.Background(), s, id2)
 	dir2 := t.TempDir()
 	out.Reset()
-	if err := addSkillCandidate(t.Context(), s, result2, id2, "another-skill", dir2, false, true, nilLLMClient, &out); err != nil {
+	if err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result2, id2, 0, "another-skill", dir2, false, true, nilLLMClient, &out); err != nil {
 		t.Fatalf("path B addSkillCandidate: %v", err)
 	}
 	rows2, err := store.LoadSkillCandidatesByName(t.Context(), s.DB(), "another-skill", 0)
@@ -262,7 +262,7 @@ func TestProposeAdd_SkillWithoutScripts(t *testing.T) {
 
 	dir := t.TempDir()
 	var out bytes.Buffer
-	if err := addSkillCandidate(t.Context(), s, result, id, "another-skill", dir, false, true, nilLLMClient, &out); err != nil {
+	if err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result, id, 0, "another-skill", dir, false, true, nilLLMClient, &out); err != nil {
 		t.Fatalf("addSkillCandidate: %v", err)
 	}
 	body, _ := os.ReadFile(filepath.Join(dir, "another-skill", "SKILL.md"))
@@ -355,7 +355,7 @@ func TestProposeAdd_EmitsKindInFrontmatter(t *testing.T) {
 			}
 			dir := t.TempDir()
 			var out bytes.Buffer
-			if err := addSkillCandidate(t.Context(), s, result, output.ID,
+			if err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result, output.ID, output.CreatedAtMs,
 				proposal.Skills[0].Name, dir, false, true, nilLLMClient, &out); err != nil {
 				t.Fatalf("addSkillCandidate: %v", err)
 			}
@@ -484,7 +484,7 @@ func TestProposeAdd_StampsProvenanceHash(t *testing.T) {
 
 	dir := t.TempDir()
 	var out bytes.Buffer
-	if err := addSkillCandidate(t.Context(), s, result, id, "build-test",
+	if err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result, id, 0, "build-test",
 		dir, false, true, nilLLMClient, &out); err != nil {
 		t.Fatalf("add: %v", err)
 	}
@@ -584,7 +584,7 @@ func TestProposeAdd_RefusesOversizedSkill(t *testing.T) {
 
 	dir := t.TempDir()
 	var out bytes.Buffer
-	err := addSkillCandidate(t.Context(), s, result, id, "oversized-skill",
+	err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result, id, 0, "oversized-skill",
 		dir, false, true, nilLLMClient, &out)
 	if err == nil {
 		t.Fatalf("expected refusal for oversized skill")
@@ -602,7 +602,7 @@ func TestProposeAdd_RefusesOversizedSkill(t *testing.T) {
 
 	// --force bypasses the budget — the rare legitimate case.
 	out.Reset()
-	if err := addSkillCandidate(t.Context(), s, result, id, "oversized-skill",
+	if err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result, id, 0, "oversized-skill",
 		dir, true, true, nilLLMClient, &out); err != nil {
 		t.Errorf("--force should bypass the budget: %v", err)
 	}
@@ -654,18 +654,18 @@ func TestProposeAdd_RefusesOverwriteWithoutForce(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
 
-	if err := addSkillCandidate(t.Context(), s, result, id, "build-test", dir, false, true, nilLLMClient, &out); err != nil {
+	if err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result, id, 0, "build-test", dir, false, true, nilLLMClient, &out); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
 
 	out.Reset()
-	err := addSkillCandidate(t.Context(), s, result, id, "build-test", dir, false, true, nilLLMClient, &out)
+	err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result, id, 0, "build-test", dir, false, true, nilLLMClient, &out)
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("second apply without --force should error, got %v", err)
 	}
 
 	out.Reset()
-	if err := addSkillCandidate(t.Context(), s, result, id, "build-test", dir, true, true, nilLLMClient, &out); err != nil {
+	if err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result, id, 0, "build-test", dir, true, true, nilLLMClient, &out); err != nil {
 		t.Errorf("apply with --force should succeed, got %v", err)
 	}
 }
@@ -690,7 +690,7 @@ func TestProposeAdd_RefusesWhenScriptExists(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := addSkillCandidate(t.Context(), s, result, id, "build-test", dir, false, true, nilLLMClient, &out)
+	err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result, id, 0, "build-test", dir, false, true, nilLLMClient, &out)
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("apply should refuse when script exists, got %v", err)
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
@@ -271,7 +272,13 @@ func RunPropose(
 	if err != nil {
 		return id, err
 	}
-	recordSkillCandidatesFromProposal(ctx, s, id, result)
+	// The LLM output was just persisted via runCachedLLM (cache
+	// hit OR cache miss); time.Now is a tight approximation of the
+	// row's created_at_ms — close enough for the proposed_at_ms
+	// anchor on each candidate. Fetching the exact row back through
+	// the api would be one extra round-trip per propose, for sub-
+	// second drift on a timestamp the lifecycle treats as advisory.
+	recordSkillCandidatesFromProposal(ctx, c, id, time.Now().UnixMilli(), result)
 	return id, nil
 }
 
@@ -403,23 +410,29 @@ func loadFailureShapesForPrompt(ctx context.Context, s *store.Store, sinceMs int
 // PK is (llm_output_id, skill_name) so the upsert in
 // RecordSkillCandidateWithMetadata keeps writes idempotent
 // regardless.
-func recordSkillCandidatesFromProposal(ctx context.Context, s *store.Store, llmOutputID int64, r *prompts.ProposalResult) {
+func recordSkillCandidatesFromProposal(ctx context.Context, c *apiclient.Client, llmOutputID int64, createdAtMs int64, r *prompts.ProposalResult) {
 	if r == nil || llmOutputID <= 0 {
 		return
 	}
-	row, err := store.LoadLLMOutputByID(ctx, s.DB(), llmOutputID)
-	if err != nil || row == nil {
-		slog.Warn("propose: skipping skill_candidates record",
-			"llm_output_id", llmOutputID, "err", err)
-		return
+	if createdAtMs <= 0 {
+		// Without a proposed_at_ms anchor the api will reject the
+		// record. Fall back to "now" rather than dropping the
+		// candidate entirely — the lifecycle row stays usable, the
+		// timestamp is just slightly less precise than the LLM
+		// row's created_at.
+		createdAtMs = time.Now().UnixMilli()
 	}
 	for _, sk := range r.Skills {
 		if sk.Name == "" {
 			continue
 		}
-		meta := skillMetadataFromProposed(sk)
-		if rerr := store.RecordSkillCandidateWithMetadata(ctx, s.DB(),
-			llmOutputID, sk.Name, row.CreatedAtMs, meta); rerr != nil {
+		req := api.RecordSkillCandidateRequest{
+			LLMOutputID:  llmOutputID,
+			SkillName:    sk.Name,
+			ProposedAtMs: createdAtMs,
+			Metadata:     skillMetadataFromProposed(sk),
+		}
+		if _, rerr := c.RecordSkillCandidate(ctx, req); rerr != nil {
 			slog.Warn("propose: failed to record skill candidate",
 				"llm_output_id", llmOutputID, "skill", sk.Name, "err", rerr)
 		}
@@ -428,25 +441,25 @@ func recordSkillCandidatesFromProposal(ctx context.Context, s *store.Store, llmO
 
 // skillMetadataFromProposed lifts the AutoSkill 7-tuple metadata
 // (triggers τ, tags γ, examples ξ, version v) plus the contrastive
-// kind label from a prompts.ProposedSkill into the store's
-// SkillCandidateMetadata shape. Centralised so the propose and
+// kind label from a prompts.ProposedSkill into the wire-shape
+// api.SkillCandidateMetadata. Centralised so the propose and
 // induction call paths can't drift on the field mapping.
-func skillMetadataFromProposed(sk prompts.ProposedSkill) store.SkillCandidateMetadata {
-	examples := make([]store.SkillExample, 0, len(sk.Examples))
+func skillMetadataFromProposed(sk prompts.ProposedSkill) api.SkillCandidateMetadata {
+	examples := make([]api.SkillCandidateExample, 0, len(sk.Examples))
 	for _, e := range sk.Examples {
-		examples = append(examples, store.SkillExample{
+		examples = append(examples, api.SkillCandidateExample{
 			Input:  e.Input,
 			Output: e.Output,
 		})
 	}
-	kind := store.SkillKind(sk.Kind)
-	if kind != store.SkillKindPattern && kind != store.SkillKindPitfall {
+	kind := sk.Kind
+	if kind != string(store.SkillKindPattern) && kind != string(store.SkillKindPitfall) {
 		// LLM omitted the field or emitted something out-of-enum;
-		// the store defaults to "pattern" anyway, so the explicit
+		// the api defaults to "pattern" anyway, so the explicit
 		// fallback here keeps the mapping reversible.
 		kind = ""
 	}
-	return store.SkillCandidateMetadata{
+	return api.SkillCandidateMetadata{
 		Triggers: append([]string(nil), sk.Triggers...),
 		Tags:     append([]string(nil), sk.Tags...),
 		Examples: examples,

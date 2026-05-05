@@ -59,7 +59,7 @@ func TestProposeAdd_VerifyApproves_WritesSkill(t *testing.T) {
 
 	fake := &fakeLLM{toolInput: approvedVerification(t)}
 	var out bytes.Buffer
-	if err := addSkillCandidate(t.Context(), s, result, output.ID,
+	if err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result, output.ID, output.CreatedAtMs,
 		"build-test", dir, false, false, fakeLLMClientFn(fake), &out); err != nil {
 		t.Fatalf("addSkillCandidate: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestProposeAdd_VerifyRefuses_AbortsAndPropagatesConcern(t *testing.T) {
 		"near-duplicate of installed skill 'foo-test'",
 		"merge with foo-test instead")}
 	var out bytes.Buffer
-	err = addSkillCandidate(t.Context(), s, result, output.ID,
+	err = addSkillCandidate(t.Context(), s, apiForStore(t, s), result, output.ID, output.CreatedAtMs,
 		"build-test", dir, false, false, fakeLLMClientFn(fake), &out)
 	if err == nil {
 		t.Fatal("expected error on critic refusal")
@@ -127,7 +127,7 @@ func TestProposeAdd_VerifyCachesDecision(t *testing.T) {
 
 	// First apply triggers a fresh verification.
 	var out1 bytes.Buffer
-	if err := addSkillCandidate(t.Context(), s, result, output.ID,
+	if err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result, output.ID, output.CreatedAtMs,
 		"build-test", dir1, false, false, clientFn, &out1); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestProposeAdd_VerifyCachesDecision(t *testing.T) {
 	// Second apply on the SAME proposal+skill must hit the cache —
 	// no second LLM call, output marked "cached".
 	var out2 bytes.Buffer
-	if err := addSkillCandidate(t.Context(), s, result, output.ID,
+	if err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result, output.ID, output.CreatedAtMs,
 		"build-test", dir2, false, false, clientFn, &out2); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestProposeAdd_NoVerifyFlag_BypassesCriticEntirely(t *testing.T) {
 	// noVerify=true is set.
 	refusing := &fakeLLM{toolInput: refusedVerification(t, "high", "no", "drop")}
 	var out bytes.Buffer
-	if err := addSkillCandidate(t.Context(), s, result, output.ID,
+	if err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result, output.ID, output.CreatedAtMs,
 		"build-test", dir, false, true /* noVerify */, fakeLLMClientFn(refusing), &out); err != nil {
 		t.Fatalf("--no-verify path errored: %v", err)
 	}

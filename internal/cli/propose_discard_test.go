@@ -24,7 +24,7 @@ func TestProposeDiscard_RecordsLifecycle(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := discardProposedSkill(t.Context(), s, result, id, "build-test", &out); err != nil {
+	if err := discardProposedSkill(t.Context(), apiForStore(t, s), result, id, 1_700_000_000_000, "build-test", &out); err != nil {
 		t.Fatalf("discardProposedSkill: %v", err)
 	}
 
@@ -63,7 +63,7 @@ func TestProposeDiscard_AutoInsertsMissingCandidate(t *testing.T) {
 
 	// No RecordSkillCandidate call beforehand.
 	var out bytes.Buffer
-	if err := discardProposedSkill(t.Context(), s, result, id, "build-test", &out); err != nil {
+	if err := discardProposedSkill(t.Context(), apiForStore(t, s), result, id, 1_700_000_000_000, "build-test", &out); err != nil {
 		t.Fatalf("discardProposedSkill: %v", err)
 	}
 
@@ -89,7 +89,7 @@ func TestProposeDiscard_RejectsUnknownSkill(t *testing.T) {
 	result, _, _ := loadLatestProposal(t.Context(), s, id)
 
 	var out bytes.Buffer
-	if err := discardProposedSkill(t.Context(), s, result, id, "no-such-skill", &out); err == nil {
+	if err := discardProposedSkill(t.Context(), apiForStore(t, s), result, id, 0, "no-such-skill", &out); err == nil {
 		t.Errorf("expected error for unknown skill")
 	}
 }

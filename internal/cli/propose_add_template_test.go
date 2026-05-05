@@ -75,7 +75,7 @@ func TestProposeAdd_StepsTemplateMaterialisesAsBashScript(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := addSkillCandidate(t.Context(), s, result, output.ID,
+	if err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result, output.ID, output.CreatedAtMs,
 		"wt-launch", dir, false, true, nilLLMClient, &out); err != nil {
 		t.Fatalf("addSkillCandidate: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestProposeAdd_StepsAndBodyAreMutuallyExclusive_StepsWin(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := addSkillCandidate(t.Context(), s, result, output.ID,
+	if err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result, output.ID, output.CreatedAtMs,
 		"wt-launch", dir, false, true, nilLLMClient, &out); err != nil {
 		t.Fatalf("addSkillCandidate: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestProposeAdd_NoStepsNoBodyEmitsTODO(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := addSkillCandidate(t.Context(), s, result, output.ID,
+	if err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result, output.ID, output.CreatedAtMs,
 		"wt-launch", dir, false, true, nilLLMClient, &out); err != nil {
 		t.Fatalf("addSkillCandidate: %v", err)
 	}

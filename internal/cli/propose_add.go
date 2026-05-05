@@ -18,8 +18,10 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
@@ -46,6 +48,7 @@ import (
 func newProposeAddCmd() *cobra.Command {
 	var (
 		dbPath    string
+		sockFlag  string
 		skillName string
 		outputID  int64
 		skillsDir string
@@ -84,6 +87,10 @@ func newProposeAddCmd() *cobra.Command {
 				return err
 			}
 			defer func() { _ = s.Close() }()
+			c, err := openAPIClient(sockFlag)
+			if err != nil {
+				return err
+			}
 
 			if skillName == "" {
 				return errors.New("--skill <name> is required (run `aichronicles propose list` to see options)")
@@ -109,13 +116,15 @@ func newProposeAddCmd() *cobra.Command {
 				return llm.FromConfig(ctx, llmCfg)
 			}
 
-			return addSkillCandidate(ctx, s, result, output.ID, skillName,
+			return addSkillCandidate(ctx, s, c, result, output.ID, output.CreatedAtMs, skillName,
 				resolveSkillsDir(skillsDir), force, noVerify,
 				newClient, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&dbPath, "db", "",
 		"SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	cmd.Flags().StringVar(&skillName, "skill", "",
 		"name of a skill from the proposal to materialise")
 	cmd.Flags().Int64Var(&outputID, "output-id", 0,
@@ -247,8 +256,10 @@ func renderProposalIndex(out io.Writer, r *prompts.ProposalResult, output *store
 func addSkillCandidate(
 	ctx context.Context,
 	st *store.Store,
+	c *apiclient.Client,
 	r *prompts.ProposalResult,
 	outputID int64,
+	outputCreatedAtMs int64,
 	name, root string,
 	force, noVerify bool,
 	newClient func() (llm.Client, error),
@@ -342,12 +353,26 @@ func addSkillCandidate(
 	// are logged and the apply is reported as successful — the
 	// SKILL.md is on disk regardless.
 	now := time.Now().UnixMilli()
-	if merr := store.MarkSkillCandidateAddedWithProvenance(ctx, st.DB(),
-		outputID, sk.Name, skillMd, now, bodyHashHex); merr != nil {
-		if errors.Is(merr, store.ErrSkillCandidateNotFound) {
-			if rerr := store.RecordSkillCandidate(ctx, st.DB(), outputID, sk.Name, now); rerr == nil {
-				_ = store.MarkSkillCandidateAddedWithProvenance(ctx, st.DB(),
-					outputID, sk.Name, skillMd, now, bodyHashHex)
+	dec := api.SkillCandidateDecisionRequest{
+		LLMOutputID:  outputID,
+		SkillName:    sk.Name,
+		Decision:     "add",
+		DecisionAtMs: now,
+		AddPath:      skillMd,
+		BodySHA256:   bodyHashHex,
+	}
+	if merr := c.SkillCandidateDecision(ctx, dec); merr != nil {
+		if errors.Is(merr, apiclient.ErrNotFound) {
+			anchor := outputCreatedAtMs
+			if anchor <= 0 {
+				anchor = now
+			}
+			if _, rerr := c.RecordSkillCandidate(ctx, api.RecordSkillCandidateRequest{
+				LLMOutputID:  outputID,
+				SkillName:    sk.Name,
+				ProposedAtMs: anchor,
+			}); rerr == nil {
+				_ = c.SkillCandidateDecision(ctx, dec)
 			}
 		} else {
 			_, _ = fmt.Fprintf(out, "warning: failed to record skill lifecycle: %v\n", merr)

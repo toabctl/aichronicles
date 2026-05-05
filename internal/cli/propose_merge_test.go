@@ -286,7 +286,7 @@ func TestMergeProposedSkill_RefusesSelfMerge(t *testing.T) {
 
 	var out bytes.Buffer
 	err = mergeProposedSkill(
-		t.Context(), s, result, id, "build-test", root,
+		t.Context(), s, apiForStore(t, s), result, id, 0, "build-test", root,
 		true, // noVerify — the refusal must fire before any LLM work
 		nilLLMClient, &out,
 	)

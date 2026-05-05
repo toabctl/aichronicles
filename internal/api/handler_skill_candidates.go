@@ -1,0 +1,199 @@
+package api
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/url"
+	"strconv"
+
+	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
+)
+
+// handleSkillCandidatesRecord serves POST /v1/skill-candidates.
+// Records a new candidate or upserts metadata on an existing
+// (llm_output_id, skill_name) row — same idempotency contract as
+// store.RecordSkillCandidateWithMetadata.
+func (s *Server) handleSkillCandidatesRecord(w http.ResponseWriter, r *http.Request) {
+	var req api.RecordSkillCandidateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeProblem(w, http.StatusBadRequest, "Invalid body", err.Error())
+		return
+	}
+	if req.LLMOutputID <= 0 {
+		writeProblem(w, http.StatusBadRequest, "llm_output_id is required", "")
+		return
+	}
+	if req.SkillName == "" {
+		writeProblem(w, http.StatusBadRequest, "skill_name is required", "")
+		return
+	}
+	if req.ProposedAtMs <= 0 {
+		writeProblem(w, http.StatusBadRequest, "proposed_at_ms is required", "")
+		return
+	}
+
+	examples := make([]store.SkillExample, 0, len(req.Metadata.Examples))
+	for _, ex := range req.Metadata.Examples {
+		examples = append(examples, store.SkillExample{Input: ex.Input, Output: ex.Output})
+	}
+	meta := store.SkillCandidateMetadata{
+		Triggers: req.Metadata.Triggers,
+		Tags:     req.Metadata.Tags,
+		Examples: examples,
+		Version:  req.Metadata.Version,
+		Kind:     store.SkillKind(req.Metadata.Kind),
+	}
+	if err := store.RecordSkillCandidateWithMetadata(r.Context(), s.store.DB(),
+		req.LLMOutputID, req.SkillName, req.ProposedAtMs, meta); err != nil {
+		s.slog.Error("RecordSkillCandidate", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, api.RecordSkillCandidateResponse{Inserted: true})
+}
+
+// handleSkillCandidatesDecision serves POST
+// /v1/skill-candidates/decision. Routes to the underlying
+// MarkSkillCandidate{Added,Merged,Discarded} helper based on
+// req.Decision. Maps store.ErrSkillCandidateNotFound to 404 so
+// the CLI can offer a "did you forget to record?" hint.
+func (s *Server) handleSkillCandidatesDecision(w http.ResponseWriter, r *http.Request) {
+	var req api.SkillCandidateDecisionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeProblem(w, http.StatusBadRequest, "Invalid body", err.Error())
+		return
+	}
+	if req.LLMOutputID <= 0 {
+		writeProblem(w, http.StatusBadRequest, "llm_output_id is required", "")
+		return
+	}
+	if req.SkillName == "" {
+		writeProblem(w, http.StatusBadRequest, "skill_name is required", "")
+		return
+	}
+	if req.DecisionAtMs <= 0 {
+		writeProblem(w, http.StatusBadRequest, "decision_at_ms is required", "")
+		return
+	}
+
+	var err error
+	switch req.Decision {
+	case "add":
+		if req.AddPath == "" {
+			writeProblem(w, http.StatusBadRequest, "add_path is required for decision=add", "")
+			return
+		}
+		err = store.MarkSkillCandidateAddedWithProvenance(r.Context(), s.store.DB(),
+			req.LLMOutputID, req.SkillName, req.AddPath, req.DecisionAtMs, req.BodySHA256)
+	case "merge":
+		if req.AddPath == "" {
+			writeProblem(w, http.StatusBadRequest, "add_path is required for decision=merge", "")
+			return
+		}
+		err = store.MarkSkillCandidateMerged(r.Context(), s.store.DB(),
+			req.LLMOutputID, req.SkillName, req.MergedIntoID, req.AddPath, req.DecisionAtMs)
+	case "discard":
+		err = store.MarkSkillCandidateDiscarded(r.Context(), s.store.DB(),
+			req.LLMOutputID, req.SkillName, req.DecisionAtMs)
+	default:
+		writeProblem(w, http.StatusBadRequest, "Invalid decision",
+			"decision must be add, merge, or discard")
+		return
+	}
+	if err != nil {
+		if errors.Is(err, store.ErrSkillCandidateNotFound) {
+			writeProblem(w, http.StatusNotFound, "Skill candidate not found",
+				"no row matches (llm_output_id, skill_name) — record it first")
+			return
+		}
+		s.slog.Error("MarkSkillCandidate", "decision", req.Decision, "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, api.SkillCandidateDecisionResponse{})
+}
+
+// handleSkillCandidatesList serves GET /v1/skill-candidates with
+// the standard ?name=&limit= filters. name is the lookup key
+// callers most commonly need (the CLI's "find candidate to mark")
+// flow); empty name returns 400 to keep the endpoint focused.
+func (s *Server) handleSkillCandidatesList(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	name := q.Get("name")
+	if name == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing name", "name query param is required")
+		return
+	}
+	var limit int
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+			return
+		}
+		limit = n
+	}
+
+	rows, err := store.LoadSkillCandidatesByName(r.Context(), s.store.DB(), name, limit)
+	if err != nil {
+		s.slog.Error("LoadSkillCandidatesByName", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+
+	out := api.SkillCandidatesResponse{Candidates: make([]api.SkillCandidate, 0, len(rows))}
+	for _, r := range rows {
+		out.Candidates = append(out.Candidates, skillCandidateRowToWire(r))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// skillCandidateRowToWire projects a store.SkillCandidate onto its
+// wire-clean api.SkillCandidate cousin. Centralised here so every
+// handler that emits a candidate row uses the same nullable
+// projection.
+func skillCandidateRowToWire(r store.SkillCandidate) api.SkillCandidate {
+	out := api.SkillCandidate{
+		ID:           r.ID,
+		LLMOutputID:  r.LLMOutputID,
+		SkillName:    r.SkillName,
+		ProposedAtMs: r.ProposedAtMs,
+		Decision:     string(r.Decision),
+		Triggers:     r.Triggers,
+		Tags:         r.Tags,
+		Version:      r.Version,
+		Kind:         string(r.Kind),
+	}
+	if r.DecisionAtMs.Valid {
+		v := r.DecisionAtMs.Int64
+		out.DecisionAtMs = &v
+	}
+	if r.AddPath.Valid {
+		v := r.AddPath.String
+		out.AddPath = &v
+	}
+	if r.MergedIntoID.Valid {
+		v := r.MergedIntoID.Int64
+		out.MergedIntoID = &v
+	}
+	if r.AddBodySHA256.Valid {
+		v := r.AddBodySHA256.String
+		out.AddBodySHA256 = &v
+	}
+	if len(r.Examples) > 0 {
+		out.Examples = make([]api.SkillCandidateExample, 0, len(r.Examples))
+		for _, ex := range r.Examples {
+			out.Examples = append(out.Examples, api.SkillCandidateExample{
+				Input: ex.Input, Output: ex.Output,
+			})
+		}
+	}
+	return out
+}
+
+// _ keeps url imported until a future request adds query encoding;
+// useful as a build-time signal that wire-types changes haven't
+// collapsed the import set.
+var _ = url.Values{}
