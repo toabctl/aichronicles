@@ -303,8 +303,10 @@ func TestRunSummarize_UnknownSessionIsError(t *testing.T) {
 		SummarizeOptions{SessionID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
 		&bytes.Buffer{},
 	)
-	if err == nil || !strings.Contains(err.Error(), "no such session") {
-		t.Fatalf("expected 'no such session' error, got %v", err)
+	// The api maps store.ErrNoSuchSession to a 404 with "Session
+	// not found"; the apiclient surfaces it as a wrapped HTTPError.
+	if err == nil || !strings.Contains(err.Error(), "Session not found") {
+		t.Fatalf("expected session-not-found error, got %v", err)
 	}
 }
 

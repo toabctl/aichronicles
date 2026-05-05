@@ -16,7 +16,7 @@ func TestProposeDiscard_RecordsLifecycle(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, sampleProposal())
-	result, _, _ := loadLatestProposal(t.Context(), s, id)
+	result, _, _ := loadLatestProposal(t.Context(), apiForStore(t, s), id)
 
 	// Pre-record the candidate row (canonical post-extraction state).
 	if err := store.RecordSkillCandidate(t.Context(), s.DB(), id, "build-test", 1_700_000_000_000); err != nil {
@@ -59,7 +59,7 @@ func TestProposeDiscard_AutoInsertsMissingCandidate(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, sampleProposal())
-	result, _, _ := loadLatestProposal(t.Context(), s, id)
+	result, _, _ := loadLatestProposal(t.Context(), apiForStore(t, s), id)
 
 	// No RecordSkillCandidate call beforehand.
 	var out bytes.Buffer
@@ -86,7 +86,7 @@ func TestProposeDiscard_RejectsUnknownSkill(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, sampleProposal())
-	result, _, _ := loadLatestProposal(t.Context(), s, id)
+	result, _, _ := loadLatestProposal(t.Context(), apiForStore(t, s), id)
 
 	var out bytes.Buffer
 	if err := discardProposedSkill(t.Context(), apiForStore(t, s), result, id, 0, "no-such-skill", &out); err == nil {

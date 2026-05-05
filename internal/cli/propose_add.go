@@ -96,7 +96,7 @@ func newProposeAddCmd() *cobra.Command {
 				return errors.New("--skill <name> is required (run `aichronicles propose list` to see options)")
 			}
 
-			result, output, err := loadLatestProposal(cmd.Context(), s, outputID)
+			result, output, err := loadLatestProposal(cmd.Context(), c, outputID)
 			if err != nil {
 				return err
 			}
@@ -143,20 +143,18 @@ func newProposeAddCmd() *cobra.Command {
 // never touches the filesystem.
 func newProposeListCmd() *cobra.Command {
 	var (
-		dbPath   string
+		sockFlag string
 		outputID int64
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List skills in the latest cached propose output",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, err := openStore(dbPath)
+			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
-
-			result, output, err := loadLatestProposal(cmd.Context(), s, outputID)
+			result, output, err := loadLatestProposal(cmd.Context(), c, outputID)
 			if err != nil {
 				return err
 			}
@@ -164,8 +162,8 @@ func newProposeListCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", "",
-		"SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	cmd.Flags().Int64Var(&outputID, "output-id", 0,
 		"specific llm_outputs row id (default: latest propose row)")
 	return cmd
@@ -176,22 +174,19 @@ func newProposeListCmd() *cobra.Command {
 // loaded directly; otherwise we return the most recent
 // kind=propose row. Both paths produce a clear error when no
 // proposal has been generated yet.
-func loadLatestProposal(ctx context.Context, s *store.Store, wantID int64) (*prompts.ProposalResult, *store.LLMOutput, error) {
-	var output *store.LLMOutput
+func loadLatestProposal(ctx context.Context, c *apiclient.Client, wantID int64) (*prompts.ProposalResult, *api.LLMOutput, error) {
+	var output *api.LLMOutput
 	if wantID > 0 {
-		out, err := store.LoadLLMOutputByID(ctx, s.DB(), wantID)
+		out, err := c.LLMOutputByID(ctx, wantID)
 		if err != nil {
 			return nil, nil, fmt.Errorf("load propose output id=%d: %w", wantID, err)
 		}
-		if out == nil || out.Kind != store.LLMKindPropose {
+		if out.Kind != string(store.LLMKindPropose) {
 			return nil, nil, fmt.Errorf("llm_outputs id=%d is not a propose row", wantID)
 		}
-		output = out
+		output = &out
 	} else {
-		rows, err := store.LoadLLMOutputs(ctx, s.DB(), store.LLMOutputFilter{
-			Kind:  store.LLMKindPropose,
-			Limit: 1,
-		})
+		rows, err := c.LLMOutputsList(ctx, string(store.LLMKindPropose), "", 1)
 		if err != nil {
 			return nil, nil, fmt.Errorf("load latest propose: %w", err)
 		}
@@ -218,7 +213,7 @@ func loadLatestProposal(ctx context.Context, s *store.Store, wantID int64) (*pro
 // the proposal — its position, its name, evidence count, effort,
 // and a one-line trigger preview. Output is plain text so a user
 // can pipe it through grep / awk.
-func renderProposalIndex(out io.Writer, r *prompts.ProposalResult, output *store.LLMOutput) {
+func renderProposalIndex(out io.Writer, r *prompts.ProposalResult, output *api.LLMOutput) {
 	_, _ = fmt.Fprintf(out, "propose output id=%d  generated=%s  model=%s\n\n",
 		output.ID,
 		time.UnixMilli(output.CreatedAtMs).UTC().Format("2006-01-02 15:04 UTC"),
@@ -290,12 +285,12 @@ func addSkillCandidate(
 	// from a different output_id silently re-adds the rejected
 	// idea, which is exactly the "rejection signal for future
 	// propose runs" promise the discard command makes.
-	if err := refuseDiscardedSkillName(ctx, st, sk.Name, force); err != nil {
+	if err := refuseDiscardedSkillName(ctx, c, sk.Name, force); err != nil {
 		return err
 	}
 
 	if !noVerify {
-		if err := verifyProposalOrAbort(ctx, st, sk, outputID, newClient, out); err != nil {
+		if err := verifyProposalOrAbort(ctx, st, c, sk, outputID, newClient, out); err != nil {
 			return err
 		}
 	}
@@ -858,23 +853,23 @@ func refuseDuplicateSkillName(targetSkillMd, candidateName string, force bool) e
 //
 // Returns nil for skill names that have never been discarded, or
 // for the discard → re-add flow under --force.
-func refuseDiscardedSkillName(ctx context.Context, st *store.Store, candidateName string, force bool) error {
+func refuseDiscardedSkillName(ctx context.Context, c *apiclient.Client, candidateName string, force bool) error {
 	if force {
 		return nil
 	}
-	rows, err := store.LoadSkillCandidatesByName(ctx, st.DB(), candidateName, 0)
+	resp, err := c.SkillCandidatesByName(ctx, candidateName, 0)
 	if err != nil {
-		// Soft-fail: a transient DB error here shouldn't block the
+		// Soft-fail: a transient api error here shouldn't block the
 		// add path entirely. The on-disk dedup check already ran;
 		// log and proceed.
 		slog.Warn("propose add: failed to check discard history", "skill", candidateName, "err", err)
 		return nil
 	}
-	for _, r := range rows {
-		if r.Decision == store.MaintenanceDiscard {
+	for _, r := range resp.Candidates {
+		if r.Decision == string(store.MaintenanceDiscard) {
 			when := "earlier"
-			if r.DecisionAtMs.Valid {
-				when = time.UnixMilli(r.DecisionAtMs.Int64).UTC().Format("2006-01-02 15:04 UTC")
+			if r.DecisionAtMs != nil {
+				when = time.UnixMilli(*r.DecisionAtMs).UTC().Format("2006-01-02 15:04 UTC")
 			}
 			return fmt.Errorf("skill %q was previously discarded (%s) — "+
 				"add it again only if you've changed your mind. "+

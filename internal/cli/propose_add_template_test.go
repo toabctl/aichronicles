@@ -66,7 +66,7 @@ func TestProposeAdd_StepsTemplateMaterialisesAsBashScript(t *testing.T) {
 	id := seedProposalOutput(t, s, proposalWithStepsTemplate())
 
 	dir := t.TempDir()
-	result, output, err := loadLatestProposal(t.Context(), s, 0)
+	result, output, err := loadLatestProposal(t.Context(), apiForStore(t, s), 0)
 	if err != nil {
 		t.Fatalf("loadLatestProposal: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestProposeAdd_StepsAndBodyAreMutuallyExclusive_StepsWin(t *testing.T) {
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, r)
 	dir := t.TempDir()
-	result, output, err := loadLatestProposal(t.Context(), s, 0)
+	result, output, err := loadLatestProposal(t.Context(), apiForStore(t, s), 0)
 	if err != nil {
 		t.Fatalf("loadLatestProposal: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestProposeAdd_NoStepsNoBodyEmitsTODO(t *testing.T) {
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, r)
 	dir := t.TempDir()
-	result, output, err := loadLatestProposal(t.Context(), s, 0)
+	result, output, err := loadLatestProposal(t.Context(), apiForStore(t, s), 0)
 	if err != nil {
 		t.Fatalf("loadLatestProposal: %v", err)
 	}

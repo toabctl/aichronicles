@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/pkg/events"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
@@ -122,27 +122,28 @@ func RunSummarize(
 	opts SummarizeOptions,
 	out io.Writer,
 ) (int64, error) {
-	sessionID, err := store.ResolveSessionIDPrefix(ctx, s.DB(), opts.SessionID)
+	sessionID, err := c.ResolveSession(ctx, opts.SessionID)
 	if err != nil {
 		return 0, fmt.Errorf("summarize: %w", err)
 	}
-	events, err := store.LoadEventsForSession(ctx, s.DB(), sessionID, 0)
+	evResp, err := c.SessionEvents(ctx, sessionID, 0, false)
 	if err != nil {
 		return 0, fmt.Errorf("summarize: load events: %w", err)
 	}
-	if len(events) == 0 {
+	if len(evResp.Events) == 0 {
 		return 0, fmt.Errorf("summarize: session %s has no events", sessionID)
 	}
+	storeEvents := wireEventsToStore(evResp.Events)
 
 	// Pre-extracted URLs for this session — the LLM annotates each
 	// with a `used_for` rather than extracting them itself. Empty
 	// slice is fine (tool input will carry links:[]).
-	urls, err := store.LoadExtractionsForSession(ctx, s.DB(), sessionID, "url")
+	urls, err := c.SessionExtractions(ctx, sessionID, "url")
 	if err != nil {
 		return 0, fmt.Errorf("summarize: load extractions (url): %w", err)
 	}
-	links := make([]string, len(urls))
-	for i, u := range urls {
+	links := make([]string, len(urls.Extractions))
+	for i, u := range urls.Extractions {
 		links[i] = u.Value
 	}
 
@@ -151,15 +152,15 @@ func RunSummarize(
 	// key_files from this list when present and to copy prose-mention
 	// paths verbatim otherwise; absolute paths thanks to
 	// FilePathExtractor's cwd-anchoring.
-	fileExt, err := store.LoadExtractionsForSession(ctx, s.DB(), sessionID, "file_path")
+	fileExt, err := c.SessionExtractions(ctx, sessionID, "file_path")
 	if err != nil {
 		return 0, fmt.Errorf("summarize: load extractions (file_path): %w", err)
 	}
 	// Multiple Read/Edit calls on the same path produce multiple
 	// extraction rows; the prompt only wants distinct values.
-	seenFile := make(map[string]struct{}, len(fileExt))
-	files := make([]string, 0, len(fileExt))
-	for _, fx := range fileExt {
+	seenFile := make(map[string]struct{}, len(fileExt.Extractions))
+	files := make([]string, 0, len(fileExt.Extractions))
+	for _, fx := range fileExt.Extractions {
 		if _, dup := seenFile[fx.Value]; dup {
 			continue
 		}
@@ -175,24 +176,24 @@ func RunSummarize(
 	// after Round 12 dropped the embedding system; that was the
 	// pre-Round-3 default and is the correct behaviour for this
 	// retrieval surface.
-	candidates, err := store.LoadCandidatePriorSessions(ctx, s.DB(), sessionID, 10)
+	candResp, err := c.SessionCandidatePriors(ctx, sessionID, 10)
 	if err != nil {
 		return 0, fmt.Errorf("summarize: load prior sessions: %w", err)
 	}
 
-	priorForPrompt := make([]prompts.CandidatePriorSession, 0, len(candidates))
-	candidateIDs := make(map[string]struct{}, len(candidates))
-	for _, c := range candidates {
+	priorForPrompt := make([]prompts.CandidatePriorSession, 0, len(candResp.Candidates))
+	candidateIDs := make(map[string]struct{}, len(candResp.Candidates))
+	for _, cand := range candResp.Candidates {
 		priorForPrompt = append(priorForPrompt, prompts.CandidatePriorSession{
-			ID:          c.ID,
-			StartedAtMs: c.StartedAtMs,
-			EndedAtMs:   c.EndedAtMs,
-			Topic:       c.Topic,
+			ID:          cand.ID,
+			StartedAtMs: cand.StartedAtMs,
+			EndedAtMs:   cand.EndedAtMs,
+			Topic:       cand.Topic,
 		})
-		candidateIDs[c.ID] = struct{}{}
+		candidateIDs[cand.ID] = struct{}{}
 	}
 
-	built, err := prompts.BuildSummary(sessionID, events, prompts.SummaryInputs{
+	built, err := prompts.BuildSummary(sessionID, storeEvents, prompts.SummaryInputs{
 		Links:             links,
 		Files:             files,
 		CandidatePriorSes: priorForPrompt,
@@ -363,50 +364,6 @@ func saveSessionLinksFromBody(
 	return persistSessionLinks(ctx, s, from, result.SessionLinks, allowed)
 }
 
-// persistInput groups every column we fill when storing an LLM
-// output. Private to this file; exists so persistSummary's signature
-// doesn't sprawl.
-type persistInput struct {
-	sessionID  string
-	kind       store.LLMOutputKind
-	hash       string
-	model      string
-	inputToks  int
-	outputToks int
-	body       string
-}
-
-func persistSummary(ctx context.Context, s *store.Store, in *persistInput) (int64, error) {
-	out := &store.LLMOutput{
-		SessionID:   sql.NullString{String: in.sessionID, Valid: in.sessionID != ""},
-		Kind:        in.kind,
-		Model:       in.model,
-		PromptHash:  in.hash,
-		Body:        in.body,
-		CreatedAtMs: time.Now().UnixMilli(),
-	}
-	if in.inputToks > 0 {
-		out.InputTokens = sql.NullInt64{Int64: int64(in.inputToks), Valid: true}
-	}
-	if in.outputToks > 0 {
-		out.OutputTokens = sql.NullInt64{Int64: int64(in.outputToks), Valid: true}
-	}
-
-	tx, err := s.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return 0, fmt.Errorf("begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	id, _, err := store.SaveLLMOutput(ctx, tx, out)
-	if err != nil {
-		return 0, err
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("commit: %w", err)
-	}
-	return id, nil
-}
-
 // marshalLLMBody is the canonical serializer for a tool result we're
 // about to stash in llm_outputs.body. Deterministic JSON (no HTML
 // escaping, indented for human grep) so identical inputs produce
@@ -428,4 +385,40 @@ func unmarshalLLMBody(body string, target any) error {
 		return fmt.Errorf("unmarshal llm_outputs.body: %w", err)
 	}
 	return nil
+}
+
+// wireEventsToStore converts api.EventView wire rows back into
+// the events.EventView shape pkg/llm/prompts consumes. Mechanical
+// projection: nullable string fields rehydrate the events.NullString
+// struct from the wire's *string. Used by RunSummarize after
+// pulling /v1/sessions/{id}/events through the apiclient.
+func wireEventsToStore(in []api.EventView) []events.EventView {
+	out := make([]events.EventView, 0, len(in))
+	for _, e := range in {
+		v := events.EventView{
+			EventID:    e.EventID,
+			Kind:       e.Kind,
+			TsSourceMs: e.TsSourceMs,
+		}
+		if e.Role != nil {
+			v.Role = events.NullString{String: *e.Role, Valid: true}
+		}
+		if e.ContentText != nil {
+			v.ContentText = events.NullString{String: *e.ContentText, Valid: true}
+		}
+		if e.ToolName != nil {
+			v.ToolName = events.NullString{String: *e.ToolName, Valid: true}
+		}
+		if e.SubagentID != nil {
+			v.SubagentID = events.NullString{String: *e.SubagentID, Valid: true}
+		}
+		if e.SubagentType != nil {
+			v.SubagentType = events.NullString{String: *e.SubagentType, Valid: true}
+		}
+		if e.Cwd != nil {
+			v.Cwd = events.NullString{String: *e.Cwd, Valid: true}
+		}
+		out = append(out, v)
+	}
+	return out
 }

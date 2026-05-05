@@ -184,16 +184,16 @@ func RunPropose(
 		humanDuration(window), opts.Limit)
 
 	sinceMs := time.Now().Add(-window).UnixMilli()
-	rows, err := store.LoadRecentSessionDigests(ctx, s.DB(), sinceMs, opts.Limit)
+	resp, err := c.SessionDigests(ctx, sinceMs, opts.Limit)
 	if err != nil {
 		return 0, fmt.Errorf("propose: load sessions: %w", err)
 	}
-	if len(rows) == 0 {
+	if len(resp.Digests) == 0 {
 		return 0, errors.New("propose: no sessions in the requested window")
 	}
 
-	_, _ = fmt.Fprintf(progress, "  loaded %d session(s), enriching with extractions...\n", len(rows))
-	digests, err := digestsFromRowsWithLinks(ctx, s, rows)
+	_, _ = fmt.Fprintf(progress, "  loaded %d session(s), enriching with extractions...\n", len(resp.Digests))
+	digests, err := digestsFromRowsWithLinks(ctx, c, resp.Digests)
 	if err != nil {
 		return 0, fmt.Errorf("propose: enrich digests: %w", err)
 	}
@@ -229,13 +229,13 @@ func RunPropose(
 		return runChallenge(ctx, s, c, newClient, opts, digests, installed, invoked, out, progress)
 	}
 
-	priorProposals, perr := loadPriorProposalsForPrompt(ctx, s, sinceMs)
+	priorProposals, perr := loadPriorProposalsForPrompt(ctx, c, sinceMs)
 	if perr != nil {
 		slog.Warn("propose: skipping prior-proposals enrichment", "err", perr)
 	}
 	_, _ = fmt.Fprintf(progress, "  prior-proposals enrichment: %d entries\n", len(priorProposals))
 
-	failureShapes, ferr := loadFailureShapesForPrompt(ctx, s, sinceMs)
+	failureShapes, ferr := loadFailureShapesForPrompt(ctx, c, sinceMs)
 	if ferr != nil {
 		slog.Warn("propose: skipping failure-shapes enrichment", "err", ferr)
 	}
@@ -298,7 +298,7 @@ func RunPropose(
 // Returns (nil, nil) when both sources are empty — RunPropose
 // silently proceeds without the stanza (renderPriorProposals
 // returns empty for empty input).
-func loadPriorProposalsForPrompt(ctx context.Context, s *store.Store, sinceMs int64) ([]prompts.PriorProposal, error) {
+func loadPriorProposalsForPrompt(ctx context.Context, c *apiclient.Client, sinceMs int64) ([]prompts.PriorProposal, error) {
 	// Look back further than the digest window for prior proposals:
 	// a 90-day horizon catches "you proposed this 60 days ago and
 	// it never got applied / never got loaded" — load-bearing
@@ -310,11 +310,14 @@ func loadPriorProposalsForPrompt(ctx context.Context, s *store.Store, sinceMs in
 
 	const maxEntries = 30
 
-	added, err := store.LoadSkillCandidateEffectiveness(ctx, s.DB(), priorSinceMs, 0, maxEntries)
+	addedResp, err := c.SkillCandidatesEffectiveness(ctx, api.SkillCandidateEffectivenessRequest{
+		SinceMs: priorSinceMs,
+		Limit:   maxEntries,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("load skill candidate effectiveness: %w", err)
 	}
-	pending, err := store.LoadPendingSkillCandidates(ctx, s.DB(), priorSinceMs, maxEntries)
+	pendingResp, err := c.SkillCandidatesPending(ctx, priorSinceMs, maxEntries)
 	if err != nil {
 		return nil, fmt.Errorf("load pending skill candidates: %w", err)
 	}
@@ -322,16 +325,16 @@ func loadPriorProposalsForPrompt(ctx context.Context, s *store.Store, sinceMs in
 	// Build one map keyed by skill_name; on a clash, the added
 	// row wins (the lifecycle moved forward, the pending entry
 	// is now stale).
-	out := make([]prompts.PriorProposal, 0, len(added)+len(pending))
-	seen := make(map[string]struct{}, len(added)+len(pending))
-	for _, e := range added {
+	out := make([]prompts.PriorProposal, 0, len(addedResp.Rows)+len(pendingResp.Candidates))
+	seen := make(map[string]struct{}, len(addedResp.Rows)+len(pendingResp.Candidates))
+	for _, e := range addedResp.Rows {
 		if _, dup := seen[e.SkillName]; dup {
 			continue
 		}
 		seen[e.SkillName] = struct{}{}
 		var lastLoaded int64
-		if e.LastLoadedMs.Valid {
-			lastLoaded = e.LastLoadedMs.Int64
+		if e.LastLoadedMs != nil {
+			lastLoaded = *e.LastLoadedMs
 		}
 		out = append(out, prompts.PriorProposal{
 			SkillName:        e.SkillName,
@@ -343,7 +346,7 @@ func loadPriorProposalsForPrompt(ctx context.Context, s *store.Store, sinceMs in
 			LastLoadedMs:     lastLoaded,
 		})
 	}
-	for _, u := range pending {
+	for _, u := range pendingResp.Candidates {
 		if _, dup := seen[u.SkillName]; dup {
 			continue
 		}
@@ -372,13 +375,13 @@ func loadPriorProposalsForPrompt(ctx context.Context, s *store.Store, sinceMs in
 //
 // Best-effort: a load error returns empty + nil so RunPropose
 // proceeds without the stanza rather than failing the LLM call.
-func loadFailureShapesForPrompt(ctx context.Context, s *store.Store, sinceMs int64) ([]prompts.FailureShapeDigest, error) {
-	rows, err := store.LoadFailureShapes(ctx, s.DB(), sinceMs, 0)
+func loadFailureShapesForPrompt(ctx context.Context, c *apiclient.Client, sinceMs int64) ([]prompts.FailureShapeDigest, error) {
+	resp, err := c.FailureShapes(ctx, sinceMs, 0)
 	if err != nil {
 		return nil, fmt.Errorf("load failure shapes: %w", err)
 	}
-	out := make([]prompts.FailureShapeDigest, 0, len(rows))
-	for _, r := range rows {
+	out := make([]prompts.FailureShapeDigest, 0, len(resp.Shapes))
+	for _, r := range resp.Shapes {
 		fs := prompts.FailureShapeDigest{
 			SessionID:         r.SessionID,
 			Title:             r.Title,
@@ -386,11 +389,11 @@ func loadFailureShapesForPrompt(ctx context.Context, s *store.Store, sinceMs int
 			GitUndoCount:      r.GitUndoCount,
 			PromptRepeatCount: r.PromptRepeatCount,
 		}
-		if r.Cwd.Valid {
-			fs.Cwd = r.Cwd.String
+		if r.Cwd != nil {
+			fs.Cwd = *r.Cwd
 		}
-		if r.LastEventKind.Valid {
-			fs.LastEventKind = r.LastEventKind.String
+		if r.LastEventKind != nil {
+			fs.LastEventKind = *r.LastEventKind
 		}
 		out = append(out, fs)
 	}
@@ -508,13 +511,18 @@ func runChallenge(
 			continue
 		}
 		seenCwd[d.Cwd] = struct{}{}
-		items, err := store.LoadUnresolvedForCwd(ctx, s.DB(), d.Cwd, sinceMs, 5, 5)
+		uresp, err := c.Unresolved(ctx, apiclient.UnresolvedRequest{
+			Cwd:                d.Cwd,
+			SinceMs:            sinceMs,
+			MaxSessions:        5,
+			MaxItemsPerSession: 5,
+		})
 		if err != nil {
 			slog.Warn("challenge: skipping unresolved enrichment for cwd",
 				"cwd", d.Cwd, "err", err)
 			continue
 		}
-		for _, it := range items {
+		for _, it := range uresp.Items {
 			if len(open) >= maxItems {
 				break
 			}

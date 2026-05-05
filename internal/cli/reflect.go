@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -113,10 +114,14 @@ type ReflectOptions struct {
 // RunReflect orchestrates the meta-analysis path. Same cache-first /
 // lazy-client / LLM-errors-are-clean discipline as RunSummarize.
 //
-// Reads (session digests + per-session extractions) still go through
-// the store directly — those don't have api endpoints yet. The cache
-// lookup + persist routes through aichronicles-api so the single-
-// writer invariant on llm_outputs is preserved.
+// All reads (session digests, per-session extractions, outcome
+// backfill) go through aichronicles-api. The cache lookup + persist
+// also routes through the api so the single-writer invariant on
+// llm_outputs is preserved.
+//
+// The *store.Store parameter is still threaded through for the
+// backwards-compat parts of the call graph that haven't migrated
+// yet; this function itself no longer touches it.
 func RunReflect(
 	ctx context.Context,
 	s *store.Store,
@@ -131,15 +136,15 @@ func RunReflect(
 	}
 
 	sinceMs := time.Now().Add(-window).UnixMilli()
-	rows, err := store.LoadRecentSessionDigests(ctx, s.DB(), sinceMs, opts.Limit)
+	resp, err := c.SessionDigests(ctx, sinceMs, opts.Limit)
 	if err != nil {
 		return 0, fmt.Errorf("reflect: load sessions: %w", err)
 	}
-	if len(rows) == 0 {
+	if len(resp.Digests) == 0 {
 		return 0, errors.New("reflect: no sessions in the requested window")
 	}
 
-	digests, err := digestsFromRowsWithLinks(ctx, s, rows)
+	digests, err := digestsFromRowsWithLinks(ctx, c, resp.Digests)
 	if err != nil {
 		return 0, fmt.Errorf("reflect: enrich digests: %w", err)
 	}
@@ -165,76 +170,73 @@ func RunReflect(
 	})
 }
 
-// digestsFromRowsWithLinks converts the DB-facing digest rows into
-// the prompt-facing shape and enriches each with the per-session URL
-// list from extractions. NULL summary → empty string (BuildReflect
-// treats it as "use first_prompt"). Does one extractions query per
-// session — N is bounded by reflect/propose --limit (typically ≤25),
-// so batching isn't worth the complexity today.
+// digestsFromRowsWithLinks converts the wire digest rows into the
+// prompt-facing shape and enriches each with the per-session URL +
+// shell-command extractions and the outcome cue. NULL summary →
+// dropped; BuildReflect / BuildPropose require ≥2 summarised rows.
+//
+// Per-session enrichment is three api round-trips (extractions×2 +
+// outcome). N is bounded by --limit (typically ≤25), so the
+// fan-out is fine; batching would require new "for these N
+// sessions" endpoints and the win is below the noise floor at this
+// scale.
 func digestsFromRowsWithLinks(
 	ctx context.Context,
-	s *store.Store,
-	rows []store.SessionDigestRow,
+	c *apiclient.Client,
+	rows []api.SessionDigest,
 ) ([]prompts.SessionDigest, error) {
 	out := make([]prompts.SessionDigest, 0, len(rows))
 	skipped := make([]string, 0)
 	for _, r := range rows {
-		// Mandatory summary policy: a digest without a cached LLM
-		// summary has only first_prompt + cwd to ground a claim,
-		// and short prompts ("/loop", "go ahead", "what's next?")
-		// don't ground anything. Rather than feed the LLM
-		// unusable rows we drop them here and surface a count so
-		// the user knows what to summarize for the next run.
-		if !r.LatestSummary.Valid || strings.TrimSpace(r.LatestSummary.String) == "" {
+		summary := ""
+		if r.LatestSummary != nil {
+			summary = strings.TrimSpace(*r.LatestSummary)
+		}
+		if summary == "" {
 			skipped = append(skipped, r.ID)
 			continue
 		}
 
-		d := prompts.SessionDigest{ID: r.ID, Summary: r.LatestSummary.String}
-		if r.StartedAtMs.Valid {
-			d.StartedAtMs = r.StartedAtMs.Int64
+		d := prompts.SessionDigest{ID: r.ID, Summary: summary}
+		if r.StartedAtMs != nil {
+			d.StartedAtMs = *r.StartedAtMs
 		}
-		if r.EndedAtMs.Valid {
-			d.EndedAtMs = r.EndedAtMs.Int64
+		if r.EndedAtMs != nil {
+			d.EndedAtMs = *r.EndedAtMs
 		}
-		if r.Cwd.Valid {
-			d.Cwd = r.Cwd.String
+		if r.Cwd != nil {
+			d.Cwd = *r.Cwd
 		}
-		if r.FirstPrompt.Valid {
-			d.FirstPrompt = r.FirstPrompt.String
+		if r.FirstPrompt != nil {
+			d.FirstPrompt = *r.FirstPrompt
 		}
-		urls, err := store.LoadExtractionsForSession(ctx, s.DB(), r.ID, "url")
+		urls, err := c.SessionExtractions(ctx, r.ID, "url")
 		if err != nil {
 			return nil, fmt.Errorf("links for %s: %w", r.ID, err)
 		}
-		if len(urls) > 0 {
-			d.Links = make([]string, len(urls))
-			for i, u := range urls {
+		if len(urls.Extractions) > 0 {
+			d.Links = make([]string, len(urls.Extractions))
+			for i, u := range urls.Extractions {
 				d.Links[i] = u.Value
 			}
 		}
-		// Shell commands per session: substrate for the propose
-		// prompt's action_template option (AWM pattern). One query
-		// per session — same batching tradeoff as urls; bounded
-		// by --limit (typically ≤25 sessions).
-		shells, err := store.LoadExtractionsForSession(ctx, s.DB(), r.ID, "shell_command")
+		shells, err := c.SessionExtractions(ctx, r.ID, "shell_command")
 		if err != nil {
 			return nil, fmt.Errorf("shell commands for %s: %w", r.ID, err)
 		}
-		if len(shells) > 0 {
-			d.ShellCommands = make([]string, len(shells))
-			for i, sc := range shells {
+		if len(shells.Extractions) > 0 {
+			d.ShellCommands = make([]string, len(shells.Extractions))
+			for i, sc := range shells.Extractions {
 				d.ShellCommands[i] = sc.Value
 			}
 		}
-		// Outcome enrichment: fill the cached row or compute one,
-		// so the propose / reflect prompt sees the success/failure
-		// heuristic per session. Best-effort: a failure here
-		// downgrades to "no outcome cue" rather than blocking.
-		if outcome, oerr := store.EnsureSessionOutcome(ctx, s.DB(), r.ID); oerr != nil {
+		// Outcome enrichment: read-or-backfill via the api. Best-
+		// effort — a failure downgrades to "no outcome cue" rather
+		// than blocking the whole digest.
+		if outcome, oerr := c.SessionOutcome(ctx, r.ID); oerr != nil {
 			slog.Warn("digest: skipping outcome cue", "session", r.ID, "err", oerr)
 		} else {
-			d.Outcome = outcome
+			d.Outcome = sessionOutcomeFromWire(outcome)
 		}
 		out = append(out, d)
 	}
@@ -251,6 +253,29 @@ func digestsFromRowsWithLinks(
 			len(out), len(rows))
 	}
 	return out, nil
+}
+
+// sessionOutcomeFromWire converts the api wire shape into the
+// store.SessionOutcome the prompts package consumes. Mechanical
+// projection — every field maps 1:1 except LastEventKind which
+// rehydrates the sql.NullString from the wire's *string.
+func sessionOutcomeFromWire(o api.SessionOutcome) *store.SessionOutcome {
+	out := &store.SessionOutcome{
+		SessionID:         o.SessionID,
+		ComputedAtMs:      o.ComputedAtMs,
+		UserPromptCount:   o.UserPromptCount,
+		ToolUseCount:      o.ToolUseCount,
+		ToolFailureCount:  o.ToolFailureCount,
+		ErrorCount:        o.ErrorCount,
+		CompactCount:      o.CompactCount,
+		GitUndoCount:      o.GitUndoCount,
+		PromptRepeatCount: o.PromptRepeatCount,
+		Outcome:           store.OutcomeLabel(o.Outcome),
+	}
+	if o.LastEventKind != nil {
+		out.LastEventKind = sql.NullString{String: *o.LastEventKind, Valid: true}
+	}
+	return out
 }
 
 // cachedLLMInput is the shared input shape for reflect and propose.

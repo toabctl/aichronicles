@@ -51,7 +51,7 @@ func TestProposeAdd_VerifyApproves_WritesSkill(t *testing.T) {
 	id := seedProposalOutput(t, s, sampleProposal())
 
 	dir := t.TempDir()
-	result, output, err := loadLatestProposal(t.Context(), s, 0)
+	result, output, err := loadLatestProposal(t.Context(), apiForStore(t, s), 0)
 	if err != nil {
 		t.Fatalf("loadLatestProposal: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestProposeAdd_VerifyRefuses_AbortsAndPropagatesConcern(t *testing.T) {
 	id := seedProposalOutput(t, s, sampleProposal())
 
 	dir := t.TempDir()
-	result, output, err := loadLatestProposal(t.Context(), s, 0)
+	result, output, err := loadLatestProposal(t.Context(), apiForStore(t, s), 0)
 	if err != nil {
 		t.Fatalf("loadLatestProposal: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestProposeAdd_VerifyCachesDecision(t *testing.T) {
 
 	dir1 := t.TempDir()
 	dir2 := t.TempDir()
-	result, output, err := loadLatestProposal(t.Context(), s, 0)
+	result, output, err := loadLatestProposal(t.Context(), apiForStore(t, s), 0)
 	if err != nil {
 		t.Fatalf("loadLatestProposal: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestProposeAdd_NoVerifyFlag_BypassesCriticEntirely(t *testing.T) {
 	_ = seedProposalOutput(t, s, sampleProposal())
 
 	dir := t.TempDir()
-	result, output, err := loadLatestProposal(t.Context(), s, 0)
+	result, output, err := loadLatestProposal(t.Context(), apiForStore(t, s), 0)
 	if err != nil {
 		t.Fatalf("loadLatestProposal: %v", err)
 	}

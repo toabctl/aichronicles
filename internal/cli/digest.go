@@ -15,6 +15,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
@@ -191,22 +192,22 @@ func RunDigestWeekly(
 		return 0, errors.New("digest weekly: PeriodStart must be before PeriodEnd")
 	}
 
-	rows, err := store.LoadRecentSessionDigests(ctx, s.DB(),
+	resp, err := c.SessionDigests(ctx,
 		opts.PeriodStart.UnixMilli(), opts.Limit)
 	if err != nil {
 		return 0, fmt.Errorf("digest weekly: load sessions: %w", err)
 	}
-	// Filter to sessions that ended INSIDE the window. The store
+	// Filter to sessions that ended INSIDE the window. The api
 	// query takes a since-cutoff but no upper bound; we apply
 	// the upper bound here to keep the prompt anchored to the
 	// requested week.
-	rows = filterRowsBefore(rows, opts.PeriodEnd.UnixMilli())
+	rows := filterDigestsBefore(resp.Digests, opts.PeriodEnd.UnixMilli())
 	if len(rows) == 0 {
 		return 0, fmt.Errorf("digest weekly: no sessions in week of %s",
 			opts.PeriodStart.Format("2006-01-02"))
 	}
 
-	digests, err := digestsFromRowsWithLinks(ctx, s, rows)
+	digests, err := digestsFromRowsWithLinks(ctx, c, rows)
 	if err != nil {
 		return 0, fmt.Errorf("digest weekly: enrich digests: %w", err)
 	}
@@ -248,8 +249,8 @@ func RunDigestWeekly(
 	// double-wrap; the WeeklyDigestEnvelope shape is computed
 	// at read time from period boundaries we stored alongside
 	// the row's prompt hash.
-	stored, err := store.LoadLLMOutputByID(ctx, s.DB(), id)
-	if err != nil || stored == nil {
+	stored, err := c.LLMOutputByID(ctx, id)
+	if err != nil {
 		return id, fmt.Errorf("digest weekly: re-read persisted body: %w", err)
 	}
 
@@ -309,18 +310,20 @@ func mondayOf(t time.Time) time.Time {
 		AddDate(0, 0, -(dow - 1))
 }
 
-// filterRowsBefore drops every row whose effective end timestamp
-// is at or after upperMs. We use COALESCE(ended_at, started_at,
-// 0) like the rest of the store — same definition the prune /
-// insights / sessions paths use.
-func filterRowsBefore(rows []store.SessionDigestRow, upperMs int64) []store.SessionDigestRow {
+// filterDigestsBefore drops every row whose effective end
+// timestamp is at or after upperMs. Mirrors the COALESCE(ended_at,
+// started_at, 0) shape the rest of the store uses for the
+// "effective ts" expression — same definition prune / insights /
+// sessions all rely on.
+func filterDigestsBefore(rows []api.SessionDigest, upperMs int64) []api.SessionDigest {
 	out := rows[:0]
 	for _, r := range rows {
-		end := int64(0)
-		if r.EndedAtMs.Valid {
-			end = r.EndedAtMs.Int64
-		} else if r.StartedAtMs.Valid {
-			end = r.StartedAtMs.Int64
+		var end int64
+		switch {
+		case r.EndedAtMs != nil:
+			end = *r.EndedAtMs
+		case r.StartedAtMs != nil:
+			end = *r.StartedAtMs
 		}
 		if end > 0 && end < upperMs {
 			out = append(out, r)

@@ -17,6 +17,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
@@ -180,13 +181,18 @@ func runSkillsEvolve(
 		return fmt.Errorf("read SKILL.md: %w", err)
 	}
 
-	// Pull failure context from the store.
+	// Pull failure context via the api.
 	sinceMs := time.Now().Add(-since).UnixMilli()
-	failures, err := store.LoadSkillFailures(ctx, s.DB(),
-		opts.SkillName, sinceMs, window.Milliseconds(), maxExamples)
+	failResp, err := c.SkillFailures(ctx, api.SkillFailuresRequest{
+		Skill:    opts.SkillName,
+		SinceMs:  sinceMs,
+		WindowMs: window.Milliseconds(),
+		Limit:    maxExamples,
+	})
 	if err != nil {
 		return fmt.Errorf("load failures: %w", err)
 	}
+	failures := failResp.Failures
 
 	_, _ = fmt.Fprintf(errOut,
 		"evolve: skill=%s  failures_found=%d  since=%s  window=%s\n",
@@ -245,8 +251,8 @@ func runSkillsEvolve(
 
 	// Re-load the persisted body so we render exactly what was
 	// stored (cache-hit and cache-miss go through the same path).
-	row, err := store.LoadLLMOutputByID(ctx, s.DB(), id)
-	if err != nil || row == nil {
+	row, err := c.LLMOutputByID(ctx, id)
+	if err != nil {
 		return fmt.Errorf("load persisted revision: %w", err)
 	}
 	var revision prompts.SkillRevision

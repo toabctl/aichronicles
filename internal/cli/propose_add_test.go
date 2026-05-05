@@ -16,6 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
@@ -104,7 +105,7 @@ func TestProposeAdd_SkillWritesScaffoldAndScripts(t *testing.T) {
 	id := seedProposalOutput(t, s, sampleProposal())
 
 	dir := t.TempDir()
-	result, output, err := loadLatestProposal(context.Background(), s, 0)
+	result, output, err := loadLatestProposal(context.Background(), apiForStore(t, s), 0)
 	if err != nil {
 		t.Fatalf("loadLatestProposal: %v", err)
 	}
@@ -181,7 +182,7 @@ func TestProposeAdd_RecordsLifecycle(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, sampleProposal())
-	result, _, _ := loadLatestProposal(context.Background(), s, id)
+	result, _, _ := loadLatestProposal(context.Background(), apiForStore(t, s), id)
 
 	// Path A: pre-record the row (the canonical RunPropose path).
 	if err := store.RecordSkillCandidate(t.Context(), s.DB(), id, "build-test", time.Now().Add(-time.Hour).UnixMilli()); err != nil {
@@ -231,7 +232,7 @@ func TestProposeAdd_RecordsLifecycle(t *testing.T) {
 			},
 		},
 	})
-	result2, _, _ := loadLatestProposal(context.Background(), s, id2)
+	result2, _, _ := loadLatestProposal(context.Background(), apiForStore(t, s), id2)
 	dir2 := t.TempDir()
 	out.Reset()
 	if err := addSkillCandidate(t.Context(), s, apiForStore(t, s), result2, id2, 0, "another-skill", dir2, false, true, nilLLMClient, &out); err != nil {
@@ -258,7 +259,7 @@ func TestProposeAdd_SkillWithoutScripts(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, sampleProposal())
-	result, _, _ := loadLatestProposal(context.Background(), s, id)
+	result, _, _ := loadLatestProposal(context.Background(), apiForStore(t, s), id)
 
 	dir := t.TempDir()
 	var out bytes.Buffer
@@ -346,7 +347,7 @@ func TestProposeAdd_EmitsKindInFrontmatter(t *testing.T) {
 			proposal := sampleProposal()
 			proposal.Skills[0].Kind = tc.kind
 			id := seedProposalOutput(t, s, proposal)
-			result, output, err := loadLatestProposal(t.Context(), s, 0)
+			result, output, err := loadLatestProposal(t.Context(), apiForStore(t, s), 0)
 			if err != nil {
 				t.Fatalf("load: %v", err)
 			}
@@ -397,7 +398,7 @@ func TestRefuseDiscardedSkillName(t *testing.T) {
 	}
 
 	t.Run("blocks add of previously-discarded name", func(t *testing.T) {
-		err := refuseDiscardedSkillName(ctx, s, skillName, false)
+		err := refuseDiscardedSkillName(ctx, apiForStore(t, s), skillName, false)
 		if err == nil {
 			t.Fatalf("expected refusal, got nil")
 		}
@@ -410,13 +411,13 @@ func TestRefuseDiscardedSkillName(t *testing.T) {
 	})
 
 	t.Run("force bypasses", func(t *testing.T) {
-		if err := refuseDiscardedSkillName(ctx, s, skillName, true); err != nil {
+		if err := refuseDiscardedSkillName(ctx, apiForStore(t, s), skillName, true); err != nil {
 			t.Errorf("--force should bypass discard history: %v", err)
 		}
 	})
 
 	t.Run("no history returns nil", func(t *testing.T) {
-		if err := refuseDiscardedSkillName(ctx, s, "never-seen-this", false); err != nil {
+		if err := refuseDiscardedSkillName(ctx, apiForStore(t, s), "never-seen-this", false); err != nil {
 			t.Errorf("a fresh name should not error: %v", err)
 		}
 	})
@@ -430,7 +431,7 @@ func TestRefuseDiscardedSkillName(t *testing.T) {
 		if err := store.RecordSkillCandidate(ctx, s.DB(), loID2, pendingName, 1_700_000_000_000); err != nil {
 			t.Fatalf("seed pending: %v", err)
 		}
-		if err := refuseDiscardedSkillName(ctx, s, pendingName, false); err != nil {
+		if err := refuseDiscardedSkillName(ctx, apiForStore(t, s), pendingName, false); err != nil {
 			t.Errorf("pending-only candidate should not block add: %v", err)
 		}
 	})
@@ -480,7 +481,7 @@ func TestProposeAdd_StampsProvenanceHash(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, sampleProposal())
-	result, _, _ := loadLatestProposal(t.Context(), s, id)
+	result, _, _ := loadLatestProposal(t.Context(), apiForStore(t, s), id)
 
 	dir := t.TempDir()
 	var out bytes.Buffer
@@ -580,7 +581,7 @@ func TestProposeAdd_RefusesOversizedSkill(t *testing.T) {
 			},
 		}},
 	})
-	result, _, _ := loadLatestProposal(context.Background(), s, id)
+	result, _, _ := loadLatestProposal(context.Background(), apiForStore(t, s), id)
 
 	dir := t.TempDir()
 	var out bytes.Buffer
@@ -649,7 +650,7 @@ func TestProposeAdd_RefusesOverwriteWithoutForce(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, sampleProposal())
-	result, _, _ := loadLatestProposal(context.Background(), s, id)
+	result, _, _ := loadLatestProposal(context.Background(), apiForStore(t, s), id)
 
 	dir := t.TempDir()
 	var out bytes.Buffer
@@ -678,7 +679,7 @@ func TestProposeAdd_RefusesWhenScriptExists(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, sampleProposal())
-	result, _, _ := loadLatestProposal(context.Background(), s, id)
+	result, _, _ := loadLatestProposal(context.Background(), apiForStore(t, s), id)
 
 	dir := t.TempDir()
 	scriptDir := filepath.Join(dir, "build-test", "scripts")
@@ -723,7 +724,7 @@ func TestFindProposedSkill_PrefixMatch(t *testing.T) {
 func TestLoadLatestProposal_NoCachedRowIsError(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
-	_, _, err := loadLatestProposal(context.Background(), s, 0)
+	_, _, err := loadLatestProposal(context.Background(), apiForStore(t, s), 0)
 	if err == nil || !strings.Contains(err.Error(), "no cached propose") {
 		t.Errorf("want 'no cached propose' error, got %v", err)
 	}
@@ -757,7 +758,7 @@ func TestLoadLatestProposal_WrongKindIsError(t *testing.T) {
 		t.Fatalf("commit: %v", err)
 	}
 
-	_, _, err = loadLatestProposal(context.Background(), s, id)
+	_, _, err = loadLatestProposal(context.Background(), apiForStore(t, s), id)
 	if err == nil || !strings.Contains(err.Error(), "not a propose row") {
 		t.Errorf("want wrong-kind error, got %v", err)
 	}
@@ -766,7 +767,7 @@ func TestLoadLatestProposal_WrongKindIsError(t *testing.T) {
 func TestRenderProposalIndex_ListsSkillsAndScripts(t *testing.T) {
 	t.Parallel()
 	r := sampleProposal()
-	output := &store.LLMOutput{ID: 42, Model: "m", CreatedAtMs: time.Now().UnixMilli()}
+	output := &api.LLMOutput{ID: 42, Model: "m", CreatedAtMs: time.Now().UnixMilli()}
 	var buf bytes.Buffer
 	renderProposalIndex(&buf, r, output)
 	body := buf.String()
@@ -787,7 +788,7 @@ func TestRenderProposalIndex_ListsSkillsAndScripts(t *testing.T) {
 
 func TestRenderProposalIndex_EmptySkillsMessage(t *testing.T) {
 	t.Parallel()
-	output := &store.LLMOutput{ID: 1, Model: "m", CreatedAtMs: time.Now().UnixMilli()}
+	output := &api.LLMOutput{ID: 1, Model: "m", CreatedAtMs: time.Now().UnixMilli()}
 	var buf bytes.Buffer
 	renderProposalIndex(&buf, &prompts.ProposalResult{}, output)
 	if !strings.Contains(buf.String(), "(no skills in proposal)") {

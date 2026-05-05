@@ -354,17 +354,21 @@ func RunInductionSweep(
 		if segLimit < 50 {
 			segLimit = 50
 		}
-		needSeg, serr := store.LoadSessionsNeedingSegmentation(ctx, s.DB(),
-			time.Now().UnixMilli(), idle.Milliseconds(), minEvents, segLimit)
+		segResp, serr := c.SessionsNeedingSegmentation(ctx, api.SessionsNeedingSegmentationRequest{
+			IdleCutoffMs: time.Now().UnixMilli(),
+			IdleMs:       idle.Milliseconds(),
+			MinEvents:    minEvents,
+			Limit:        segLimit,
+		})
 		if serr != nil {
 			slog.Warn("induction sweep: failed to load sessions needing segmentation", "err", serr)
-		} else if len(needSeg) > 0 {
-			_, _ = fmt.Fprintf(errOut, "induction sweep: segmenting %d session(s)\n", len(needSeg))
-			for _, sid := range needSeg {
+		} else if len(segResp.SessionIDs) > 0 {
+			_, _ = fmt.Fprintf(errOut, "induction sweep: segmenting %d session(s)\n", len(segResp.SessionIDs))
+			for _, sid := range segResp.SessionIDs {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				if eerr := segmentAndSaveEpisodes(ctx, s, sid); eerr != nil {
+				if _, eerr := c.SegmentSession(ctx, sid, api.SegmentSessionRequest{}); eerr != nil {
 					slog.Warn("induction sweep: episode segmentation failed",
 						"session_id", sid, "err", eerr)
 					_, _ = fmt.Fprintf(errOut, "  ✗ episodes %s: %v\n", sid[:8], eerr)
@@ -373,11 +377,16 @@ func RunInductionSweep(
 		}
 	}
 
-	candidates, err := store.LoadInductionCandidates(ctx, s.DB(),
-		time.Now().UnixMilli(), idle.Milliseconds(), minEvents, limit)
+	candResp, err := c.InductionCandidates(ctx, api.InductionCandidatesRequest{
+		NowMs:           time.Now().UnixMilli(),
+		IdleThresholdMs: idle.Milliseconds(),
+		MinEvents:       minEvents,
+		Limit:           limit,
+	})
 	if err != nil {
 		return fmt.Errorf("load induction candidates: %w", err)
 	}
+	candidates := candResp.Candidates
 	_, _ = fmt.Fprintf(errOut,
 		"induction sweep: idle=%s  min_events=%d  candidates=%d\n",
 		humanDuration(idle), minEvents, len(candidates))
@@ -428,7 +437,7 @@ func RunInductionSweep(
 		// the kind=summary row is genuinely missing.
 		summaryAvailable := true
 		if !opts.SkipSummarize {
-			has, herr := store.HasLLMOutputForSession(ctx, s.DB(), cand.ID, store.LLMKindSummary)
+			has, herr := c.LLMOutputExistsForSession(ctx, cand.ID, string(store.LLMKindSummary))
 			if herr != nil {
 				slog.Warn("induction sweep: summary existence check failed",
 					"session_id", cand.ID, "err", herr)
@@ -495,37 +504,13 @@ func RunInductionSweep(
 	return nil
 }
 
-// segmentAndSaveEpisodes loads the session's events, runs the
-// pure-function segmenter, and persists the result. Idempotent:
-// store.SaveEpisodes is DELETE-then-INSERT, so re-running on the
-// same (or extended) session converges. Skips persistence when
-// the segmenter returns no episodes (a session with zero events
-// shouldn't reach the candidate query, but the guard keeps the
-// DB write trivial in the degenerate case).
-func segmentAndSaveEpisodes(ctx context.Context, s *store.Store, sessionID string) error {
-	// Unbounded load on purpose: episode segmentation is meaningless
-	// over a truncated event list — the final episode's ended_at_ms
-	// would be the cap-th event's timestamp, not the actual session
-	// tail. Sessions over DefaultEventsPerSessionLimit (10k events)
-	// happen during long autonomous runs and are exactly the case
-	// where wrong stored data is worse than slow extraction (project
-	// rule #7).
-	events, err := store.LoadEventsForSession(ctx, s.DB(), sessionID, store.LoadEventsForSessionUnbounded)
-	if err != nil {
-		return fmt.Errorf("load events: %w", err)
-	}
-	if len(events) == 0 {
-		return nil
-	}
-	episodes := store.SegmentSession(sessionID, events, 0)
-	if len(episodes) == 0 {
-		return nil
-	}
-	if _, err := store.SaveEpisodes(ctx, s.DB(), sessionID, episodes); err != nil {
-		return fmt.Errorf("save episodes: %w", err)
-	}
-	return nil
-}
+// segmentAndSaveEpisodes used to combine the unbounded event load
+// with the segmenter call and the SaveEpisodes persist; the api
+// folded that triple into POST /v1/sessions/{id}/segment, so the
+// only remaining caller (the induction sweep) inlines
+// c.SegmentSession directly. Helper retained as documentation of
+// the logical operation; new callers can drop it in favour of the
+// one-liner.
 
 // InductionRunOptions drives RunInductionForSession.
 type InductionRunOptions struct {
@@ -553,56 +538,53 @@ func RunInductionForSession(
 	opts InductionRunOptions,
 	out io.Writer,
 ) (int64, error) {
-	sessionID, err := store.ResolveSessionIDPrefix(ctx, s.DB(), opts.SessionID)
+	sessionID, err := c.ResolveSession(ctx, opts.SessionID)
 	if err != nil {
 		return 0, fmt.Errorf("induction: %w", err)
 	}
 
-	digestRow, err := store.LoadSessionDigest(ctx, s.DB(), sessionID)
+	digestRow, err := c.Session(ctx, sessionID)
 	if err != nil {
 		return 0, fmt.Errorf("induction: load digest: %w", err)
 	}
-	if digestRow == nil {
-		return 0, fmt.Errorf("induction: session %s not found", sessionID)
-	}
-	if !digestRow.LatestSummary.Valid || strings.TrimSpace(digestRow.LatestSummary.String) == "" {
+	if digestRow.LatestSummary == nil || strings.TrimSpace(*digestRow.LatestSummary) == "" {
 		return 0, fmt.Errorf("induction: session %s has no summary — run `aichronicles summarize %s` first",
 			sessionID, sessionID)
 	}
 
 	digest := prompts.SessionDigest{
 		ID:      digestRow.ID,
-		Summary: digestRow.LatestSummary.String,
+		Summary: *digestRow.LatestSummary,
 	}
-	if digestRow.StartedAtMs.Valid {
-		digest.StartedAtMs = digestRow.StartedAtMs.Int64
+	if digestRow.StartedAtMs != nil {
+		digest.StartedAtMs = *digestRow.StartedAtMs
 	}
-	if digestRow.EndedAtMs.Valid {
-		digest.EndedAtMs = digestRow.EndedAtMs.Int64
+	if digestRow.EndedAtMs != nil {
+		digest.EndedAtMs = *digestRow.EndedAtMs
 	}
-	if digestRow.Cwd.Valid {
-		digest.Cwd = digestRow.Cwd.String
+	if digestRow.Cwd != nil {
+		digest.Cwd = *digestRow.Cwd
 	}
-	if digestRow.FirstPrompt.Valid {
-		digest.FirstPrompt = digestRow.FirstPrompt.String
+	if digestRow.FirstPrompt != nil {
+		digest.FirstPrompt = *digestRow.FirstPrompt
 	}
-	urls, err := store.LoadExtractionsForSession(ctx, s.DB(), sessionID, "url")
+	urls, err := c.SessionExtractions(ctx, sessionID, "url")
 	if err != nil {
 		return 0, fmt.Errorf("induction: load urls: %w", err)
 	}
-	if len(urls) > 0 {
-		digest.Links = make([]string, len(urls))
-		for i, u := range urls {
+	if len(urls.Extractions) > 0 {
+		digest.Links = make([]string, len(urls.Extractions))
+		for i, u := range urls.Extractions {
 			digest.Links[i] = u.Value
 		}
 	}
-	shells, err := store.LoadExtractionsForSession(ctx, s.DB(), sessionID, "shell_command")
+	shells, err := c.SessionExtractions(ctx, sessionID, "shell_command")
 	if err != nil {
 		return 0, fmt.Errorf("induction: load shell_command: %w", err)
 	}
-	if len(shells) > 0 {
-		digest.ShellCommands = make([]string, len(shells))
-		for i, sc := range shells {
+	if len(shells.Extractions) > 0 {
+		digest.ShellCommands = make([]string, len(shells.Extractions))
+		for i, sc := range shells.Extractions {
 			digest.ShellCommands[i] = sc.Value
 		}
 	}
@@ -611,10 +593,10 @@ func RunInductionForSession(
 	// the induction prompt apply its outcome-aware bias (failure_likely
 	// → default to no_skill_found unless the failure itself reveals a
 	// reusable trigger). Best-effort.
-	if outcome, oerr := store.EnsureSessionOutcome(ctx, s.DB(), sessionID); oerr != nil {
+	if outcome, oerr := c.SessionOutcome(ctx, sessionID); oerr != nil {
 		slog.Warn("induction: skipping outcome cue", "session", sessionID, "err", oerr)
 	} else {
-		digest.Outcome = outcome
+		digest.Outcome = sessionOutcomeFromWire(outcome)
 	}
 
 	// Installed-skills enrichment so the induction prompt won't
@@ -656,8 +638,8 @@ func RunInductionForSession(
 		return 0, err
 	}
 
-	row, err := store.LoadLLMOutputByID(ctx, s.DB(), id)
-	if err != nil || row == nil {
+	row, err := c.LLMOutputByID(ctx, id)
+	if err != nil {
 		return id, fmt.Errorf("induction: load persisted row: %w", err)
 	}
 	var result prompts.InductionResult

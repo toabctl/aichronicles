@@ -5,14 +5,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"strconv"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/llm"
 	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
@@ -34,6 +37,7 @@ import (
 func verifyProposalOrAbort(
 	ctx context.Context,
 	st *store.Store,
+	c *apiclient.Client,
 	skill *prompts.ProposedSkill,
 	outputID int64,
 	newClient func() (llm.Client, error),
@@ -42,11 +46,9 @@ func verifyProposalOrAbort(
 	hash := proposeVerifyHash(outputID, skill.Name)
 
 	// Cache: re-running apply on the same proposal is free.
-	cached, err := store.LoadLLMOutputByHash(ctx, st.DB(), store.LLMKindProposeVerify, hash)
-	if err != nil {
-		return fmt.Errorf("propose verify: cache lookup: %w", err)
-	}
-	if cached != nil {
+	cached, err := c.LLMOutputByHash(ctx, string(store.LLMKindProposeVerify), hash)
+	switch {
+	case err == nil:
 		var v prompts.ProposalVerification
 		if jerr := json.Unmarshal([]byte(cached.Body), &v); jerr != nil {
 			// Cached body is malformed — fall through to a fresh
@@ -56,18 +58,26 @@ func verifyProposalOrAbort(
 		} else {
 			return reportVerification(out, &v, true)
 		}
+	case errors.Is(err, apiclient.ErrNotFound):
+		// fall through
+	default:
+		return fmt.Errorf("propose verify: cache lookup: %w", err)
 	}
 
 	// Build prompt: skill + cited evidence digests + installed skills.
-	installed, err := skills.CollectInstalled(ctx, st.DB(),
+	// Filesystem walk against st.DB() for the per-cwd skill scan
+	// stays — the api doesn't expose CollectInstalled, and the
+	// scan is a read-only filesystem traversal that has no bearing
+	// on the writer invariant.
+	installed, ierr := skills.CollectInstalled(ctx, st.DB(),
 		time.Now().Add(-90*24*time.Hour).UnixMilli())
-	if err != nil {
+	if ierr != nil {
 		// Non-fatal: critic still runs, just without the
 		// installed-skills enrichment. A propose run that just
 		// finished probably has those baked into its prompt, so
 		// the critic can still reason about duplicates from
 		// what's in the proposal.
-		slog.Warn("propose verify: skipping installed-skills enrichment", "err", err)
+		slog.Warn("propose verify: skipping installed-skills enrichment", "err", ierr)
 	}
 
 	built, err := prompts.BuildVerifyProposal(prompts.VerifyProposalInputs{
@@ -96,14 +106,22 @@ func verifyProposalOrAbort(
 	if err != nil {
 		return fmt.Errorf("propose verify: marshal: %w", err)
 	}
-	if _, err := persistSummary(ctx, st, &persistInput{
-		kind:       store.LLMKindProposeVerify,
-		hash:       hash,
-		model:      resp.Model,
-		inputToks:  resp.Usage.InputTokens,
-		outputToks: resp.Usage.OutputTokens,
-		body:       body,
-	}); err != nil {
+	saveReq := api.SaveLLMOutputRequest{
+		Kind:        string(store.LLMKindProposeVerify),
+		Model:       resp.Model,
+		PromptHash:  hash,
+		Body:        body,
+		CreatedAtMs: time.Now().UnixMilli(),
+	}
+	if resp.Usage.InputTokens > 0 {
+		v := int64(resp.Usage.InputTokens)
+		saveReq.InputTokens = &v
+	}
+	if resp.Usage.OutputTokens > 0 {
+		v := int64(resp.Usage.OutputTokens)
+		saveReq.OutputTokens = &v
+	}
+	if _, err := c.SaveLLMOutput(ctx, saveReq); err != nil {
 		// Persisting failed but we have the verification — don't
 		// re-pay for another call just because caching failed.
 		// Log and proceed; user gets the decision they paid for.

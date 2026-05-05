@@ -259,7 +259,7 @@ func TestMergeProposedSkill_RefusesSelfMerge(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)
 	id := seedProposalOutput(t, s, sampleProposal())
-	result, _, err := loadLatestProposal(t.Context(), s, id)
+	result, _, err := loadLatestProposal(t.Context(), apiForStore(t, s), id)
 	if err != nil {
 		t.Fatalf("loadLatestProposal: %v", err)
 	}

@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"context"
+
 	"github.com/spf13/cobra"
 
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 )
 
 // sessionCompletionLimit caps how many candidates the completion
@@ -13,7 +15,7 @@ import (
 const sessionCompletionLimit = 50
 
 // completeSessionID is a cobra completion function that returns
-// matching session ids from the live store, formatted as
+// matching session ids from the live api, formatted as
 // "id\tdescription" so shells (zsh, fish) render the cwd + first
 // prompt next to each candidate. Wired into both
 // ValidArgsFunction (for positional <session> args) and
@@ -21,21 +23,32 @@ const sessionCompletionLimit = 50
 //
 // Errors swallow to NoFileComp + Error — completion frameworks
 // handle the directive; emitting a Go error string into the
-// shell output would mostly produce noise.
+// shell output would mostly produce noise. The empty-string flag
+// passed to openAPIClient picks up $AICHRONICLES_API_SOCKET if set,
+// or the XDG default — same resolution every other CLI subcommand
+// uses.
 func completeSessionID(cmd *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	s, err := openStore("")
+	c, err := openAPIClient("")
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveError | cobra.ShellCompDirectiveNoFileComp
 	}
-	defer func() { _ = s.Close() }()
+	return completeSessionIDFrom(cmd, c, toComplete)
+}
 
-	rows, err := store.LoadSessionsForCompletion(cmd.Context(), s.DB(), toComplete, sessionCompletionLimit)
+// completeSessionIDFrom is the inner shape that takes an explicit
+// apiclient.Client. Tests construct one against a httptest server
+// (apiForStore) and call this directly, bypassing the cobra-time
+// socket resolution.
+func completeSessionIDFrom(cmd *cobra.Command, c interface {
+	SessionsForCompletion(ctx context.Context, prefix string, limit int) (api.SessionCompletionsResponse, error)
+}, toComplete string) ([]string, cobra.ShellCompDirective) {
+	resp, err := c.SessionsForCompletion(cmd.Context(), toComplete, sessionCompletionLimit)
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveError | cobra.ShellCompDirectiveNoFileComp
 	}
 
-	out := make([]string, 0, len(rows))
-	for _, r := range rows {
+	out := make([]string, 0, len(resp.Sessions))
+	for _, r := range resp.Sessions {
 		// cobra splits "id\tdescription" automatically: the
 		// part before \t becomes the candidate string the
 		// shell substitutes; the part after is the description

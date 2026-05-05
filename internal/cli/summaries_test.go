@@ -316,19 +316,6 @@ func TestSummariesShow_UnknownKindErrs(t *testing.T) {
 	}
 }
 
-// dbPathFromStore extracts the backing file path from a Store opened
-// on disk. Tests use an in-memory test store with a known path so
-// subcommands (which open stores by path) can target the same DB.
-func dbPathFromStore(t *testing.T, s *store.Store) string {
-	t.Helper()
-	var path string
-	err := s.DB().QueryRow(`PRAGMA database_list`).Scan(new(int), new(string), &path)
-	if err != nil {
-		t.Fatalf("pragma database_list: %v", err)
-	}
-	return path
-}
-
 // seedSessionForMissing ingests one user_prompt event so a session
 // row exists. Used to give the missing/fill paths something to
 // surface. The summary slot is left empty; tests that want a
@@ -380,13 +367,16 @@ func TestSummariesMissing_OnlyUnsummarizedRowsAppear(t *testing.T) {
 	}
 	_ = tx.Commit()
 
-	cmd := newSummariesMissingCmd()
+	c := apiForStore(t, s)
+	resp, err := c.SessionsMissingSummary(t.Context(), api.SessionsMissingSummaryRequest{
+		SinceMs: time.Now().Add(-24 * time.Hour).UnixMilli(),
+	})
+	if err != nil {
+		t.Fatalf("SessionsMissingSummary: %v", err)
+	}
 	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--db", dbPathFromStore(t, s), "--since", "24h"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("execute: %v", err)
+	if err := writeMissingSummaries(&out, resp.Sessions, FormatTable); err != nil {
+		t.Fatalf("writeMissingSummaries: %v", err)
 	}
 	body := out.String()
 	if strings.Contains(body, idA[:8]) {
@@ -402,13 +392,16 @@ func TestSummariesMissing_JSONFormatShape(t *testing.T) {
 	s := testStore(t)
 	id := seedSessionForMissing(t, s, "miss-json", time.Now().Add(-time.Hour))
 
-	cmd := newSummariesMissingCmd()
+	c := apiForStore(t, s)
+	resp, err := c.SessionsMissingSummary(t.Context(), api.SessionsMissingSummaryRequest{
+		SinceMs: time.Now().Add(-24 * time.Hour).UnixMilli(),
+	})
+	if err != nil {
+		t.Fatalf("SessionsMissingSummary: %v", err)
+	}
 	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--db", dbPathFromStore(t, s), "--since", "24h", "--format", "json"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("execute: %v", err)
+	if err := writeMissingSummaries(&out, resp.Sessions, FormatJSON); err != nil {
+		t.Fatalf("writeMissingSummaries: %v", err)
 	}
 
 	var parsed []struct {
@@ -431,13 +424,16 @@ func TestSummariesMissing_EmptyWindowReportsCleanly(t *testing.T) {
 	t.Parallel()
 	s := testStore(t)
 
-	cmd := newSummariesMissingCmd()
+	c := apiForStore(t, s)
+	resp, err := c.SessionsMissingSummary(t.Context(), api.SessionsMissingSummaryRequest{
+		SinceMs: time.Now().Add(-24 * time.Hour).UnixMilli(),
+	})
+	if err != nil {
+		t.Fatalf("SessionsMissingSummary: %v", err)
+	}
 	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--db", dbPathFromStore(t, s), "--since", "24h"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("execute: %v", err)
+	if err := writeMissingSummaries(&out, resp.Sessions, FormatTable); err != nil {
+		t.Fatalf("writeMissingSummaries: %v", err)
 	}
 	if !strings.Contains(out.String(), "no sessions missing") {
 		t.Errorf("empty result should print a friendly placeholder; got:\n%s", out.String())
@@ -451,7 +447,7 @@ func TestRunSummariesFill_StreamsAndTallies(t *testing.T) {
 	idA := seedSessionForMissing(t, s, "fill-A", now.Add(-time.Hour))
 	idB := seedSessionForMissing(t, s, "fill-B", now.Add(-2*time.Hour))
 
-	rows := []store.SessionDigestRow{
+	rows := []api.SessionDigest{
 		{ID: idA},
 		{ID: idB},
 	}
@@ -510,7 +506,7 @@ func TestRunSummariesFill_JSONFormatShape(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runSummariesFill(t.Context(), s, apiForStore(t, s), newClient,
-		[]store.SessionDigestRow{{ID: id}}, "", 5*time.Second, FormatJSON, &out); err != nil {
+		[]api.SessionDigest{{ID: id}}, "", 5*time.Second, FormatJSON, &out); err != nil {
 		t.Fatalf("runSummariesFill: %v", err)
 	}
 	var parsed []fillStatus

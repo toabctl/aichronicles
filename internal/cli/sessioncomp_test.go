@@ -68,7 +68,13 @@ func TestCompleteSessionID_ReturnsTabSeparatedDescriptions(t *testing.T) {
 	cmd := &cobra.Command{Use: "test"}
 	cmd.SetContext(context.Background())
 
-	out, dir := completeSessionID(cmd, nil, "")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+	c := apiForStore(t, st)
+	out, dir := completeSessionIDFrom(cmd, c, "")
 	if dir&cobra.ShellCompDirectiveNoFileComp == 0 {
 		t.Errorf("expected NoFileComp directive, got %v", dir)
 	}
@@ -98,7 +104,13 @@ func TestCompleteSessionID_PrefixFilters(t *testing.T) {
 	cmd := &cobra.Command{Use: "test"}
 	cmd.SetContext(context.Background())
 
-	out, _ := completeSessionID(cmd, nil, a[:8])
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+	c := apiForStore(t, st)
+	out, _ := completeSessionIDFrom(cmd, c, a[:8])
 	if len(out) != 1 {
 		t.Fatalf("prefix should narrow to one candidate; got %d: %v", len(out), out)
 	}

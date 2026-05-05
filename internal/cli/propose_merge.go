@@ -77,7 +77,7 @@ func newProposeMergeCmd() *cobra.Command {
 				return errors.New("--skill <name> is required (run `aichronicles propose list` to see options)")
 			}
 
-			result, output, err := loadLatestProposal(cmd.Context(), s, outputID)
+			result, output, err := loadLatestProposal(cmd.Context(), c, outputID)
 			if err != nil {
 				return err
 			}
@@ -169,9 +169,18 @@ func mergeProposedSkill(
 	// reject self-references), producing a row pointing at itself.
 	// Loading once here also keeps a single canonical view of the
 	// target row through the whole flow.
-	existingCandidate, err := store.LoadAddedSkillCandidate(ctx, st.DB(), candidate.Name)
-	if err != nil {
-		return fmt.Errorf("merge: load existing candidate: %w", err)
+	var existingCandidate *api.SkillCandidate
+	{
+		row, lerr := c.AddedSkillCandidate(ctx, candidate.Name)
+		switch {
+		case lerr == nil:
+			existingCandidate = &row
+		case errors.Is(lerr, apiclient.ErrNotFound):
+			// Hand-authored skill — no candidate row owns the file.
+			existingCandidate = nil
+		default:
+			return fmt.Errorf("merge: load existing candidate: %w", lerr)
+		}
 	}
 	if existingCandidate != nil &&
 		existingCandidate.LLMOutputID == outputID &&
@@ -181,12 +190,12 @@ func mergeProposedSkill(
 	}
 
 	if !noVerify {
-		if err := verifyProposalOrAbort(ctx, st, candidate, outputID, newClient, out); err != nil {
+		if err := verifyProposalOrAbort(ctx, st, c, candidate, outputID, newClient, out); err != nil {
 			return err
 		}
 	}
 
-	merged, err := runMergeLLM(ctx, st, *candidate, string(existingBytes), nextVersion, outputID, newClient, out)
+	merged, err := runMergeLLM(ctx, c, *candidate, string(existingBytes), nextVersion, outputID, newClient, out)
 	if err != nil {
 		return err
 	}
@@ -221,22 +230,20 @@ func mergeProposedSkill(
 	// is the post-merge content, and the next `skills verify`
 	// reports every merged skill as drifted.
 	if existingCandidate != nil {
-		if uerr := store.UpdateSkillCandidateAddBodyHash(ctx, st.DB(), existingCandidate.ID, skillMd, bodyHashHex); uerr != nil {
-			slog.Warn("merge: failed to refresh add_body_sha256 on merge target", "id", existingCandidate.ID, "err", uerr)
+		// Combine the body-hash + kind refresh into a single PATCH.
+		// The api endpoint applies whichever fields are set; an
+		// out-of-enum kind leaves the row's existing kind untouched
+		// (no fabrication — CLAUDE.md rule #7).
+		updateReq := api.UpdateSkillCandidateRequest{
+			AddPath:    skillMd,
+			BodySHA256: bodyHashHex,
 		}
-		// Refresh the target's kind too: the LLM-decided union may
-		// have flipped pattern→pitfall (the prompt rule says any
-		// pitfall input subsumes a pattern target). The frontmatter
-		// got the update via writeMergedSkill; mirror it on the row
-		// so the DB and the file agree on the contrastive label.
-		// We only call when the parsed kind is recognised; an
-		// empty / out-of-enum value leaves the existing row untouched
-		// (no fabrication — see CLAUDE.md rule #7).
 		if mergedKind := store.SkillKind(merged.Kind); mergedKind == store.SkillKindPattern || mergedKind == store.SkillKindPitfall {
-			if uerr := store.UpdateSkillCandidateKind(ctx, st.DB(), existingCandidate.ID, mergedKind); uerr != nil {
-				slog.Warn("merge: failed to refresh kind on merge target",
-					"id", existingCandidate.ID, "kind", mergedKind, "err", uerr)
-			}
+			updateReq.Kind = string(mergedKind)
+		}
+		if uerr := c.UpdateSkillCandidate(ctx, existingCandidate.ID, updateReq); uerr != nil {
+			slog.Warn("merge: failed to refresh merge target",
+				"id", existingCandidate.ID, "err", uerr)
 		}
 	}
 	_, _ = fmt.Fprintf(out, "merged %s (%s → %s)\n", skillMd, existingVersion, nextVersion)
@@ -292,7 +299,7 @@ func mergeProposedSkill(
 // (outputID, skill-name). A re-run on the same proposal is free.
 func runMergeLLM(
 	ctx context.Context,
-	st *store.Store,
+	c *apiclient.Client,
 	candidate prompts.ProposedSkill,
 	currentSkillMd, nextVersion string,
 	outputID int64,
@@ -301,17 +308,19 @@ func runMergeLLM(
 ) (*prompts.MergedSkillResult, error) {
 	hash := proposeMergeHash(outputID, candidate.Name, currentSkillMd, nextVersion)
 
-	cached, err := store.LoadLLMOutputByHash(ctx, st.DB(), store.LLMKindSkillMerge, hash)
-	if err != nil {
-		return nil, fmt.Errorf("merge: cache lookup: %w", err)
-	}
-	if cached != nil {
+	cached, err := c.LLMOutputByHash(ctx, string(store.LLMKindSkillMerge), hash)
+	switch {
+	case err == nil:
 		var m prompts.MergedSkillResult
 		if jerr := json.Unmarshal([]byte(cached.Body), &m); jerr == nil {
 			_, _ = fmt.Fprintln(out, "merge: ✓ result cached, no LLM call")
 			return &m, nil
 		}
 		slog.Warn("merge: malformed cached body, re-running", "id", cached.ID, "err", err)
+	case errors.Is(err, apiclient.ErrNotFound):
+		// fall through to the LLM call
+	default:
+		return nil, fmt.Errorf("merge: cache lookup: %w", err)
 	}
 
 	built, err := prompts.BuildMergeSkill(prompts.MergeSkillInputs{
@@ -342,14 +351,22 @@ func runMergeLLM(
 	if err != nil {
 		return nil, fmt.Errorf("merge: marshal: %w", err)
 	}
-	if _, err := persistSummary(ctx, st, &persistInput{
-		kind:       store.LLMKindSkillMerge,
-		hash:       hash,
-		model:      resp.Model,
-		inputToks:  resp.Usage.InputTokens,
-		outputToks: resp.Usage.OutputTokens,
-		body:       body,
-	}); err != nil {
+	saveReq := api.SaveLLMOutputRequest{
+		Kind:        string(store.LLMKindSkillMerge),
+		Model:       resp.Model,
+		PromptHash:  hash,
+		Body:        body,
+		CreatedAtMs: time.Now().UnixMilli(),
+	}
+	if resp.Usage.InputTokens > 0 {
+		v := int64(resp.Usage.InputTokens)
+		saveReq.InputTokens = &v
+	}
+	if resp.Usage.OutputTokens > 0 {
+		v := int64(resp.Usage.OutputTokens)
+		saveReq.OutputTokens = &v
+	}
+	if _, err := c.SaveLLMOutput(ctx, saveReq); err != nil {
 		slog.Warn("merge: persist failed (merge still applied)", "err", err)
 	}
 	return &merged, nil

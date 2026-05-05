@@ -200,7 +200,7 @@ func RunMetaAnalysisSweep(
 
 	// propose
 	if !opts.ProposeSkip {
-		if due, err := overdue(ctx, s, store.LLMKindPropose, opts.ProposeCadence, now); err != nil {
+		if due, err := overdue(ctx, c, store.LLMKindPropose, opts.ProposeCadence, now); err != nil {
 			record(err)
 		} else if due {
 			if err := runProposeForSweep(ctx, s, c, newClient, opts, out, errOut); err != nil {
@@ -215,7 +215,7 @@ func RunMetaAnalysisSweep(
 
 	// reflect
 	if !opts.ReflectSkip {
-		if due, err := overdue(ctx, s, store.LLMKindReflect, opts.ReflectCadence, now); err != nil {
+		if due, err := overdue(ctx, c, store.LLMKindReflect, opts.ReflectCadence, now); err != nil {
 			record(err)
 		} else if due {
 			if err := runReflectForSweep(ctx, s, c, newClient, opts, out, errOut); err != nil {
@@ -230,7 +230,7 @@ func RunMetaAnalysisSweep(
 
 	// challenge
 	if !opts.ChallengeSkip {
-		if due, err := overdue(ctx, s, store.LLMKindChallenge, opts.ChallengeCadence, now); err != nil {
+		if due, err := overdue(ctx, c, store.LLMKindChallenge, opts.ChallengeCadence, now); err != nil {
 			record(err)
 		} else if due {
 			if err := runChallengeForSweep(ctx, s, c, newClient, opts, out, errOut); err != nil {
@@ -245,7 +245,7 @@ func RunMetaAnalysisSweep(
 
 	// reflect_weekly
 	if !opts.ReflectWeeklySkip {
-		if due, err := overdue(ctx, s, store.LLMKindReflectWeekly, opts.ReflectWeeklyCadence, now); err != nil {
+		if due, err := overdue(ctx, c, store.LLMKindReflectWeekly, opts.ReflectWeeklyCadence, now); err != nil {
 			record(err)
 		} else if due {
 			if err := runReflectWeeklyForSweep(ctx, s, c, newClient, opts, out, errOut, now); err != nil {
@@ -260,7 +260,7 @@ func RunMetaAnalysisSweep(
 
 	// skill_revision
 	if !opts.SkillRevisionSkip {
-		if due, err := overdue(ctx, s, store.LLMKindSkillRevision, opts.SkillRevisionCadence, now); err != nil {
+		if due, err := overdue(ctx, c, store.LLMKindSkillRevision, opts.SkillRevisionCadence, now); err != nil {
 			record(err)
 		} else if due {
 			if err := runSkillRevisionForSweep(ctx, s, c, newClient, opts, out, errOut); err != nil {
@@ -280,7 +280,7 @@ func RunMetaAnalysisSweep(
 // without unsetting Skip still gets safe behaviour).
 func overdue(
 	ctx context.Context,
-	s *store.Store,
+	c *apiclient.Client,
 	kind store.LLMOutputKind,
 	cadence time.Duration,
 	now time.Time,
@@ -288,7 +288,7 @@ func overdue(
 	if cadence <= 0 {
 		return false, nil
 	}
-	last, err := store.LastLLMOutputCreatedAt(ctx, s.DB(), kind)
+	last, err := c.LLMOutputLastCreatedAt(ctx, string(kind))
 	if err != nil {
 		return false, fmt.Errorf("read last %s timestamp: %w", kind, err)
 	}

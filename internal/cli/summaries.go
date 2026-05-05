@@ -64,7 +64,7 @@ func newSummariesMissingCmd() *cobra.Command {
 		limit    int
 		cwd      string
 		agent    string
-		dbPath   string
+		sockFlag string
 		formatIn string
 	)
 	cmd := &cobra.Command{
@@ -83,19 +83,21 @@ func newSummariesMissingCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := openStore(dbPath)
+			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
-
 			sinceMs := time.Now().Add(-since).UnixMilli()
-			rows, err := store.LoadSessionsMissingSummary(cmd.Context(), s.DB(),
-				sinceMs, store.SessionFilter{Cwd: cwd, Agent: agent}, limit)
+			resp, err := c.SessionsMissingSummary(cmd.Context(), api.SessionsMissingSummaryRequest{
+				SinceMs: sinceMs,
+				Cwd:     cwd,
+				Agent:   agent,
+				Limit:   limit,
+			})
 			if err != nil {
 				return fmt.Errorf("summaries missing: %w", err)
 			}
-			return writeMissingSummaries(cmd.OutOrStdout(), rows, format)
+			return writeMissingSummaries(cmd.OutOrStdout(), resp.Sessions, format)
 		},
 	}
 	addFlexDurationFlag(cmd, &since, "since", defaultSummariesWindow,
@@ -103,7 +105,8 @@ func newSummariesMissingCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 200, "max sessions to list")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "filter by exact cwd")
 	cmd.Flags().StringVar(&agent, "agent", "", "filter by source_agent (claude-code | codex)")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
@@ -156,11 +159,16 @@ func newSummariesFillCmd() *cobra.Command {
 			}
 
 			sinceMs := time.Now().Add(-since).UnixMilli()
-			rows, err := store.LoadSessionsMissingSummary(cmd.Context(), s.DB(),
-				sinceMs, store.SessionFilter{Cwd: cwd, Agent: agent}, limit)
+			missing, err := c.SessionsMissingSummary(cmd.Context(), api.SessionsMissingSummaryRequest{
+				SinceMs: sinceMs,
+				Cwd:     cwd,
+				Agent:   agent,
+				Limit:   limit,
+			})
 			if err != nil {
 				return fmt.Errorf("summaries fill: %w", err)
 			}
+			rows := missing.Sessions
 			if len(rows) == 0 {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no sessions missing a summary in the window")
 				return nil
@@ -223,7 +231,7 @@ func runSummariesFill(
 	s *store.Store,
 	c *apiclient.Client,
 	newClient func() (llm.Client, error),
-	rows []store.SessionDigestRow,
+	rows []api.SessionDigest,
 	model string,
 	perCallTimeout time.Duration,
 	format OutputFormat,
@@ -296,15 +304,15 @@ func runSummariesFill(
 			failed++
 		} else {
 			st.Status = "summarized"
-			// One DB hit covers both topic + token lookup so we
+			// One api hit covers both topic + token lookup so we
 			// don't double-query on the just-written row.
-			if r := latestSummaryRow(ctx, s, row.ID); r != nil {
+			if r := latestSummaryRow(ctx, c, row.ID); r != nil {
 				st.Topic = extractTopic(store.LLMKindSummary, r.Body)
-				if r.InputTokens.Valid {
-					st.InputTokens = r.InputTokens.Int64
+				if r.InputTokens != nil {
+					st.InputTokens = *r.InputTokens
 				}
-				if r.OutputTokens.Valid {
-					st.OutputTokens = r.OutputTokens.Int64
+				if r.OutputTokens != nil {
+					st.OutputTokens = *r.OutputTokens
 				}
 			}
 			filled++
@@ -367,25 +375,20 @@ func writeJSONFillResults(w io.Writer, results []fillStatus) error {
 // latestSummaryRow returns the most recent kind=summary llm_outputs
 // row for a session, or nil when none exists / on a query error.
 // Shared between topic + token lookups so each per-session reporter
-// only hits the DB once after a successful summarise.
-func latestSummaryRow(ctx context.Context, s *store.Store, sessionID string) *store.LLMOutput {
-	outs, err := store.LoadLLMOutputsForSession(ctx, s.DB(), sessionID)
-	if err != nil {
+// only hits the api once after a successful summarise.
+func latestSummaryRow(ctx context.Context, c *apiclient.Client, sessionID string) *api.LLMOutput {
+	outs, err := c.SessionLLMOutputs(ctx, sessionID, string(store.LLMKindSummary), 1)
+	if err != nil || len(outs) == 0 {
 		return nil
 	}
-	for _, o := range outs {
-		if o.Kind == store.LLMKindSummary {
-			row := o
-			return &row
-		}
-	}
-	return nil
+	row := outs[0]
+	return &row
 }
 
-// writeMissingSummaries renders the LoadSessionsMissingSummary
-// result. Reuses the `aichronicles sessions` formatters so the
-// table layout matches column-for-column — muscle memory carries.
-func writeMissingSummaries(w io.Writer, rows []store.SessionDigestRow, format OutputFormat) error {
+// writeMissingSummaries renders the missing-summary result.
+// Reuses the `aichronicles sessions` formatters so the table
+// layout matches column-for-column — muscle memory carries.
+func writeMissingSummaries(w io.Writer, rows []api.SessionDigest, format OutputFormat) error {
 	if format == FormatJSON {
 		return writeMissingSummariesJSON(w, rows)
 	}
@@ -398,10 +401,10 @@ func writeMissingSummaries(w io.Writer, rows []store.SessionDigestRow, format Ou
 	for _, r := range rows {
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
 			shortSessionID(r.ID),
-			formatTsNullable(r.StartedAtMs),
-			formatTsNullable(r.EndedAtMs),
-			nullStringOrDash(r.Cwd),
-			truncatePrompt(nullStringOrDash(r.FirstPrompt)),
+			formatTsPtr(r.StartedAtMs),
+			formatTsPtr(r.EndedAtMs),
+			strPtrOrDash(r.Cwd),
+			truncatePrompt(strPtrOrDash(r.FirstPrompt)),
 		)
 	}
 	return tw.Flush()
@@ -410,7 +413,7 @@ func writeMissingSummaries(w io.Writer, rows []store.SessionDigestRow, format Ou
 // writeMissingSummariesJSON shapes the rows into the same JSON that
 // `aichronicles sessions --format=json` produces, so jq pipelines
 // work unchanged.
-func writeMissingSummariesJSON(w io.Writer, rows []store.SessionDigestRow) error {
+func writeMissingSummariesJSON(w io.Writer, rows []api.SessionDigest) error {
 	type out struct {
 		ID          string `json:"id"`
 		StartedAtMs int64  `json:"started_at_ms,omitempty"`
@@ -421,17 +424,17 @@ func writeMissingSummariesJSON(w io.Writer, rows []store.SessionDigestRow) error
 	dst := make([]out, 0, len(rows))
 	for _, r := range rows {
 		o := out{ID: r.ID}
-		if r.StartedAtMs.Valid {
-			o.StartedAtMs = r.StartedAtMs.Int64
+		if r.StartedAtMs != nil {
+			o.StartedAtMs = *r.StartedAtMs
 		}
-		if r.EndedAtMs.Valid {
-			o.EndedAtMs = r.EndedAtMs.Int64
+		if r.EndedAtMs != nil {
+			o.EndedAtMs = *r.EndedAtMs
 		}
-		if r.Cwd.Valid {
-			o.Cwd = r.Cwd.String
+		if r.Cwd != nil {
+			o.Cwd = *r.Cwd
 		}
-		if r.FirstPrompt.Valid {
-			o.FirstPrompt = r.FirstPrompt.String
+		if r.FirstPrompt != nil {
+			o.FirstPrompt = *r.FirstPrompt
 		}
 		dst = append(dst, o)
 	}

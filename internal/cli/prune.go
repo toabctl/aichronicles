@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
 )
 
@@ -98,8 +97,8 @@ func formatPruneResponse(r api.PruneResponse, window time.Duration) string {
 
 func newVacuumCmd() *cobra.Command {
 	var (
-		yes    bool
-		dbPath string
+		yes      bool
+		sockFlag string
 	)
 	cmd := &cobra.Command{
 		Use:   "vacuum",
@@ -116,42 +115,41 @@ func newVacuumCmd() *cobra.Command {
 			"  - Pass --yes to actually run; default is a no-op preview that\n" +
 			"    prints the current page count.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, err := openStore(dbPath)
+			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
-
-			before, err := store.QueryPageInfo(cmd.Context(), s.DB())
+			before, err := c.DBInfo(cmd.Context())
 			if err != nil {
 				return fmt.Errorf("page info: %w", err)
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 				"DB before vacuum: %s (%d pages × %d bytes)\n",
-				humanBytes(before.Bytes()), before.PageCount, before.PageSize)
+				humanBytes(before.Bytes), before.PageCount, before.PageSize)
 			if !yes {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "(dry-run; pass --yes to actually vacuum)")
 				return nil
 			}
 
-			if err := store.Vacuum(cmd.Context(), s.DB()); err != nil {
+			if err := c.Vacuum(cmd.Context()); err != nil {
 				return fmt.Errorf("vacuum: %w", err)
 			}
 
-			after, err := store.QueryPageInfo(cmd.Context(), s.DB())
+			after, err := c.DBInfo(cmd.Context())
 			if err != nil {
 				return fmt.Errorf("page info (after): %w", err)
 			}
-			delta := before.Bytes() - after.Bytes()
+			delta := before.Bytes - after.Bytes
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 				"DB after vacuum:  %s (%d pages × %d bytes)\nreclaimed:        %s\n",
-				humanBytes(after.Bytes()), after.PageCount, after.PageSize,
+				humanBytes(after.Bytes), after.PageCount, after.PageSize,
 				humanBytes(delta))
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "actually vacuum; without --yes the command prints current size and exits")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	return cmd
 }
 

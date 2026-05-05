@@ -217,56 +217,53 @@ func RunFactsForSession(
 	opts FactsRunOptions,
 	out io.Writer,
 ) (int64, error) {
-	sessionID, err := store.ResolveSessionIDPrefix(ctx, s.DB(), opts.SessionID)
+	sessionID, err := c.ResolveSession(ctx, opts.SessionID)
 	if err != nil {
 		return 0, fmt.Errorf("facts: %w", err)
 	}
 
-	digestRow, err := store.LoadSessionDigest(ctx, s.DB(), sessionID)
+	digestRow, err := c.Session(ctx, sessionID)
 	if err != nil {
 		return 0, fmt.Errorf("facts: load digest: %w", err)
 	}
-	if digestRow == nil {
-		return 0, fmt.Errorf("facts: session %s not found", sessionID)
-	}
-	if !digestRow.LatestSummary.Valid || strings.TrimSpace(digestRow.LatestSummary.String) == "" {
+	if digestRow.LatestSummary == nil || strings.TrimSpace(*digestRow.LatestSummary) == "" {
 		return 0, fmt.Errorf("facts: session %s has no summary — run `aichronicles summarize %s` first",
 			sessionID, sessionID)
 	}
 
 	digest := prompts.SessionDigest{
 		ID:      digestRow.ID,
-		Summary: digestRow.LatestSummary.String,
+		Summary: *digestRow.LatestSummary,
 	}
-	if digestRow.StartedAtMs.Valid {
-		digest.StartedAtMs = digestRow.StartedAtMs.Int64
+	if digestRow.StartedAtMs != nil {
+		digest.StartedAtMs = *digestRow.StartedAtMs
 	}
-	if digestRow.EndedAtMs.Valid {
-		digest.EndedAtMs = digestRow.EndedAtMs.Int64
+	if digestRow.EndedAtMs != nil {
+		digest.EndedAtMs = *digestRow.EndedAtMs
 	}
-	if digestRow.Cwd.Valid {
-		digest.Cwd = digestRow.Cwd.String
+	if digestRow.Cwd != nil {
+		digest.Cwd = *digestRow.Cwd
 	}
-	if digestRow.FirstPrompt.Valid {
-		digest.FirstPrompt = digestRow.FirstPrompt.String
+	if digestRow.FirstPrompt != nil {
+		digest.FirstPrompt = *digestRow.FirstPrompt
 	}
-	urls, err := store.LoadExtractionsForSession(ctx, s.DB(), sessionID, "url")
+	urls, err := c.SessionExtractions(ctx, sessionID, "url")
 	if err != nil {
 		return 0, fmt.Errorf("facts: load urls: %w", err)
 	}
-	if len(urls) > 0 {
-		digest.Links = make([]string, len(urls))
-		for i, u := range urls {
+	if len(urls.Extractions) > 0 {
+		digest.Links = make([]string, len(urls.Extractions))
+		for i, u := range urls.Extractions {
 			digest.Links[i] = u.Value
 		}
 	}
-	shells, err := store.LoadExtractionsForSession(ctx, s.DB(), sessionID, "shell_command")
+	shells, err := c.SessionExtractions(ctx, sessionID, "shell_command")
 	if err != nil {
 		return 0, fmt.Errorf("facts: load shell_command: %w", err)
 	}
-	if len(shells) > 0 {
-		digest.ShellCommands = make([]string, len(shells))
-		for i, sc := range shells {
+	if len(shells.Extractions) > 0 {
+		digest.ShellCommands = make([]string, len(shells.Extractions))
+		for i, sc := range shells.Extractions {
 			digest.ShellCommands[i] = sc.Value
 		}
 	}
@@ -274,10 +271,10 @@ func RunFactsForSession(
 	// important here (facts are about static contracts, not about
 	// outcome), but the cue is cheap and the LLM may use it to
 	// down-weight facts asserted in failure_likely sessions.
-	if outcome, oerr := store.EnsureSessionOutcome(ctx, s.DB(), sessionID); oerr != nil {
+	if outcome, oerr := c.SessionOutcome(ctx, sessionID); oerr != nil {
 		slog.Warn("facts: skipping outcome cue", "session", sessionID, "err", oerr)
 	} else {
-		digest.Outcome = outcome
+		digest.Outcome = sessionOutcomeFromWire(outcome)
 	}
 
 	built, err := prompts.BuildFacts(prompts.FactsFromSessionInputs{Digest: digest})
@@ -310,8 +307,8 @@ func RunFactsForSession(
 	// semantic_facts. The projection is best-effort per-fact: a
 	// single bad fact doesn't drop the whole batch — we log and
 	// continue so partial extraction still lands.
-	row, err := store.LoadLLMOutputByID(ctx, s.DB(), id)
-	if err != nil || row == nil {
+	row, err := c.LLMOutputByID(ctx, id)
+	if err != nil {
 		return id, fmt.Errorf("facts: load persisted row: %w", err)
 	}
 	var result prompts.FactsResult

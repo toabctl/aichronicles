@@ -57,7 +57,7 @@ func newProposeDiscardCmd() *cobra.Command {
 				return errors.New("--skill <name> is required (run `aichronicles propose list` to see options)")
 			}
 
-			result, output, err := loadLatestProposal(cmd.Context(), s, outputID)
+			result, output, err := loadLatestProposal(cmd.Context(), c, outputID)
 			if err != nil {
 				return err
 			}
