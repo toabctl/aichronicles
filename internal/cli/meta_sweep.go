@@ -12,6 +12,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/llm"
 )
 
@@ -449,12 +450,14 @@ func runSkillRevisionForSweep(
 	}
 
 	sinceMs := time.Now().Add(-since).UnixMilli()
-	report, err := store.LoadSkillStaleness(ctx, s.DB(), sinceMs, window.Milliseconds(),
-		store.SkillStalenessLimits{})
+	resp, err := c.SkillStaleness(ctx, api.SkillStalenessRequest{
+		SinceMs:  sinceMs,
+		WindowMs: window.Milliseconds(),
+	})
 	if err != nil {
 		return fmt.Errorf("load staleness report: %w", err)
 	}
-	if len(report) == 0 {
+	if len(resp.Skills) == 0 {
 		_, _ = fmt.Fprintln(errOut, "meta sweep: skill_revision: no stale skills, nothing to do")
 		return nil
 	}
@@ -462,7 +465,7 @@ func runSkillRevisionForSweep(
 	skillsDir := resolveSkillsDir(opts.SkillsDir)
 	dispatched := 0
 	var firstErr error
-	for _, st := range report {
+	for _, st := range resp.Skills {
 		if dispatched >= maxSkills {
 			break
 		}

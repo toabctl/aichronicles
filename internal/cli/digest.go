@@ -123,7 +123,7 @@ func newDigestWeeklyCmd() *cobra.Command {
 
 func newDigestListCmd() *cobra.Command {
 	var (
-		dbPath   string
+		sockFlag string
 		formatIn string
 		limit    int
 	)
@@ -135,16 +135,13 @@ func newDigestListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := openStore(dbPath)
+			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
 
-			rows, err := store.LoadLLMOutputs(cmd.Context(), s.DB(), store.LLMOutputFilter{
-				Kind:  store.LLMKindReflectWeekly,
-				Limit: limit,
-			})
+			rows, err := c.LLMOutputsList(cmd.Context(),
+				string(store.LLMKindReflectWeekly), "", limit)
 			if err != nil {
 				return fmt.Errorf("list digests: %w", err)
 			}
@@ -152,8 +149,8 @@ func newDigestListCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 20, "max digests to list, newest first")
-	cmd.Flags().StringVar(&dbPath, "db", "",
-		"SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
@@ -374,7 +371,7 @@ func renderWeeklyDigest(out io.Writer, env WeeklyDigestEnvelope) error {
 // renderDigestList prints a tabular summary of past weekly digest
 // rows so the user can see what's in the timeline. JSON mode emits
 // the raw envelope shape for jq.
-func renderDigestList(out io.Writer, rows []store.LLMOutput, format OutputFormat) error {
+func renderDigestList(out io.Writer, rows []api.LLMOutput, format OutputFormat) error {
 	if format == FormatJSON {
 		envs := make([]WeeklyDigestEnvelope, 0, len(rows))
 		for _, r := range rows {
@@ -417,7 +414,7 @@ func renderDigestList(out io.Writer, rows []store.LLMOutput, format OutputFormat
 // stored row. The body holds the bare ReflectionResult; we don't
 // have a recorded period start/end so we leave those empty in
 // JSON output — the consumer can use created_at_ms instead.
-func decodeStoredEnvelope(r *store.LLMOutput) (WeeklyDigestEnvelope, error) {
+func decodeStoredEnvelope(r *api.LLMOutput) (WeeklyDigestEnvelope, error) {
 	var inner prompts.ReflectionResult
 	if err := json.Unmarshal([]byte(r.Body), &inner); err != nil {
 		return WeeklyDigestEnvelope{}, err

@@ -299,7 +299,7 @@ func RunSummarize(
 
 // persistSessionLinks filters the model-emitted links down to ones
 // whose to_session_id is in `allowed` (the candidate shortlist the
-// model was given), then writes them via store.SaveSessionLinks.
+// model was given), then writes them via the api.
 //
 // Filtering enforces the prompt's anti-fabrication contract: the
 // model is told to only emit ids from the candidate stanza, but

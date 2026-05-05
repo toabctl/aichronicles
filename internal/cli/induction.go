@@ -218,7 +218,7 @@ func newInductionRunCmd() *cobra.Command {
 
 func newInductionListCmd() *cobra.Command {
 	var (
-		dbPath   string
+		sockFlag string
 		limit    int
 		formatIn string
 	)
@@ -230,23 +230,21 @@ func newInductionListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := openStore(dbPath)
+			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
 
-			rows, err := store.LoadLLMOutputs(cmd.Context(), s.DB(), store.LLMOutputFilter{
-				Kind:  store.LLMKindInduction,
-				Limit: limit,
-			})
+			rows, err := c.LLMOutputsList(cmd.Context(),
+				string(store.LLMKindInduction), "", limit)
 			if err != nil {
 				return fmt.Errorf("load induction rows: %w", err)
 			}
 			return renderInductionList(cmd.OutOrStdout(), rows, format)
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockFlag, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "max rows to render, newest first")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
@@ -717,7 +715,7 @@ func renderInductionResult(out io.Writer, sessionID string, r *prompts.Induction
 // renderInductionList renders the induction history — one row per
 // induction llm_outputs row, newest first. Topic is the proposed
 // skill name OR "(no skill)" when the verdict was negative.
-func renderInductionList(out io.Writer, rows []store.LLMOutput, format OutputFormat) error {
+func renderInductionList(out io.Writer, rows []api.LLMOutput, format OutputFormat) error {
 	if format == FormatJSON {
 		// Round-trip the raw rows so a JSON consumer gets the full
 		// body and can branch on the skill/workflow fields themselves.
@@ -739,8 +737,8 @@ func renderInductionList(out io.Writer, rows []store.LLMOutput, format OutputFor
 			outcome = formatInductionOutcome(&result)
 		}
 		sessShort := "(none)"
-		if r.SessionID.Valid && len(r.SessionID.String) >= 8 {
-			sessShort = r.SessionID.String[:8]
+		if r.SessionID != nil && len(*r.SessionID) >= 8 {
+			sessShort = (*r.SessionID)[:8]
 		}
 		when := time.UnixMilli(r.CreatedAtMs).UTC().Format("2006-01-02 15:04 UTC")
 		fmt.Fprintf(&b, "%-8s  %-19s  %s\n", sessShort, when, outcome)
