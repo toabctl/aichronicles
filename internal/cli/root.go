@@ -1,3 +1,24 @@
+// Package cli is the cobra-based command tree behind the
+// `aichronicles` binary. Each subcommand lives in its own file
+// (hook, search, propose, reflect, summarize, scrub, audit, doctor,
+// setup, teardown, …); root.go assembles them into the tree
+// returned by NewRootCmd.
+//
+// Two boundaries the package observes:
+//   - Daemon-vs-DB. Read-heavy and LLM-driven commands (propose,
+//     reflect, facts, digest, search) talk to the running daemon
+//     through internal/apiclient over its UDS. Offline tools that
+//     run without the daemon (backfill, scrub, import-*, mcp-serve)
+//     open the SQLite store directly. The split is intentional;
+//     internal/cli/apiclient.go centralises the daemon-side wiring,
+//     internal/cli/store.go centralises the direct-DB side.
+//   - Output. Read commands take --format=table|json and route
+//     through format.go (addFormatFlag / emitJSON). Write commands
+//     have no --format and emit human-readable progress only.
+//
+// Errors flow back through cobra's RunE; root.go wraps them with a
+// styled "aichronicles:" prefix on stderr. Commands set
+// SilenceUsage=true so a runtime error does not dump help text.
 package cli
 
 import (
