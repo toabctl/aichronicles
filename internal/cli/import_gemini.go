@@ -14,7 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
-	"github.com/toabctl/aichronicles/pkg/events/sources/gemini"
+	"github.com/toabctl/aichronicles/internal/events/sources/gemini"
 )
 
 func newImportGeminiCmd() *cobra.Command {

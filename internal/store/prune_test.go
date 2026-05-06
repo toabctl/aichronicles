@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/internal/events"
 )
 
 // seedSessionAt ingests one user_prompt envelope tagged with the

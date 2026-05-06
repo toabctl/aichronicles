@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/internal/events"
 )
 
 // openTestStore opens a fresh SQLite DB in t.TempDir for tests.

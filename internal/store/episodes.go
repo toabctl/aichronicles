@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/internal/events"
 )
 
 // DefaultEpisodeIdleGapMs is the inter-event gap above which the

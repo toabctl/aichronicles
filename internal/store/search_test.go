@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/internal/events"
 )
 
 // contains is a one-letter alias for strings.Contains, kept to

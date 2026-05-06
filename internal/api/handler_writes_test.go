@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/pkg/api"
-	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 func hashOf(t *testing.T, s string) string {

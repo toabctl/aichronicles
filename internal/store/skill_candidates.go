@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/internal/events"
 )
 
 // InitialSkillVersion is the version stamp every newly-recorded

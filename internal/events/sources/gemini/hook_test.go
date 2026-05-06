@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/internal/events"
 )
 
 var testNow = func() time.Time { return time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC) }

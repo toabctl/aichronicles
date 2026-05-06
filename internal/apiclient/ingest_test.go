@@ -12,8 +12,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/api"
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 func validEnvelope(t *testing.T) events.Envelope {

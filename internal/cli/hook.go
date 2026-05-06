@@ -12,11 +12,11 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/config"
+	"github.com/toabctl/aichronicles/internal/events"
+	"github.com/toabctl/aichronicles/internal/events/sources/claude"
+	"github.com/toabctl/aichronicles/internal/events/sources/gemini"
 	"github.com/toabctl/aichronicles/internal/notify"
 	"github.com/toabctl/aichronicles/internal/paths"
-	"github.com/toabctl/aichronicles/pkg/events"
-	"github.com/toabctl/aichronicles/pkg/events/sources/claude"
-	"github.com/toabctl/aichronicles/pkg/events/sources/gemini"
 )
 
 // defaultHookTimeout caps the api round-trip so a wedged daemon
@@ -153,7 +153,7 @@ func RunHook(stdin io.Reader, stderr io.Writer, socketFlag, agentSlug string) er
 }
 
 // translateHook dispatches to the per-agent HookTranslator under
-// pkg/events/sources/. Translators are pure: they parse the hook
+// internal/events/sources/. Translators are pure: they parse the hook
 // payload and produce a canonical Envelope. Redaction is applied
 // server-side by the receiving daemon's events.Pipeline. Unknown
 // agent slugs return an error so a typo in --agent surfaces

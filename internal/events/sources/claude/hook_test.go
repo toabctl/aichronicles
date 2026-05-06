@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/internal/events"
 )
 
 // Fixed timestamp for deterministic test output. Real hooks fire

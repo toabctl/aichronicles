@@ -7,8 +7,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/pkg/api"
-	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 func TestClient_Sessions_HappyPath(t *testing.T) {

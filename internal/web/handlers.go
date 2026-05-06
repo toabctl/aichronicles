@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/timefmt"
-	"github.com/toabctl/aichronicles/pkg/events"
 
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 )
@@ -286,7 +286,7 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int, f sess
 	}
 	if f.Skill != "" {
 		// extractions kind=skill_load value=<name> is the canonical
-		// signal — see pkg/events/SkillLoadExtractor.
+		// signal — see internal/events/SkillLoadExtractor.
 		conds = append(conds, `EXISTS (
 			SELECT 1 FROM extractions x
 			 WHERE x.session_id = s.id AND x.kind = ? AND x.value = ?

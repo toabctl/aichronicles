@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
-	"github.com/toabctl/aichronicles/pkg/events/sources/claude"
+	"github.com/toabctl/aichronicles/internal/events/sources/claude"
 )
 
 func newImportClaudeCmd() *cobra.Command {

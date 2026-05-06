@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/internal/events"
 )
 
 // OutcomeLabel is the coarse derived verdict for a session. The

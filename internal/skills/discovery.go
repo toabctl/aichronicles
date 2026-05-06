@@ -16,8 +16,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
-	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // ClaudeSkillsDirName is the directory Claude Code reads SKILL.md

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/internal/events"
 )
 
 const userEntryFixture = `{"type":"user","uuid":"01970000-0000-7000-8000-000000000001","sessionId":"s1","timestamp":"2026-05-02T12:00:00.000Z","cwd":"/p","version":"1.2.3","message":{"role":"user","content":"hello"}}`

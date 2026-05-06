@@ -3,9 +3,9 @@ package api
 import (
 	"net/http"
 
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
-	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // handleEpisodesList serves GET /v1/episodes with optional

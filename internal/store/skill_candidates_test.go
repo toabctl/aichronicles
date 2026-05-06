@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/internal/events"
 )
 
 // mkProposeRow inserts a minimal llm_outputs row of kind=propose for

@@ -4,7 +4,7 @@ import "context"
 
 // Sink consumes events. Implementations decide their own atomicity
 // and batching: one-tx-per-call (live ingest) or buffered-and-
-// flushed (batch import) is up to the Sink. pkg/events does NOT
+// flushed (batch import) is up to the Sink. internal/events does NOT
 // import database/sql; SQLite-backed Sinks live in internal/store
 // and satisfy this interface.
 //

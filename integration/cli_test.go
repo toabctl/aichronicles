@@ -15,8 +15,8 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/api"
 	"github.com/toabctl/aichronicles/internal/cli"
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // isolateEnv scopes XDG + notification env so RunHook never reads

@@ -3,10 +3,10 @@ package api
 import (
 	"net/http"
 
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
-	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // handleSessionEvents serves GET /v1/sessions/{id}/events. Returns

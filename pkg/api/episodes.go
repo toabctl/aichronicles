@@ -2,7 +2,7 @@ package api
 
 // Episode is the wire shape for one stored episode — a bounded,
 // contextually-coherent run of events within a session. Maps from
-// pkg/events.Episode at the handler boundary; the wire form uses
+// internal/events.Episode at the handler boundary; the wire form uses
 // *string for nullable Cwd so JSON consumers do not need a custom
 // helper.
 type Episode struct {

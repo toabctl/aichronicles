@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/internal/events"
 )
 
 // ErrRedactionRequired is returned when an envelope reaches the store

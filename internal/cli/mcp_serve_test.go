@@ -16,9 +16,9 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/api"
 	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/mcp"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // TestMCPServe_EndToEnd pipes a minimal MCP handshake + tools/list

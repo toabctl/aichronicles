@@ -36,19 +36,19 @@ type rule struct {
 
 var rules = []rule{
 	{
-		From:      "github.com/toabctl/aichronicles/pkg/events",
+		From:      "github.com/toabctl/aichronicles/internal/events",
 		Forbidden: []string{"database/sql", "net/http"},
-		Reason:    "pkg/events is the domain core; SQL and HTTP belong to adapters",
+		Reason:    "internal/events is the domain core; SQL and HTTP belong to adapters",
 	},
 	{
-		From: "github.com/toabctl/aichronicles/pkg/events",
+		From: "github.com/toabctl/aichronicles/internal/events",
 		Forbidden: []string{
 			"github.com/toabctl/aichronicles/internal/store",
 			"github.com/toabctl/aichronicles/internal/api",
 			"github.com/toabctl/aichronicles/internal/apiclient",
 			"github.com/toabctl/aichronicles/internal/cli",
 		},
-		Reason: "pkg/events must not depend on any internal/* package",
+		Reason: "internal/events must not depend on any other internal package",
 	},
 	{
 		From:      "github.com/toabctl/aichronicles/pkg/api",

@@ -2,7 +2,7 @@ package events
 
 // NullString is a domain-pure analogue of sql.NullString — same
 // (String, Valid) shape, no database/sql dependency. Lives in
-// pkg/events so domain types (events.EventView, SessionDigest, …) can
+// internal/events so domain types (events.EventView, SessionDigest, …) can
 // model genuinely-nullable text columns without making this package
 // depend on a SQL driver.
 //

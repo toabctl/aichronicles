@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/pkg/api"
-	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // ingestN posts n distinct envelopes through the server and returns

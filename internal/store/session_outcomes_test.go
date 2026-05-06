@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/internal/events"
 )
 
 // outcomeFixture seeds one session with a controlled sequence of

@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/preview"
-	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // ErrNoSuchSession is returned when a session-id prefix does not match

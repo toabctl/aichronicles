@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/pkg/api"
-	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // importMaxLineBytes caps a single NDJSON line. One line is one

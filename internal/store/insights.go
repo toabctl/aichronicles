@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/internal/events"
 )
 
 // InsightsReport is the full output of LoadInsights — the data the

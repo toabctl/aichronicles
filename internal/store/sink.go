@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/internal/events"
 )
 
 // Sink writes one envelope per call in its own SQLite transaction.

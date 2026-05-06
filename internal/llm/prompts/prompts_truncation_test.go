@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/internal/events"
 )
 
 // TestRenderEvents_PerKindCaps confirms the per-kind cap actually

@@ -13,8 +13,8 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/api"
 	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // apiForStore stands up an httptest internal/api server backed

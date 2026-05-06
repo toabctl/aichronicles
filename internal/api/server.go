@@ -6,7 +6,7 @@
 // CLI subcommand are clients of this surface.
 //
 // Redaction is enforced server-side here via the Pipeline (see
-// pkg/events). Clients ship raw envelopes and trust the server to
+// internal/events). Clients ship raw envelopes and trust the server to
 // scrub before storage; even a buggy or malicious client claiming
 // redaction.applied=true is re-redacted.
 package api
@@ -25,10 +25,10 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
-	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // DefaultMaxEnvelopeBytes caps a single ingest body when the

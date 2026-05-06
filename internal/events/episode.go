@@ -3,7 +3,7 @@ package events
 // Episode is one bounded, contextually-coherent run of events
 // within a session — Pink et al. (2026 — arXiv:2502.06975) frame
 // it as the episodic-memory unit agents need to retrieve concrete
-// prior trajectories. Lives in pkg/events as a domain type so
+// prior trajectories. Lives in internal/events as a domain type so
 // consumers (prompt builders, web rendering, MCP find_episodes)
 // import it from the domain package rather than internal/store.
 //

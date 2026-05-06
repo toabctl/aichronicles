@@ -34,9 +34,9 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/google/uuid"
 
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/web"
-	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 // chromeBinaries lists the executables we look for on PATH. First

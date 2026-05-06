@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/internal/events"
 )
 
 // SkillStaleness is the per-skill staleness summary produced by

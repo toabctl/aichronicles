@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/events"
 )
 
 func nullS(s string) events.NullString { return events.NullString{String: s, Valid: s != ""} }

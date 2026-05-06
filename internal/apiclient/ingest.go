@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/toabctl/aichronicles/pkg/events"
+	"github.com/toabctl/aichronicles/internal/events"
 )
 
 // Ingest POSTs an envelope to /v1/ingest. Returns the server's
