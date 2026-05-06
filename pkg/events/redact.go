@@ -3,7 +3,7 @@ package events
 import (
 	"sort"
 
-	"github.com/toabctl/aichronicles/pkg/redact"
+	"github.com/toabctl/aichronicles/internal/redact"
 )
 
 // Redactor is the interface the Pipeline uses to scrub secrets
@@ -22,9 +22,9 @@ type Redactor interface {
 }
 
 // ScannerRedactor is the production Redactor: it adapts a
-// pkg/redact.Scanner (the regex/detector catalog) to the
+// redact.Scanner (the regex/detector catalog) to the
 // envelope-shaped Redactor interface. NewScannerRedactor wraps
-// any pkg/redact.Scanner; the project default is wired by callers
+// any redact.Scanner; the project default is wired by callers
 // as ScannerRedactor{Scanner: redact.Default()}.
 type ScannerRedactor struct {
 	Scanner redact.Scanner

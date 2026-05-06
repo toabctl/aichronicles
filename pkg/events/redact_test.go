@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/toabctl/aichronicles/pkg/redact"
+	"github.com/toabctl/aichronicles/internal/redact"
 )
 
 // freshEnv returns a minimal valid Envelope for tests to mutate.

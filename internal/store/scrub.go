@@ -8,8 +8,8 @@ import (
 	"io"
 	"sort"
 
+	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/pkg/events"
-	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 // ScrubOptions controls Scrub behavior. DryRun=true means "scan

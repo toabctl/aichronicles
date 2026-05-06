@@ -25,10 +25,10 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/events"
-	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 // DefaultMaxEnvelopeBytes caps a single ingest body when the

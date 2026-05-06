@@ -6,9 +6,9 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
-	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 // handleScrub serves POST /v1/scrub. Body: api.ScrubRequest.

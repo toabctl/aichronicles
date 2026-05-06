@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/toabctl/aichronicles/internal/nullable"
+	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/pkg/api"
-	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 // auditSnippetRunes caps the per-row snippet returned by /v1/audit.
@@ -100,7 +100,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 // buildAuditQuery composes the audit scan query: every event with
 // non-null content_text, newest-first, optional since_ms cutoff and
 // row limit. Inline rather than living in internal/store because
-// audit is a pkg/redact-driven server-side operation; keeping the
+// audit is a redact-driven server-side operation; keeping the
 // SQL next to the handler makes the data-flow obvious.
 func buildAuditQuery(sinceMs int64, limit int) (string, []any) {
 	var filter strings.Builder

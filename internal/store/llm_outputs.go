@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/toabctl/aichronicles/pkg/redact"
+	"github.com/toabctl/aichronicles/internal/redact"
 )
 
 // LLMOutputKind is the discriminator for llm_outputs.kind. Application

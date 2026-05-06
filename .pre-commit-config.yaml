@@ -14,7 +14,7 @@ repos:
         # generated detector reference reproduces the regex pattern
         # (which embeds the literal BEGIN/END markers) for users to
         # inspect. None carries live key material.
-        exclude: ^(pkg/redact/redact_test\.go|pkg/redact/fuzz_test\.go|docs/reference/redaction-detectors\.md)$
+        exclude: ^(internal/redact/redact_test\.go|internal/redact/fuzz_test\.go|docs/reference/redaction-detectors\.md)$
       - id: check-yaml
         # mkdocs.yml uses pymdownx.superfences's `!!python/name:`
         # tag, which the default safe loader rejects. --unsafe

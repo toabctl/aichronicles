@@ -26,8 +26,8 @@ import (
 	"github.com/spf13/cobra/doc"
 
 	"github.com/toabctl/aichronicles/internal/cli"
+	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/redact"
 )
 
 func main() {
