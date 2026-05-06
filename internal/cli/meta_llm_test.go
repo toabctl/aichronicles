@@ -13,9 +13,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/events"
-	"github.com/toabctl/aichronicles/pkg/llm"
 )
 
 // seedSessionsForMeta writes `count` short sessions, each with one

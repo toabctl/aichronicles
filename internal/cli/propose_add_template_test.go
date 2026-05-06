@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/toabctl/aichronicles/pkg/llm/prompts"
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 )
 
 // proposalWithStepsTemplate fabricates a ProposalResult whose

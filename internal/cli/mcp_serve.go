@@ -7,8 +7,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/config"
+	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/mcp"
-	"github.com/toabctl/aichronicles/pkg/llm"
 )
 
 // mcpServerName is what the MCP `initialize` handshake reports back

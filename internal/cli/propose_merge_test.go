@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 // TestWriteMergedSkill_RebuildsFrontmatter covers the SKILL.md

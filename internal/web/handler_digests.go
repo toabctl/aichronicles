@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 // digestsDefaultLimit caps how many recent digests we render. The

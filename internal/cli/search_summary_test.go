@@ -10,9 +10,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/events"
-	"github.com/toabctl/aichronicles/pkg/llm"
 )
 
 // seedSearchableEvent ingests one user_prompt with the given

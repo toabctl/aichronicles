@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/pkg/api"
-	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 // RegisterAichroniclesAPITools registers the MCP tools that have

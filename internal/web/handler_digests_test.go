@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 // seedWeeklyDigest writes a synthetic reflect_weekly row to

@@ -3,8 +3,8 @@ package cli
 import (
 	"testing"
 
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/pkg/api"
-	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 func TestMergeImpactIntoInvoked_PopulatesMatchingRows(t *testing.T) {

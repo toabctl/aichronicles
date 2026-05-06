@@ -3,8 +3,8 @@ package web
 import (
 	"html/template"
 
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 // Page is the common envelope every route's view data sits inside.

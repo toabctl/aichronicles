@@ -4,7 +4,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/config"
-	"github.com/toabctl/aichronicles/pkg/llm"
+	"github.com/toabctl/aichronicles/internal/llm"
 )
 
 // newMetaCmd is the umbrella for cadence-gated meta-analyses

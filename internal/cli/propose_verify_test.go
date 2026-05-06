@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/toabctl/aichronicles/pkg/llm"
-	"github.com/toabctl/aichronicles/pkg/llm/prompts"
+	"github.com/toabctl/aichronicles/internal/llm"
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 )
 
 // fakeLLMClientFn wraps a *fakeLLM into the newClient closure

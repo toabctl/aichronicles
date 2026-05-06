@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/llm"
 )
 
 // countLLMOutputsByKind is a small assertion helper.

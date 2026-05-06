@@ -15,10 +15,10 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/toabctl/aichronicles/internal/llm"
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
-	"github.com/toabctl/aichronicles/pkg/llm"
-	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 // nilLLMClient is the closure tests pass when noVerify=true short-

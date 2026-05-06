@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/toabctl/aichronicles/internal/llm"
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/llm"
-	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 func TestRunFactsForSession_RequiresSummary(t *testing.T) {

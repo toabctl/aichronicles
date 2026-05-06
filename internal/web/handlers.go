@@ -17,7 +17,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/timefmt"
 	"github.com/toabctl/aichronicles/pkg/events"
 
-	"github.com/toabctl/aichronicles/pkg/llm/prompts"
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 )
 
 // sessionsListLimit is how many sessions /  loads. Aichronicles is a

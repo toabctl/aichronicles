@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 // proposeDefaultLimit caps how many propose rows /propose renders.

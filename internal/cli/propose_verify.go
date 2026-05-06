@@ -13,11 +13,11 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/internal/llm"
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
-	"github.com/toabctl/aichronicles/pkg/llm"
-	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 // verifyProposalOrAbort runs the Voyager-style critic gate before

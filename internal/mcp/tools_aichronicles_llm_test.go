@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/toabctl/aichronicles/pkg/llm"
+	"github.com/toabctl/aichronicles/internal/llm"
 )
 
 // fakeLLMClient is a tiny in-package stand-in for the LLM client.

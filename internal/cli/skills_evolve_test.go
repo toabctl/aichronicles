@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 // seedSkillOnDisk writes a minimal SKILL.md under

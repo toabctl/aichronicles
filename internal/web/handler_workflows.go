@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/timefmt"
-	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 // workflowsHandler renders /workflows — every kind=induction row

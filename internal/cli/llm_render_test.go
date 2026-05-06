@@ -5,12 +5,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/toabctl/aichronicles/pkg/llm"
+	"github.com/toabctl/aichronicles/internal/llm"
 )
 
 // TestProviderLabel pins the strings the cli surfaces in command
 // headers ("provider=anthropic", "provider=openai") so a future
-// rename in pkg/llm doesn't silently change what users see.
+// rename in internal/llm doesn't silently change what users see.
 func TestProviderLabel(t *testing.T) {
 	t.Parallel()
 	cases := map[llm.Provider]string{

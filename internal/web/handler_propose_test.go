@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 // seedProposalRow writes a synthetic kind=propose row to llm_outputs.

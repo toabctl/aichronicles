@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/toabctl/aichronicles/pkg/llm/prompts"
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 )
 
 // TestReadVersion_ParsesQuotedAndUnquoted mirrors

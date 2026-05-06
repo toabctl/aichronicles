@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/llm"
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/llm"
-	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 // TestRunPropose_ChallengeFlagPersistsWithKindChallenge confirms

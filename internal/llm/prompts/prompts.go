@@ -32,10 +32,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/events"
-	"github.com/toabctl/aichronicles/pkg/llm"
 )
 
 // Built is the output of every Build* function. Returning it as a

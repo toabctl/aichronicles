@@ -8,9 +8,9 @@ import (
 	"strings"
 
 	"github.com/toabctl/aichronicles/internal/config"
+	"github.com/toabctl/aichronicles/internal/llm"
+	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/llm"
-	"github.com/toabctl/aichronicles/pkg/llm/prompts"
 )
 
 // providerLabel returns a short human-readable name for the
@@ -32,11 +32,11 @@ func providerLabel(cfg llm.Config) string {
 // resolveModelLabel returns the model identifier the user can
 // expect to see in API requests for the given provider. When a
 // flag-supplied model is non-empty it wins; otherwise we pick up
-// the provider-specific default constant from pkg/llm so the
+// the provider-specific default constant from internal/llm so the
 // command header shows the real model id ("claude-sonnet-4-6")
 // rather than a generic "(provider default)" placeholder.
 //
-// The constants stay the source of truth — bump them in pkg/llm
+// The constants stay the source of truth — bump them in internal/llm
 // and headers across the cli automatically reflect the new
 // default with no second list to keep in sync.
 func resolveModelLabel(cfg llm.Config, flagModel string) string {
