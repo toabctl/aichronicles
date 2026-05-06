@@ -23,9 +23,10 @@ import (
 //
 // Production wiring calls all three so the tool catalog is the
 // union of registered tools regardless of which side a handler
-// happens to be on. A tool MUST appear in exactly one registry —
-// duplicate registration would have the second Register call
-// overwrite the first silently.
+// happens to be on. A tool MUST appear in exactly one registry;
+// RegisterTool panics on duplicate names so the conflict surfaces
+// at startup rather than silently shadowing one handler with
+// another.
 func RegisterAichroniclesAPITools(s *Server, c *apiclient.Client) {
 	registerGetUnresolvedForCwd(s, c)
 	registerGetFactsForSubject(s, c)
