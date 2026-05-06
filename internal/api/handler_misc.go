@@ -20,9 +20,8 @@ func (s *Server) handleSessionLLMOutputs(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	kind := r.URL.Query().Get("kind")
-	limit := parseLimit(r, 50)
-	if limit < 0 {
-		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+	limit, ok := parseLimitQuery(w, r, 50)
+	if !ok {
 		return
 	}
 	rows, err := store.LoadLLMOutputsForSession(r.Context(), s.store.DB(), id)
@@ -56,9 +55,8 @@ func (s *Server) handleLLMOutputsList(w http.ResponseWriter, r *http.Request) {
 		Kind:      store.LLMOutputKind(q.Get("kind")),
 		SessionID: q.Get("session_id"),
 	}
-	limit := parseLimit(r, 50)
-	if limit < 0 {
-		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+	limit, ok := parseLimitQuery(w, r, 50)
+	if !ok {
 		return
 	}
 	filter.Limit = limit
@@ -196,9 +194,8 @@ func (s *Server) handleProjectsAggregates(w http.ResponseWriter, r *http.Request
 // Empty session_id returns spans across the whole store.
 func (s *Server) handleSubagentSpans(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.URL.Query().Get("session_id")
-	limit := parseLimit(r, 50)
-	if limit < 0 {
-		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+	limit, ok := parseLimitQuery(w, r, 50)
+	if !ok {
 		return
 	}
 	rows, err := store.LoadSubagentSpans(r.Context(), s.store.DB(), sessionID, limit)
@@ -223,35 +220,19 @@ func (s *Server) handleSubagentSpans(w http.ResponseWriter, r *http.Request) {
 
 // handleInsights serves GET /v1/insights?since_ms=&top_tools=&top_skills=&top_sessions=.
 func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
 	sinceMs, ok := parseInt64Query(w, r, "since_ms")
 	if !ok {
 		return
 	}
 	lim := store.InsightsLimits{}
-	if v := q.Get("top_tools"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid top_tools", "")
-			return
-		}
-		lim.TopTools = n
+	if lim.TopTools, ok = parsePositiveIntQuery(w, r, "top_tools", 0); !ok {
+		return
 	}
-	if v := q.Get("top_skills"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid top_skills", "")
-			return
-		}
-		lim.TopSkills = n
+	if lim.TopSkills, ok = parsePositiveIntQuery(w, r, "top_skills", 0); !ok {
+		return
 	}
-	if v := q.Get("top_sessions"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid top_sessions", "")
-			return
-		}
-		lim.TopSessions = n
+	if lim.TopSessions, ok = parsePositiveIntQuery(w, r, "top_sessions", 0); !ok {
+		return
 	}
 	rep, err := store.LoadInsights(r.Context(), s.store.DB(), sinceMs, lim)
 	if err != nil {
@@ -325,21 +306,6 @@ func insightsToWire(r *store.InsightsReport) api.Insights {
 		})
 	}
 	return out
-}
-
-// positiveOrZero parses "" → 0, valid positive int → that int,
-// otherwise -1 to signal a 400. Used by handlers that have
-// optional non-negative limits without the parseLimit default
-// behavior.
-func positiveOrZero(v string) int {
-	if v == "" {
-		return 0
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 0 {
-		return -1
-	}
-	return n
 }
 
 // handleLLMOutputByID serves GET /v1/llm-outputs/{id}. Returns the

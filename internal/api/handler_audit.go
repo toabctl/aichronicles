@@ -3,7 +3,6 @@ package api
 import (
 	"database/sql"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/toabctl/aichronicles/pkg/api"
@@ -33,14 +32,10 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var limit int
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
-			return
-		}
-		limit = n
+	limit := positiveOrZero(q.Get("limit"))
+	if limit < 0 {
+		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+		return
 	}
 
 	sqlText, args := buildAuditQuery(sinceMs, limit)

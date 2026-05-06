@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"strconv"
 
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
@@ -126,14 +125,10 @@ func (s *Server) handleSkillCandidatesList(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, http.StatusBadRequest, "Missing name", "name query param is required")
 		return
 	}
-	var limit int
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
-			return
-		}
-		limit = n
+	limit := positiveOrZero(q.Get("limit"))
+	if limit < 0 {
+		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+		return
 	}
 
 	rows, err := store.LoadSkillCandidatesByName(r.Context(), s.store.DB(), name, limit)

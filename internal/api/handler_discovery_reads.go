@@ -18,14 +18,9 @@ func (s *Server) handleSessionsMissingSummary(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	limit := 200
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
-			return
-		}
-		limit = n
+	limit, ok := parsePositiveIntQuery(w, r, "limit", 200)
+	if !ok {
+		return
 	}
 	rows, err := store.LoadSessionsMissingSummary(r.Context(), s.store.DB(),
 		sinceMs, store.SessionFilter{Cwd: q.Get("cwd"), Agent: q.Get("agent")}, limit)
@@ -53,19 +48,15 @@ func (s *Server) handleSessionsNeedingSegmentation(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	var minEvents, limit int
-	for k, dst := range map[string]*int{
-		"min_events": &minEvents,
-		"limit":      &limit,
-	} {
-		if v := q.Get(k); v != "" {
-			n, err := strconv.Atoi(v)
-			if err != nil || n < 0 {
-				writeProblem(w, http.StatusBadRequest, "Invalid "+k, "")
-				return
-			}
-			*dst = n
-		}
+	minEvents := positiveOrZero(q.Get("min_events"))
+	if minEvents < 0 {
+		writeProblem(w, http.StatusBadRequest, "Invalid min_events", "")
+		return
+	}
+	limit := positiveOrZero(q.Get("limit"))
+	if limit < 0 {
+		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+		return
 	}
 	ids, err := store.LoadSessionsNeedingSegmentation(r.Context(), s.store.DB(),
 		idleCutoff, idleMs, minEvents, limit)
@@ -83,16 +74,10 @@ func (s *Server) handleSessionsNeedingSegmentation(w http.ResponseWriter, r *htt
 // handleSessionsForCompletion serves GET /v1/sessions/completions?prefix=&limit=.
 // Drives shell-completion for `--session` flags.
 func (s *Server) handleSessionsForCompletion(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	prefix := q.Get("prefix")
-	limit := 25
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
-			return
-		}
-		limit = n
+	prefix := r.URL.Query().Get("prefix")
+	limit, ok := parsePositiveIntQuery(w, r, "limit", 25)
+	if !ok {
+		return
 	}
 	rows, err := store.LoadSessionsForCompletion(r.Context(), s.store.DB(), prefix, limit)
 	if err != nil {
@@ -121,19 +106,15 @@ func (s *Server) handleInductionCandidates(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	var minEvents, limit int
-	for k, dst := range map[string]*int{
-		"min_events": &minEvents,
-		"limit":      &limit,
-	} {
-		if v := q.Get(k); v != "" {
-			n, err := strconv.Atoi(v)
-			if err != nil || n < 0 {
-				writeProblem(w, http.StatusBadRequest, "Invalid "+k, "")
-				return
-			}
-			*dst = n
-		}
+	minEvents := positiveOrZero(q.Get("min_events"))
+	if minEvents < 0 {
+		writeProblem(w, http.StatusBadRequest, "Invalid min_events", "")
+		return
+	}
+	limit := positiveOrZero(q.Get("limit"))
+	if limit < 0 {
+		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+		return
 	}
 	rows, err := store.LoadInductionCandidates(r.Context(), s.store.DB(),
 		nowMs, idleMs, minEvents, limit)
@@ -164,19 +145,14 @@ func (s *Server) handleInductionCandidates(w http.ResponseWriter, r *http.Reques
 
 // handleFailureShapes serves GET /v1/proposals/failure-shapes.
 func (s *Server) handleFailureShapes(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
 	sinceMs, ok := parseInt64Query(w, r, "since_ms")
 	if !ok {
 		return
 	}
-	var limit int
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
-			return
-		}
-		limit = n
+	limit := positiveOrZero(r.URL.Query().Get("limit"))
+	if limit < 0 {
+		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+		return
 	}
 	rows, err := store.LoadFailureShapes(r.Context(), s.store.DB(), sinceMs, limit)
 	if err != nil {
@@ -226,14 +202,10 @@ func (s *Server) handleSkillFailures(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var limit int
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
-			return
-		}
-		limit = n
+	limit := positiveOrZero(q.Get("limit"))
+	if limit < 0 {
+		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+		return
 	}
 	rows, err := store.LoadSkillFailures(r.Context(), s.store.DB(), skill, sinceMs, windowMs, limit)
 	if err != nil {
@@ -257,7 +229,6 @@ func (s *Server) handleSkillFailures(w http.ResponseWriter, r *http.Request) {
 // handleSkillCandidatesEffectiveness serves
 // GET /v1/skill-candidates/effectiveness?since_ms=&window_ms=&limit=.
 func (s *Server) handleSkillCandidatesEffectiveness(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
 	sinceMs, ok := parseInt64Query(w, r, "since_ms")
 	if !ok {
 		return
@@ -266,14 +237,10 @@ func (s *Server) handleSkillCandidatesEffectiveness(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	var limit int
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
-			return
-		}
-		limit = n
+	limit := positiveOrZero(r.URL.Query().Get("limit"))
+	if limit < 0 {
+		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+		return
 	}
 	rows, err := store.LoadSkillCandidateEffectiveness(r.Context(), s.store.DB(), sinceMs, windowMs, limit)
 	if err != nil {
@@ -307,19 +274,14 @@ func (s *Server) handleSkillCandidatesEffectiveness(w http.ResponseWriter, r *ht
 // propose's prior-art enrichment to surface candidates the user
 // has not acted on (decision IS NULL).
 func (s *Server) handleSkillCandidatesPending(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
 	sinceMs, ok := parseInt64Query(w, r, "since_ms")
 	if !ok {
 		return
 	}
-	var limit int
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
-			return
-		}
-		limit = n
+	limit := positiveOrZero(r.URL.Query().Get("limit"))
+	if limit < 0 {
+		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+		return
 	}
 	rows, err := store.LoadPendingSkillCandidates(r.Context(), s.store.DB(), sinceMs, limit)
 	if err != nil {

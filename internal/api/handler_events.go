@@ -3,7 +3,6 @@ package api
 import (
 	"database/sql"
 	"net/http"
-	"strconv"
 
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
@@ -30,21 +29,9 @@ func (s *Server) handleEventsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := api.DefaultPageLimit
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil {
-			writeProblem(w, http.StatusBadRequest, "Invalid limit", err.Error())
-			return
-		}
-		if n <= 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid limit", "must be positive")
-			return
-		}
-		if n > api.MaxPageLimit {
-			n = api.MaxPageLimit
-		}
-		limit = n
+	limit, ok := parseLimitQuery(w, r, api.DefaultPageLimit)
+	if !ok {
+		return
 	}
 
 	rows, err := store.LoadEventsSinceSeq(r.Context(), s.store.DB(), sinceSeq, sessionID, limit)

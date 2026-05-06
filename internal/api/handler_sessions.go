@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/store"
@@ -37,21 +36,9 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 		sinceMs = time.Now().Add(-defaultSessionListWindow).UnixMilli()
 	}
 
-	limit := api.DefaultPageLimit
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil {
-			writeProblem(w, http.StatusBadRequest, "Invalid limit", err.Error())
-			return
-		}
-		if n <= 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid limit", "must be positive")
-			return
-		}
-		if n > api.MaxPageLimit {
-			n = api.MaxPageLimit
-		}
-		limit = n
+	limit, ok := parseLimitQuery(w, r, api.DefaultPageLimit)
+	if !ok {
+		return
 	}
 
 	cwd := q.Get("cwd")
@@ -190,21 +177,9 @@ func (s *Server) handleSessionsRelated(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := 10
-	if v := r.URL.Query().Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil {
-			writeProblem(w, http.StatusBadRequest, "Invalid limit", err.Error())
-			return
-		}
-		if n <= 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid limit", "must be positive")
-			return
-		}
-		if n > api.MaxPageLimit {
-			n = api.MaxPageLimit
-		}
-		limit = n
+	limit, ok := parseLimitQuery(w, r, 10)
+	if !ok {
+		return
 	}
 
 	rows, err := store.LoadCandidatePriorSessions(r.Context(), s.store.DB(), id, limit)

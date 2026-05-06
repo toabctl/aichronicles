@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
@@ -22,9 +21,8 @@ func (s *Server) handleFactsSubjects(w http.ResponseWriter, r *http.Request) {
 			"contains is required so the subject lookup is scoped")
 		return
 	}
-	limit := parseLimit(r, defaultFactsLimit)
-	if limit < 0 {
-		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+	limit, ok := parseLimitQuery(w, r, defaultFactsLimit)
+	if !ok {
 		return
 	}
 	subjects, err := store.FactSubjectsLike(r.Context(), s.store.DB(), contains, limit)
@@ -43,9 +41,8 @@ func (s *Server) handleFactsSubjects(w http.ResponseWriter, r *http.Request) {
 // GET /v1/facts (latter returns recent facts across all subjects).
 func (s *Server) handleFactsList(w http.ResponseWriter, r *http.Request) {
 	subject := r.URL.Query().Get("subject")
-	limit := parseLimit(r, defaultFactsLimit)
-	if limit < 0 {
-		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+	limit, ok := parseLimitQuery(w, r, defaultFactsLimit)
+	if !ok {
 		return
 	}
 	var rows []store.SemanticFact
@@ -75,22 +72,4 @@ func (s *Server) handleFactsList(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
-}
-
-// parseLimit reads the "limit" query param. Returns the default
-// when missing, the parsed value when valid, or -1 to signal "the
-// caller should respond with 400". Caps at MaxPageLimit.
-func parseLimit(r *http.Request, def int) int {
-	v := r.URL.Query().Get("limit")
-	if v == "" {
-		return def
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
-		return -1
-	}
-	if n > api.MaxPageLimit {
-		return api.MaxPageLimit
-	}
-	return n
 }

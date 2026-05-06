@@ -3,7 +3,6 @@ package api
 import (
 	"errors"
 	"net/http"
-	"strconv"
 
 	"github.com/toabctl/aichronicles/internal/searchquery"
 	"github.com/toabctl/aichronicles/internal/store"
@@ -59,16 +58,8 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	opts.SinceMs = sinceMs
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
-			return
-		}
-		if n > api.MaxPageLimit {
-			n = api.MaxPageLimit
-		}
-		opts.Limit = n
+	if opts.Limit, ok = parseLimitQuery(w, r, 0); !ok {
+		return
 	}
 
 	hits, err := store.SearchEvents(r.Context(), s.store.DB(), opts)

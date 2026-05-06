@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
@@ -13,8 +12,6 @@ import (
 // optional since_ms / window_ms / max_skills / max_examples
 // filters. Backed by store.LoadSkillStaleness.
 func (s *Server) handleSkillsStaleness(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-
 	sinceMs, ok := parseInt64Query(w, r, "since_ms")
 	if !ok {
 		return
@@ -25,21 +22,11 @@ func (s *Server) handleSkillsStaleness(w http.ResponseWriter, r *http.Request) {
 	}
 
 	lim := store.SkillStalenessLimits{}
-	if v := q.Get("max_skills"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid max_skills", "")
-			return
-		}
-		lim.MaxSkills = n
+	if lim.MaxSkills, ok = parsePositiveIntQuery(w, r, "max_skills", 0); !ok {
+		return
 	}
-	if v := q.Get("max_examples"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid max_examples", "")
-			return
-		}
-		lim.MaxExamples = n
+	if lim.MaxExamples, ok = parsePositiveIntQuery(w, r, "max_examples", 0); !ok {
+		return
 	}
 
 	rows, err := store.LoadSkillStaleness(r.Context(), s.store.DB(), sinceMs, windowMs, lim)
@@ -70,8 +57,6 @@ func (s *Server) handleSkillsStaleness(w http.ResponseWriter, r *http.Request) {
 // callers can render the full distribution. Backed by
 // store.LoadSkillImpact.
 func (s *Server) handleSkillsImpact(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-
 	sinceMs, ok := parseInt64Query(w, r, "since_ms")
 	if !ok {
 		return
@@ -82,13 +67,8 @@ func (s *Server) handleSkillsImpact(w http.ResponseWriter, r *http.Request) {
 	}
 
 	lim := store.SkillImpactLimits{}
-	if v := q.Get("max_skills"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid max_skills", "")
-			return
-		}
-		lim.MaxSkills = n
+	if lim.MaxSkills, ok = parsePositiveIntQuery(w, r, "max_skills", 0); !ok {
+		return
 	}
 
 	rows, err := store.LoadSkillImpact(r.Context(), s.store.DB(), sinceMs, windowMs, lim)

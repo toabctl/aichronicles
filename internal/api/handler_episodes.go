@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
@@ -15,7 +14,6 @@ import (
 // most recent DefaultFindEpisodesLimit episodes overall.
 func (s *Server) handleEpisodesList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-
 	opts := store.FindEpisodesOpts{
 		SessionID:     q.Get("session_id"),
 		Cwd:           q.Get("cwd"),
@@ -26,17 +24,11 @@ func (s *Server) handleEpisodesList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	opts.SinceMs = sinceMs
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
-			return
-		}
-		if n > api.MaxPageLimit {
-			n = api.MaxPageLimit
-		}
-		opts.Limit = n
+	limit, ok := parseLimitQuery(w, r, 0)
+	if !ok {
+		return
 	}
+	opts.Limit = limit
 
 	rows, err := store.FindEpisodes(r.Context(), s.store.DB(), opts)
 	if err != nil {

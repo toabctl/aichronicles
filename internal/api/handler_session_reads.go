@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
@@ -31,13 +30,12 @@ func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 	var limit int
 	if q.Get("unbounded") == "true" {
 		limit = store.LoadEventsForSessionUnbounded
-	} else if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
+	} else {
+		limit = positiveOrZero(q.Get("limit"))
+		if limit < 0 {
 			writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
 			return
 		}
-		limit = n
 	}
 
 	rows, err := store.LoadEventsForSession(r.Context(), s.store.DB(), id, limit)
@@ -124,14 +122,9 @@ func (s *Server) handleSessionCandidatePriors(w http.ResponseWriter, r *http.Req
 		writeProblem(w, http.StatusBadRequest, "Missing session id", "")
 		return
 	}
-	limit := 10
-	if v := r.URL.Query().Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
-			return
-		}
-		limit = n
+	limit, ok := parsePositiveIntQuery(w, r, "limit", 10)
+	if !ok {
+		return
 	}
 	rows, err := store.LoadCandidatePriorSessions(r.Context(), s.store.DB(), id, limit)
 	if err != nil {
@@ -187,22 +180,13 @@ func (s *Server) handleSessionOutcome(w http.ResponseWriter, r *http.Request) {
 // its summary topic + first prompt + cwd, used by reflect/propose
 // to build a window of cross-session input.
 func (s *Server) handleSessionDigests(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
 	sinceMs, ok := parseInt64Query(w, r, "since_ms")
 	if !ok {
 		return
 	}
-	limit := api.DefaultPageLimit
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
-			return
-		}
-		if n > api.MaxPageLimit {
-			n = api.MaxPageLimit
-		}
-		limit = n
+	limit, ok := parseLimitQuery(w, r, api.DefaultPageLimit)
+	if !ok {
+		return
 	}
 	rows, err := store.LoadRecentSessionDigests(r.Context(), s.store.DB(), sinceMs, limit)
 	if err != nil {
