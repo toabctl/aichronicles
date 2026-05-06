@@ -11,7 +11,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/skills"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // RegisterAichroniclesAPITools registers the MCP tools that have
@@ -284,7 +284,7 @@ func getSkillStalenessAPIHandler(c *apiclient.Client) ToolHandler {
 		}
 		sinceMs := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
 
-		resp, err := c.SkillStaleness(ctx, api.SkillStalenessRequest{
+		resp, err := c.SkillStaleness(ctx, wire.SkillStalenessRequest{
 			SinceMs:  sinceMs,
 			WindowMs: windowMs,
 		})
@@ -371,11 +371,11 @@ func getInsightsAPIHandler(c *apiclient.Client) ToolHandler {
 	}
 }
 
-// formatInsightsAPI renders an api.Insights value in the same
+// formatInsightsAPI renders an wire.Insights value in the same
 // shape formatInsightsForMCP does for the legacy *store.InsightsReport.
 // Lives here so internal/mcp doesn't depend on internal/store for
 // the migrated handler's rendering.
-func formatInsightsAPI(r *api.Insights, days int) string {
+func formatInsightsAPI(r *wire.Insights, days int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Insights — last %d days (%s → %s)\n\n",
 		days,
@@ -486,7 +486,7 @@ func findEpisodesAPIHandler(c *apiclient.Client) ToolHandler {
 			sessionID = full
 		}
 
-		resp, err := c.Episodes(ctx, api.EpisodeListRequest{
+		resp, err := c.Episodes(ctx, wire.EpisodeListRequest{
 			SessionID:     sessionID,
 			Cwd:           req.Cwd,
 			QueryContains: req.Query,
@@ -650,7 +650,7 @@ func searchEventsAPIHandler(c *apiclient.Client) ToolHandler {
 		// ErrSyntax as a 400 problem+json. Translate that back
 		// to a user-friendly TextError so the agent sees the
 		// hint rather than an opaque "400 Invalid q".
-		resp, err := c.Search(ctx, api.SearchRequest{
+		resp, err := c.Search(ctx, wire.SearchRequest{
 			Q:          req.Query,
 			SubagentID: req.SubagentID,
 			Limit:      req.Limit,
@@ -748,7 +748,7 @@ func listSessionsAPIHandler(c *apiclient.Client) ToolHandler {
 		if req.SinceHours > 0 {
 			sinceMs = time.Now().Add(-time.Duration(req.SinceHours) * time.Hour).UnixMilli()
 		}
-		resp, err := c.Sessions(ctx, api.SessionListRequest{
+		resp, err := c.Sessions(ctx, wire.SessionListRequest{
 			Cwd:     req.Cwd,
 			SinceMs: sinceMs,
 			Limit:   req.Limit,
@@ -909,7 +909,7 @@ func listWorkflowsAPIHandler(c *apiclient.Client) ToolHandler {
 
 		needle := strings.ToLower(strings.TrimSpace(req.TaskShapeContains))
 		type entry struct {
-			row api.LLMOutput
+			row wire.LLMOutput
 			ind prompts.InductionResult
 		}
 		var keep []entry
@@ -1076,7 +1076,7 @@ func getProjectContextAPIHandler(c *apiclient.Client) ToolHandler {
 }
 
 func renderRecentSessionsForCwdAPI(ctx context.Context, c *apiclient.Client, b *strings.Builder, cwd string, sinceMs int64, limit int) error {
-	resp, err := c.Sessions(ctx, api.SessionListRequest{
+	resp, err := c.Sessions(ctx, wire.SessionListRequest{
 		Cwd:     cwd,
 		SinceMs: sinceMs,
 		Limit:   limit,
@@ -1106,7 +1106,7 @@ func renderRecentSessionsForCwdAPI(ctx context.Context, c *apiclient.Client, b *
 	return nil
 }
 
-func renderUnresolvedSectionAPI(b *strings.Builder, items []api.UnresolvedItem) {
+func renderUnresolvedSectionAPI(b *strings.Builder, items []wire.UnresolvedItem) {
 	fmt.Fprintf(b, "\n## Open unresolved threads\n")
 	if len(items) == 0 {
 		fmt.Fprintln(b, "(none — past sessions wrapped up cleanly)")
@@ -1118,7 +1118,7 @@ func renderUnresolvedSectionAPI(b *strings.Builder, items []api.UnresolvedItem) 
 	}
 }
 
-func renderFactsSectionAPI(b *strings.Builder, facts []api.SemanticFact) {
+func renderFactsSectionAPI(b *strings.Builder, facts []wire.SemanticFact) {
 	fmt.Fprintf(b, "\n## Project facts\n")
 	if len(facts) == 0 {
 		fmt.Fprintln(b, "(none — try `aichronicles facts induce --session <id>` on a past session in this cwd)")
@@ -1130,10 +1130,10 @@ func renderFactsSectionAPI(b *strings.Builder, facts []api.SemanticFact) {
 	}
 }
 
-// renderWorkflowsSectionAPI walks api.LLMOutput rows of kind=induction
+// renderWorkflowsSectionAPI walks wire.LLMOutput rows of kind=induction
 // and surfaces those whose body has a non-null workflow field.
 // (Round 8 merged workflows into induction rows.)
-func renderWorkflowsSectionAPI(b *strings.Builder, rows []api.LLMOutput, limit int) {
+func renderWorkflowsSectionAPI(b *strings.Builder, rows []wire.LLMOutput, limit int) {
 	fmt.Fprintf(b, "\n## Recent workflows (project-agnostic — scan task_shape for relevance)\n")
 	rendered := 0
 	for _, r := range rows {

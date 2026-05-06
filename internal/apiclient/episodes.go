@@ -6,11 +6,11 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // Episodes queries GET /v1/episodes.
-func (c *Client) Episodes(ctx context.Context, req api.EpisodeListRequest) (api.EpisodeListResponse, error) {
+func (c *Client) Episodes(ctx context.Context, req wire.EpisodeListRequest) (wire.EpisodeListResponse, error) {
 	q := url.Values{}
 	if req.SessionID != "" {
 		q.Set("session_id", req.SessionID)
@@ -31,9 +31,9 @@ func (c *Client) Episodes(ctx context.Context, req api.EpisodeListRequest) (api.
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out api.EpisodeListResponse
+	var out wire.EpisodeListResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return api.EpisodeListResponse{}, err
+		return wire.EpisodeListResponse{}, err
 	}
 	return out, nil
 }

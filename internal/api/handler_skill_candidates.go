@@ -8,7 +8,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // handleSkillCandidatesRecord serves POST /v1/skill-candidates.
@@ -16,7 +16,7 @@ import (
 // (llm_output_id, skill_name) row — same idempotency contract as
 // store.RecordSkillCandidateWithMetadata.
 func (s *Server) handleSkillCandidatesRecord(w http.ResponseWriter, r *http.Request) {
-	var req api.RecordSkillCandidateRequest
+	var req wire.RecordSkillCandidateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeProblem(w, http.StatusBadRequest, "Invalid body", err.Error())
 		return
@@ -51,7 +51,7 @@ func (s *Server) handleSkillCandidatesRecord(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	writeJSON(w, http.StatusOK, api.RecordSkillCandidateResponse{Inserted: true})
+	writeJSON(w, http.StatusOK, wire.RecordSkillCandidateResponse{Inserted: true})
 }
 
 // handleSkillCandidatesDecision serves POST
@@ -60,7 +60,7 @@ func (s *Server) handleSkillCandidatesRecord(w http.ResponseWriter, r *http.Requ
 // req.Decision. Maps store.ErrSkillCandidateNotFound to 404 so
 // the CLI can offer a "did you forget to record?" hint.
 func (s *Server) handleSkillCandidatesDecision(w http.ResponseWriter, r *http.Request) {
-	var req api.SkillCandidateDecisionRequest
+	var req wire.SkillCandidateDecisionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeProblem(w, http.StatusBadRequest, "Invalid body", err.Error())
 		return
@@ -112,7 +112,7 @@ func (s *Server) handleSkillCandidatesDecision(w http.ResponseWriter, r *http.Re
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	writeJSON(w, http.StatusOK, api.SkillCandidateDecisionResponse{})
+	writeJSON(w, http.StatusOK, wire.SkillCandidateDecisionResponse{})
 }
 
 // handleSkillCandidatesList serves GET /v1/skill-candidates with
@@ -139,7 +139,7 @@ func (s *Server) handleSkillCandidatesList(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	out := api.SkillCandidatesResponse{Candidates: make([]api.SkillCandidate, 0, len(rows))}
+	out := wire.SkillCandidatesResponse{Candidates: make([]wire.SkillCandidate, 0, len(rows))}
 	for _, r := range rows {
 		out.Candidates = append(out.Candidates, skillCandidateRowToWire(r))
 	}
@@ -147,11 +147,11 @@ func (s *Server) handleSkillCandidatesList(w http.ResponseWriter, r *http.Reques
 }
 
 // skillCandidateRowToWire projects a store.SkillCandidate onto its
-// wire-clean api.SkillCandidate cousin. Centralised here so every
+// wire-clean wire.SkillCandidate cousin. Centralised here so every
 // handler that emits a candidate row uses the same nullable
 // projection.
-func skillCandidateRowToWire(r store.SkillCandidate) api.SkillCandidate {
-	out := api.SkillCandidate{
+func skillCandidateRowToWire(r store.SkillCandidate) wire.SkillCandidate {
+	out := wire.SkillCandidate{
 		ID:           r.ID,
 		LLMOutputID:  r.LLMOutputID,
 		SkillName:    r.SkillName,
@@ -167,9 +167,9 @@ func skillCandidateRowToWire(r store.SkillCandidate) api.SkillCandidate {
 	out.MergedIntoID = nullable.Int64Ptr(r.MergedIntoID)
 	out.AddBodySHA256 = nullable.StringPtr(r.AddBodySHA256)
 	if len(r.Examples) > 0 {
-		out.Examples = make([]api.SkillCandidateExample, 0, len(r.Examples))
+		out.Examples = make([]wire.SkillCandidateExample, 0, len(r.Examples))
 		for _, ex := range r.Examples {
-			out.Examples = append(out.Examples, api.SkillCandidateExample{
+			out.Examples = append(out.Examples, wire.SkillCandidateExample{
 				Input: ex.Input, Output: ex.Output,
 			})
 		}

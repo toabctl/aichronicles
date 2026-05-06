@@ -1,4 +1,4 @@
-package api
+package wire
 
 // AuditRequest is the query-shape for GET /v1/audit. Both fields
 // are optional; zero means "no filter".

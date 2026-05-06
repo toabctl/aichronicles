@@ -5,7 +5,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // handleSkillsStaleness serves GET /v1/skills/staleness with
@@ -36,9 +36,9 @@ func (s *Server) handleSkillsStaleness(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := api.SkillStalenessResponse{Skills: make([]api.SkillStaleness, 0, len(rows))}
+	out := wire.SkillStalenessResponse{Skills: make([]wire.SkillStaleness, 0, len(rows))}
 	for _, r := range rows {
-		out.Skills = append(out.Skills, api.SkillStaleness{
+		out.Skills = append(out.Skills, wire.SkillStaleness{
 			Name:            r.Name,
 			TotalLoads:      r.TotalLoads,
 			StaleLoads:      r.StaleLoads,
@@ -78,9 +78,9 @@ func (s *Server) handleSkillsImpact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := api.SkillImpactResponse{Skills: make([]api.SkillImpact, 0, len(rows))}
+	out := wire.SkillImpactResponse{Skills: make([]wire.SkillImpact, 0, len(rows))}
 	for _, r := range rows {
-		out.Skills = append(out.Skills, api.SkillImpact{
+		out.Skills = append(out.Skills, wire.SkillImpact{
 			Name:         r.Name,
 			TotalLoads:   r.TotalLoads,
 			FailedLoads:  r.FailedLoads,
@@ -108,9 +108,9 @@ func (s *Server) handleSkillsInvoked(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := api.InvokedSkillsResponse{Skills: make([]api.InvokedSkill, 0, len(rows))}
+	out := wire.InvokedSkillsResponse{Skills: make([]wire.InvokedSkill, 0, len(rows))}
 	for _, r := range rows {
-		out.Skills = append(out.Skills, api.InvokedSkill{
+		out.Skills = append(out.Skills, wire.InvokedSkill{
 			Name:  r.Name,
 			Count: r.Count,
 		})

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 func TestMergeImpactIntoInvoked_PopulatesMatchingRows(t *testing.T) {
@@ -14,7 +14,7 @@ func TestMergeImpactIntoInvoked_PopulatesMatchingRows(t *testing.T) {
 		{Name: "beta", Count: 3},
 		{Name: "gamma-no-impact", Count: 1}, // no impact row → unchanged
 	}
-	impact := []api.SkillImpact{
+	impact := []wire.SkillImpact{
 		{Name: "alpha", TotalLoads: 5, FailedLoads: 1, SuccessRate: 0.8, LastLoadedMs: 1_700_000_000_000},
 		{Name: "beta", TotalLoads: 3, FailedLoads: 3, SuccessRate: 0.0, LastLoadedMs: 1_700_000_111_000},
 		{Name: "delta-not-invoked", TotalLoads: 9, FailedLoads: 0, SuccessRate: 1.0, LastLoadedMs: 1_700_000_222_000},

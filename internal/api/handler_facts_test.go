@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 func TestHandleFactsSubjects_RequiresContains(t *testing.T) {
@@ -41,7 +41,7 @@ func TestHandleFactsList_EmptyDB(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d", rr.Code)
 	}
-	var out api.FactsResponse
+	var out wire.FactsResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	if len(out.Facts) != 0 {
 		t.Errorf("got %d facts, want 0", len(out.Facts))

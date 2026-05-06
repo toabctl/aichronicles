@@ -6,12 +6,12 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // Search queries GET /v1/search. Q is required; the server
 // returns 400 when it is empty.
-func (c *Client) Search(ctx context.Context, req api.SearchRequest) (api.SearchResponse, error) {
+func (c *Client) Search(ctx context.Context, req wire.SearchRequest) (wire.SearchResponse, error) {
 	q := url.Values{}
 	q.Set("q", req.Q)
 	for k, v := range map[string]string{
@@ -40,9 +40,9 @@ func (c *Client) Search(ctx context.Context, req api.SearchRequest) (api.SearchR
 		q.Set("limit", strconv.Itoa(req.Limit))
 	}
 
-	var out api.SearchResponse
+	var out wire.SearchResponse
 	if err := c.do(ctx, http.MethodGet, "/v1/search?"+q.Encode(), nil, &out); err != nil {
-		return api.SearchResponse{}, err
+		return wire.SearchResponse{}, err
 	}
 	return out, nil
 }

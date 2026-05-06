@@ -1,4 +1,4 @@
-package api
+package wire
 
 // Problem is the RFC 7807 problem+json shape every error response
 // from aichronicles-api uses. Title is short and human-stable,

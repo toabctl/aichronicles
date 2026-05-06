@@ -1,4 +1,4 @@
-package api
+package wire
 
 // SkillStaleness is the wire shape for one /v1/skills/staleness
 // row. Mirrors store.SkillStaleness one-to-one (the store row is

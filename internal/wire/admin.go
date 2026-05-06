@@ -1,4 +1,4 @@
-package api
+package wire
 
 // ScrubRequest is the body shape for POST /v1/scrub.
 //

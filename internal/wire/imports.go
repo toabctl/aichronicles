@@ -1,4 +1,4 @@
-package api
+package wire
 
 // ImportStats is the response body for POST /v1/import. Mirrors
 // the per-line outcomes the bulk importer needs to surface to

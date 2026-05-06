@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 func newAuditCmd() *cobra.Command {
@@ -94,7 +94,7 @@ type AuditReportJSON struct {
 // emits a header + tab-aligned row per finding; format=json emits
 // the AuditReportJSON envelope.
 func runAudit(ctx context.Context, c *apiclient.Client, opts AuditOptions, out io.Writer) error {
-	resp, err := c.Audit(ctx, api.AuditRequest{SinceMs: opts.SinceMs, Limit: opts.Limit})
+	resp, err := c.Audit(ctx, wire.AuditRequest{SinceMs: opts.SinceMs, Limit: opts.Limit})
 	if err != nil {
 		return fmt.Errorf("audit: %w", err)
 	}

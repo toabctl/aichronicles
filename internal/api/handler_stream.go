@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // streamHeartbeatInterval keeps the connection alive across
@@ -22,7 +22,7 @@ const streamHeartbeatInterval = 15 * time.Second
 //
 //	id: <ingest_seq>
 //	event: event
-//	data: <api.StreamEvent JSON>
+//	data: <wire.StreamEvent JSON>
 //
 // Heartbeats are SSE comment lines (`:keepalive ...`) every
 // streamHeartbeatInterval to keep middleboxes from severing the
@@ -92,7 +92,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 // StreamEvent. The id: line uses ingest_seq so a reconnecting
 // client's Last-Event-ID header can be parsed straight back into
 // the cursor.
-func writeStreamEvent(w http.ResponseWriter, ev api.StreamEvent) error {
+func writeStreamEvent(w http.ResponseWriter, ev wire.StreamEvent) error {
 	body, err := json.Marshal(ev)
 	if err != nil {
 		// Should never fail for our struct; failsafe so a future

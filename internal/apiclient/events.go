@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // Events queries GET /v1/events with the supplied filters and
@@ -18,7 +18,7 @@ import (
 // IngestSeq from the previous response as SinceSeq on the next
 // call. The response carries LatestSeq so a client can detect
 // "caught up" without a separate query.
-func (c *Client) Events(ctx context.Context, req api.EventListRequest) (api.EventListResponse, error) {
+func (c *Client) Events(ctx context.Context, req wire.EventListRequest) (wire.EventListResponse, error) {
 	q := url.Values{}
 	if req.SessionID != "" {
 		q.Set("session_id", req.SessionID)
@@ -35,9 +35,9 @@ func (c *Client) Events(ctx context.Context, req api.EventListRequest) (api.Even
 		path += "?" + encoded
 	}
 
-	var out api.EventListResponse
+	var out wire.EventListResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return api.EventListResponse{}, err
+		return wire.EventListResponse{}, err
 	}
 	return out, nil
 }

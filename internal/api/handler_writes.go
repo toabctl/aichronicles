@@ -9,7 +9,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // handleLLMOutputSave serves POST /v1/llm-outputs. Wraps
@@ -24,7 +24,7 @@ import (
 // layer.
 func (s *Server) handleLLMOutputSave(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = r.Body.Close() }()
-	var req api.SaveLLMOutputRequest
+	var req wire.SaveLLMOutputRequest
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
@@ -83,7 +83,7 @@ func (s *Server) handleLLMOutputSave(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	writeJSON(w, http.StatusOK, api.SaveLLMOutputResponse{ID: id, Inserted: inserted})
+	writeJSON(w, http.StatusOK, wire.SaveLLMOutputResponse{ID: id, Inserted: inserted})
 }
 
 // handleEpisodesSave serves POST /v1/episodes. Replaces every
@@ -91,7 +91,7 @@ func (s *Server) handleLLMOutputSave(w http.ResponseWriter, r *http.Request) {
 // inside one tx in the store).
 func (s *Server) handleEpisodesSave(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = r.Body.Close() }()
-	var req api.SaveEpisodesRequest
+	var req wire.SaveEpisodesRequest
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
@@ -112,13 +112,13 @@ func (s *Server) handleEpisodesSave(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	writeJSON(w, http.StatusOK, api.SaveEpisodesResponse{Saved: n})
+	writeJSON(w, http.StatusOK, wire.SaveEpisodesResponse{Saved: n})
 }
 
 // handleFactsSave serves POST /v1/facts.
 func (s *Server) handleFactsSave(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = r.Body.Close() }()
-	var req api.SaveSemanticFactRequest
+	var req wire.SaveSemanticFactRequest
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
@@ -160,13 +160,13 @@ func (s *Server) handleFactsSave(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	writeJSON(w, http.StatusOK, api.SaveSemanticFactResponse{ID: id})
+	writeJSON(w, http.StatusOK, wire.SaveSemanticFactResponse{ID: id})
 }
 
 // handleSessionOutcomeSave serves POST /v1/session-outcomes.
 func (s *Server) handleSessionOutcomeSave(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = r.Body.Close() }()
-	var req api.SaveSessionOutcomeRequest
+	var req wire.SaveSessionOutcomeRequest
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
@@ -207,7 +207,7 @@ func (s *Server) handleSessionOutcomeSave(w http.ResponseWriter, r *http.Request
 // every outgoing link from the named session atomically.
 func (s *Server) handleSessionLinksSave(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = r.Body.Close() }()
-	var req api.SaveSessionLinksRequest
+	var req wire.SaveSessionLinksRequest
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
@@ -261,9 +261,9 @@ func (s *Server) handleSessionLinksSave(w http.ResponseWriter, r *http.Request) 
 }
 
 // episodeFromWire is the inverse of episodeToWire — projects the
-// JSON-clean api.Episode back to the events.Episode the store
+// JSON-clean wire.Episode back to the events.Episode the store
 // SaveEpisodes call expects.
-func episodeFromWire(e api.Episode) events.Episode {
+func episodeFromWire(e wire.Episode) events.Episode {
 	out := events.Episode{
 		ID:            e.ID,
 		SessionID:     e.SessionID,

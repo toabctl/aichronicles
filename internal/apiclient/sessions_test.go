@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/events"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 func TestClient_Sessions_HappyPath(t *testing.T) {
@@ -25,7 +25,7 @@ func TestClient_Sessions_HappyPath(t *testing.T) {
 		}
 	}
 
-	out, err := c.Sessions(context.Background(), api.SessionListRequest{})
+	out, err := c.Sessions(context.Background(), wire.SessionListRequest{})
 	if err != nil {
 		t.Fatalf("Sessions: %v", err)
 	}

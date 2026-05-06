@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // maxPromptRunes caps the identifying-prompt snippet in `sessions`
@@ -99,7 +99,7 @@ type SessionRowJSON struct {
 // "(no sessions matched)" line in table mode and an empty array in
 // JSON mode so consumers always see well-formed output.
 func RunListSessions(ctx context.Context, c *apiclient.Client, opts SessionsOptions, out io.Writer) error {
-	resp, err := c.Sessions(ctx, api.SessionListRequest{
+	resp, err := c.Sessions(ctx, wire.SessionListRequest{
 		SinceMs: opts.SinceMs,
 		Cwd:     opts.Cwd,
 		Limit:   opts.Limit,
@@ -148,7 +148,7 @@ func RunListSessions(ctx context.Context, c *apiclient.Client, opts SessionsOpti
 // formatSessionRow renders one row for CLI output. Tab-separated so
 // downstream column -t / awk / cut behave. First prompt is truncated
 // and newlines flattened; missing values render as "-".
-func formatSessionRow(s api.SessionDigest) string {
+func formatSessionRow(s wire.SessionDigest) string {
 	sess := s.ID
 	if len(sess) > 8 {
 		sess = sess[:8]

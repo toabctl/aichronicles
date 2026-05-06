@@ -11,7 +11,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/api"
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/store"
-	apiwire "github.com/toabctl/aichronicles/pkg/api"
+	apiwire "github.com/toabctl/aichronicles/internal/wire"
 )
 
 // plantSummaryWithUnresolved seeds the store with a session +

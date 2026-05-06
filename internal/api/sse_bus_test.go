@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 func TestSSEBus_PublishToOneSubscriber(t *testing.T) {
@@ -19,7 +19,7 @@ func TestSSEBus_PublishToOneSubscriber(t *testing.T) {
 	}
 	defer cancel()
 
-	want := api.StreamEvent{IngestSeq: 1, EventID: "abc", Kind: "user_prompt"}
+	want := wire.StreamEvent{IngestSeq: 1, EventID: "abc", Kind: "user_prompt"}
 	b.Publish(want)
 
 	select {
@@ -38,7 +38,7 @@ func TestSSEBus_PublishFanOutToManySubscribers(t *testing.T) {
 	defer b.Close()
 
 	const n = 5
-	chs := make([]<-chan api.StreamEvent, 0, n)
+	chs := make([]<-chan wire.StreamEvent, 0, n)
 	cancels := make([]func(), 0, n)
 	for i := 0; i < n; i++ {
 		ch, cancel, ok := b.subscribe()
@@ -54,7 +54,7 @@ func TestSSEBus_PublishFanOutToManySubscribers(t *testing.T) {
 		}
 	}()
 
-	want := api.StreamEvent{EventID: "fan-out"}
+	want := wire.StreamEvent{EventID: "fan-out"}
 	b.Publish(want)
 
 	for i, ch := range chs {
@@ -106,7 +106,7 @@ func TestSSEBus_SlowSubscriberDropped(t *testing.T) {
 	// publish drops the subscriber. The test cannot guess the
 	// exact buffer size, so push enough events to overflow.
 	for i := 0; i < SSEBufferSize+10; i++ {
-		b.Publish(api.StreamEvent{IngestSeq: int64(i)})
+		b.Publish(wire.StreamEvent{IngestSeq: int64(i)})
 	}
 
 	// Drain whatever's in the channel; eventually it must close.
@@ -131,7 +131,7 @@ func TestSSEBus_CloseDisconnectsSubscribers(t *testing.T) {
 
 	b.Close()
 
-	for i, ch := range []<-chan api.StreamEvent{ch1, ch2} {
+	for i, ch := range []<-chan wire.StreamEvent{ch1, ch2} {
 		select {
 		case _, ok := <-ch:
 			if ok {
@@ -155,7 +155,7 @@ func TestSSEBus_PublishAfterCloseIsNoOp(t *testing.T) {
 	b := newSSEBus()
 	b.Close()
 	// Must not panic; no observable side effects.
-	b.Publish(api.StreamEvent{EventID: "post-close"})
+	b.Publish(wire.StreamEvent{EventID: "post-close"})
 }
 
 func TestSSEBus_ConcurrentPublishersAndSubscribers(t *testing.T) {
@@ -191,7 +191,7 @@ func TestSSEBus_ConcurrentPublishersAndSubscribers(t *testing.T) {
 	for p := 0; p < publishers; p++ {
 		go func(p int) {
 			for i := 0; i < eventsPerPublisher; i++ {
-				b.Publish(api.StreamEvent{IngestSeq: int64(p*eventsPerPublisher + i)})
+				b.Publish(wire.StreamEvent{IngestSeq: int64(p*eventsPerPublisher + i)})
 			}
 		}(p)
 	}

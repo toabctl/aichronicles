@@ -17,7 +17,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 func newFactsCmd() *cobra.Command {
@@ -331,7 +331,7 @@ func persistInducedFacts(ctx context.Context, c *apiclient.Client, llmOutputID i
 	now := time.Now().UnixMilli()
 	persisted := 0
 	for _, f := range result.Facts {
-		req := api.SaveSemanticFactRequest{
+		req := wire.SaveSemanticFactRequest{
 			SourceLLMOutputID: llmOutputID,
 			Subject:           f.Subject,
 			Predicate:         f.Predicate,
@@ -388,7 +388,7 @@ func renderFactsResult(out io.Writer, sessionID string, r *prompts.FactsResult, 
 // renderFactsList renders the LLM-output history for kind=facts.
 // Mirrors renderInductionList / renderWorkflowList. Reads the wire
 // shape since `facts list` goes through the api now.
-func renderFactsList(out io.Writer, rows []api.LLMOutput, format OutputFormat) error {
+func renderFactsList(out io.Writer, rows []wire.LLMOutput, format OutputFormat) error {
 	if format == FormatJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
@@ -426,7 +426,7 @@ func renderFactsList(out io.Writer, rows []api.LLMOutput, format OutputFormat) e
 // renderFactsForSubject renders every semantic_facts row for one
 // subject. Tabular format keyed on predicate so a reader scans
 // "what do I know about /work/foo" cleanly.
-func renderFactsForSubject(out io.Writer, subject string, facts []api.SemanticFact, format OutputFormat) error {
+func renderFactsForSubject(out io.Writer, subject string, facts []wire.SemanticFact, format OutputFormat) error {
 	if format == FormatJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")

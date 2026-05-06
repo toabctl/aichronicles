@@ -1,4 +1,4 @@
-package api
+package wire
 
 // SessionDigest is the wire shape for a single session row as
 // returned by /v1/sessions and /v1/sessions/{id}. Maps from the

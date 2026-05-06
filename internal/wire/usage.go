@@ -1,4 +1,4 @@
-package api
+package wire
 
 // UsageRow is the wire shape for one (day, kind, model) bucket of
 // LLM-token spend returned by /v1/usage. Day is a UTC YYYY-MM-DD

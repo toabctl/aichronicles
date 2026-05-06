@@ -5,7 +5,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 const defaultFactsLimit = 50
@@ -35,7 +35,7 @@ func (s *Server) handleFactsSubjects(w http.ResponseWriter, r *http.Request) {
 	if subjects == nil {
 		subjects = []string{}
 	}
-	writeJSON(w, http.StatusOK, api.FactSubjectsResponse{Subjects: subjects})
+	writeJSON(w, http.StatusOK, wire.FactSubjectsResponse{Subjects: subjects})
 }
 
 // handleFactsList serves GET /v1/facts?subject=... or
@@ -58,9 +58,9 @@ func (s *Server) handleFactsList(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := api.FactsResponse{Facts: make([]api.SemanticFact, 0, len(rows))}
+	out := wire.FactsResponse{Facts: make([]wire.SemanticFact, 0, len(rows))}
 	for _, f := range rows {
-		out.Facts = append(out.Facts, api.SemanticFact{
+		out.Facts = append(out.Facts, wire.SemanticFact{
 			ID:                f.ID,
 			SourceLLMOutputID: f.SourceLLMOutputID,
 			Subject:           f.Subject,

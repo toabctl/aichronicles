@@ -1,4 +1,4 @@
-package api
+package wire
 
 // Episode is the wire shape for one stored episode — a bounded,
 // contextually-coherent run of events within a session. Maps from

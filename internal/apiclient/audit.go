@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // Audit queries GET /v1/audit. The server runs the canonical
@@ -14,7 +14,7 @@ import (
 // content_text and returns one finding per matched event plus
 // aggregate counters. Snippet bytes never carry the raw secret —
 // the matched span is rendered as <pattern> on the wire.
-func (c *Client) Audit(ctx context.Context, req api.AuditRequest) (api.AuditResponse, error) {
+func (c *Client) Audit(ctx context.Context, req wire.AuditRequest) (wire.AuditResponse, error) {
 	q := url.Values{}
 	if req.SinceMs > 0 {
 		q.Set("since_ms", strconv.FormatInt(req.SinceMs, 10))
@@ -26,9 +26,9 @@ func (c *Client) Audit(ctx context.Context, req api.AuditRequest) (api.AuditResp
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out api.AuditResponse
+	var out wire.AuditResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return api.AuditResponse{}, err
+		return wire.AuditResponse{}, err
 	}
 	return out, nil
 }

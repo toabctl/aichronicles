@@ -9,7 +9,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // Re-exports of the store package's scrub types so tests and any
@@ -54,7 +54,7 @@ func newScrubCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resp, err := c.Scrub(cmd.Context(), api.ScrubRequest{DryRun: !yes})
+			resp, err := c.Scrub(cmd.Context(), wire.ScrubRequest{DryRun: !yes})
 			if err != nil {
 				return fmt.Errorf("scrub: %w", err)
 			}
@@ -68,11 +68,11 @@ func newScrubCmd() *cobra.Command {
 	return cmd
 }
 
-// renderScrubResponse prints the api.ScrubResponse in the same
+// renderScrubResponse prints the wire.ScrubResponse in the same
 // summary shape store.Scrub used to emit through its Out writer
 // — one summary line plus a sorted pattern-hit table. Same shape
 // keeps existing operator habits and any wrapping scripts intact.
-func renderScrubResponse(out io.Writer, r api.ScrubResponse) {
+func renderScrubResponse(out io.Writer, r wire.ScrubResponse) {
 	_, _ = fmt.Fprintf(out,
 		"scanned=%d envelopes_rewritten=%d events_content_rewritten=%d "+
 			"llm_outputs_scanned=%d llm_outputs_rewritten=%d dry_run=%t\n",

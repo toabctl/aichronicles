@@ -1,4 +1,4 @@
-package api
+package wire
 
 // UnresolvedItem is the wire shape for one /v1/unresolved row.
 // Mirrors store.UnresolvedItem.

@@ -1,4 +1,4 @@
-package api
+package wire
 
 // SemanticFact is the wire shape for one semantic_facts row, as
 // returned by /v1/facts and /v1/facts/recent. Maps from

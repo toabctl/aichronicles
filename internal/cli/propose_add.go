@@ -23,7 +23,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // newProposeAddCmd is the AutoSkill (Yang et al., 2026 —
@@ -174,8 +174,8 @@ func newProposeListCmd() *cobra.Command {
 // loaded directly; otherwise we return the most recent
 // kind=propose row. Both paths produce a clear error when no
 // proposal has been generated yet.
-func loadLatestProposal(ctx context.Context, c *apiclient.Client, wantID int64) (*prompts.ProposalResult, *api.LLMOutput, error) {
-	var output *api.LLMOutput
+func loadLatestProposal(ctx context.Context, c *apiclient.Client, wantID int64) (*prompts.ProposalResult, *wire.LLMOutput, error) {
+	var output *wire.LLMOutput
 	if wantID > 0 {
 		out, err := c.LLMOutputByID(ctx, wantID)
 		if err != nil {
@@ -213,7 +213,7 @@ func loadLatestProposal(ctx context.Context, c *apiclient.Client, wantID int64) 
 // the proposal — its position, its name, evidence count, effort,
 // and a one-line trigger preview. Output is plain text so a user
 // can pipe it through grep / awk.
-func renderProposalIndex(out io.Writer, r *prompts.ProposalResult, output *api.LLMOutput) {
+func renderProposalIndex(out io.Writer, r *prompts.ProposalResult, output *wire.LLMOutput) {
 	_, _ = fmt.Fprintf(out, "propose output id=%d  generated=%s  model=%s\n\n",
 		output.ID,
 		time.UnixMilli(output.CreatedAtMs).UTC().Format("2006-01-02 15:04 UTC"),
@@ -348,7 +348,7 @@ func addSkillCandidate(
 	// are logged and the apply is reported as successful — the
 	// SKILL.md is on disk regardless.
 	now := time.Now().UnixMilli()
-	dec := api.SkillCandidateDecisionRequest{
+	dec := wire.SkillCandidateDecisionRequest{
 		LLMOutputID:  outputID,
 		SkillName:    sk.Name,
 		Decision:     "add",
@@ -362,7 +362,7 @@ func addSkillCandidate(
 			if anchor <= 0 {
 				anchor = now
 			}
-			if _, rerr := c.RecordSkillCandidate(ctx, api.RecordSkillCandidateRequest{
+			if _, rerr := c.RecordSkillCandidate(ctx, wire.RecordSkillCandidateRequest{
 				LLMOutputID:  outputID,
 				SkillName:    sk.Name,
 				ProposedAtMs: anchor,

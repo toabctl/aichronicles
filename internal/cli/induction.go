@@ -18,7 +18,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // defaultInductionIdle re-exports store.DefaultInductionIdle as
@@ -352,7 +352,7 @@ func RunInductionSweep(
 		if segLimit < 50 {
 			segLimit = 50
 		}
-		segResp, serr := c.SessionsNeedingSegmentation(ctx, api.SessionsNeedingSegmentationRequest{
+		segResp, serr := c.SessionsNeedingSegmentation(ctx, wire.SessionsNeedingSegmentationRequest{
 			IdleCutoffMs: time.Now().UnixMilli(),
 			IdleMs:       idle.Milliseconds(),
 			MinEvents:    minEvents,
@@ -366,7 +366,7 @@ func RunInductionSweep(
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				if _, eerr := c.SegmentSession(ctx, sid, api.SegmentSessionRequest{}); eerr != nil {
+				if _, eerr := c.SegmentSession(ctx, sid, wire.SegmentSessionRequest{}); eerr != nil {
 					slog.Warn("induction sweep: episode segmentation failed",
 						"session_id", sid, "err", eerr)
 					_, _ = fmt.Fprintf(errOut, "  ✗ episodes %s: %v\n", sid[:8], eerr)
@@ -375,7 +375,7 @@ func RunInductionSweep(
 		}
 	}
 
-	candResp, err := c.InductionCandidates(ctx, api.InductionCandidatesRequest{
+	candResp, err := c.InductionCandidates(ctx, wire.InductionCandidatesRequest{
 		NowMs:           time.Now().UnixMilli(),
 		IdleThresholdMs: idle.Milliseconds(),
 		MinEvents:       minEvents,
@@ -654,7 +654,7 @@ func RunInductionForSession(
 	// recordSkillCandidatesFromProposal.
 	if result.Skill != nil && result.Skill.Name != "" {
 		meta := skillMetadataFromProposed(*result.Skill)
-		if _, rerr := c.RecordSkillCandidate(ctx, api.RecordSkillCandidateRequest{
+		if _, rerr := c.RecordSkillCandidate(ctx, wire.RecordSkillCandidateRequest{
 			LLMOutputID:  id,
 			SkillName:    result.Skill.Name,
 			ProposedAtMs: row.CreatedAtMs,
@@ -715,7 +715,7 @@ func renderInductionResult(out io.Writer, sessionID string, r *prompts.Induction
 // renderInductionList renders the induction history — one row per
 // induction llm_outputs row, newest first. Topic is the proposed
 // skill name OR "(no skill)" when the verdict was negative.
-func renderInductionList(out io.Writer, rows []api.LLMOutput, format OutputFormat) error {
+func renderInductionList(out io.Writer, rows []wire.LLMOutput, format OutputFormat) error {
 	if format == FormatJSON {
 		// Round-trip the raw rows so a JSON consumer gets the full
 		// body and can branch on the skill/workflow fields themselves.

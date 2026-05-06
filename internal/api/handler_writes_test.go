@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/toabctl/aichronicles/internal/events"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 func hashOf(t *testing.T, s string) string {
@@ -21,7 +21,7 @@ func hashOf(t *testing.T, s string) string {
 func TestHandleLLMOutputSave_HappyPath(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)
-	req := api.SaveLLMOutputRequest{
+	req := wire.SaveLLMOutputRequest{
 		Kind:        "summary",
 		Model:       "claude-sonnet-4-6",
 		PromptHash:  hashOf(t, "hello"),
@@ -34,7 +34,7 @@ func TestHandleLLMOutputSave_HappyPath(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	var out api.SaveLLMOutputResponse
+	var out wire.SaveLLMOutputResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	if out.ID <= 0 || !out.Inserted {
 		t.Errorf("expected ID>0, Inserted=true; got %+v", out)
@@ -46,7 +46,7 @@ func TestHandleLLMOutputSave_HappyPath(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("second status=%d", rr.Code)
 	}
-	var out2 api.SaveLLMOutputResponse
+	var out2 wire.SaveLLMOutputResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &out2)
 	if out2.ID != out.ID {
 		t.Errorf("idempotency: id changed from %d to %d", out.ID, out2.ID)
@@ -89,9 +89,9 @@ func TestHandleEpisodesSave_RejectsMissingSessionID(t *testing.T) {
 func TestHandleSessionLinksSave_RejectsBadKind(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)
-	body := mustJSON(t, api.SaveSessionLinksRequest{
+	body := mustJSON(t, wire.SaveSessionLinksRequest{
 		FromSessionID: "from-1",
-		Links:         []api.SessionLink{{ToSessionID: "to-1", Kind: "invented_kind"}},
+		Links:         []wire.SessionLink{{ToSessionID: "to-1", Kind: "invented_kind"}},
 	})
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr,
@@ -109,7 +109,7 @@ func TestHandleSessionOutcomeSave_RejectsBadOutcome(t *testing.T) {
 	// (the store doesn't translate it) — this test pins the
 	// current behavior so a future fix can flip the assertion.
 	srv := newTestServer(t)
-	body := mustJSON(t, api.SaveSessionOutcomeRequest{
+	body := mustJSON(t, wire.SaveSessionOutcomeRequest{
 		SessionID: "no-such-session",
 		Outcome:   "neutral",
 	})
@@ -132,7 +132,7 @@ func TestHandleSessionOutcomeSave_ValidOutcomeWritesRow(t *testing.T) {
 		httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(mustJSON(t, env))))
 
 	sessID := events.DeriveSessionID("claude-code", "sess-abc")
-	body := mustJSON(t, api.SaveSessionOutcomeRequest{
+	body := mustJSON(t, wire.SaveSessionOutcomeRequest{
 		SessionID:    sessID,
 		ComputedAtMs: 1,
 		Outcome:      "unknown",

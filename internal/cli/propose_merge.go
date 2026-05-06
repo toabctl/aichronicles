@@ -24,7 +24,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // newProposeMergeCmd is the AutoSkill maintenance action 'merge'
@@ -169,7 +169,7 @@ func mergeProposedSkill(
 	// reject self-references), producing a row pointing at itself.
 	// Loading once here also keeps a single canonical view of the
 	// target row through the whole flow.
-	var existingCandidate *api.SkillCandidate
+	var existingCandidate *wire.SkillCandidate
 	{
 		row, lerr := c.AddedSkillCandidate(ctx, candidate.Name)
 		switch {
@@ -234,7 +234,7 @@ func mergeProposedSkill(
 		// The api endpoint applies whichever fields are set; an
 		// out-of-enum kind leaves the row's existing kind untouched
 		// (no fabrication — CLAUDE.md rule #7).
-		updateReq := api.UpdateSkillCandidateRequest{
+		updateReq := wire.UpdateSkillCandidateRequest{
 			AddPath:    skillMd,
 			BodySHA256: bodyHashHex,
 		}
@@ -266,7 +266,7 @@ func mergeProposedSkill(
 	} else {
 		_, _ = fmt.Fprintln(out, "  (existing skill is hand-authored — recording merge with NULL target)")
 	}
-	dec := api.SkillCandidateDecisionRequest{
+	dec := wire.SkillCandidateDecisionRequest{
 		LLMOutputID:  outputID,
 		SkillName:    candidate.Name,
 		Decision:     "merge",
@@ -280,7 +280,7 @@ func mergeProposedSkill(
 			if anchor <= 0 {
 				anchor = now
 			}
-			if _, rerr := c.RecordSkillCandidate(ctx, api.RecordSkillCandidateRequest{
+			if _, rerr := c.RecordSkillCandidate(ctx, wire.RecordSkillCandidateRequest{
 				LLMOutputID:  outputID,
 				SkillName:    candidate.Name,
 				ProposedAtMs: anchor,
@@ -351,7 +351,7 @@ func runMergeLLM(
 	if err != nil {
 		return nil, fmt.Errorf("merge: marshal: %w", err)
 	}
-	saveReq := api.SaveLLMOutputRequest{
+	saveReq := wire.SaveLLMOutputRequest{
 		Kind:        string(store.LLMKindSkillMerge),
 		Model:       resp.Model,
 		PromptHash:  hash,

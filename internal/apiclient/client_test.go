@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // newTestClient stands up an httptest.Server with the supplied
@@ -325,12 +325,12 @@ func TestHTTPError_FormatsTitleAndDetail(t *testing.T) {
 	}{
 		{
 			name: "title and detail",
-			err:  HTTPError{Status: 400, Problem: api.Problem{Title: "Bad", Detail: "missing foo"}},
+			err:  HTTPError{Status: 400, Problem: wire.Problem{Title: "Bad", Detail: "missing foo"}},
 			want: "apiclient: 400 Bad: missing foo",
 		},
 		{
 			name: "title only",
-			err:  HTTPError{Status: 404, Problem: api.Problem{Title: "Not Found"}},
+			err:  HTTPError{Status: 404, Problem: wire.Problem{Title: "Not Found"}},
 			want: "apiclient: 404 Not Found",
 		},
 		{

@@ -6,7 +6,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // handleSessionLLMOutputs serves
@@ -31,7 +31,7 @@ func (s *Server) handleSessionLLMOutputs(w http.ResponseWriter, r *http.Request)
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := make([]api.LLMOutput, 0, len(rows))
+	out := make([]wire.LLMOutput, 0, len(rows))
 	for _, o := range rows {
 		if kind != "" && string(o.Kind) != kind {
 			continue
@@ -42,7 +42,7 @@ func (s *Server) handleSessionLLMOutputs(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Outputs []api.LLMOutput `json:"outputs"`
+		Outputs []wire.LLMOutput `json:"outputs"`
 	}{Outputs: out})
 }
 
@@ -68,12 +68,12 @@ func (s *Server) handleLLMOutputsList(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := make([]api.LLMOutput, 0, len(rows))
+	out := make([]wire.LLMOutput, 0, len(rows))
 	for _, o := range rows {
 		out = append(out, llmOutputToWire(o))
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Outputs []api.LLMOutput `json:"outputs"`
+		Outputs []wire.LLMOutput `json:"outputs"`
 	}{Outputs: out})
 }
 
@@ -154,9 +154,9 @@ func (s *Server) handleUnresolvedForCwd(w http.ResponseWriter, r *http.Request) 
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := api.UnresolvedResponse{Items: make([]api.UnresolvedItem, 0, len(rows))}
+	out := wire.UnresolvedResponse{Items: make([]wire.UnresolvedItem, 0, len(rows))}
 	for _, it := range rows {
-		out.Items = append(out.Items, api.UnresolvedItem{
+		out.Items = append(out.Items, wire.UnresolvedItem{
 			SessionID:    it.SessionID,
 			SessionShort: it.SessionShort,
 			EndedAtMs:    it.EndedAtMs,
@@ -179,9 +179,9 @@ func (s *Server) handleProjectsAggregates(w http.ResponseWriter, r *http.Request
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := api.ProjectAggregatesResponse{Projects: make([]api.ProjectAggregate, 0, len(rows))}
+	out := wire.ProjectAggregatesResponse{Projects: make([]wire.ProjectAggregate, 0, len(rows))}
 	for _, p := range rows {
-		out.Projects = append(out.Projects, api.ProjectAggregate{
+		out.Projects = append(out.Projects, wire.ProjectAggregate{
 			Cwd:            p.Cwd,
 			Sessions:       p.Sessions,
 			Events:         p.Events,
@@ -205,9 +205,9 @@ func (s *Server) handleSubagentSpans(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := api.SubagentsResponse{Spans: make([]api.SubagentSpan, 0, len(rows))}
+	out := wire.SubagentsResponse{Spans: make([]wire.SubagentSpan, 0, len(rows))}
 	for _, sp := range rows {
-		out.Spans = append(out.Spans, api.SubagentSpan{
+		out.Spans = append(out.Spans, wire.SubagentSpan{
 			SessionID:    sp.SessionID,
 			SubagentID:   sp.SubagentID,
 			SubagentType: nullable.StringPtr(sp.SubagentType),
@@ -244,10 +244,10 @@ func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, insightsToWire(rep))
 }
 
-// llmOutputToWire projects store.LLMOutput → api.LLMOutput. Kind
+// llmOutputToWire projects store.LLMOutput → wire.LLMOutput. Kind
 // is the underlying string of LLMOutputKind.
-func llmOutputToWire(o store.LLMOutput) api.LLMOutput {
-	return api.LLMOutput{
+func llmOutputToWire(o store.LLMOutput) wire.LLMOutput {
+	return wire.LLMOutput{
 		ID:           o.ID,
 		SessionID:    nullable.StringPtr(o.SessionID),
 		Kind:         string(o.Kind),
@@ -260,19 +260,19 @@ func llmOutputToWire(o store.LLMOutput) api.LLMOutput {
 	}
 }
 
-// insightsToWire projects store.InsightsReport → api.Insights,
+// insightsToWire projects store.InsightsReport → wire.Insights,
 // flattening sql.NullInt64 / sql.NullString in TopSession.
-func insightsToWire(r *store.InsightsReport) api.Insights {
+func insightsToWire(r *store.InsightsReport) wire.Insights {
 	if r == nil {
-		return api.Insights{}
+		return wire.Insights{}
 	}
-	out := api.Insights{
-		Window: api.InsightsWindow{
+	out := wire.Insights{
+		Window: wire.InsightsWindow{
 			SinceMs: r.Window.SinceMs,
 			UntilMs: r.Window.UntilMs,
 			Days:    r.Window.Days,
 		},
-		Overview: api.InsightsOverview{
+		Overview: wire.InsightsOverview{
 			Sessions:       r.Overview.Sessions,
 			Events:         r.Overview.Events,
 			ToolUses:       r.Overview.ToolUses,
@@ -280,24 +280,24 @@ func insightsToWire(r *store.InsightsReport) api.Insights {
 			DistinctTools:  r.Overview.DistinctTools,
 			DistinctSkills: r.Overview.DistinctSkills,
 		},
-		TopTools:       make([]api.ToolUsage, 0, len(r.TopTools)),
-		TopSkills:      make([]api.SkillUsage, 0, len(r.TopSkills)),
-		ActivityByHour: make([]api.HourBucket, 0, len(r.ActivityByHour)),
-		TopSessions:    make([]api.TopSession, 0, len(r.TopSessions)),
+		TopTools:       make([]wire.ToolUsage, 0, len(r.TopTools)),
+		TopSkills:      make([]wire.SkillUsage, 0, len(r.TopSkills)),
+		ActivityByHour: make([]wire.HourBucket, 0, len(r.ActivityByHour)),
+		TopSessions:    make([]wire.TopSession, 0, len(r.TopSessions)),
 	}
 	for _, t := range r.TopTools {
-		out.TopTools = append(out.TopTools, api.ToolUsage{ToolName: t.ToolName, Count: t.Count})
+		out.TopTools = append(out.TopTools, wire.ToolUsage{ToolName: t.ToolName, Count: t.Count})
 	}
 	for _, sk := range r.TopSkills {
-		out.TopSkills = append(out.TopSkills, api.SkillUsage{
+		out.TopSkills = append(out.TopSkills, wire.SkillUsage{
 			Name: sk.Name, Count: sk.Count, LastUsedMs: sk.LastUsedMs,
 		})
 	}
 	for _, h := range r.ActivityByHour {
-		out.ActivityByHour = append(out.ActivityByHour, api.HourBucket{Hour: h.Hour, Count: h.Count})
+		out.ActivityByHour = append(out.ActivityByHour, wire.HourBucket{Hour: h.Hour, Count: h.Count})
 	}
 	for _, ts := range r.TopSessions {
-		out.TopSessions = append(out.TopSessions, api.TopSession{
+		out.TopSessions = append(out.TopSessions, wire.TopSession{
 			SessionID:   ts.SessionID,
 			EventCount:  ts.EventCount,
 			StartedAtMs: nullable.Int64Ptr(ts.StartedAtMs),

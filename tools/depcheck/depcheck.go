@@ -1,7 +1,7 @@
 // Package depcheck verifies the dependency-direction invariants
 // the architecture relies on. Catches accidental imports that
 // would couple a package to a layer it isn't supposed to know
-// about (e.g. pkg/api importing database/sql, internal/apiclient
+// about (e.g. internal/wire importing database/sql, internal/apiclient
 // importing internal/store).
 //
 // Run via `go run ./tools/depcheck` from CI; exits non-zero with
@@ -51,19 +51,19 @@ var rules = []rule{
 		Reason: "internal/events must not depend on any other internal package",
 	},
 	{
-		From:      "github.com/toabctl/aichronicles/pkg/api",
+		From:      "github.com/toabctl/aichronicles/internal/wire",
 		Forbidden: []string{"database/sql", "net/http"},
-		Reason:    "pkg/api is wire types only; SQL/HTTP belong to internal/api",
+		Reason:    "internal/wire is wire types only; SQL/HTTP belong to internal/api",
 	},
 	{
-		From: "github.com/toabctl/aichronicles/pkg/api",
+		From: "github.com/toabctl/aichronicles/internal/wire",
 		Forbidden: []string{
 			"github.com/toabctl/aichronicles/internal/store",
 			"github.com/toabctl/aichronicles/internal/api",
 			"github.com/toabctl/aichronicles/internal/apiclient",
 			"github.com/toabctl/aichronicles/internal/cli",
 		},
-		Reason: "pkg/api must not depend on any internal/* package",
+		Reason: "internal/wire must not depend on any other internal package",
 	},
 	{
 		From:      "github.com/toabctl/aichronicles/internal/apiclient",

@@ -1,4 +1,4 @@
-package api
+package wire
 
 // SessionsMissingSummaryRequest is the query-shape for
 // GET /v1/sessions/missing-summary. Mirrors store.SessionFilter

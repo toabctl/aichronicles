@@ -1,4 +1,4 @@
-package api
+package wire
 
 // Event is the wire shape for a single stored event as returned
 // by /v1/events. Maps from the internal store's LiveEvent type

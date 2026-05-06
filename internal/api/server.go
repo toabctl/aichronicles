@@ -28,7 +28,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // DefaultMaxEnvelopeBytes caps a single ingest body when the
@@ -304,7 +304,7 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	// row was written, so there's nothing live consumers haven't
 	// already seen.
 	if !result.Deduped {
-		s.sseBus.Publish(api.StreamEvent{
+		s.sseBus.Publish(wire.StreamEvent{
 			EventID:    result.EventID,
 			SessionID:  result.SessionID,
 			Kind:       env.Kind,
@@ -319,7 +319,7 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 func writeProblem(w http.ResponseWriter, status int, title, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(api.Problem{Title: title, Status: status, Detail: detail})
+	_ = json.NewEncoder(w).Encode(wire.Problem{Title: title, Status: status, Detail: detail})
 }
 
 // writeJSON renders a 2xx JSON response.

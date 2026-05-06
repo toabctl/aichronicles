@@ -16,7 +16,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // maxSnippetRunes caps how much of content_text we print per hit. FTS
@@ -176,9 +176,9 @@ type SearchHitJSON struct {
 }
 
 // searchRequestFromOptions translates SearchOptions into the wire-shape
-// api.SearchRequest. Limit defaults left to the server (DefaultPageLimit).
-func searchRequestFromOptions(opts SearchOptions, limit int) api.SearchRequest {
-	return api.SearchRequest{
+// wire.SearchRequest. Limit defaults left to the server (DefaultPageLimit).
+func searchRequestFromOptions(opts SearchOptions, limit int) wire.SearchRequest {
+	return wire.SearchRequest{
 		Q:                 opts.Query,
 		Kind:              opts.Kind,
 		SessionID:         opts.SessionID,
@@ -266,7 +266,7 @@ func ptrStrOrEmpty(p *string) string {
 // Returns (display, truncated). truncated is true iff the displayed
 // text is shorter than the full content_text — i.e., the user is
 // looking at a preview, not the whole row.
-func pickSnippet(h api.SearchHit) (string, bool) {
+func pickSnippet(h wire.SearchHit) (string, bool) {
 	full := ptrStrOrEmpty(h.Content)
 	snip := ptrStrOrEmpty(h.Snippet)
 	if snip != "" {

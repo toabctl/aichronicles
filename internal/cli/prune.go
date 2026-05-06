@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // defaultPruneAge is the lower bound the CLI applies when
@@ -47,7 +47,7 @@ func newPruneCmd() *cobra.Command {
 			}
 			cutoff := time.Now().Add(-window).UnixMilli()
 
-			resp, err := c.Prune(cmd.Context(), api.PruneRequest{
+			resp, err := c.Prune(cmd.Context(), wire.PruneRequest{
 				CutoffMs:          cutoff,
 				IncludeLLMOutputs: includeLLMOuts,
 				DryRun:            !yes,
@@ -72,9 +72,9 @@ func newPruneCmd() *cobra.Command {
 
 // formatPruneResponse renders the human-readable text the CLI
 // prints after a (dry-)prune. Same shape as the legacy
-// formatPruneReport but driven by the wire api.PruneResponse so
+// formatPruneReport but driven by the wire wire.PruneResponse so
 // the renderer stays internal/store-free.
-func formatPruneResponse(r api.PruneResponse, window time.Duration) string {
+func formatPruneResponse(r wire.PruneResponse, window time.Duration) string {
 	var b strings.Builder
 	verb := "deleted"
 	if r.DryRun {

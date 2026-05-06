@@ -6,15 +6,15 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // LLMOutputByID fetches one llm_outputs row by primary key.
 // ErrNotFound when the row does not exist.
-func (c *Client) LLMOutputByID(ctx context.Context, id int64) (api.LLMOutput, error) {
-	var out api.LLMOutput
+func (c *Client) LLMOutputByID(ctx context.Context, id int64) (wire.LLMOutput, error) {
+	var out wire.LLMOutput
 	if err := c.do(ctx, http.MethodGet, "/v1/llm-outputs/"+strconv.FormatInt(id, 10), nil, &out); err != nil {
-		return api.LLMOutput{}, err
+		return wire.LLMOutput{}, err
 	}
 	return out, nil
 }
@@ -55,7 +55,7 @@ func (c *Client) LLMOutputExistsForSession(ctx context.Context, sessionID, kind 
 // SessionLLMOutputs fetches every llm_outputs row for a session,
 // optionally filtered by kind. Used by MCP get_summary (when
 // kind != summary).
-func (c *Client) SessionLLMOutputs(ctx context.Context, sessionID, kind string, limit int) ([]api.LLMOutput, error) {
+func (c *Client) SessionLLMOutputs(ctx context.Context, sessionID, kind string, limit int) ([]wire.LLMOutput, error) {
 	q := url.Values{}
 	if kind != "" {
 		q.Set("kind", kind)
@@ -68,7 +68,7 @@ func (c *Client) SessionLLMOutputs(ctx context.Context, sessionID, kind string, 
 		path += "?" + encoded
 	}
 	var out struct {
-		Outputs []api.LLMOutput `json:"outputs"`
+		Outputs []wire.LLMOutput `json:"outputs"`
 	}
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
@@ -78,7 +78,7 @@ func (c *Client) SessionLLMOutputs(ctx context.Context, sessionID, kind string, 
 
 // LLMOutputsList fetches a filtered list of LLM outputs across
 // sessions. Used by MCP list_workflows (kind=induction).
-func (c *Client) LLMOutputsList(ctx context.Context, kind, sessionID string, limit int) ([]api.LLMOutput, error) {
+func (c *Client) LLMOutputsList(ctx context.Context, kind, sessionID string, limit int) ([]wire.LLMOutput, error) {
 	q := url.Values{}
 	if kind != "" {
 		q.Set("kind", kind)
@@ -94,7 +94,7 @@ func (c *Client) LLMOutputsList(ctx context.Context, kind, sessionID string, lim
 		path += "?" + encoded
 	}
 	var out struct {
-		Outputs []api.LLMOutput `json:"outputs"`
+		Outputs []wire.LLMOutput `json:"outputs"`
 	}
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
@@ -104,25 +104,25 @@ func (c *Client) LLMOutputsList(ctx context.Context, kind, sessionID string, lim
 
 // Summary fetches the cached summary for a session, or
 // ErrNotFound when none exists.
-func (c *Client) Summary(ctx context.Context, sessionID string) (api.LLMOutput, error) {
+func (c *Client) Summary(ctx context.Context, sessionID string) (wire.LLMOutput, error) {
 	q := url.Values{}
 	q.Set("session_id", sessionID)
-	var out api.LLMOutput
+	var out wire.LLMOutput
 	if err := c.do(ctx, http.MethodGet, "/v1/summaries?"+q.Encode(), nil, &out); err != nil {
-		return api.LLMOutput{}, err
+		return wire.LLMOutput{}, err
 	}
 	return out, nil
 }
 
 // LLMOutputByHash fetches the cached llm output for a (kind,
 // prompt_hash) pair. Returns ErrNotFound when missing.
-func (c *Client) LLMOutputByHash(ctx context.Context, kind, promptHash string) (api.LLMOutput, error) {
+func (c *Client) LLMOutputByHash(ctx context.Context, kind, promptHash string) (wire.LLMOutput, error) {
 	q := url.Values{}
 	q.Set("kind", kind)
 	q.Set("prompt_hash", promptHash)
-	var out api.LLMOutput
+	var out wire.LLMOutput
 	if err := c.do(ctx, http.MethodGet, "/v1/llm-outputs?"+q.Encode(), nil, &out); err != nil {
-		return api.LLMOutput{}, err
+		return wire.LLMOutput{}, err
 	}
 	return out, nil
 }
@@ -136,7 +136,7 @@ type UnresolvedRequest struct {
 	MaxItemsPerSession int
 }
 
-func (c *Client) Unresolved(ctx context.Context, req UnresolvedRequest) (api.UnresolvedResponse, error) {
+func (c *Client) Unresolved(ctx context.Context, req UnresolvedRequest) (wire.UnresolvedResponse, error) {
 	q := url.Values{}
 	q.Set("cwd", req.Cwd)
 	if req.SinceMs > 0 {
@@ -148,28 +148,28 @@ func (c *Client) Unresolved(ctx context.Context, req UnresolvedRequest) (api.Unr
 	if req.MaxItemsPerSession > 0 {
 		q.Set("max_items_per_session", strconv.Itoa(req.MaxItemsPerSession))
 	}
-	var out api.UnresolvedResponse
+	var out wire.UnresolvedResponse
 	if err := c.do(ctx, http.MethodGet, "/v1/unresolved?"+q.Encode(), nil, &out); err != nil {
-		return api.UnresolvedResponse{}, err
+		return wire.UnresolvedResponse{}, err
 	}
 	return out, nil
 }
 
 // ProjectAggregates fetches /v1/projects/aggregates.
-func (c *Client) ProjectAggregates(ctx context.Context, sinceMs int64) (api.ProjectAggregatesResponse, error) {
+func (c *Client) ProjectAggregates(ctx context.Context, sinceMs int64) (wire.ProjectAggregatesResponse, error) {
 	path := "/v1/projects/aggregates"
 	if sinceMs > 0 {
 		path += "?since_ms=" + strconv.FormatInt(sinceMs, 10)
 	}
-	var out api.ProjectAggregatesResponse
+	var out wire.ProjectAggregatesResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return api.ProjectAggregatesResponse{}, err
+		return wire.ProjectAggregatesResponse{}, err
 	}
 	return out, nil
 }
 
 // SubagentSpans fetches /v1/subagents.
-func (c *Client) SubagentSpans(ctx context.Context, sessionID string, limit int) (api.SubagentsResponse, error) {
+func (c *Client) SubagentSpans(ctx context.Context, sessionID string, limit int) (wire.SubagentsResponse, error) {
 	q := url.Values{}
 	if sessionID != "" {
 		q.Set("session_id", sessionID)
@@ -181,9 +181,9 @@ func (c *Client) SubagentSpans(ctx context.Context, sessionID string, limit int)
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out api.SubagentsResponse
+	var out wire.SubagentsResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return api.SubagentsResponse{}, err
+		return wire.SubagentsResponse{}, err
 	}
 	return out, nil
 }
@@ -196,7 +196,7 @@ type InsightsRequest struct {
 	TopSessions int
 }
 
-func (c *Client) Insights(ctx context.Context, req InsightsRequest) (api.Insights, error) {
+func (c *Client) Insights(ctx context.Context, req InsightsRequest) (wire.Insights, error) {
 	q := url.Values{}
 	if req.SinceMs > 0 {
 		q.Set("since_ms", strconv.FormatInt(req.SinceMs, 10))
@@ -214,9 +214,9 @@ func (c *Client) Insights(ctx context.Context, req InsightsRequest) (api.Insight
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out api.Insights
+	var out wire.Insights
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return api.Insights{}, err
+		return wire.Insights{}, err
 	}
 	return out, nil
 }

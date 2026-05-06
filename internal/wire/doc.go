@@ -25,4 +25,4 @@
 //
 // Errors on the wire follow RFC 7807 problem+json (see Problem).
 // Pagination is opaque-cursor based (see Cursor).
-package api
+package wire

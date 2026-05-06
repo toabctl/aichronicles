@@ -17,7 +17,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // defaultMetaLLMTimeout covers both reflect and propose when
@@ -171,7 +171,7 @@ func RunReflect(
 func digestsFromRowsWithLinks(
 	ctx context.Context,
 	c *apiclient.Client,
-	rows []api.SessionDigest,
+	rows []wire.SessionDigest,
 ) ([]prompts.SessionDigest, error) {
 	out := make([]prompts.SessionDigest, 0, len(rows))
 	skipped := make([]string, 0)
@@ -247,7 +247,7 @@ func digestsFromRowsWithLinks(
 // store.SessionOutcome the prompts package consumes. Mechanical
 // projection — every field maps 1:1 except LastEventKind which
 // rehydrates the sql.NullString from the wire's *string.
-func sessionOutcomeFromWire(o api.SessionOutcome) *store.SessionOutcome {
+func sessionOutcomeFromWire(o wire.SessionOutcome) *store.SessionOutcome {
 	out := &store.SessionOutcome{
 		SessionID:         o.SessionID,
 		ComputedAtMs:      o.ComputedAtMs,
@@ -354,7 +354,7 @@ func runCachedLLM(
 		return 0, fmt.Errorf("%s: marshal result: %w", in.kind, err)
 	}
 
-	saveReq := api.SaveLLMOutputRequest{
+	saveReq := wire.SaveLLMOutputRequest{
 		// session_id intentionally empty for reflect/propose:
 		// they span many sessions. Single-session callers
 		// (summary, induction, facts) populate it.

@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 func TestHandleSearch_RequiresQ(t *testing.T) {
@@ -27,7 +27,7 @@ func TestHandleSearch_EmptyDB_ReturnsEmptyHits(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	var out api.SearchResponse
+	var out wire.SearchResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	if len(out.Hits) != 0 {
 		t.Errorf("got %d hits, want 0", len(out.Hits))
@@ -55,7 +55,7 @@ func TestHandleSearch_FindsIngestedContent(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	var out api.SearchResponse
+	var out wire.SearchResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	if len(out.Hits) != 1 {
 		t.Errorf("got %d hits, want 1", len(out.Hits))

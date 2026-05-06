@@ -18,7 +18,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // nilLLMClient is the closure tests pass when noVerify=true short-
@@ -767,7 +767,7 @@ func TestLoadLatestProposal_WrongKindIsError(t *testing.T) {
 func TestRenderProposalIndex_ListsSkillsAndScripts(t *testing.T) {
 	t.Parallel()
 	r := sampleProposal()
-	output := &api.LLMOutput{ID: 42, Model: "m", CreatedAtMs: time.Now().UnixMilli()}
+	output := &wire.LLMOutput{ID: 42, Model: "m", CreatedAtMs: time.Now().UnixMilli()}
 	var buf bytes.Buffer
 	renderProposalIndex(&buf, r, output)
 	body := buf.String()
@@ -788,7 +788,7 @@ func TestRenderProposalIndex_ListsSkillsAndScripts(t *testing.T) {
 
 func TestRenderProposalIndex_EmptySkillsMessage(t *testing.T) {
 	t.Parallel()
-	output := &api.LLMOutput{ID: 1, Model: "m", CreatedAtMs: time.Now().UnixMilli()}
+	output := &wire.LLMOutput{ID: 1, Model: "m", CreatedAtMs: time.Now().UnixMilli()}
 	var buf bytes.Buffer
 	renderProposalIndex(&buf, &prompts.ProposalResult{}, output)
 	if !strings.Contains(buf.String(), "(no skills in proposal)") {

@@ -1,4 +1,4 @@
-package api
+package wire
 
 // SearchHit is the wire shape for a single search result row from
 // /v1/search. Snippet is the FTS5-computed match-centered excerpt;

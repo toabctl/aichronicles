@@ -4,7 +4,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // SSEMaxSubscribers caps simultaneous SSE subscribers system-wide.
@@ -44,7 +44,7 @@ type sseBus struct {
 // ch is bounded; if a publish would block, the subscriber is
 // dropped.
 type sseSubscriber struct {
-	ch       chan api.StreamEvent
+	ch       chan wire.StreamEvent
 	overflow atomic.Bool
 }
 
@@ -59,13 +59,13 @@ func newSSEBus() *sseBus {
 //
 // If the bus is at SSEMaxSubscribers, returns (nil, nil, false).
 // Caller maps that to HTTP 429.
-func (b *sseBus) subscribe() (<-chan api.StreamEvent, func(), bool) {
+func (b *sseBus) subscribe() (<-chan wire.StreamEvent, func(), bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if len(b.subs) >= SSEMaxSubscribers {
 		return nil, nil, false
 	}
-	s := &sseSubscriber{ch: make(chan api.StreamEvent, SSEBufferSize)}
+	s := &sseSubscriber{ch: make(chan wire.StreamEvent, SSEBufferSize)}
 	b.subs[s] = struct{}{}
 	cancel := func() {
 		b.mu.Lock()
@@ -85,7 +85,7 @@ func (b *sseBus) subscribe() (<-chan api.StreamEvent, func(), bool) {
 // goroutine.
 //
 // No-op after Close.
-func (b *sseBus) Publish(ev api.StreamEvent) {
+func (b *sseBus) Publish(ev wire.StreamEvent) {
 	if b.closed.Load() {
 		return
 	}

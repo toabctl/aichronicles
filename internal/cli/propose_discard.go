@@ -11,7 +11,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // newProposeDiscardCmd is the AutoSkill maintenance action 'discard'
@@ -97,7 +97,7 @@ func discardProposedSkill(
 	}
 
 	now := time.Now().UnixMilli()
-	dec := api.SkillCandidateDecisionRequest{
+	dec := wire.SkillCandidateDecisionRequest{
 		LLMOutputID:  outputID,
 		SkillName:    candidate.Name,
 		Decision:     "discard",
@@ -115,7 +115,7 @@ func discardProposedSkill(
 		if anchor <= 0 {
 			anchor = now
 		}
-		if _, rerr := c.RecordSkillCandidate(ctx, api.RecordSkillCandidateRequest{
+		if _, rerr := c.RecordSkillCandidate(ctx, wire.RecordSkillCandidateRequest{
 			LLMOutputID:  outputID,
 			SkillName:    candidate.Name,
 			ProposedAtMs: anchor,

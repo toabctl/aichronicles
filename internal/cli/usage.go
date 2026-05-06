@@ -15,7 +15,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/pricing"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // defaultUsageWindow matches what TODO.md describes for the
@@ -91,7 +91,7 @@ type runUsageOpts struct {
 
 func runUsage(ctx context.Context, c *apiclient.Client, opts runUsageOpts) error {
 	sinceMs := time.Now().Add(-opts.Since).UnixMilli()
-	resp, err := c.Usage(ctx, api.UsageRequest{SinceMs: sinceMs})
+	resp, err := c.Usage(ctx, wire.UsageRequest{SinceMs: sinceMs})
 	if err != nil {
 		return fmt.Errorf("load token usage: %w", err)
 	}
@@ -125,7 +125,7 @@ func loadUsagePrices(flag string) (pricing.Prices, error) {
 }
 
 // UsageRowJSON is the per-row JSON shape emitted by --format=json.
-// Mirrors api.UsageRow + an optional cost field; cost is omitted
+// Mirrors wire.UsageRow + an optional cost field; cost is omitted
 // (nil pointer) when prices.toml didn't carry an entry for the
 // model.
 type UsageRowJSON struct {
@@ -142,16 +142,16 @@ type UsageRowJSON struct {
 // pipelines can grab `.totals.input_tokens` directly without
 // re-summing.
 type UsageReportJSON struct {
-	WindowDays int             `json:"window_days"`
-	Rows       []UsageRowJSON  `json:"rows"`
-	Totals     api.UsageTotals `json:"totals"`
-	TotalCost  *float64        `json:"total_cost_usd,omitempty"`
+	WindowDays int              `json:"window_days"`
+	Rows       []UsageRowJSON   `json:"rows"`
+	Totals     wire.UsageTotals `json:"totals"`
+	TotalCost  *float64         `json:"total_cost_usd,omitempty"`
 }
 
 // renderUsage writes the per-day×kind×model token report. Table
 // mode renders aligned columns + a totals footer; JSON mode emits
 // UsageReportJSON for jq.
-func renderUsage(out io.Writer, resp api.UsageResponse, prices pricing.Prices, window time.Duration, format OutputFormat) error {
+func renderUsage(out io.Writer, resp wire.UsageResponse, prices pricing.Prices, window time.Duration, format OutputFormat) error {
 	windowDays := int(window / (24 * time.Hour))
 
 	if format == FormatJSON {
@@ -160,7 +160,7 @@ func renderUsage(out io.Writer, resp api.UsageResponse, prices pricing.Prices, w
 	return renderUsageTable(out, resp, prices, window)
 }
 
-func renderUsageJSON(out io.Writer, resp api.UsageResponse, prices pricing.Prices, windowDays int) error {
+func renderUsageJSON(out io.Writer, resp wire.UsageResponse, prices pricing.Prices, windowDays int) error {
 	report := UsageReportJSON{
 		WindowDays: windowDays,
 		Rows:       make([]UsageRowJSON, 0, len(resp.Rows)),
@@ -191,7 +191,7 @@ func renderUsageJSON(out io.Writer, resp api.UsageResponse, prices pricing.Price
 	return emitJSON(out, report)
 }
 
-func renderUsageTable(out io.Writer, resp api.UsageResponse, prices pricing.Prices, window time.Duration) error {
+func renderUsageTable(out io.Writer, resp wire.UsageResponse, prices pricing.Prices, window time.Duration) error {
 	rows := resp.Rows
 	totals := resp.Totals
 	if len(rows) == 0 {

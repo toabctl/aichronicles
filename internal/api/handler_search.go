@@ -7,7 +7,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/searchquery"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // handleSearch serves GET /v1/search.
@@ -70,9 +70,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := api.SearchResponse{Hits: make([]api.SearchHit, 0, len(hits))}
+	out := wire.SearchResponse{Hits: make([]wire.SearchHit, 0, len(hits))}
 	for _, h := range hits {
-		out.Hits = append(out.Hits, api.SearchHit{
+		out.Hits = append(out.Hits, wire.SearchHit{
 			SessionID:  h.SessionID,
 			Kind:       h.Kind,
 			Cwd:        nullable.StringPtr(h.Cwd),

@@ -6,7 +6,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // handleSessionEvents serves GET /v1/sessions/{id}/events. Returns
@@ -45,15 +45,15 @@ func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := api.SessionEventsResponse{Events: make([]api.SessionEvent, 0, len(rows))}
+	out := wire.SessionEventsResponse{Events: make([]wire.SessionEvent, 0, len(rows))}
 	for _, e := range rows {
 		out.Events = append(out.Events, eventViewToWire(e))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-func eventViewToWire(e events.EventView) api.SessionEvent {
-	return api.SessionEvent{
+func eventViewToWire(e events.EventView) wire.SessionEvent {
+	return wire.SessionEvent{
 		EventID:      e.EventID,
 		Kind:         e.Kind,
 		TsSourceMs:   e.TsSourceMs,
@@ -86,9 +86,9 @@ func (s *Server) handleSessionExtractions(w http.ResponseWriter, r *http.Request
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := api.SessionExtractionsResponse{Extractions: make([]api.Extraction, 0, len(rows))}
+	out := wire.SessionExtractionsResponse{Extractions: make([]wire.Extraction, 0, len(rows))}
 	for _, x := range rows {
-		out.Extractions = append(out.Extractions, api.Extraction{Kind: x.Kind, Value: x.Value})
+		out.Extractions = append(out.Extractions, wire.Extraction{Kind: x.Kind, Value: x.Value})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -114,9 +114,9 @@ func (s *Server) handleSessionCandidatePriors(w http.ResponseWriter, r *http.Req
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := api.CandidateSessionListResponse{Candidates: make([]api.CandidateSession, 0, len(rows))}
+	out := wire.CandidateSessionListResponse{Candidates: make([]wire.CandidateSession, 0, len(rows))}
 	for _, c := range rows {
-		out.Candidates = append(out.Candidates, api.CandidateSession{
+		out.Candidates = append(out.Candidates, wire.CandidateSession{
 			ID: c.ID, Cwd: c.Cwd, StartedAtMs: c.StartedAtMs, EndedAtMs: c.EndedAtMs, Topic: c.Topic,
 		})
 	}
@@ -138,7 +138,7 @@ func (s *Server) handleSessionOutcome(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	writeJSON(w, http.StatusOK, api.SessionOutcome{
+	writeJSON(w, http.StatusOK, wire.SessionOutcome{
 		SessionID:         row.SessionID,
 		ComputedAtMs:      row.ComputedAtMs,
 		UserPromptCount:   row.UserPromptCount,
@@ -162,7 +162,7 @@ func (s *Server) handleSessionDigests(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	limit, ok := parseLimitQuery(w, r, api.DefaultPageLimit)
+	limit, ok := parseLimitQuery(w, r, wire.DefaultPageLimit)
 	if !ok {
 		return
 	}
@@ -172,7 +172,7 @@ func (s *Server) handleSessionDigests(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := api.SessionDigestsResponse{Digests: make([]api.SessionDigest, 0, len(rows))}
+	out := wire.SessionDigestsResponse{Digests: make([]wire.SessionDigest, 0, len(rows))}
 	for _, row := range rows {
 		out.Digests = append(out.Digests, sessionDigestRowToWire(row))
 	}

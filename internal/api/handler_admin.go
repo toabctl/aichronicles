@@ -8,11 +8,11 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
-// handleScrub serves POST /v1/scrub. Body: api.ScrubRequest.
-// Response: api.ScrubResponse. Always returns the report — the
+// handleScrub serves POST /v1/scrub. Body: wire.ScrubRequest.
+// Response: wire.ScrubResponse. Always returns the report — the
 // caller decides whether the rewrite count is acceptable.
 //
 // The transport-level concern: scrub holds SQLite's write lock
@@ -24,7 +24,7 @@ import (
 func (s *Server) handleScrub(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = r.Body.Close() }()
 
-	var req api.ScrubRequest
+	var req wire.ScrubRequest
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeProblem(w, http.StatusBadRequest, "Read request body failed", err.Error())
@@ -54,12 +54,12 @@ func (s *Server) handleScrub(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, scrubReportToWire(report))
 }
 
-// handlePrune serves POST /v1/prune. Body: api.PruneRequest.
-// Response: api.PruneResponse.
+// handlePrune serves POST /v1/prune. Body: wire.PruneRequest.
+// Response: wire.PruneResponse.
 func (s *Server) handlePrune(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = r.Body.Close() }()
 
-	var req api.PruneRequest
+	var req wire.PruneRequest
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeProblem(w, http.StatusBadRequest, "Read request body failed", err.Error())
@@ -92,7 +92,7 @@ func (s *Server) handlePrune(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "Prune failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, api.PruneResponse{
+	writeJSON(w, http.StatusOK, wire.PruneResponse{
 		Sessions:     report.Sessions,
 		RawEnvelopes: report.RawEnvelopes,
 		Events:       report.Events,
@@ -103,11 +103,11 @@ func (s *Server) handlePrune(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func scrubReportToWire(r *store.ScrubReport) api.ScrubResponse {
+func scrubReportToWire(r *store.ScrubReport) wire.ScrubResponse {
 	if r == nil {
-		return api.ScrubResponse{}
+		return wire.ScrubResponse{}
 	}
-	return api.ScrubResponse{
+	return wire.ScrubResponse{
 		EventsScanned:       r.EventsScanned,
 		EventsRewritten:     r.EventsRewritten,
 		EnvelopesRewritten:  r.EnvelopesRewritten,

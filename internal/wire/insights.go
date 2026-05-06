@@ -1,4 +1,4 @@
-package api
+package wire
 
 // Insights is the wire shape for /v1/insights. Mirrors
 // store.InsightsReport one-to-one (the store row is already

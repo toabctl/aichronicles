@@ -1,4 +1,4 @@
-package api
+package wire
 
 // ProjectAggregate is the wire shape for one /v1/projects/aggregates
 // row. Mirrors store.ProjectAggregate — already wire-clean (no

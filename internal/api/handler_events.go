@@ -5,7 +5,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // handleEventsList serves GET /v1/events.
@@ -15,10 +15,10 @@ import (
 //   - session_id: filter to one session (empty = all sessions)
 //   - since_seq:  exclusive cursor on raw_envelopes.ingest_seq;
 //     events with ingest_seq > since_seq are returned
-//   - limit:      page size, capped at api.MaxPageLimit
+//   - limit:      page size, capped at wire.MaxPageLimit
 //
-// Response body is an api.EventListResponse — a slice of
-// api.Event plus the current LatestSeq watermark.
+// Response body is an wire.EventListResponse — a slice of
+// wire.Event plus the current LatestSeq watermark.
 func (s *Server) handleEventsList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
@@ -29,7 +29,7 @@ func (s *Server) handleEventsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit, ok := parseLimitQuery(w, r, api.DefaultPageLimit)
+	limit, ok := parseLimitQuery(w, r, wire.DefaultPageLimit)
 	if !ok {
 		return
 	}
@@ -48,12 +48,12 @@ func (s *Server) handleEventsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := api.EventListResponse{
-		Events:    make([]api.Event, 0, len(rows)),
+	out := wire.EventListResponse{
+		Events:    make([]wire.Event, 0, len(rows)),
 		LatestSeq: latest,
 	}
 	for _, e := range rows {
-		out.Events = append(out.Events, api.Event{
+		out.Events = append(out.Events, wire.Event{
 			IngestSeq:  e.IngestSeq,
 			EventID:    e.EventID,
 			SessionID:  e.SessionID,

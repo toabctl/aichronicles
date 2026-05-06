@@ -17,7 +17,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // verifyProposalOrAbort runs the Voyager-style critic gate before
@@ -106,7 +106,7 @@ func verifyProposalOrAbort(
 	if err != nil {
 		return fmt.Errorf("propose verify: marshal: %w", err)
 	}
-	saveReq := api.SaveLLMOutputRequest{
+	saveReq := wire.SaveLLMOutputRequest{
 		Kind:        string(store.LLMKindProposeVerify),
 		Model:       resp.Model,
 		PromptHash:  hash,

@@ -17,7 +17,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // weeklyDigestSessionLimit caps how many sessions feed the LLM
@@ -303,7 +303,7 @@ func mondayOf(t time.Time) time.Time {
 // started_at, 0) shape the rest of the store uses for the
 // "effective ts" expression — same definition prune / insights /
 // sessions all rely on.
-func filterDigestsBefore(rows []api.SessionDigest, upperMs int64) []api.SessionDigest {
+func filterDigestsBefore(rows []wire.SessionDigest, upperMs int64) []wire.SessionDigest {
 	out := rows[:0]
 	for _, r := range rows {
 		var end int64
@@ -362,7 +362,7 @@ func renderWeeklyDigest(out io.Writer, env WeeklyDigestEnvelope) error {
 // renderDigestList prints a tabular summary of past weekly digest
 // rows so the user can see what's in the timeline. JSON mode emits
 // the raw envelope shape for jq.
-func renderDigestList(out io.Writer, rows []api.LLMOutput, format OutputFormat) error {
+func renderDigestList(out io.Writer, rows []wire.LLMOutput, format OutputFormat) error {
 	if format == FormatJSON {
 		envs := make([]WeeklyDigestEnvelope, 0, len(rows))
 		for _, r := range rows {
@@ -405,7 +405,7 @@ func renderDigestList(out io.Writer, rows []api.LLMOutput, format OutputFormat) 
 // stored row. The body holds the bare ReflectionResult; we don't
 // have a recorded period start/end so we leave those empty in
 // JSON output — the consumer can use created_at_ms instead.
-func decodeStoredEnvelope(r *api.LLMOutput) (WeeklyDigestEnvelope, error) {
+func decodeStoredEnvelope(r *wire.LLMOutput) (WeeklyDigestEnvelope, error) {
 	var inner prompts.ReflectionResult
 	if err := json.Unmarshal([]byte(r.Body), &inner); err != nil {
 		return WeeklyDigestEnvelope{}, err

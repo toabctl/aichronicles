@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // defaultInsightsWindow matches the default the api uses (and what
@@ -83,7 +83,7 @@ func runInsights(ctx context.Context, c *apiclient.Client, opts runInsightsOpts)
 
 // renderInsights writes the report to out in the requested format.
 // JSON gets the raw struct; text gets a hand-tuned digest layout.
-func renderInsights(out io.Writer, r *api.Insights, format OutputFormat) error {
+func renderInsights(out io.Writer, r *wire.Insights, format OutputFormat) error {
 	if format == FormatJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
@@ -96,7 +96,7 @@ func renderInsights(out io.Writer, r *api.Insights, format OutputFormat) error {
 // every section omitted when its underlying slice is empty (no
 // "Top Skills: (none)" placeholder lines — keeps the report tight
 // for users who don't load skills).
-func renderInsightsText(out io.Writer, r *api.Insights) error {
+func renderInsightsText(out io.Writer, r *wire.Insights) error {
 	var b strings.Builder
 
 	since := time.UnixMilli(r.Window.SinceMs).UTC().Format("2006-01-02")
@@ -189,7 +189,7 @@ func shortID(id string) string {
 
 // maxToolNameWidth picks a column width for the tool-name column,
 // clamped to cap so absurdly long names don't blow up the layout.
-func maxToolNameWidth(tools []api.ToolUsage, cap int) int {
+func maxToolNameWidth(tools []wire.ToolUsage, cap int) int {
 	w := 0
 	for _, t := range tools {
 		if n := len(t.ToolName); n > w {
@@ -205,7 +205,7 @@ func maxToolNameWidth(tools []api.ToolUsage, cap int) int {
 	return w
 }
 
-func maxSkillNameWidth(skills []api.SkillUsage, cap int) int {
+func maxSkillNameWidth(skills []wire.SkillUsage, cap int) int {
 	w := 0
 	for _, s := range skills {
 		if n := len(s.Name); n > w {
@@ -221,7 +221,7 @@ func maxSkillNameWidth(skills []api.SkillUsage, cap int) int {
 	return w
 }
 
-func hasAnyHourActivity(buckets []api.HourBucket) bool {
+func hasAnyHourActivity(buckets []wire.HourBucket) bool {
 	for _, b := range buckets {
 		if b.Count > 0 {
 			return true
@@ -234,7 +234,7 @@ func hasAnyHourActivity(buckets []api.HourBucket) bool {
 // list with a unicode-block-element bar per hour. Bar width is
 // scaled to the busiest hour so the chart self-fits at any
 // activity level.
-func writeHourHistogram(b *strings.Builder, buckets []api.HourBucket) {
+func writeHourHistogram(b *strings.Builder, buckets []wire.HourBucket) {
 	maxCount := 0
 	for _, hb := range buckets {
 		if hb.Count > maxCount {

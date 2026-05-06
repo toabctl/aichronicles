@@ -18,7 +18,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // defaultSummarizeTimeout caps the whole subcommand (prompt build +
@@ -252,7 +252,7 @@ func RunSummarize(
 		return 0, fmt.Errorf("summarize: marshal result: %w", err)
 	}
 
-	saveReq := api.SaveLLMOutputRequest{
+	saveReq := wire.SaveLLMOutputRequest{
 		SessionID:   &sessionID,
 		Kind:        string(store.LLMKindSummary),
 		Model:       resp.Model,
@@ -310,7 +310,7 @@ func persistSessionLinks(
 	emitted []prompts.SessionLinkAnnotation,
 	allowed map[string]struct{},
 ) error {
-	links := make([]api.SessionLink, 0, len(emitted))
+	links := make([]wire.SessionLink, 0, len(emitted))
 	dropped := 0
 	for _, l := range emitted {
 		if _, ok := allowed[l.ToSessionID]; !ok {
@@ -321,7 +321,7 @@ func persistSessionLinks(
 			dropped++
 			continue
 		}
-		links = append(links, api.SessionLink{
+		links = append(links, wire.SessionLink{
 			ToSessionID: l.ToSessionID,
 			Kind:        l.Kind,
 			Rationale:   l.Rationale,
@@ -334,7 +334,7 @@ func persistSessionLinks(
 	// Always call SaveSessionLinks (even with empty links) so a
 	// re-summarize that emits nothing clears stale rows from a
 	// previous run.
-	return c.SaveSessionLinks(ctx, api.SaveSessionLinksRequest{
+	return c.SaveSessionLinks(ctx, wire.SaveSessionLinksRequest{
 		FromSessionID: from,
 		Links:         links,
 	})
@@ -382,12 +382,12 @@ func unmarshalLLMBody(body string, target any) error {
 	return nil
 }
 
-// wireEventsToStore converts api.SessionEvent wire rows back into
+// wireEventsToStore converts wire.SessionEvent wire rows back into
 // the events.EventView shape pkg/llm/prompts consumes. Mechanical
 // projection: nullable string fields rehydrate the events.NullString
 // struct from the wire's *string. Used by RunSummarize after
 // pulling /v1/sessions/{id}/events through the apiclient.
-func wireEventsToStore(in []api.SessionEvent) []events.EventView {
+func wireEventsToStore(in []wire.SessionEvent) []events.EventView {
 	out := make([]events.EventView, 0, len(in))
 	for _, e := range in {
 		v := events.EventView{

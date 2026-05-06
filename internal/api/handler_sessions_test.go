@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/toabctl/aichronicles/internal/events"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 func TestHandleSessionsList_Empty(t *testing.T) {
@@ -19,7 +19,7 @@ func TestHandleSessionsList_Empty(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d", rr.Code)
 	}
-	var out api.SessionListResponse
+	var out wire.SessionListResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	if len(out.Sessions) != 0 {
 		t.Errorf("got %d sessions, want 0", len(out.Sessions))
@@ -49,7 +49,7 @@ func TestHandleSessionsList_ListsIngested(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	var out api.SessionListResponse
+	var out wire.SessionListResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	if len(out.Sessions) != 2 {
 		t.Errorf("got %d sessions, want 2 (one per source_session_id)", len(out.Sessions))
@@ -82,7 +82,7 @@ func TestHandleSessionsGet_Found(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	var got api.SessionDigest
+	var got wire.SessionDigest
 	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestHandleSessionsRelated_ReturnsEmptyForUnknown(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Errorf("status=%d, want 200 (empty list, NOT 404)", rr.Code)
 	}
-	var out api.CandidateSessionListResponse
+	var out wire.CandidateSessionListResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	if len(out.Candidates) != 0 {
 		t.Errorf("got %d candidates, want 0", len(out.Candidates))
@@ -170,7 +170,7 @@ func TestHandleSessionsResolve_FoundReturnsCanonicalID(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	var got api.ResolveSessionResponse
+	var got wire.ResolveSessionResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestHandleSessionsGet_ErrorShape(t *testing.T) {
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status=%d, want 404", rr.Code)
 	}
-	var p api.Problem
+	var p wire.Problem
 	if err := json.Unmarshal(rr.Body.Bytes(), &p); err != nil {
 		t.Fatalf("decode problem: %v", err)
 	}

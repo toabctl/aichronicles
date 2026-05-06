@@ -7,7 +7,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/redact"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // auditSnippetRunes caps the per-row snippet returned by /v1/audit.
@@ -49,8 +49,8 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = rows.Close() }()
 
 	scanner := redact.Default()
-	resp := api.AuditResponse{
-		Findings:    make([]api.AuditFinding, 0, 8),
+	resp := wire.AuditResponse{
+		Findings:    make([]wire.AuditFinding, 0, 8),
 		PatternHits: map[string]int{},
 	}
 	for rows.Next() {
@@ -81,7 +81,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 			resp.PatternHits[n]++
 		}
 
-		resp.Findings = append(resp.Findings, api.AuditFinding{
+		resp.Findings = append(resp.Findings, wire.AuditFinding{
 			SessionID:  sess,
 			TsSourceMs: nullable.Int64Ptr(tsMs),
 			Kind:       kind,

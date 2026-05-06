@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 func TestHandleEpisodesList_EmptyDB(t *testing.T) {
@@ -17,7 +17,7 @@ func TestHandleEpisodesList_EmptyDB(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d", rr.Code)
 	}
-	var out api.EpisodeListResponse
+	var out wire.EpisodeListResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	if len(out.Episodes) != 0 {
 		t.Errorf("got %d episodes, want 0", len(out.Episodes))
@@ -57,7 +57,7 @@ func TestHandleEpisodesList_FilterPassThrough(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d", rr.Code)
 	}
-	var out api.EpisodeListResponse
+	var out wire.EpisodeListResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	if len(out.Episodes) != 0 {
 		t.Errorf("expected empty list for non-matching filter")

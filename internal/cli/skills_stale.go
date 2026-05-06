@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // defaultSkillStaleWindow matches what hermes-agent observed in
@@ -101,7 +101,7 @@ type runSkillsImpactOpts struct {
 
 func runSkillsImpact(ctx context.Context, c *apiclient.Client, opts runSkillsImpactOpts) error {
 	sinceMs := time.Now().Add(-opts.Since).UnixMilli()
-	resp, err := c.SkillImpact(ctx, api.SkillImpactRequest{
+	resp, err := c.SkillImpact(ctx, wire.SkillImpactRequest{
 		SinceMs:  sinceMs,
 		WindowMs: opts.Window.Milliseconds(),
 	})
@@ -115,7 +115,7 @@ func runSkillsImpact(ctx context.Context, c *apiclient.Client, opts runSkillsImp
 // renderSkillStaleness; same column layout intent (skill name on
 // the left, counts in the middle, percentage on the right) so a
 // user looking at both side-by-side has consistent muscle memory.
-func renderSkillImpact(out io.Writer, rows []api.SkillImpact, since, window time.Duration, format OutputFormat) error {
+func renderSkillImpact(out io.Writer, rows []wire.SkillImpact, since, window time.Duration, format OutputFormat) error {
 	if format == FormatJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
@@ -238,7 +238,7 @@ type runSkillsStaleOpts struct {
 
 func runSkillsStale(ctx context.Context, c *apiclient.Client, opts runSkillsStaleOpts) error {
 	sinceMs := time.Now().Add(-opts.Since).UnixMilli()
-	resp, err := c.SkillStaleness(ctx, api.SkillStalenessRequest{
+	resp, err := c.SkillStaleness(ctx, wire.SkillStalenessRequest{
 		SinceMs:  sinceMs,
 		WindowMs: opts.Window.Milliseconds(),
 	})
@@ -251,7 +251,7 @@ func runSkillsStale(ctx context.Context, c *apiclient.Client, opts runSkillsStal
 // renderSkillStaleness writes the staleness report to out in the
 // requested format. Empty report → "no stale-correlated skills"
 // rather than an empty table.
-func renderSkillStaleness(out io.Writer, rows []api.SkillStaleness, since, window time.Duration, format OutputFormat) error {
+func renderSkillStaleness(out io.Writer, rows []wire.SkillStaleness, since, window time.Duration, format OutputFormat) error {
 	if format == FormatJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")

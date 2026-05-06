@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/events"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // importMaxLineBytes caps a single NDJSON line. One line is one
@@ -37,7 +37,7 @@ const importInitialBufferBytes = 1 << 20
 //   - Pipeline error: returns 500 with stats so far in the body
 //     so an operator can see exactly where the run stopped
 //
-// Response: api.ImportStats as JSON. 200 even when invalid > 0;
+// Response: wire.ImportStats as JSON. 200 even when invalid > 0;
 // the client decides whether the rejected count is acceptable.
 //
 // Content-Type: prefers application/x-ndjson but accepts
@@ -54,7 +54,7 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	stats := api.ImportStats{}
+	stats := wire.ImportStats{}
 
 	scanner := bufio.NewScanner(r.Body)
 	scanner.Buffer(make([]byte, importInitialBufferBytes), importMaxLineBytes)
@@ -102,7 +102,7 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 			stats.Deduped++
 		} else {
 			stats.Imported++
-			s.sseBus.Publish(api.StreamEvent{
+			s.sseBus.Publish(wire.StreamEvent{
 				EventID:    result.EventID,
 				SessionID:  result.SessionID,
 				Kind:       env.Kind,
@@ -152,7 +152,7 @@ func isAcceptableImportContentType(ct string) bool {
 // failure so the operator sees how far the import got. Used as
 // the Detail of the problem+json body when the run aborts mid-
 // stream.
-func partialStatsDetail(stats api.ImportStats) string {
+func partialStatsDetail(stats wire.ImportStats) string {
 	b, _ := json.Marshal(stats)
 	return "partial stats: " + string(b)
 }

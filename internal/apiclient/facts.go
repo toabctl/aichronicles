@@ -6,11 +6,11 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // FactSubjects queries GET /v1/facts/subjects?contains=&limit=.
-func (c *Client) FactSubjects(ctx context.Context, contains string, limit int) (api.FactSubjectsResponse, error) {
+func (c *Client) FactSubjects(ctx context.Context, contains string, limit int) (wire.FactSubjectsResponse, error) {
 	q := url.Values{}
 	if contains != "" {
 		q.Set("contains", contains)
@@ -22,16 +22,16 @@ func (c *Client) FactSubjects(ctx context.Context, contains string, limit int) (
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out api.FactSubjectsResponse
+	var out wire.FactSubjectsResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return api.FactSubjectsResponse{}, err
+		return wire.FactSubjectsResponse{}, err
 	}
 	return out, nil
 }
 
 // Facts queries GET /v1/facts?subject=&limit=. Empty subject
 // returns recent facts across all subjects.
-func (c *Client) Facts(ctx context.Context, subject string, limit int) (api.FactsResponse, error) {
+func (c *Client) Facts(ctx context.Context, subject string, limit int) (wire.FactsResponse, error) {
 	q := url.Values{}
 	if subject != "" {
 		q.Set("subject", subject)
@@ -43,9 +43,9 @@ func (c *Client) Facts(ctx context.Context, subject string, limit int) (api.Fact
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out api.FactsResponse
+	var out wire.FactsResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return api.FactsResponse{}, err
+		return wire.FactsResponse{}, err
 	}
 	return out, nil
 }

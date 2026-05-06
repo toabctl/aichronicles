@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // parseInt64Query reads an optional non-negative int64 query
@@ -30,7 +30,7 @@ func parseInt64Query(w http.ResponseWriter, r *http.Request, name string) (int64
 }
 
 // parseLimitQuery reads the optional "limit" query parameter,
-// capped at api.MaxPageLimit. Returns (def, true) when missing,
+// capped at wire.MaxPageLimit. Returns (def, true) when missing,
 // (n, true) when valid (capped at MaxPageLimit), or (0, false)
 // after writing a 400 problem response. Callers must return
 // immediately when ok is false.
@@ -48,8 +48,8 @@ func parseLimitQuery(w http.ResponseWriter, r *http.Request, def int) (int, bool
 		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
 		return 0, false
 	}
-	if n > api.MaxPageLimit {
-		return api.MaxPageLimit, true
+	if n > wire.MaxPageLimit {
+		return wire.MaxPageLimit, true
 	}
 	return n, true
 }

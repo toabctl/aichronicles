@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/events"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // ingestN posts n distinct envelopes through the server and returns
@@ -42,7 +42,7 @@ func TestHandleEventsList_EmptyDB(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d", rr.Code)
 	}
-	var out api.EventListResponse
+	var out wire.EventListResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestHandleEventsList_ReturnsAllInOrder(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	var out api.EventListResponse
+	var out wire.EventListResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestHandleEventsList_FiltersBySessionID(t *testing.T) {
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr,
 		httptest.NewRequest(http.MethodGet, "/v1/events?session_id="+wantSessA, nil))
-	var out api.EventListResponse
+	var out wire.EventListResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestHandleEventsList_SinceSeqWatermark(t *testing.T) {
 	// First fetch: no cursor, expect 3.
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/events", nil))
-	var page1 api.EventListResponse
+	var page1 wire.EventListResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &page1)
 	if len(page1.Events) != 3 {
 		t.Fatalf("page1 len: got %d, want 3", len(page1.Events))
@@ -150,7 +150,7 @@ func TestHandleEventsList_SinceSeqWatermark(t *testing.T) {
 	srv.Handler().ServeHTTP(rr,
 		httptest.NewRequest(http.MethodGet,
 			"/v1/events?since_seq="+itoa(highSeq), nil))
-	var page2 api.EventListResponse
+	var page2 wire.EventListResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &page2)
 	if len(page2.Events) != 0 {
 		t.Errorf("page2 len: got %d, want 0 (caught up)", len(page2.Events))
@@ -171,17 +171,17 @@ func TestHandleEventsList_LimitClampsToMax(t *testing.T) {
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr,
 		httptest.NewRequest(http.MethodGet,
-			"/v1/events?limit="+itoa(int64(api.MaxPageLimit*2)), nil))
+			"/v1/events?limit="+itoa(int64(wire.MaxPageLimit*2)), nil))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d", rr.Code)
 	}
-	var out api.EventListResponse
+	var out wire.EventListResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(out.Events) > api.MaxPageLimit {
+	if len(out.Events) > wire.MaxPageLimit {
 		t.Errorf("got %d events; expected <= MaxPageLimit (%d)",
-			len(out.Events), api.MaxPageLimit)
+			len(out.Events), wire.MaxPageLimit)
 	}
 }
 
@@ -232,7 +232,7 @@ func TestHandleEventsList_NonExistentSessionReturnsEmpty(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Errorf("status=%d, want 200", rr.Code)
 	}
-	var out api.EventListResponse
+	var out wire.EventListResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	if len(out.Events) != 0 {
 		t.Errorf("got %d events; want 0", len(out.Events))
@@ -263,7 +263,7 @@ func TestHandleEventsList_NullableFieldsRoundTrip(t *testing.T) {
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr,
 		httptest.NewRequest(http.MethodGet, "/v1/events", nil))
-	var out api.EventListResponse
+	var out wire.EventListResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	if len(out.Events) != 2 {
 		t.Fatalf("got %d events, want 2", len(out.Events))
@@ -304,7 +304,7 @@ func TestHandleEventsList_ContextCancellationStopsQuery(t *testing.T) {
 	// error → 500. We don't enforce a specific status, just that
 	// it's not a 200 with bogus data.
 	if rr.Code == http.StatusOK {
-		var out api.EventListResponse
+		var out wire.EventListResponse
 		_ = json.Unmarshal(rr.Body.Bytes(), &out)
 		if len(out.Events) > 0 {
 			t.Errorf("canceled context returned %d events", len(out.Events))

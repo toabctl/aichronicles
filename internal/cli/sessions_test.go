@@ -12,7 +12,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // seedStoreForSessions inserts three sessions, each with a user_prompt
@@ -213,7 +213,7 @@ func TestFormatSessionRow_ColumnsAndNullHandling(t *testing.T) {
 	ended := int64(1700000060000)
 	cwd := "/home/u/proj"
 	prompt := "hello"
-	got := formatSessionRow(api.SessionDigest{
+	got := formatSessionRow(wire.SessionDigest{
 		ID:          "abcdef0123456789",
 		StartedAtMs: &started,
 		EndedAtMs:   &ended,
@@ -233,7 +233,7 @@ func TestFormatSessionRow_ColumnsAndNullHandling(t *testing.T) {
 	}
 
 	// nil started/ended/cwd/prompt render as "-"
-	got = formatSessionRow(api.SessionDigest{ID: "zzzzzzzz"})
+	got = formatSessionRow(wire.SessionDigest{ID: "zzzzzzzz"})
 	parts = strings.Split(got, "\t")
 	for i := 1; i <= 4; i++ {
 		// skip event_count check — that's "0"

@@ -19,7 +19,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 const defaultEvolveSinceWindow = 30 * 24 * time.Hour
@@ -174,7 +174,7 @@ func runSkillsEvolve(
 
 	// Pull failure context via the api.
 	sinceMs := time.Now().Add(-since).UnixMilli()
-	failResp, err := c.SkillFailures(ctx, api.SkillFailuresRequest{
+	failResp, err := c.SkillFailures(ctx, wire.SkillFailuresRequest{
 		Skill:    opts.SkillName,
 		SinceMs:  sinceMs,
 		WindowMs: window.Milliseconds(),

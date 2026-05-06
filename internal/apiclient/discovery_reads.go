@@ -6,11 +6,11 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // SessionsMissingSummary queries GET /v1/sessions/missing-summary.
-func (c *Client) SessionsMissingSummary(ctx context.Context, req api.SessionsMissingSummaryRequest) (api.SessionsMissingSummaryResponse, error) {
+func (c *Client) SessionsMissingSummary(ctx context.Context, req wire.SessionsMissingSummaryRequest) (wire.SessionsMissingSummaryResponse, error) {
 	q := url.Values{}
 	if req.SinceMs > 0 {
 		q.Set("since_ms", strconv.FormatInt(req.SinceMs, 10))
@@ -28,16 +28,16 @@ func (c *Client) SessionsMissingSummary(ctx context.Context, req api.SessionsMis
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out api.SessionsMissingSummaryResponse
+	var out wire.SessionsMissingSummaryResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return api.SessionsMissingSummaryResponse{}, err
+		return wire.SessionsMissingSummaryResponse{}, err
 	}
 	return out, nil
 }
 
 // SessionsNeedingSegmentation queries
 // GET /v1/sessions/needing-segmentation.
-func (c *Client) SessionsNeedingSegmentation(ctx context.Context, req api.SessionsNeedingSegmentationRequest) (api.SessionsNeedingSegmentationResponse, error) {
+func (c *Client) SessionsNeedingSegmentation(ctx context.Context, req wire.SessionsNeedingSegmentationRequest) (wire.SessionsNeedingSegmentationResponse, error) {
 	q := url.Values{}
 	if req.IdleCutoffMs > 0 {
 		q.Set("idle_cutoff_ms", strconv.FormatInt(req.IdleCutoffMs, 10))
@@ -55,15 +55,15 @@ func (c *Client) SessionsNeedingSegmentation(ctx context.Context, req api.Sessio
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out api.SessionsNeedingSegmentationResponse
+	var out wire.SessionsNeedingSegmentationResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return api.SessionsNeedingSegmentationResponse{}, err
+		return wire.SessionsNeedingSegmentationResponse{}, err
 	}
 	return out, nil
 }
 
 // SessionsForCompletion queries GET /v1/sessions/completions.
-func (c *Client) SessionsForCompletion(ctx context.Context, prefix string, limit int) (api.SessionCompletionsResponse, error) {
+func (c *Client) SessionsForCompletion(ctx context.Context, prefix string, limit int) (wire.SessionCompletionsResponse, error) {
 	q := url.Values{}
 	if prefix != "" {
 		q.Set("prefix", prefix)
@@ -75,9 +75,9 @@ func (c *Client) SessionsForCompletion(ctx context.Context, prefix string, limit
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out api.SessionCompletionsResponse
+	var out wire.SessionCompletionsResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return api.SessionCompletionsResponse{}, err
+		return wire.SessionCompletionsResponse{}, err
 	}
 	return out, nil
 }
@@ -86,16 +86,16 @@ func (c *Client) SessionsForCompletion(ctx context.Context, prefix string, limit
 // every event for the session, runs the segmenter server-side,
 // writes the resulting episodes via SaveEpisodes, and returns the
 // count produced.
-func (c *Client) SegmentSession(ctx context.Context, sessionID string, req api.SegmentSessionRequest) (api.SegmentSessionResponse, error) {
-	var out api.SegmentSessionResponse
+func (c *Client) SegmentSession(ctx context.Context, sessionID string, req wire.SegmentSessionRequest) (wire.SegmentSessionResponse, error) {
+	var out wire.SegmentSessionResponse
 	if err := c.do(ctx, http.MethodPost, "/v1/sessions/"+url.PathEscape(sessionID)+"/segment", req, &out); err != nil {
-		return api.SegmentSessionResponse{}, err
+		return wire.SegmentSessionResponse{}, err
 	}
 	return out, nil
 }
 
 // InductionCandidates queries GET /v1/induction/candidates.
-func (c *Client) InductionCandidates(ctx context.Context, req api.InductionCandidatesRequest) (api.InductionCandidatesResponse, error) {
+func (c *Client) InductionCandidates(ctx context.Context, req wire.InductionCandidatesRequest) (wire.InductionCandidatesResponse, error) {
 	q := url.Values{}
 	if req.NowMs > 0 {
 		q.Set("now_ms", strconv.FormatInt(req.NowMs, 10))
@@ -113,15 +113,15 @@ func (c *Client) InductionCandidates(ctx context.Context, req api.InductionCandi
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out api.InductionCandidatesResponse
+	var out wire.InductionCandidatesResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return api.InductionCandidatesResponse{}, err
+		return wire.InductionCandidatesResponse{}, err
 	}
 	return out, nil
 }
 
 // FailureShapes queries GET /v1/proposals/failure-shapes.
-func (c *Client) FailureShapes(ctx context.Context, sinceMs int64, limit int) (api.FailureShapesResponse, error) {
+func (c *Client) FailureShapes(ctx context.Context, sinceMs int64, limit int) (wire.FailureShapesResponse, error) {
 	q := url.Values{}
 	if sinceMs > 0 {
 		q.Set("since_ms", strconv.FormatInt(sinceMs, 10))
@@ -133,15 +133,15 @@ func (c *Client) FailureShapes(ctx context.Context, sinceMs int64, limit int) (a
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out api.FailureShapesResponse
+	var out wire.FailureShapesResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return api.FailureShapesResponse{}, err
+		return wire.FailureShapesResponse{}, err
 	}
 	return out, nil
 }
 
 // SkillFailures queries GET /v1/skills/failures.
-func (c *Client) SkillFailures(ctx context.Context, req api.SkillFailuresRequest) (api.SkillFailuresResponse, error) {
+func (c *Client) SkillFailures(ctx context.Context, req wire.SkillFailuresRequest) (wire.SkillFailuresResponse, error) {
 	q := url.Values{}
 	q.Set("skill", req.Skill)
 	if req.SinceMs > 0 {
@@ -153,16 +153,16 @@ func (c *Client) SkillFailures(ctx context.Context, req api.SkillFailuresRequest
 	if req.Limit > 0 {
 		q.Set("limit", strconv.Itoa(req.Limit))
 	}
-	var out api.SkillFailuresResponse
+	var out wire.SkillFailuresResponse
 	if err := c.do(ctx, http.MethodGet, "/v1/skills/failures?"+q.Encode(), nil, &out); err != nil {
-		return api.SkillFailuresResponse{}, err
+		return wire.SkillFailuresResponse{}, err
 	}
 	return out, nil
 }
 
 // SkillCandidatesEffectiveness queries
 // GET /v1/skill-candidates/effectiveness.
-func (c *Client) SkillCandidatesEffectiveness(ctx context.Context, req api.SkillCandidateEffectivenessRequest) (api.SkillCandidateEffectivenessResponse, error) {
+func (c *Client) SkillCandidatesEffectiveness(ctx context.Context, req wire.SkillCandidateEffectivenessRequest) (wire.SkillCandidateEffectivenessResponse, error) {
 	q := url.Values{}
 	if req.SinceMs > 0 {
 		q.Set("since_ms", strconv.FormatInt(req.SinceMs, 10))
@@ -177,15 +177,15 @@ func (c *Client) SkillCandidatesEffectiveness(ctx context.Context, req api.Skill
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out api.SkillCandidateEffectivenessResponse
+	var out wire.SkillCandidateEffectivenessResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return api.SkillCandidateEffectivenessResponse{}, err
+		return wire.SkillCandidateEffectivenessResponse{}, err
 	}
 	return out, nil
 }
 
 // SkillCandidatesPending queries GET /v1/skill-candidates/pending.
-func (c *Client) SkillCandidatesPending(ctx context.Context, sinceMs int64, limit int) (api.PendingSkillCandidatesResponse, error) {
+func (c *Client) SkillCandidatesPending(ctx context.Context, sinceMs int64, limit int) (wire.PendingSkillCandidatesResponse, error) {
 	q := url.Values{}
 	if sinceMs > 0 {
 		q.Set("since_ms", strconv.FormatInt(sinceMs, 10))
@@ -197,9 +197,9 @@ func (c *Client) SkillCandidatesPending(ctx context.Context, sinceMs int64, limi
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out api.PendingSkillCandidatesResponse
+	var out wire.PendingSkillCandidatesResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return api.PendingSkillCandidatesResponse{}, err
+		return wire.PendingSkillCandidatesResponse{}, err
 	}
 	return out, nil
 }
@@ -207,12 +207,12 @@ func (c *Client) SkillCandidatesPending(ctx context.Context, sinceMs int64, limi
 // AddedSkillCandidate queries GET /v1/skill-candidates/added?name=.
 // ErrNotFound when no candidate row exists for the named skill
 // (the skill is hand-authored).
-func (c *Client) AddedSkillCandidate(ctx context.Context, name string) (api.SkillCandidate, error) {
+func (c *Client) AddedSkillCandidate(ctx context.Context, name string) (wire.SkillCandidate, error) {
 	q := url.Values{}
 	q.Set("name", name)
-	var out api.AddedSkillCandidateResponse
+	var out wire.AddedSkillCandidateResponse
 	if err := c.do(ctx, http.MethodGet, "/v1/skill-candidates/added?"+q.Encode(), nil, &out); err != nil {
-		return api.SkillCandidate{}, err
+		return wire.SkillCandidate{}, err
 	}
 	return out.Candidate, nil
 }
@@ -220,8 +220,8 @@ func (c *Client) AddedSkillCandidate(ctx context.Context, name string) (api.Skil
 // UpdateSkillCandidate posts to /v1/skill-candidates/{id}/update.
 // Used by the merge path to converge the surviving candidate's
 // stored hash + kind to the post-merge SKILL.md on disk.
-func (c *Client) UpdateSkillCandidate(ctx context.Context, id int64, req api.UpdateSkillCandidateRequest) error {
-	var out api.UpdateSkillCandidateResponse
+func (c *Client) UpdateSkillCandidate(ctx context.Context, id int64, req wire.UpdateSkillCandidateRequest) error {
+	var out wire.UpdateSkillCandidateResponse
 	return c.do(ctx, http.MethodPost,
 		"/v1/skill-candidates/"+strconv.FormatInt(id, 10)+"/update", req, &out)
 }
@@ -230,16 +230,16 @@ func (c *Client) UpdateSkillCandidate(ctx context.Context, id int64, req api.Upd
 // holds an exclusive lock and the caller wants to know it
 // finished before issuing follow-up work.
 func (c *Client) Vacuum(ctx context.Context) error {
-	var out api.VacuumResponse
+	var out wire.VacuumResponse
 	return c.do(ctx, http.MethodPost, "/v1/admin/vacuum", nil, &out)
 }
 
 // DBInfo queries GET /v1/admin/db-info — page_count + page_size +
 // computed bytes for the live store.
-func (c *Client) DBInfo(ctx context.Context) (api.DBPageInfoResponse, error) {
-	var out api.DBPageInfoResponse
+func (c *Client) DBInfo(ctx context.Context) (wire.DBPageInfoResponse, error) {
+	var out wire.DBPageInfoResponse
 	if err := c.do(ctx, http.MethodGet, "/v1/admin/db-info", nil, &out); err != nil {
-		return api.DBPageInfoResponse{}, err
+		return wire.DBPageInfoResponse{}, err
 	}
 	return out, nil
 }

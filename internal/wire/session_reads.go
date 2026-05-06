@@ -1,4 +1,4 @@
-package api
+package wire
 
 // SessionEvent is the wire shape for one stored event row as
 // returned by GET /v1/sessions/{id}/events. Mirrors events.EventView

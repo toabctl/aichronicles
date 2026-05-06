@@ -1,4 +1,4 @@
-package api
+package wire
 
 // StreamEvent is the wire shape of one SSE frame from
 // GET /v1/stream. Carries enough info for a client to render a

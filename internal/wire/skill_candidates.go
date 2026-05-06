@@ -1,4 +1,4 @@
-package api
+package wire
 
 // SkillCandidateExample is one (input, output) demonstration in
 // the AutoSkill ξ set — a representative user query paired with a

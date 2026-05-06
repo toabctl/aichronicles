@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/events"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // envelopeNDJSON marshals env as one NDJSON line (JSON + \n).
@@ -33,7 +33,7 @@ func TestHandleImport_EmptyBody(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	var out api.ImportStats
+	var out wire.ImportStats
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	if out.LinesRead != 0 || out.Imported != 0 {
 		t.Errorf("empty body should produce zero counts: %+v", out)
@@ -54,7 +54,7 @@ func TestHandleImport_HappyPath(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	var out api.ImportStats
+	var out wire.ImportStats
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	if out.LinesRead != 5 {
 		t.Errorf("LinesRead: got %d, want 5", out.LinesRead)
@@ -84,7 +84,7 @@ func TestHandleImport_DuplicatesAreDeduped(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	var out api.ImportStats
+	var out wire.ImportStats
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	if out.Imported != 1 || out.Deduped != 2 {
 		t.Errorf("expected 1 imported + 2 deduped; got %+v", out)
@@ -109,7 +109,7 @@ func TestHandleImport_InvalidLinesAreSkipped(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	var out api.ImportStats
+	var out wire.ImportStats
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	if out.Imported != 2 {
 		t.Errorf("Imported: got %d, want 2", out.Imported)
@@ -133,7 +133,7 @@ func TestHandleImport_BlankLinesIgnored(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	var out api.ImportStats
+	var out wire.ImportStats
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	if out.Imported != 1 || out.Invalid != 0 {
 		t.Errorf("blank lines should not count: %+v", out)

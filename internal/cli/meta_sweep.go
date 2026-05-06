@@ -13,7 +13,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // MetaAnalysisKinds enumerates the cadence-gated meta-analyses
@@ -447,7 +447,7 @@ func runSkillRevisionForSweep(
 	}
 
 	sinceMs := time.Now().Add(-since).UnixMilli()
-	resp, err := c.SkillStaleness(ctx, api.SkillStalenessRequest{
+	resp, err := c.SkillStaleness(ctx, wire.SkillStalenessRequest{
 		SinceMs:  sinceMs,
 		WindowMs: window.Milliseconds(),
 	})

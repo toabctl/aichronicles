@@ -9,7 +9,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // Sentinel errors. Callers prefer errors.Is(err, ErrNotFound)
@@ -43,7 +43,7 @@ var (
 // Problem is the decoded RFC 7807 body when one was provided.
 type HTTPError struct {
 	Status  int
-	Problem api.Problem
+	Problem wire.Problem
 	// sentinel is the matchable error returned by Unwrap so
 	// errors.Is(err, ErrNotFound) works against an *HTTPError.
 	sentinel error

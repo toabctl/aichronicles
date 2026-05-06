@@ -15,7 +15,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // newSummariesCmd is the `summaries` subcommand tree.
@@ -88,7 +88,7 @@ func newSummariesMissingCmd() *cobra.Command {
 				return err
 			}
 			sinceMs := time.Now().Add(-since).UnixMilli()
-			resp, err := c.SessionsMissingSummary(cmd.Context(), api.SessionsMissingSummaryRequest{
+			resp, err := c.SessionsMissingSummary(cmd.Context(), wire.SessionsMissingSummaryRequest{
 				SinceMs: sinceMs,
 				Cwd:     cwd,
 				Agent:   agent,
@@ -159,7 +159,7 @@ func newSummariesFillCmd() *cobra.Command {
 			}
 
 			sinceMs := time.Now().Add(-since).UnixMilli()
-			missing, err := c.SessionsMissingSummary(cmd.Context(), api.SessionsMissingSummaryRequest{
+			missing, err := c.SessionsMissingSummary(cmd.Context(), wire.SessionsMissingSummaryRequest{
 				SinceMs: sinceMs,
 				Cwd:     cwd,
 				Agent:   agent,
@@ -231,7 +231,7 @@ func runSummariesFill(
 	s *store.Store,
 	c *apiclient.Client,
 	newClient func() (llm.Client, error),
-	rows []api.SessionDigest,
+	rows []wire.SessionDigest,
 	model string,
 	perCallTimeout time.Duration,
 	format OutputFormat,
@@ -376,7 +376,7 @@ func writeJSONFillResults(w io.Writer, results []fillStatus) error {
 // row for a session, or nil when none exists / on a query error.
 // Shared between topic + token lookups so each per-session reporter
 // only hits the api once after a successful summarise.
-func latestSummaryRow(ctx context.Context, c *apiclient.Client, sessionID string) *api.LLMOutput {
+func latestSummaryRow(ctx context.Context, c *apiclient.Client, sessionID string) *wire.LLMOutput {
 	outs, err := c.SessionLLMOutputs(ctx, sessionID, string(store.LLMKindSummary), 1)
 	if err != nil || len(outs) == 0 {
 		return nil
@@ -388,7 +388,7 @@ func latestSummaryRow(ctx context.Context, c *apiclient.Client, sessionID string
 // writeMissingSummaries renders the missing-summary result.
 // Reuses the `aichronicles sessions` formatters so the table
 // layout matches column-for-column — muscle memory carries.
-func writeMissingSummaries(w io.Writer, rows []api.SessionDigest, format OutputFormat) error {
+func writeMissingSummaries(w io.Writer, rows []wire.SessionDigest, format OutputFormat) error {
 	if format == FormatJSON {
 		return writeMissingSummariesJSON(w, rows)
 	}
@@ -413,7 +413,7 @@ func writeMissingSummaries(w io.Writer, rows []api.SessionDigest, format OutputF
 // writeMissingSummariesJSON shapes the rows into the same JSON that
 // `aichronicles sessions --format=json` produces, so jq pipelines
 // work unchanged.
-func writeMissingSummariesJSON(w io.Writer, rows []api.SessionDigest) error {
+func writeMissingSummariesJSON(w io.Writer, rows []wire.SessionDigest) error {
 	type out struct {
 		ID          string `json:"id"`
 		StartedAtMs int64  `json:"started_at_ms,omitempty"`
@@ -606,7 +606,7 @@ type LLMOutputRowJSON struct {
 // human-readable tab-aligned table; format=json is a JSON array of
 // LLMOutputRowJSON for jq pipelines. Empty result is "(no outputs)"
 // in table mode and "[]" in JSON mode.
-func writeSummaries(w io.Writer, rows []api.LLMOutput, format OutputFormat) error {
+func writeSummaries(w io.Writer, rows []wire.LLMOutput, format OutputFormat) error {
 	if format == FormatJSON {
 		payload := make([]LLMOutputRowJSON, 0, len(rows))
 		for _, r := range rows {

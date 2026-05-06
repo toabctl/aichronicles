@@ -5,7 +5,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // handleEpisodesList serves GET /v1/episodes with optional
@@ -36,15 +36,15 @@ func (s *Server) handleEpisodesList(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := api.EpisodeListResponse{Episodes: make([]api.Episode, 0, len(rows))}
+	out := wire.EpisodeListResponse{Episodes: make([]wire.Episode, 0, len(rows))}
 	for _, e := range rows {
 		out.Episodes = append(out.Episodes, episodeToWire(e))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-func episodeToWire(e events.Episode) api.Episode {
-	return api.Episode{
+func episodeToWire(e events.Episode) wire.Episode {
+	return wire.Episode{
 		ID:            e.ID,
 		SessionID:     e.SessionID,
 		Ordinal:       e.Ordinal,

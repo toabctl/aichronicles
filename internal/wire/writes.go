@@ -1,4 +1,4 @@
-package api
+package wire
 
 // SaveLLMOutputRequest is the body shape for POST /v1/llm-outputs.
 // SessionID is optional — bare cache rows (e.g. propose-merge

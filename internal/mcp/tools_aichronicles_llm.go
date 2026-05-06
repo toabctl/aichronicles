@@ -11,7 +11,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // summaryTopNDefault and summaryTopNMax cap how many hits feed the
@@ -87,7 +87,7 @@ func searchWithSummaryHandler(c *apiclient.Client, newClient func() (llm.Client,
 			topN = summaryTopNMax
 		}
 
-		searchReq := api.SearchRequest{
+		searchReq := wire.SearchRequest{
 			Q:     req.Query,
 			Kind:  req.Kind,
 			Limit: topN,

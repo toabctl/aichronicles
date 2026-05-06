@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // handleUsage serves GET /v1/usage. Aggregates llm_outputs token
@@ -30,16 +30,16 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	totals := store.SumTokenUsage(rows)
 
-	out := api.UsageResponse{
-		Rows: make([]api.UsageRow, 0, len(rows)),
-		Totals: api.UsageTotals{
+	out := wire.UsageResponse{
+		Rows: make([]wire.UsageRow, 0, len(rows)),
+		Totals: wire.UsageTotals{
 			InputTokens:  totals.InputTokens,
 			OutputTokens: totals.OutputTokens,
 			RowCount:     totals.RowCount,
 		},
 	}
 	for _, r := range rows {
-		out.Rows = append(out.Rows, api.UsageRow{
+		out.Rows = append(out.Rows, wire.UsageRow{
 			Day:          r.Day,
 			Kind:         r.Kind,
 			Model:        r.Model,

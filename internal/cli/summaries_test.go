@@ -14,16 +14,16 @@ import (
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // llmOutputsToWire converts store rows to the api wire shape so the
-// summaries-list renderer (which now consumes []api.LLMOutput) can
+// summaries-list renderer (which now consumes []wire.LLMOutput) can
 // be exercised against fixtures seeded directly into the store.
-func llmOutputsToWire(rows []store.LLMOutput) []api.LLMOutput {
-	out := make([]api.LLMOutput, 0, len(rows))
+func llmOutputsToWire(rows []store.LLMOutput) []wire.LLMOutput {
+	out := make([]wire.LLMOutput, 0, len(rows))
 	for _, r := range rows {
-		o := api.LLMOutput{
+		o := wire.LLMOutput{
 			ID:          r.ID,
 			Kind:        string(r.Kind),
 			Model:       r.Model,
@@ -368,7 +368,7 @@ func TestSummariesMissing_OnlyUnsummarizedRowsAppear(t *testing.T) {
 	_ = tx.Commit()
 
 	c := apiForStore(t, s)
-	resp, err := c.SessionsMissingSummary(t.Context(), api.SessionsMissingSummaryRequest{
+	resp, err := c.SessionsMissingSummary(t.Context(), wire.SessionsMissingSummaryRequest{
 		SinceMs: time.Now().Add(-24 * time.Hour).UnixMilli(),
 	})
 	if err != nil {
@@ -393,7 +393,7 @@ func TestSummariesMissing_JSONFormatShape(t *testing.T) {
 	id := seedSessionForMissing(t, s, "miss-json", time.Now().Add(-time.Hour))
 
 	c := apiForStore(t, s)
-	resp, err := c.SessionsMissingSummary(t.Context(), api.SessionsMissingSummaryRequest{
+	resp, err := c.SessionsMissingSummary(t.Context(), wire.SessionsMissingSummaryRequest{
 		SinceMs: time.Now().Add(-24 * time.Hour).UnixMilli(),
 	})
 	if err != nil {
@@ -425,7 +425,7 @@ func TestSummariesMissing_EmptyWindowReportsCleanly(t *testing.T) {
 	s := testStore(t)
 
 	c := apiForStore(t, s)
-	resp, err := c.SessionsMissingSummary(t.Context(), api.SessionsMissingSummaryRequest{
+	resp, err := c.SessionsMissingSummary(t.Context(), wire.SessionsMissingSummaryRequest{
 		SinceMs: time.Now().Add(-24 * time.Hour).UnixMilli(),
 	})
 	if err != nil {
@@ -447,7 +447,7 @@ func TestRunSummariesFill_StreamsAndTallies(t *testing.T) {
 	idA := seedSessionForMissing(t, s, "fill-A", now.Add(-time.Hour))
 	idB := seedSessionForMissing(t, s, "fill-B", now.Add(-2*time.Hour))
 
-	rows := []api.SessionDigest{
+	rows := []wire.SessionDigest{
 		{ID: idA},
 		{ID: idB},
 	}
@@ -506,7 +506,7 @@ func TestRunSummariesFill_JSONFormatShape(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runSummariesFill(t.Context(), s, apiForStore(t, s), newClient,
-		[]api.SessionDigest{{ID: id}}, "", 5*time.Second, FormatJSON, &out); err != nil {
+		[]wire.SessionDigest{{ID: id}}, "", 5*time.Second, FormatJSON, &out); err != nil {
 		t.Fatalf("runSummariesFill: %v", err)
 	}
 	var parsed []fillStatus

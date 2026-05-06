@@ -8,7 +8,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // handleSessionsMissingSummary serves
@@ -30,7 +30,7 @@ func (s *Server) handleSessionsMissingSummary(w http.ResponseWriter, r *http.Req
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := api.SessionsMissingSummaryResponse{Sessions: make([]api.SessionDigest, 0, len(rows))}
+	out := wire.SessionsMissingSummaryResponse{Sessions: make([]wire.SessionDigest, 0, len(rows))}
 	for _, row := range rows {
 		out.Sessions = append(out.Sessions, sessionDigestRowToWire(row))
 	}
@@ -69,7 +69,7 @@ func (s *Server) handleSessionsNeedingSegmentation(w http.ResponseWriter, r *htt
 	if ids == nil {
 		ids = []string{}
 	}
-	writeJSON(w, http.StatusOK, api.SessionsNeedingSegmentationResponse{SessionIDs: ids})
+	writeJSON(w, http.StatusOK, wire.SessionsNeedingSegmentationResponse{SessionIDs: ids})
 }
 
 // handleSessionsForCompletion serves GET /v1/sessions/completions?prefix=&limit=.
@@ -86,9 +86,9 @@ func (s *Server) handleSessionsForCompletion(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := api.SessionCompletionsResponse{Sessions: make([]api.SessionCompletion, 0, len(rows))}
+	out := wire.SessionCompletionsResponse{Sessions: make([]wire.SessionCompletion, 0, len(rows))}
 	for _, row := range rows {
-		out.Sessions = append(out.Sessions, api.SessionCompletion{
+		out.Sessions = append(out.Sessions, wire.SessionCompletion{
 			ID:          row.ID,
 			Description: row.Description,
 		})
@@ -124,9 +124,9 @@ func (s *Server) handleInductionCandidates(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := api.InductionCandidatesResponse{Candidates: make([]api.InductionCandidate, 0, len(rows))}
+	out := wire.InductionCandidatesResponse{Candidates: make([]wire.InductionCandidate, 0, len(rows))}
 	for _, row := range rows {
-		out.Candidates = append(out.Candidates, api.InductionCandidate{
+		out.Candidates = append(out.Candidates, wire.InductionCandidate{
 			ID:          row.ID,
 			EventCount:  row.EventCount,
 			StartedAtMs: nullable.Int64Ptr(row.StartedAtMs),
@@ -154,9 +154,9 @@ func (s *Server) handleFailureShapes(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := api.FailureShapesResponse{Shapes: make([]api.FailureShape, 0, len(rows))}
+	out := wire.FailureShapesResponse{Shapes: make([]wire.FailureShape, 0, len(rows))}
 	for _, row := range rows {
-		out.Shapes = append(out.Shapes, api.FailureShape{
+		out.Shapes = append(out.Shapes, wire.FailureShape{
 			SessionID:         row.SessionID,
 			Title:             row.Title,
 			ToolFailureCount:  row.ToolFailureCount,
@@ -197,9 +197,9 @@ func (s *Server) handleSkillFailures(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := api.SkillFailuresResponse{Failures: make([]api.SkillFailureContext, 0, len(rows))}
+	out := wire.SkillFailuresResponse{Failures: make([]wire.SkillFailureContext, 0, len(rows))}
 	for _, row := range rows {
-		out.Failures = append(out.Failures, api.SkillFailureContext{
+		out.Failures = append(out.Failures, wire.SkillFailureContext{
 			SessionID:  row.SessionID,
 			LoadTsMs:   row.LoadTsMs,
 			FailTsMs:   row.FailTsMs,
@@ -232,9 +232,9 @@ func (s *Server) handleSkillCandidatesEffectiveness(w http.ResponseWriter, r *ht
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := api.SkillCandidateEffectivenessResponse{Rows: make([]api.SkillCandidateEffectiveness, 0, len(rows))}
+	out := wire.SkillCandidateEffectivenessResponse{Rows: make([]wire.SkillCandidateEffectiveness, 0, len(rows))}
 	for _, row := range rows {
-		out.Rows = append(out.Rows, api.SkillCandidateEffectiveness{
+		out.Rows = append(out.Rows, wire.SkillCandidateEffectiveness{
 			CandidateID:      row.CandidateID,
 			LLMOutputID:      row.LLMOutputID,
 			SkillName:        row.SkillName,
@@ -269,7 +269,7 @@ func (s *Server) handleSkillCandidatesPending(w http.ResponseWriter, r *http.Req
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := api.PendingSkillCandidatesResponse{Candidates: make([]api.SkillCandidate, 0, len(rows))}
+	out := wire.PendingSkillCandidatesResponse{Candidates: make([]wire.SkillCandidate, 0, len(rows))}
 	for _, row := range rows {
 		out.Candidates = append(out.Candidates, skillCandidateRowToWire(row))
 	}
@@ -297,7 +297,7 @@ func (s *Server) handleSkillCandidatesAdded(w http.ResponseWriter, r *http.Reque
 		writeProblem(w, http.StatusNotFound, "Added candidate not found", "")
 		return
 	}
-	writeJSON(w, http.StatusOK, api.AddedSkillCandidateResponse{Candidate: skillCandidateRowToWire(*row)})
+	writeJSON(w, http.StatusOK, wire.AddedSkillCandidateResponse{Candidate: skillCandidateRowToWire(*row)})
 }
 
 // handleSegmentSession serves POST /v1/sessions/{id}/segment.
@@ -315,7 +315,7 @@ func (s *Server) handleSegmentSession(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "Missing session id", "")
 		return
 	}
-	var req api.SegmentSessionRequest
+	var req wire.SegmentSessionRequest
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeProblem(w, http.StatusBadRequest, "Invalid body", err.Error())
@@ -334,7 +334,7 @@ func (s *Server) handleSegmentSession(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	writeJSON(w, http.StatusOK, api.SegmentSessionResponse{Episodes: len(episodes)})
+	writeJSON(w, http.StatusOK, wire.SegmentSessionResponse{Episodes: len(episodes)})
 }
 
 // handleSkillCandidateUpdate serves
@@ -349,7 +349,7 @@ func (s *Server) handleSkillCandidateUpdate(w http.ResponseWriter, r *http.Reque
 		writeProblem(w, http.StatusBadRequest, "Invalid id", "")
 		return
 	}
-	var req api.UpdateSkillCandidateRequest
+	var req wire.UpdateSkillCandidateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeProblem(w, http.StatusBadRequest, "Invalid body", err.Error())
 		return
@@ -380,7 +380,7 @@ func (s *Server) handleSkillCandidateUpdate(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, api.UpdateSkillCandidateResponse{})
+	writeJSON(w, http.StatusOK, wire.UpdateSkillCandidateResponse{})
 }
 
 // handleVacuum serves POST /v1/admin/vacuum. Synchronous: VACUUM
@@ -392,7 +392,7 @@ func (s *Server) handleVacuum(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	writeJSON(w, http.StatusOK, api.VacuumResponse{})
+	writeJSON(w, http.StatusOK, wire.VacuumResponse{})
 }
 
 // handleDBInfo serves GET /v1/admin/db-info — page_count + page_size
@@ -405,7 +405,7 @@ func (s *Server) handleDBInfo(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	writeJSON(w, http.StatusOK, api.DBPageInfoResponse{
+	writeJSON(w, http.StatusOK, wire.DBPageInfoResponse{
 		PageCount: info.PageCount,
 		PageSize:  info.PageSize,
 		Bytes:     info.Bytes(),

@@ -9,7 +9,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // defaultSessionListWindow is the cutoff applied when a client
@@ -37,7 +37,7 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 		sinceMs = time.Now().Add(-defaultSessionListWindow).UnixMilli()
 	}
 
-	limit, ok := parseLimitQuery(w, r, api.DefaultPageLimit)
+	limit, ok := parseLimitQuery(w, r, wire.DefaultPageLimit)
 	if !ok {
 		return
 	}
@@ -56,7 +56,7 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 			return
 		}
-		writeJSON(w, http.StatusOK, api.SessionListResponse{Sessions: rows})
+		writeJSON(w, http.StatusOK, wire.SessionListResponse{Sessions: rows})
 		return
 	}
 
@@ -67,8 +67,8 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := api.SessionListResponse{
-		Sessions: make([]api.SessionDigest, 0, len(rows)),
+	out := wire.SessionListResponse{
+		Sessions: make([]wire.SessionDigest, 0, len(rows)),
 	}
 	for _, row := range rows {
 		out.Sessions = append(out.Sessions, sessionDigestRowToWire(row))
@@ -81,7 +81,7 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 // doesn't need to widen the legacy LoadRecentSessionDigests
 // signature; consumers that need a richer shape will land in a
 // dedicated store helper later.
-func loadSessionsForListEndpoint(ctx context.Context, db *sql.DB, cwd string, sinceMs int64, limit int) ([]api.SessionDigest, error) {
+func loadSessionsForListEndpoint(ctx context.Context, db *sql.DB, cwd string, sinceMs int64, limit int) ([]wire.SessionDigest, error) {
 	q := `SELECT s.id, s.started_at_ms, s.ended_at_ms, s.event_count,
 		s.cwd, s.first_prompt_text, s.summary_topic
 		FROM sessions s
@@ -93,7 +93,7 @@ func loadSessionsForListEndpoint(ctx context.Context, db *sql.DB, cwd string, si
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	out := make([]api.SessionDigest, 0)
+	out := make([]wire.SessionDigest, 0)
 	for rows.Next() {
 		var id string
 		var started, ended sql.NullInt64
@@ -102,7 +102,7 @@ func loadSessionsForListEndpoint(ctx context.Context, db *sql.DB, cwd string, si
 		if err := rows.Scan(&id, &started, &ended, &ec, &cwdN, &fp, &topic); err != nil {
 			return nil, err
 		}
-		out = append(out, api.SessionDigest{
+		out = append(out, wire.SessionDigest{
 			ID:            id,
 			StartedAtMs:   nullable.Int64Ptr(started),
 			EndedAtMs:     nullable.Int64Ptr(ended),
@@ -163,7 +163,7 @@ func (s *Server) handleSessionsResolve(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, api.ResolveSessionResponse{ID: id})
+	writeJSON(w, http.StatusOK, wire.ResolveSessionResponse{ID: id})
 }
 
 // handleSessionsRelated serves GET /v1/sessions/{id}/related.
@@ -190,11 +190,11 @@ func (s *Server) handleSessionsRelated(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := api.CandidateSessionListResponse{
-		Candidates: make([]api.CandidateSession, 0, len(rows)),
+	out := wire.CandidateSessionListResponse{
+		Candidates: make([]wire.CandidateSession, 0, len(rows)),
 	}
 	for _, c := range rows {
-		out.Candidates = append(out.Candidates, api.CandidateSession{
+		out.Candidates = append(out.Candidates, wire.CandidateSession{
 			ID:          c.ID,
 			Cwd:         c.Cwd,
 			StartedAtMs: c.StartedAtMs,
@@ -205,8 +205,8 @@ func (s *Server) handleSessionsRelated(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-func sessionDigestRowToWire(row store.SessionDigestRow) api.SessionDigest {
-	return api.SessionDigest{
+func sessionDigestRowToWire(row store.SessionDigestRow) wire.SessionDigest {
+	return wire.SessionDigest{
 		ID:            row.ID,
 		StartedAtMs:   nullable.Int64Ptr(row.StartedAtMs),
 		EndedAtMs:     nullable.Int64Ptr(row.EndedAtMs),

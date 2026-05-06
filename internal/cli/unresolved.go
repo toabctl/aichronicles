@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // defaultUnresolvedSince matches LoadUnresolvedForCwd's default —
@@ -133,7 +133,7 @@ func runUnresolved(ctx context.Context, c *apiclient.Client, opts runUnresolvedO
 // Empty items + text format = a single "(no unresolved …)" line.
 // A hook caller piping into the agent gets a one-line "all clear"
 // signal rather than a confusing empty injection.
-func renderUnresolved(out io.Writer, cwd string, items []api.UnresolvedItem, format OutputFormat) error {
+func renderUnresolved(out io.Writer, cwd string, items []wire.UnresolvedItem, format OutputFormat) error {
 	if format == FormatJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")

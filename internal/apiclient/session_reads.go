@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // SessionEvents queries GET /v1/sessions/{id}/events. limit
@@ -15,7 +15,7 @@ import (
 //   - >0:        explicit cap
 //   - unbounded=true: every event in the session, no LIMIT clause
 //     (used by the segmenter)
-func (c *Client) SessionEvents(ctx context.Context, sessionID string, limit int, unbounded bool) (api.SessionEventsResponse, error) {
+func (c *Client) SessionEvents(ctx context.Context, sessionID string, limit int, unbounded bool) (wire.SessionEventsResponse, error) {
 	q := url.Values{}
 	if unbounded {
 		q.Set("unbounded", "true")
@@ -26,35 +26,35 @@ func (c *Client) SessionEvents(ctx context.Context, sessionID string, limit int,
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out api.SessionEventsResponse
+	var out wire.SessionEventsResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return api.SessionEventsResponse{}, err
+		return wire.SessionEventsResponse{}, err
 	}
 	return out, nil
 }
 
 // SessionExtractions queries GET /v1/sessions/{id}/extractions?kind=.
 // kind is required ("url", "file_path", "shell_command", ...).
-func (c *Client) SessionExtractions(ctx context.Context, sessionID, kind string) (api.SessionExtractionsResponse, error) {
+func (c *Client) SessionExtractions(ctx context.Context, sessionID, kind string) (wire.SessionExtractionsResponse, error) {
 	q := url.Values{}
 	q.Set("kind", kind)
 	path := "/v1/sessions/" + url.PathEscape(sessionID) + "/extractions?" + q.Encode()
-	var out api.SessionExtractionsResponse
+	var out wire.SessionExtractionsResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return api.SessionExtractionsResponse{}, err
+		return wire.SessionExtractionsResponse{}, err
 	}
 	return out, nil
 }
 
 // SessionCandidatePriors queries GET /v1/sessions/{id}/candidate-priors?limit=.
-func (c *Client) SessionCandidatePriors(ctx context.Context, sessionID string, limit int) (api.CandidateSessionListResponse, error) {
+func (c *Client) SessionCandidatePriors(ctx context.Context, sessionID string, limit int) (wire.CandidateSessionListResponse, error) {
 	path := "/v1/sessions/" + url.PathEscape(sessionID) + "/candidate-priors"
 	if limit > 0 {
 		path += "?limit=" + strconv.Itoa(limit)
 	}
-	var out api.CandidateSessionListResponse
+	var out wire.CandidateSessionListResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return api.CandidateSessionListResponse{}, err
+		return wire.CandidateSessionListResponse{}, err
 	}
 	return out, nil
 }
@@ -62,10 +62,10 @@ func (c *Client) SessionCandidatePriors(ctx context.Context, sessionID string, l
 // SessionOutcome queries GET /v1/sessions/{id}/outcome. Read-or-
 // backfill: the first call computes + persists; subsequent calls
 // hit the cached row.
-func (c *Client) SessionOutcome(ctx context.Context, sessionID string) (api.SessionOutcome, error) {
-	var out api.SessionOutcome
+func (c *Client) SessionOutcome(ctx context.Context, sessionID string) (wire.SessionOutcome, error) {
+	var out wire.SessionOutcome
 	if err := c.do(ctx, http.MethodGet, "/v1/sessions/"+url.PathEscape(sessionID)+"/outcome", nil, &out); err != nil {
-		return api.SessionOutcome{}, err
+		return wire.SessionOutcome{}, err
 	}
 	return out, nil
 }
@@ -74,7 +74,7 @@ func (c *Client) SessionOutcome(ctx context.Context, sessionID string) (api.Sess
 // Returns the LoadRecentSessionDigests result — full SessionDigest
 // rows for reflect/propose's window. Distinct from
 // c.Sessions which serves the cwd-scoped MCP path.
-func (c *Client) SessionDigests(ctx context.Context, sinceMs int64, limit int) (api.SessionDigestsResponse, error) {
+func (c *Client) SessionDigests(ctx context.Context, sinceMs int64, limit int) (wire.SessionDigestsResponse, error) {
 	q := url.Values{}
 	if sinceMs > 0 {
 		q.Set("since_ms", strconv.FormatInt(sinceMs, 10))
@@ -86,9 +86,9 @@ func (c *Client) SessionDigests(ctx context.Context, sinceMs int64, limit int) (
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out api.SessionDigestsResponse
+	var out wire.SessionDigestsResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return api.SessionDigestsResponse{}, err
+		return wire.SessionDigestsResponse{}, err
 	}
 	return out, nil
 }

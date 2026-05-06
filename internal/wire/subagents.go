@@ -1,4 +1,4 @@
-package api
+package wire
 
 // SubagentSpan is the wire shape for one /v1/subagents row.
 // Maps from store.SubagentSpan. SubagentType is nullable on the

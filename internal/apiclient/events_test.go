@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 func TestClient_Events_HappyPath(t *testing.T) {
@@ -22,7 +22,7 @@ func TestClient_Events_HappyPath(t *testing.T) {
 		}
 	}
 
-	out, err := c.Events(context.Background(), api.EventListRequest{})
+	out, err := c.Events(context.Background(), wire.EventListRequest{})
 	if err != nil {
 		t.Fatalf("Events: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestClient_Events_FiltersOmitZero(t *testing.T) {
 	t.Cleanup(srv.Close)
 	c := newClientForTests(srv.Client(), srv.URL)
 
-	if _, err := c.Events(context.Background(), api.EventListRequest{}); err != nil {
+	if _, err := c.Events(context.Background(), wire.EventListRequest{}); err != nil {
 		t.Fatalf("Events: %v", err)
 	}
 	for _, k := range []string{"session_id", "since_seq", "limit"} {
@@ -70,7 +70,7 @@ func TestClient_Events_FiltersForwarded(t *testing.T) {
 	t.Cleanup(srv.Close)
 	c := newClientForTests(srv.Client(), srv.URL)
 
-	req := api.EventListRequest{SessionID: "sess-x", SinceSeq: 42, Limit: 10}
+	req := wire.EventListRequest{SessionID: "sess-x", SinceSeq: 42, Limit: 10}
 	if _, err := c.Events(context.Background(), req); err != nil {
 		t.Fatalf("Events: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestClient_Events_400Error(t *testing.T) {
 	t.Cleanup(srv.Close)
 	c := newClientForTests(srv.Client(), srv.URL)
 
-	_, err := c.Events(context.Background(), api.EventListRequest{Limit: -1})
+	_, err := c.Events(context.Background(), wire.EventListRequest{Limit: -1})
 	if err == nil {
 		t.Fatal("expected error")
 	}

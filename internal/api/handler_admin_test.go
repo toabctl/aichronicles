@@ -7,19 +7,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 func TestHandleScrub_DryRunOnEmptyDB(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)
-	body := mustJSON(t, api.ScrubRequest{DryRun: true})
+	body := mustJSON(t, wire.ScrubRequest{DryRun: true})
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/scrub", bytesReader(body)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	var out api.ScrubResponse
+	var out wire.ScrubResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	if !out.DryRun {
 		t.Errorf("DryRun should round-trip true: %+v", out)
@@ -62,13 +62,13 @@ func TestHandleScrub_NoOpAfterServerSideRedaction(t *testing.T) {
 		t.Fatalf("seed ingest: status=%d body=%s", rr.Code, rr.Body.String())
 	}
 
-	scrubBody := mustJSON(t, api.ScrubRequest{DryRun: false})
+	scrubBody := mustJSON(t, wire.ScrubRequest{DryRun: false})
 	rr = httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/scrub", bytesReader(scrubBody)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("scrub: status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	var out api.ScrubResponse
+	var out wire.ScrubResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	if out.EnvelopesRewritten != 0 {
 		t.Errorf("server-side-redacted ingest should leave nothing for scrub to rewrite; got %+v", out)
@@ -98,7 +98,7 @@ func TestHandlePrune_RequiresBody(t *testing.T) {
 func TestHandlePrune_RejectsZeroCutoff(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)
-	body := mustJSON(t, api.PruneRequest{CutoffMs: 0})
+	body := mustJSON(t, wire.PruneRequest{CutoffMs: 0})
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/prune", bytesReader(body)))
 	if rr.Code != http.StatusBadRequest {
@@ -109,13 +109,13 @@ func TestHandlePrune_RejectsZeroCutoff(t *testing.T) {
 func TestHandlePrune_DryRunOnEmptyDB(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)
-	body := mustJSON(t, api.PruneRequest{CutoffMs: 1000, DryRun: true})
+	body := mustJSON(t, wire.PruneRequest{CutoffMs: 1000, DryRun: true})
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/prune", bytesReader(body)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	var out api.PruneResponse
+	var out wire.PruneResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &out)
 	if out.Sessions != 0 {
 		t.Errorf("empty DB should report 0 sessions; got %d", out.Sessions)

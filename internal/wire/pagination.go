@@ -1,4 +1,4 @@
-package api
+package wire
 
 // Cursor is an opaque page token. The server treats it as a black
 // box and decodes it server-side; clients pass it back verbatim

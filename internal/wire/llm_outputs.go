@@ -1,4 +1,4 @@
-package api
+package wire
 
 // LLMOutput is the wire shape for one llm_outputs cache row,
 // returned by /v1/llm-outputs and /v1/summaries. Maps from

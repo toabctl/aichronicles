@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // sessionCompletionLimit caps how many candidates the completion
@@ -40,7 +40,7 @@ func completeSessionID(cmd *cobra.Command, _ []string, toComplete string) ([]str
 // (apiForStore) and call this directly, bypassing the cobra-time
 // socket resolution.
 func completeSessionIDFrom(cmd *cobra.Command, c interface {
-	SessionsForCompletion(ctx context.Context, prefix string, limit int) (api.SessionCompletionsResponse, error)
+	SessionsForCompletion(ctx context.Context, prefix string, limit int) (wire.SessionCompletionsResponse, error)
 }, toComplete string) ([]string, cobra.ShellCompDirective) {
 	resp, err := c.SessionsForCompletion(cmd.Context(), toComplete, sessionCompletionLimit)
 	if err != nil {

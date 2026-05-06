@@ -13,7 +13,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/pricing"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 func TestHumanInt(t *testing.T) {
@@ -40,7 +40,7 @@ func TestHumanInt(t *testing.T) {
 func TestRenderUsage_EmptyStorePrintsPlaceholder(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
-	err := renderUsage(&buf, api.UsageResponse{}, nil, defaultUsageWindow, FormatTable)
+	err := renderUsage(&buf, wire.UsageResponse{}, nil, defaultUsageWindow, FormatTable)
 	if err != nil {
 		t.Fatalf("renderUsage: %v", err)
 	}
@@ -51,12 +51,12 @@ func TestRenderUsage_EmptyStorePrintsPlaceholder(t *testing.T) {
 
 func TestRenderUsage_TableWithoutPricesShowsHint(t *testing.T) {
 	t.Parallel()
-	resp := api.UsageResponse{
-		Rows: []api.UsageRow{
+	resp := wire.UsageResponse{
+		Rows: []wire.UsageRow{
 			{Day: "2026-04-28", Kind: "summary", Model: "claude-sonnet-4-6",
 				InputTokens: 12_345, OutputTokens: 6_789, RowCount: 3},
 		},
-		Totals: api.UsageTotals{InputTokens: 12_345, OutputTokens: 6_789, RowCount: 3},
+		Totals: wire.UsageTotals{InputTokens: 12_345, OutputTokens: 6_789, RowCount: 3},
 	}
 	var buf bytes.Buffer
 	if err := renderUsage(&buf, resp, nil, defaultUsageWindow, FormatTable); err != nil {
@@ -76,12 +76,12 @@ func TestRenderUsage_TableWithoutPricesShowsHint(t *testing.T) {
 
 func TestRenderUsage_TableWithPricesShowsCost(t *testing.T) {
 	t.Parallel()
-	resp := api.UsageResponse{
-		Rows: []api.UsageRow{
+	resp := wire.UsageResponse{
+		Rows: []wire.UsageRow{
 			{Day: "2026-04-28", Kind: "summary", Model: "claude-sonnet-4-6",
 				InputTokens: 1_000_000, OutputTokens: 500_000, RowCount: 1},
 		},
-		Totals: api.UsageTotals{InputTokens: 1_000_000, OutputTokens: 500_000, RowCount: 1},
+		Totals: wire.UsageTotals{InputTokens: 1_000_000, OutputTokens: 500_000, RowCount: 1},
 	}
 	prices := pricing.Prices{
 		"claude-sonnet-4-6": {InputPerMTok: 3.00, OutputPerMTok: 15.00},
@@ -102,14 +102,14 @@ func TestRenderUsage_TableWithPricesShowsCost(t *testing.T) {
 
 func TestRenderUsage_JSONIncludesCostWhenKnown(t *testing.T) {
 	t.Parallel()
-	resp := api.UsageResponse{
-		Rows: []api.UsageRow{
+	resp := wire.UsageResponse{
+		Rows: []wire.UsageRow{
 			{Day: "2026-04-28", Kind: "summary", Model: "claude-sonnet-4-6",
 				InputTokens: 1_000_000, OutputTokens: 500_000, RowCount: 1},
 			{Day: "2026-04-28", Kind: "reflect", Model: "unknown-model",
 				InputTokens: 100, OutputTokens: 50, RowCount: 1},
 		},
-		Totals: api.UsageTotals{InputTokens: 1_000_100, OutputTokens: 500_050, RowCount: 2},
+		Totals: wire.UsageTotals{InputTokens: 1_000_100, OutputTokens: 500_050, RowCount: 2},
 	}
 	prices := pricing.Prices{
 		"claude-sonnet-4-6": {InputPerMTok: 3.00, OutputPerMTok: 15.00},

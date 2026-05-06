@@ -17,7 +17,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/pkg/api"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // defaultProposeWindow defaults to a rolling 7 days: long enough
@@ -216,7 +216,7 @@ func RunPropose(
 	// same window so the model can see which invoked skills are
 	// actually working vs. correlated with tool_failure. Failures
 	// here are non-fatal — propose proceeds with bare counts.
-	if impactResp, ierr := c.SkillImpact(ctx, api.SkillImpactRequest{SinceMs: sinceMs}); ierr != nil {
+	if impactResp, ierr := c.SkillImpact(ctx, wire.SkillImpactRequest{SinceMs: sinceMs}); ierr != nil {
 		slog.Warn("propose: skipping skill-impact enrichment", "err", ierr)
 	} else {
 		invoked = mergeImpactIntoInvoked(invoked, impactResp.Skills)
@@ -309,7 +309,7 @@ func loadPriorProposalsForPrompt(ctx context.Context, c *apiclient.Client, since
 
 	const maxEntries = 30
 
-	addedResp, err := c.SkillCandidatesEffectiveness(ctx, api.SkillCandidateEffectivenessRequest{
+	addedResp, err := c.SkillCandidatesEffectiveness(ctx, wire.SkillCandidateEffectivenessRequest{
 		SinceMs: priorSinceMs,
 		Limit:   maxEntries,
 	})
@@ -428,7 +428,7 @@ func recordSkillCandidatesFromProposal(ctx context.Context, c *apiclient.Client,
 		if sk.Name == "" {
 			continue
 		}
-		req := api.RecordSkillCandidateRequest{
+		req := wire.RecordSkillCandidateRequest{
 			LLMOutputID:  llmOutputID,
 			SkillName:    sk.Name,
 			ProposedAtMs: createdAtMs,
@@ -444,12 +444,12 @@ func recordSkillCandidatesFromProposal(ctx context.Context, c *apiclient.Client,
 // skillMetadataFromProposed lifts the AutoSkill 7-tuple metadata
 // (triggers τ, tags γ, examples ξ, version v) plus the contrastive
 // kind label from a prompts.ProposedSkill into the wire-shape
-// api.SkillCandidateMetadata. Centralised so the propose and
+// wire.SkillCandidateMetadata. Centralised so the propose and
 // induction call paths can't drift on the field mapping.
-func skillMetadataFromProposed(sk prompts.ProposedSkill) api.SkillCandidateMetadata {
-	examples := make([]api.SkillCandidateExample, 0, len(sk.Examples))
+func skillMetadataFromProposed(sk prompts.ProposedSkill) wire.SkillCandidateMetadata {
+	examples := make([]wire.SkillCandidateExample, 0, len(sk.Examples))
 	for _, e := range sk.Examples {
-		examples = append(examples, api.SkillCandidateExample{
+		examples = append(examples, wire.SkillCandidateExample{
 			Input:  e.Input,
 			Output: e.Output,
 		})
@@ -461,7 +461,7 @@ func skillMetadataFromProposed(sk prompts.ProposedSkill) api.SkillCandidateMetad
 		// fallback here keeps the mapping reversible.
 		kind = ""
 	}
-	return api.SkillCandidateMetadata{
+	return wire.SkillCandidateMetadata{
 		Triggers: append([]string(nil), sk.Triggers...),
 		Tags:     append([]string(nil), sk.Tags...),
 		Examples: examples,
@@ -578,11 +578,11 @@ func runChallenge(
 // independent means LoadInvoked stays small and reusable, and
 // adding the impact source is a 5-line splice in propose.go
 // rather than a new shape parameter on every caller of LoadInvoked.
-func mergeImpactIntoInvoked(invoked []prompts.InvokedSkill, impact []api.SkillImpact) []prompts.InvokedSkill {
+func mergeImpactIntoInvoked(invoked []prompts.InvokedSkill, impact []wire.SkillImpact) []prompts.InvokedSkill {
 	if len(impact) == 0 {
 		return invoked
 	}
-	byName := make(map[string]api.SkillImpact, len(impact))
+	byName := make(map[string]wire.SkillImpact, len(impact))
 	for _, im := range impact {
 		byName[im.Name] = im
 	}
