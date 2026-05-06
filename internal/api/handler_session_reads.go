@@ -45,15 +45,15 @@ func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := api.SessionEventsResponse{Events: make([]api.EventView, 0, len(rows))}
+	out := api.SessionEventsResponse{Events: make([]api.SessionEvent, 0, len(rows))}
 	for _, e := range rows {
 		out.Events = append(out.Events, eventViewToWire(e))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-func eventViewToWire(e events.EventView) api.EventView {
-	return api.EventView{
+func eventViewToWire(e events.EventView) api.SessionEvent {
+	return api.SessionEvent{
 		EventID:      e.EventID,
 		Kind:         e.Kind,
 		TsSourceMs:   e.TsSourceMs,

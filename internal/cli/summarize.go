@@ -382,12 +382,12 @@ func unmarshalLLMBody(body string, target any) error {
 	return nil
 }
 
-// wireEventsToStore converts api.EventView wire rows back into
+// wireEventsToStore converts api.SessionEvent wire rows back into
 // the events.EventView shape pkg/llm/prompts consumes. Mechanical
 // projection: nullable string fields rehydrate the events.NullString
 // struct from the wire's *string. Used by RunSummarize after
 // pulling /v1/sessions/{id}/events through the apiclient.
-func wireEventsToStore(in []api.EventView) []events.EventView {
+func wireEventsToStore(in []api.SessionEvent) []events.EventView {
 	out := make([]events.EventView, 0, len(in))
 	for _, e := range in {
 		v := events.EventView{

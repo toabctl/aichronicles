@@ -1,9 +1,11 @@
 package api
 
-// EventView is the wire shape for one stored event row, matching
-// events.EventView with nullable columns projected to *T pointers.
-// Used by GET /v1/sessions/{id}/events.
-type EventView struct {
+// SessionEvent is the wire shape for one stored event row as
+// returned by GET /v1/sessions/{id}/events. Mirrors events.EventView
+// with nullable columns projected to *T pointers. The richer
+// per-session view contrasts with api.Event, the slimmer cross-session
+// listing shape returned by /v1/events.
+type SessionEvent struct {
 	EventID      string  `json:"event_id"`
 	Kind         string  `json:"kind"`
 	Role         *string `json:"role,omitempty"`
@@ -17,7 +19,7 @@ type EventView struct {
 
 // SessionEventsResponse is the body for /v1/sessions/{id}/events.
 type SessionEventsResponse struct {
-	Events []EventView `json:"events"`
+	Events []SessionEvent `json:"events"`
 }
 
 // Extraction is the wire shape for one extractions row, returned
