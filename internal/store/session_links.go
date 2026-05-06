@@ -96,7 +96,7 @@ func LoadCandidatePriorSessions(ctx context.Context, db *sql.DB, forSession stri
 	if err != nil {
 		return nil, fmt.Errorf("load anchor session: %w", err)
 	}
-	if !cwd.Valid || cwd.String == "" || !startedAt.Valid {
+	if cwd.String == "" || !startedAt.Valid {
 		return nil, nil
 	}
 

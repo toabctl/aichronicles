@@ -358,7 +358,7 @@ func nullableJSON(b []byte) any {
 // returns an error so a corrupted row surfaces rather than silently
 // giving an empty list.
 func scanSkillStringList(s sql.NullString) ([]string, error) {
-	if !s.Valid || s.String == "" {
+	if s.String == "" {
 		return nil, nil
 	}
 	var out []string
@@ -371,7 +371,7 @@ func scanSkillStringList(s sql.NullString) ([]string, error) {
 // scanSkillExamples parses the JSON-array examples column into
 // []SkillExample. NULL / empty → nil; malformed body → error.
 func scanSkillExamples(s sql.NullString) ([]SkillExample, error) {
-	if !s.Valid || s.String == "" {
+	if s.String == "" {
 		return nil, nil
 	}
 	var out []SkillExample
@@ -574,9 +574,7 @@ func scanSkillCandidate(rows *sql.Rows) (SkillCandidate, error) {
 		return SkillCandidate{}, err
 	}
 	r.Examples = examples
-	if versionStr.Valid {
-		r.Version = versionStr.String
-	}
+	r.Version = versionStr.String
 	return r, nil
 }
 

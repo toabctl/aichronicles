@@ -476,6 +476,13 @@ func nullStringToEvents(n sql.NullString) events.NullString {
 	return events.NullString{String: n.String, Valid: n.Valid}
 }
 
+// eventsNullStringToSQL is the inverse of nullStringToEvents. Used at
+// write boundaries where the store binds an events.NullString carried
+// on a domain object back into a sql.NullString driver argument.
+func eventsNullStringToSQL(n events.NullString) sql.NullString {
+	return sql.NullString{String: n.String, Valid: n.Valid}
+}
+
 // SessionDigestRow is the read shape used by reflect/propose. Each
 // row represents one conversation: its time window, the first user
 // prompt (so the model has something to anchor on when there is no

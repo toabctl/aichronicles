@@ -188,7 +188,7 @@ func SaveEpisodes(ctx context.Context, db *sql.DB, sessionID string, episodes []
 					cwd, intent_summary, event_count, first_event_id
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 				sessionID, ep.Ordinal, ep.StartedAtMs, ep.EndedAtMs,
-				sql.NullString{String: ep.Cwd.String, Valid: ep.Cwd.Valid},
+				eventsNullStringToSQL(ep.Cwd),
 				ep.IntentSummary, ep.EventCount, ep.FirstEventID,
 			); err != nil {
 				return fmt.Errorf("insert episode %d: %w", ep.Ordinal, err)
