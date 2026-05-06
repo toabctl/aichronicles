@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/redact"
 )
@@ -82,7 +83,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 
 		resp.Findings = append(resp.Findings, api.AuditFinding{
 			SessionID:  sess,
-			TsSourceMs: sqlNullInt64ToPtr(tsMs),
+			TsSourceMs: nullable.Int64Ptr(tsMs),
 			Kind:       kind,
 			Patterns:   names,
 			Snippet:    auditSnippet(content.String, findings[0]),

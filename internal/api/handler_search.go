@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/searchquery"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
@@ -74,10 +75,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		out.Hits = append(out.Hits, api.SearchHit{
 			SessionID:  h.SessionID,
 			Kind:       h.Kind,
-			Cwd:        sqlNullToPtr(h.Cwd),
+			Cwd:        nullable.StringPtr(h.Cwd),
 			TsSourceMs: h.TsSourceMs,
-			Content:    sqlNullToPtr(h.Content),
-			Snippet:    sqlNullToPtr(h.Snippet),
+			Content:    nullable.StringPtr(h.Content),
+			Snippet:    nullable.StringPtr(h.Snippet),
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
 )
@@ -125,20 +126,13 @@ func (s *Server) handleInductionCandidates(w http.ResponseWriter, r *http.Reques
 	}
 	out := api.InductionCandidatesResponse{Candidates: make([]api.InductionCandidate, 0, len(rows))}
 	for _, row := range rows {
-		c := api.InductionCandidate{ID: row.ID, EventCount: row.EventCount}
-		if row.StartedAtMs.Valid {
-			v := row.StartedAtMs.Int64
-			c.StartedAtMs = &v
-		}
-		if row.EndedAtMs.Valid {
-			v := row.EndedAtMs.Int64
-			c.EndedAtMs = &v
-		}
-		if row.Cwd.Valid {
-			v := row.Cwd.String
-			c.Cwd = &v
-		}
-		out.Candidates = append(out.Candidates, c)
+		out.Candidates = append(out.Candidates, api.InductionCandidate{
+			ID:          row.ID,
+			EventCount:  row.EventCount,
+			StartedAtMs: nullable.Int64Ptr(row.StartedAtMs),
+			EndedAtMs:   nullable.Int64Ptr(row.EndedAtMs),
+			Cwd:         nullable.StringPtr(row.Cwd),
+		})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -162,26 +156,16 @@ func (s *Server) handleFailureShapes(w http.ResponseWriter, r *http.Request) {
 	}
 	out := api.FailureShapesResponse{Shapes: make([]api.FailureShape, 0, len(rows))}
 	for _, row := range rows {
-		fs := api.FailureShape{
+		out.Shapes = append(out.Shapes, api.FailureShape{
 			SessionID:         row.SessionID,
 			Title:             row.Title,
 			ToolFailureCount:  row.ToolFailureCount,
 			GitUndoCount:      row.GitUndoCount,
 			PromptRepeatCount: row.PromptRepeatCount,
-		}
-		if row.EndedAtMs.Valid {
-			v := row.EndedAtMs.Int64
-			fs.EndedAtMs = &v
-		}
-		if row.Cwd.Valid {
-			v := row.Cwd.String
-			fs.Cwd = &v
-		}
-		if row.LastEventKind.Valid {
-			v := row.LastEventKind.String
-			fs.LastEventKind = &v
-		}
-		out.Shapes = append(out.Shapes, fs)
+			EndedAtMs:         nullable.Int64Ptr(row.EndedAtMs),
+			Cwd:               nullable.StringPtr(row.Cwd),
+			LastEventKind:     nullable.StringPtr(row.LastEventKind),
+		})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -250,7 +234,7 @@ func (s *Server) handleSkillCandidatesEffectiveness(w http.ResponseWriter, r *ht
 	}
 	out := api.SkillCandidateEffectivenessResponse{Rows: make([]api.SkillCandidateEffectiveness, 0, len(rows))}
 	for _, row := range rows {
-		e := api.SkillCandidateEffectiveness{
+		out.Rows = append(out.Rows, api.SkillCandidateEffectiveness{
 			CandidateID:      row.CandidateID,
 			LLMOutputID:      row.LLMOutputID,
 			SkillName:        row.SkillName,
@@ -259,12 +243,8 @@ func (s *Server) handleSkillCandidatesEffectiveness(w http.ResponseWriter, r *ht
 			AddPath:          row.AddPath,
 			LoadsAfterAdd:    row.LoadsAfterAdd,
 			FailedLoadsAfter: row.FailedLoadsAfter,
-		}
-		if row.LastLoadedMs.Valid {
-			v := row.LastLoadedMs.Int64
-			e.LastLoadedMs = &v
-		}
-		out.Rows = append(out.Rows, e)
+			LastLoadedMs:     nullable.Int64Ptr(row.LastLoadedMs),
+		})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

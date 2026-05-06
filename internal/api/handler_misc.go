@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
 )
@@ -209,7 +210,7 @@ func (s *Server) handleSubagentSpans(w http.ResponseWriter, r *http.Request) {
 		out.Spans = append(out.Spans, api.SubagentSpan{
 			SessionID:    sp.SessionID,
 			SubagentID:   sp.SubagentID,
-			SubagentType: sqlNullToPtr(sp.SubagentType),
+			SubagentType: nullable.StringPtr(sp.SubagentType),
 			StartedAtMs:  sp.StartedAtMs,
 			EndedAtMs:    sp.EndedAtMs,
 			EventCount:   sp.EventCount,
@@ -248,12 +249,12 @@ func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 func llmOutputToWire(o store.LLMOutput) api.LLMOutput {
 	return api.LLMOutput{
 		ID:           o.ID,
-		SessionID:    sqlNullToPtr(o.SessionID),
+		SessionID:    nullable.StringPtr(o.SessionID),
 		Kind:         string(o.Kind),
 		Model:        o.Model,
 		PromptHash:   o.PromptHash,
-		InputTokens:  sqlNullInt64ToPtr(o.InputTokens),
-		OutputTokens: sqlNullInt64ToPtr(o.OutputTokens),
+		InputTokens:  nullable.Int64Ptr(o.InputTokens),
+		OutputTokens: nullable.Int64Ptr(o.OutputTokens),
 		Body:         o.Body,
 		CreatedAtMs:  o.CreatedAtMs,
 	}
@@ -299,9 +300,9 @@ func insightsToWire(r *store.InsightsReport) api.Insights {
 		out.TopSessions = append(out.TopSessions, api.TopSession{
 			SessionID:   ts.SessionID,
 			EventCount:  ts.EventCount,
-			StartedAtMs: sqlNullInt64ToPtr(ts.StartedAtMs),
-			EndedAtMs:   sqlNullInt64ToPtr(ts.EndedAtMs),
-			Cwd:         sqlNullToPtr(ts.Cwd),
+			StartedAtMs: nullable.Int64Ptr(ts.StartedAtMs),
+			EndedAtMs:   nullable.Int64Ptr(ts.EndedAtMs),
+			Cwd:         nullable.StringPtr(ts.Cwd),
 			FirstPrompt: ts.FirstPrompt,
 		})
 	}

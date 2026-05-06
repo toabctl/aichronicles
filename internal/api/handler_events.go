@@ -1,9 +1,9 @@
 package api
 
 import (
-	"database/sql"
 	"net/http"
 
+	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
 )
@@ -60,22 +60,9 @@ func (s *Server) handleEventsList(w http.ResponseWriter, r *http.Request) {
 			Kind:       e.Kind,
 			TsSourceMs: e.TsSourceMs,
 			TsServerMs: e.TsServerMs,
-			Cwd:        sqlNullToPtr(e.Cwd),
-			Snippet:    sqlNullToPtr(e.Snippet),
+			Cwd:        nullable.StringPtr(e.Cwd),
+			Snippet:    nullable.StringPtr(e.Snippet),
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
-}
-
-// sqlNullToPtr translates a sql.NullString to the wire-clean
-// *string shape pkg/api types use. Returns nil when the column
-// was NULL, otherwise a pointer to the value. Centralized here
-// so every handler that walks internal/store row types projects
-// nullable text columns identically.
-func sqlNullToPtr(n sql.NullString) *string {
-	if !n.Valid {
-		return nil
-	}
-	s := n.String
-	return &s
 }

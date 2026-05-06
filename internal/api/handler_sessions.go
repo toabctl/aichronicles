@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
 )
@@ -103,11 +104,11 @@ func loadSessionsForListEndpoint(ctx context.Context, db *sql.DB, cwd string, si
 		}
 		out = append(out, api.SessionDigest{
 			ID:            id,
-			StartedAtMs:   sqlNullInt64ToPtr(started),
-			EndedAtMs:     sqlNullInt64ToPtr(ended),
-			Cwd:           sqlNullToPtr(cwdN),
-			FirstPrompt:   sqlNullToPtr(fp),
-			LatestSummary: sqlNullToPtr(topic),
+			StartedAtMs:   nullable.Int64Ptr(started),
+			EndedAtMs:     nullable.Int64Ptr(ended),
+			Cwd:           nullable.StringPtr(cwdN),
+			FirstPrompt:   nullable.StringPtr(fp),
+			LatestSummary: nullable.StringPtr(topic),
 			EventCount:    ec,
 		})
 	}
@@ -207,20 +208,10 @@ func (s *Server) handleSessionsRelated(w http.ResponseWriter, r *http.Request) {
 func sessionDigestRowToWire(row store.SessionDigestRow) api.SessionDigest {
 	return api.SessionDigest{
 		ID:            row.ID,
-		StartedAtMs:   sqlNullInt64ToPtr(row.StartedAtMs),
-		EndedAtMs:     sqlNullInt64ToPtr(row.EndedAtMs),
-		Cwd:           sqlNullToPtr(row.Cwd),
-		FirstPrompt:   sqlNullToPtr(row.FirstPrompt),
-		LatestSummary: sqlNullToPtr(row.LatestSummary),
+		StartedAtMs:   nullable.Int64Ptr(row.StartedAtMs),
+		EndedAtMs:     nullable.Int64Ptr(row.EndedAtMs),
+		Cwd:           nullable.StringPtr(row.Cwd),
+		FirstPrompt:   nullable.StringPtr(row.FirstPrompt),
+		LatestSummary: nullable.StringPtr(row.LatestSummary),
 	}
-}
-
-// sqlNullInt64ToPtr translates sql.NullInt64 to *int64 for wire
-// types. Mirrors sqlNullToPtr for the int64 case.
-func sqlNullInt64ToPtr(n sql.NullInt64) *int64 {
-	if !n.Valid {
-		return nil
-	}
-	v := n.Int64
-	return &v
 }

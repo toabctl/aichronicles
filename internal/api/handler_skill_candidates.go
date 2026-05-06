@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
 )
@@ -161,22 +162,10 @@ func skillCandidateRowToWire(r store.SkillCandidate) api.SkillCandidate {
 		Version:      r.Version,
 		Kind:         string(r.Kind),
 	}
-	if r.DecisionAtMs.Valid {
-		v := r.DecisionAtMs.Int64
-		out.DecisionAtMs = &v
-	}
-	if r.AddPath.Valid {
-		v := r.AddPath.String
-		out.AddPath = &v
-	}
-	if r.MergedIntoID.Valid {
-		v := r.MergedIntoID.Int64
-		out.MergedIntoID = &v
-	}
-	if r.AddBodySHA256.Valid {
-		v := r.AddBodySHA256.String
-		out.AddBodySHA256 = &v
-	}
+	out.DecisionAtMs = nullable.Int64Ptr(r.DecisionAtMs)
+	out.AddPath = nullable.StringPtr(r.AddPath)
+	out.MergedIntoID = nullable.Int64Ptr(r.MergedIntoID)
+	out.AddBodySHA256 = nullable.StringPtr(r.AddBodySHA256)
 	if len(r.Examples) > 0 {
 		out.Examples = make([]api.SkillCandidateExample, 0, len(r.Examples))
 		for _, ex := range r.Examples {

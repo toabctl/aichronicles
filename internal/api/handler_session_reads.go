@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 
+	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
 	"github.com/toabctl/aichronicles/pkg/events"
@@ -156,7 +157,7 @@ func (s *Server) handleSessionOutcome(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	out := api.SessionOutcome{
+	writeJSON(w, http.StatusOK, api.SessionOutcome{
 		SessionID:         row.SessionID,
 		ComputedAtMs:      row.ComputedAtMs,
 		UserPromptCount:   row.UserPromptCount,
@@ -167,12 +168,8 @@ func (s *Server) handleSessionOutcome(w http.ResponseWriter, r *http.Request) {
 		GitUndoCount:      row.GitUndoCount,
 		PromptRepeatCount: row.PromptRepeatCount,
 		Outcome:           string(row.Outcome),
-	}
-	if row.LastEventKind.Valid {
-		v := row.LastEventKind.String
-		out.LastEventKind = &v
-	}
-	writeJSON(w, http.StatusOK, out)
+		LastEventKind:     nullable.StringPtr(row.LastEventKind),
+	})
 }
 
 // handleSessionDigests serves GET /v1/sessions/digests?since_ms=&limit=.

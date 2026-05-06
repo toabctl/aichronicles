@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 
+	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
 )
@@ -66,8 +67,8 @@ func (s *Server) handleFactsList(w http.ResponseWriter, r *http.Request) {
 			Predicate:         f.Predicate,
 			Object:            f.Object,
 			Confidence:        f.Confidence,
-			EvidenceSessionID: sqlNullToPtr(f.EvidenceSessionID),
-			EvidenceQuote:     sqlNullToPtr(f.EvidenceQuote),
+			EvidenceSessionID: nullable.StringPtr(f.EvidenceSessionID),
+			EvidenceQuote:     nullable.StringPtr(f.EvidenceQuote),
 			AssertedAtMs:      f.AssertedAtMs,
 		})
 	}
