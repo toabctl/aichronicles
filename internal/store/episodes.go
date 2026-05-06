@@ -176,31 +176,27 @@ func SaveEpisodes(ctx context.Context, db *sql.DB, sessionID string, episodes []
 	if sessionID == "" {
 		return 0, errors.New("SaveEpisodes: session_id is required")
 	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, fmt.Errorf("begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM episodes WHERE session_id = ?`, sessionID); err != nil {
-		return 0, fmt.Errorf("delete existing: %w", err)
-	}
-	for _, ep := range episodes {
+	if err := WithTx(ctx, db, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO episodes(
-				session_id, ordinal, started_at_ms, ended_at_ms,
-				cwd, intent_summary, event_count, first_event_id
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			sessionID, ep.Ordinal, ep.StartedAtMs, ep.EndedAtMs,
-			sql.NullString{String: ep.Cwd.String, Valid: ep.Cwd.Valid},
-			ep.IntentSummary, ep.EventCount, ep.FirstEventID,
-		); err != nil {
-			return 0, fmt.Errorf("insert episode %d: %w", ep.Ordinal, err)
+			`DELETE FROM episodes WHERE session_id = ?`, sessionID); err != nil {
+			return fmt.Errorf("delete existing: %w", err)
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("commit: %w", err)
+		for _, ep := range episodes {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO episodes(
+					session_id, ordinal, started_at_ms, ended_at_ms,
+					cwd, intent_summary, event_count, first_event_id
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				sessionID, ep.Ordinal, ep.StartedAtMs, ep.EndedAtMs,
+				sql.NullString{String: ep.Cwd.String, Valid: ep.Cwd.Valid},
+				ep.IntentSummary, ep.EventCount, ep.FirstEventID,
+			); err != nil {
+				return fmt.Errorf("insert episode %d: %w", ep.Ordinal, err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return 0, err
 	}
 	return len(episodes), nil
 }

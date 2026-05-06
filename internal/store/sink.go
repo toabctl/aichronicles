@@ -6,6 +6,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -53,19 +54,17 @@ func (s *Sink) Write(ctx context.Context, e events.Event) (events.Result, error)
 	if e.Envelope == nil {
 		return events.Result{}, errors.New("Sink.Write: nil envelope")
 	}
-	tx, err := s.store.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return events.Result{}, fmt.Errorf("begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	tsMs := s.now().UnixMilli()
-	deduped, err := IngestEnvelopeWithExtractions(ctx, tx, e.Envelope, e.Raw, tsMs, e.Extractions)
-	if err != nil {
+	var deduped bool
+	if err := WithTx(ctx, s.store.DB(), func(tx *sql.Tx) error {
+		tsMs := s.now().UnixMilli()
+		d, err := IngestEnvelopeWithExtractions(ctx, tx, e.Envelope, e.Raw, tsMs, e.Extractions)
+		if err != nil {
+			return err
+		}
+		deduped = d
+		return nil
+	}); err != nil {
 		return events.Result{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return events.Result{}, fmt.Errorf("commit: %w", err)
 	}
 	if deduped {
 		s.deduped++
@@ -241,25 +240,22 @@ func (b *BufferedSink) Stats() events.SinkStats {
 // flushBatch attempts the entire chunk in one tx. Returns the first
 // error encountered; the caller falls back to flushRowByRow.
 func (b *BufferedSink) flushBatch(ctx context.Context, pending []pendingWrite) error {
-	tx, err := b.store.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
 	var imported, deduped int
-	for _, p := range pending {
-		d, err := IngestEnvelopeWithExtractions(ctx, tx, p.event.Envelope, p.event.Raw, p.tsMs, p.event.Extractions)
-		if err != nil {
-			return fmt.Errorf("ingest %s: %w", p.event.Envelope.EventID, err)
+	if err := WithTx(ctx, b.store.DB(), func(tx *sql.Tx) error {
+		for _, p := range pending {
+			d, err := IngestEnvelopeWithExtractions(ctx, tx, p.event.Envelope, p.event.Raw, p.tsMs, p.event.Extractions)
+			if err != nil {
+				return fmt.Errorf("ingest %s: %w", p.event.Envelope.EventID, err)
+			}
+			if d {
+				deduped++
+			} else {
+				imported++
+			}
 		}
-		if d {
-			deduped++
-		} else {
-			imported++
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
+		return nil
+	}); err != nil {
+		return err
 	}
 	b.imported += imported
 	b.deduped += deduped
@@ -272,19 +268,18 @@ func (b *BufferedSink) flushBatch(ctx context.Context, pending []pendingWrite) e
 // landed before a per-row error stopped the rest.
 func (b *BufferedSink) flushRowByRow(ctx context.Context, pending []pendingWrite) error {
 	for _, p := range pending {
-		tx, err := b.store.DB().BeginTx(ctx, nil)
-		if err != nil {
-			return fmt.Errorf("begin: %w", err)
-		}
-		d, err := IngestEnvelopeWithExtractions(ctx, tx, p.event.Envelope, p.event.Raw, p.tsMs, p.event.Extractions)
-		if err != nil {
-			_ = tx.Rollback()
+		var deduped bool
+		if err := WithTx(ctx, b.store.DB(), func(tx *sql.Tx) error {
+			d, err := IngestEnvelopeWithExtractions(ctx, tx, p.event.Envelope, p.event.Raw, p.tsMs, p.event.Extractions)
+			if err != nil {
+				return err
+			}
+			deduped = d
+			return nil
+		}); err != nil {
 			return err
 		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit: %w", err)
-		}
-		if d {
+		if deduped {
 			b.deduped++
 		} else {
 			b.imported++

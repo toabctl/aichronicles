@@ -123,40 +123,35 @@ func Prune(ctx context.Context, db *sql.DB, opts PruneOptions) (PruneReport, err
 	// the DB consistent. Order matters — raw_envelopes first so
 	// the cascade chains through events/extractions/fts, sessions
 	// second to drop the now-empty session rows.
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return report, fmt.Errorf("begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM raw_envelopes
-		  WHERE event_id IN (
-		    SELECT e.event_id FROM events e
-		      JOIN sessions s ON s.id = e.session_id
-		     WHERE s.ended_at_ms IS NOT NULL AND s.ended_at_ms < ?
-		  )`,
-		opts.CutoffMs,
-	); err != nil {
-		return report, fmt.Errorf("delete raw_envelopes: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM sessions WHERE ended_at_ms IS NOT NULL AND ended_at_ms < ?`,
-		opts.CutoffMs,
-	); err != nil {
-		return report, fmt.Errorf("delete sessions: %w", err)
-	}
-	if opts.IncludeLLMOutputs {
+	if err := WithTx(ctx, db, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM llm_outputs WHERE created_at_ms < ?`,
+			`DELETE FROM raw_envelopes
+			  WHERE event_id IN (
+			    SELECT e.event_id FROM events e
+			      JOIN sessions s ON s.id = e.session_id
+			     WHERE s.ended_at_ms IS NOT NULL AND s.ended_at_ms < ?
+			  )`,
 			opts.CutoffMs,
 		); err != nil {
-			return report, fmt.Errorf("delete llm_outputs: %w", err)
+			return fmt.Errorf("delete raw_envelopes: %w", err)
 		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return report, fmt.Errorf("commit: %w", err)
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM sessions WHERE ended_at_ms IS NOT NULL AND ended_at_ms < ?`,
+			opts.CutoffMs,
+		); err != nil {
+			return fmt.Errorf("delete sessions: %w", err)
+		}
+		if opts.IncludeLLMOutputs {
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM llm_outputs WHERE created_at_ms < ?`,
+				opts.CutoffMs,
+			); err != nil {
+				return fmt.Errorf("delete llm_outputs: %w", err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return report, err
 	}
 	return report, nil
 }

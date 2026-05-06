@@ -154,33 +154,26 @@ func SaveSessionLinks(ctx context.Context, db *sql.DB, from string, links []Sess
 		}
 	}
 
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM session_links WHERE from_session_id = ?`, from); err != nil {
-		return fmt.Errorf("clear existing links: %w", err)
-	}
-	now := time.Now().UnixMilli()
-	for _, l := range links {
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO session_links(from_session_id, to_session_id, kind, rationale, created_at_ms)
-			VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT(from_session_id, to_session_id, kind) DO UPDATE SET
-			  rationale     = excluded.rationale,
-			  created_at_ms = excluded.created_at_ms
-		`, from, l.ToSessionID, l.Kind, l.Rationale, now)
-		if err != nil {
-			return fmt.Errorf("insert link to %s (%s): %w", l.ToSessionID, l.Kind, err)
+	return WithTx(ctx, db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM session_links WHERE from_session_id = ?`, from); err != nil {
+			return fmt.Errorf("clear existing links: %w", err)
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
-	}
-	return nil
+		now := time.Now().UnixMilli()
+		for _, l := range links {
+			_, err := tx.ExecContext(ctx, `
+				INSERT INTO session_links(from_session_id, to_session_id, kind, rationale, created_at_ms)
+				VALUES (?, ?, ?, ?, ?)
+				ON CONFLICT(from_session_id, to_session_id, kind) DO UPDATE SET
+				  rationale     = excluded.rationale,
+				  created_at_ms = excluded.created_at_ms
+			`, from, l.ToSessionID, l.Kind, l.Rationale, now)
+			if err != nil {
+				return fmt.Errorf("insert link to %s (%s): %w", l.ToSessionID, l.Kind, err)
+			}
+		}
+		return nil
+	})
 }
 
 // LoadSessionLinksFrom returns every link emitted from `sessionID`,
