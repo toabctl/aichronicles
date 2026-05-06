@@ -53,36 +53,17 @@ func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func eventViewToWire(e events.EventView) api.EventView {
-	out := api.EventView{
-		EventID:    e.EventID,
-		Kind:       e.Kind,
-		TsSourceMs: e.TsSourceMs,
+	return api.EventView{
+		EventID:      e.EventID,
+		Kind:         e.Kind,
+		TsSourceMs:   e.TsSourceMs,
+		Role:         e.Role.Ptr(),
+		ContentText:  e.ContentText.Ptr(),
+		ToolName:     e.ToolName.Ptr(),
+		SubagentID:   e.SubagentID.Ptr(),
+		SubagentType: e.SubagentType.Ptr(),
+		Cwd:          e.Cwd.Ptr(),
 	}
-	if e.Role.Valid {
-		v := e.Role.String
-		out.Role = &v
-	}
-	if e.ContentText.Valid {
-		v := e.ContentText.String
-		out.ContentText = &v
-	}
-	if e.ToolName.Valid {
-		v := e.ToolName.String
-		out.ToolName = &v
-	}
-	if e.SubagentID.Valid {
-		v := e.SubagentID.String
-		out.SubagentID = &v
-	}
-	if e.SubagentType.Valid {
-		v := e.SubagentType.String
-		out.SubagentType = &v
-	}
-	if e.Cwd.Valid {
-		v := e.Cwd.String
-		out.Cwd = &v
-	}
-	return out
 }
 
 // handleSessionExtractions serves GET /v1/sessions/{id}/extractions?kind=.

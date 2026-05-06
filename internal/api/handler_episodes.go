@@ -44,18 +44,13 @@ func (s *Server) handleEpisodesList(w http.ResponseWriter, r *http.Request) {
 }
 
 func episodeToWire(e events.Episode) api.Episode {
-	var cwd *string
-	if e.Cwd.Valid {
-		v := e.Cwd.String
-		cwd = &v
-	}
 	return api.Episode{
 		ID:            e.ID,
 		SessionID:     e.SessionID,
 		Ordinal:       e.Ordinal,
 		StartedAtMs:   e.StartedAtMs,
 		EndedAtMs:     e.EndedAtMs,
-		Cwd:           cwd,
+		Cwd:           e.Cwd.Ptr(),
 		IntentSummary: e.IntentSummary,
 		EventCount:    e.EventCount,
 		FirstEventID:  e.FirstEventID,
