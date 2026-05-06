@@ -9,12 +9,12 @@ repos:
       - id: check-added-large-files
         args: [--maxkb=500]
       - id: detect-private-key
-        # redact_test.go contains a synthetic PEM fixture for the
-        # pem_private_key detector; the auto-generated detector
-        # reference reproduces the regex pattern (which embeds the
-        # literal BEGIN/END markers) for users to inspect. Neither
-        # file carries live key material.
-        exclude: ^(pkg/redact/redact_test\.go|docs/reference/redaction-detectors\.md)$
+        # redact_test.go and fuzz_test.go contain synthetic PEM
+        # fixtures for the pem_private_key detector; the auto-
+        # generated detector reference reproduces the regex pattern
+        # (which embeds the literal BEGIN/END markers) for users to
+        # inspect. None carries live key material.
+        exclude: ^(pkg/redact/redact_test\.go|pkg/redact/fuzz_test\.go|docs/reference/redaction-detectors\.md)$
       - id: check-yaml
         # mkdocs.yml uses pymdownx.superfences's `!!python/name:`
         # tag, which the default safe loader rejects. --unsafe
