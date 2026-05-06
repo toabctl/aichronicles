@@ -200,7 +200,7 @@ type UpdateSkillCandidateResponse struct{}
 type VacuumResponse struct{}
 
 // DBPageInfoResponse is the body for GET /v1/admin/db-info. Mirrors
-// store.DBPageInfo with the on-disk bytes computed server-side so
+// store.PageInfo with the on-disk bytes computed server-side so
 // the CLI's before/after vacuum report doesn't have to multiply.
 type DBPageInfoResponse struct {
 	PageCount int64 `json:"page_count"`

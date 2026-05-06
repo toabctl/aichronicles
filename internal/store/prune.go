@@ -183,20 +183,20 @@ func Vacuum(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-// DBPageInfo is the page-count snapshot used by tests and the CLI
+// PageInfo is the page-count snapshot used by tests and the CLI
 // vacuum report to show before/after numbers.
-type DBPageInfo struct {
+type PageInfo struct {
 	PageCount int64
 	PageSize  int64
 }
 
 // Bytes returns the on-disk size implied by the page metadata.
-func (i DBPageInfo) Bytes() int64 { return i.PageCount * i.PageSize }
+func (i PageInfo) Bytes() int64 { return i.PageCount * i.PageSize }
 
 // QueryPageInfo runs the two PRAGMAs SQLite exposes for sizing.
 // Cheap; safe to call before/after vacuum.
-func QueryPageInfo(ctx context.Context, db *sql.DB) (DBPageInfo, error) {
-	var info DBPageInfo
+func QueryPageInfo(ctx context.Context, db *sql.DB) (PageInfo, error) {
+	var info PageInfo
 	if err := db.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&info.PageCount); err != nil {
 		return info, fmt.Errorf("page_count: %w", err)
 	}
