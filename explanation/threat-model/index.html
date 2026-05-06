@@ -632,13 +632,13 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-ingest-is-the-single-point-of-redaction-truth" class="md-nav__link">
+  <a href="#1-the-api-is-the-single-point-of-redaction-truth" class="md-nav__link">
     <span class="md-ellipsis">
-      1. Ingest is the single point of redaction truth
+      1. The api is the single point of redaction truth
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="1. Ingest is the single point of redaction truth">
+    <nav class="md-nav" aria-label="1. The api is the single point of redaction truth">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -881,13 +881,13 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-ingest-is-the-single-point-of-redaction-truth" class="md-nav__link">
+  <a href="#1-the-api-is-the-single-point-of-redaction-truth" class="md-nav__link">
     <span class="md-ellipsis">
-      1. Ingest is the single point of redaction truth
+      1. The api is the single point of redaction truth
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="1. Ingest is the single point of redaction truth">
+    <nav class="md-nav" aria-label="1. The api is the single point of redaction truth">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1109,67 +1109,69 @@ that data.</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>┌─────────────────────────────────────────────────────────────┐
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>│  YOUR MACHINE — single user, local disk                     │
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│                                                             │
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│   Claude Code  ──hook──▶  ingest CLI                        │
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>│                              │ edge redact                  │
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>│                              ▼                              │
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>│   MCP client  ◀────stdio────▶  mcp-serve                    │
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>│                                  │                          │
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>│   browser    ◀──HTTP/127.0.0.1──▶  aichronicles web         │
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>│                                  │                          │
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>│                              ▼   │ read-only                │
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>│                           SQLite store                      │
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>│                              ▲   ▲                          │
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>│                              │   │                          │
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>│   summarize/reflect/propose ─┘   └─ aichroniclesd ◀──UDS──  │
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>│        │                            (0600 socket,             │
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>│        │ egress redact              0700 parent dir)         │
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>│        ▼                                                    │
-</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>└────────┼────────────────────────────────────────────────────┘
-</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>         │
-</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>         ▼
-</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>   Anthropic / OpenAI HTTPS  ◀── only on summarize/reflect/propose
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│   Claude Code  ──hook──▶  aichronicles hook ──UDS──▶ api    │
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>│                                                       │     │
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>│   MCP client  ◀──stdio─▶  mcp-serve  ──UDS──▶  aichronicles-api
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>│                                                       │     │
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>│   browser  ◀── HTTP/127.0.0.1 ──▶ aichronicles-api    │     │
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>│                                                       │     │
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>│                                              redact + persist
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>│                                                       ▼     │
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>│                                                 SQLite store│
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>│                                                             │
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>│   summarize/reflect/propose  ──UDS──▶  aichronicles-api     │
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>│        │                              (0600 socket,         │
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>│        │ egress redact                 0700 parent dir)     │
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>│        ▼                                                    │
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>└────────┼────────────────────────────────────────────────────┘
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>         │
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>         ▼
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>   Anthropic / OpenAI HTTPS  ◀── only on summarize/reflect/propose
 </span></code></pre></div>
-<p><code>aichronicles web</code> is a short-lived CLI subprocess (same shape as
-<code>mcp-serve</code>) that boots a small HTTP server on <code>127.0.0.1</code> and
-opens the SQLite store read-only. Localhost is the auth boundary
-— no authentication, no TLS — mirroring the daemon's choice of
-0600 UDS rather than network sockets. Binding to a non-loopback
-address is opt-in (<code>--bind 0.0.0.0</code>) and surfaces a startup
-warning; it explicitly leaves the single-user trust model and is
-not a supported posture.</p>
-<p>Inside the box: untrusted <em>between</em> boundaries (the daemon doesn't
-trust the CLI's redaction claim; the egress redactor scrubs again
-before talking to a third-party LLM), but unauthenticated <em>across
-UID</em> — any process running as your UID can read everything
-aichronicles writes. We don't defend against an attacker already
-on your account.</p>
+<p><code>aichronicles-api</code> is the single SQLite-handling process: every
+read and every write goes through it over the 0600 UDS. The
+browser-facing web UI rides the same daemon (HTML on TCP
+127.0.0.1, JSON+SSE on the UDS). Localhost is the auth boundary
+— no authentication, no TLS — mirroring the api's choice of 0600
+UDS rather than network sockets. Binding the web UI to a
+non-loopback address is opt-in (<code>--bind 0.0.0.0</code>) and surfaces a
+startup warning; it explicitly leaves the single-user trust model
+and is not a supported posture.</p>
+<p>Inside the box: untrusted <em>between</em> boundaries (hook clients
+cannot smuggle pre-redacted bytes — the api re-scans server-side;
+the egress redactor scrubs again before talking to a third-party
+LLM), but unauthenticated <em>across UID</em> — any process running as
+your UID can read everything aichronicles writes. We don't defend
+against an attacker already on your account.</p>
 <h2 id="what-aichronicles-promises">What aichronicles promises<a class="headerlink" href="#what-aichronicles-promises" title="Permanent link">&para;</a></h2>
-<h3 id="1-ingest-is-the-single-point-of-redaction-truth">1. Ingest is the single point of redaction truth<a class="headerlink" href="#1-ingest-is-the-single-point-of-redaction-truth" title="Permanent link">&para;</a></h3>
-<p>The store has two distinct write paths, each with its own
-enforcement layer. Read paths (MCP <code>tools/call</code>, the CLI's
-<code>search</code> / <code>sessions</code> / <code>summaries show</code>, the <code>aichronicles web</code>
-server) render content directly without re-scanning. A separate
-egress layer protects the read path that <em>does</em> leave the local
-trust boundary — the LLM call.</p>
+<h3 id="1-the-api-is-the-single-point-of-redaction-truth">1. The api is the single point of redaction truth<a class="headerlink" href="#1-the-api-is-the-single-point-of-redaction-truth" title="Permanent link">&para;</a></h3>
+<p>Redaction runs server-side in <code>aichronicles-api</code> on every write
+path. Hook clients send raw bytes; the api scrubs before the
+envelope hits disk. There is no client-side redaction the api
+trusts: <code>redaction.applied=true</code> from a hook is ignored — the
+server applies its own scrub regardless. A malicious or buggy
+hook subprocess therefore cannot smuggle secrets past the gate.</p>
+<p>Read paths (MCP <code>tools/call</code>, the CLI's <code>search</code> / <code>sessions</code> /
+<code>summaries show</code>, the <code>aichronicles web</code> UI) render content
+directly without re-scanning — the bytes on disk are already
+scrubbed. A separate egress layer protects the read path that
+<em>does</em> leave the local trust boundary — the LLM call.</p>
 <p><strong>Hook write path</strong> — events:</p>
 <ul>
-<li><strong>Edge (in <code>aichronicles ingest</code>):</strong> Every hook payload is
-  scrubbed via <code>redact.Default()</code> <em>before</em> the envelope is
-  serialized for the daemon. Source-of-truth: the patterns in
-  <code>internal/redact/redact.go:builtinDetectors</code>. Patterns that
-  fired land in <code>envelope.Redaction.Patterns</code>.</li>
-<li><strong>Daemon (<code>aichroniclesd</code>):</strong> Refuses any envelope where
-  <code>redaction.applied != true</code>. The daemon does not silently
-  re-scrub — that would mask a broken client. It rejects with
-  HTTP 400 and logs the source agent.</li>
+<li><strong>Server-side (<code>internal/api</code> + <code>pkg/events.Pipeline.Redactor</code>):</strong>
+  Every envelope routed through <code>POST /v1/ingest</code> runs through
+  <code>redact.Default()</code> inside the api before being written to the
+  store. Source-of-truth: the patterns in
+  <code>pkg/redact/builtin.go</code>. Patterns that fired land in
+  <code>envelope.Redaction.Patterns</code>.</li>
 </ul>
 <p><strong>LLM-response write path</strong> — <code>llm_outputs</code>:</p>
 <ul>
-<li><strong>Store (<code>SaveLLMOutput</code> in <code>internal/store/llm_outputs.go</code>):</strong>
-  Body is run through <code>redact.Outbound</code> before insertion. The
-  edge redactor never sees an LLM response — it lands here, not
-  via /v1/ingest — so the store is the enforcement point. An
-  LLM that hallucinates a credential into its <code>summarize</code> reply
+<li><strong>Server-side (<code>POST /v1/llm-outputs</code> in <code>internal/api</code>):</strong>
+  Body is run through <code>redact.Outbound</code> before insertion. CLI
+  callers never write to the store directly; they POST the
+  candidate body to the api, which scrubs and persists. An LLM
+  that hallucinates a credential into its <code>summarize</code> reply
   cannot land it in the store unscrubbed.</li>
 </ul>
 <p><strong>LLM-egress to third party</strong> — outbound network:</p>

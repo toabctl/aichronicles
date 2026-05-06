@@ -669,17 +669,17 @@
 <h2 id="aichronicles-setup-systemd">aichronicles setup systemd<a class="headerlink" href="#aichronicles-setup-systemd" title="Permanent link">&para;</a></h2>
 <p>Install socket-activated systemd --user units</p>
 <h3 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h3>
-<p>Writes the daemon and web-UI unit pairs into
+<p>Writes the api and web-UI unit pairs into
 ~/.config/systemd/user/, reloads the user manager, and enables
 both sockets so the matching service starts on demand when
 someone connects:</p>
 <ul>
-<li>aichronicles.socket        UDS for hook ingest</li>
-<li>aichronicles.service       the long-lived ingest daemon</li>
+<li>aichronicles-api.socket    UDS for the unified daemon</li>
+<li>aichronicles-api.service   the long-lived read+write+SSE+web daemon</li>
 <li>aichronicles-web.socket    TCP 127.0.0.1:7878 for the web UI</li>
 <li>aichronicles-web.service   web UI; idle-shutdown after 5m</li>
 </ul>
-<p>The service units expect <code>aichronicles</code> and <code>aichroniclesd</code>
+<p>The service units expect <code>aichronicles</code> and <code>aichronicles-api</code>
 to be discoverable on systemd's user manager PATH (~/.local/bin
 by default, via <code>make install</code>).</p>
 <p>Requires <code>systemctl</code> on PATH. Idempotent.</p>

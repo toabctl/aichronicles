@@ -831,26 +831,26 @@ exposes the corpus as an
 context from past work, and generates structured summaries on demand.</p>
 <pre class="mermaid"><code>flowchart LR
     cc[Claude Code]
-    api[(Anthropic / OpenAI&lt;br/&gt;HTTPS, on-demand)]
+    llm[(Anthropic / OpenAI&lt;br/&gt;HTTPS, on-demand)]
 
     subgraph local["Your machine — single user, local disk"]
         direction LR
-        ingest["aichronicles ingest&lt;br/&gt;&lt;i&gt;hook subprocess&lt;/i&gt;"]
-        daemon["aichroniclesd&lt;br/&gt;&lt;i&gt;systemd --user · UDS 0600&lt;/i&gt;"]
+        hook["aichronicles hook&lt;br/&gt;&lt;i&gt;hook subprocess&lt;/i&gt;"]
+        api["aichronicles-api&lt;br/&gt;&lt;i&gt;systemd --user · UDS 0600&lt;/i&gt;"]
         db[("SQLite store&lt;br/&gt;raw_envelopes ▸ events ▸&lt;br/&gt;extractions ▸ llm_outputs")]
         mcp["aichronicles mcp-serve&lt;br/&gt;&lt;i&gt;stdio&lt;/i&gt;"]
         cli["aichronicles summarize&lt;br/&gt;/ reflect / propose"]
     end
 
-    cc -- "hook fires" --&gt; ingest
-    ingest -- "edge redact&lt;br/&gt;POST /v1/ingest" --&gt; daemon
-    daemon -- "verify + persist" --&gt; db
+    cc -- "hook fires" --&gt; hook
+    hook -- "POST /v1/ingest" --&gt; api
+    api -- "redact + verify + persist" --&gt; db
     cc &lt;-- "tools/call (stdio)" --&gt; mcp
-    mcp -- "read-only SQL" --&gt; db
-    cli -- "read events + cache" --&gt; db
-    cli -.-&gt;|"egress redact ▸ tool use"| api
-    api -.-&gt; cli
-    cli -- "write llm_outputs" --&gt; db</code></pre>
+    mcp -- "GET /v1/* (UDS)" --&gt; api
+    cli -- "GET /v1/* (UDS)" --&gt; api
+    cli -.-&gt;|"egress redact ▸ tool use"| llm
+    llm -.-&gt; cli
+    cli -- "POST /v1/llm-outputs" --&gt; api</code></pre>
 <p><strong>Legend.</strong> Solid arrow: data flows in this direction. Dashed arrow:
 optional / on-demand (only fires for summarize/reflect/propose). The
 <code>local</code> box is the trust boundary — everything inside runs as your

@@ -20,7 +20,7 @@
     
     
       
-        <title>Aichronicles ingest - aichronicles</title>
+        <title>Aichronicles hook - aichronicles</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#aichronicles-ingest" class="md-skip">
+        <a href="#aichronicles-hook" class="md-skip">
           Skip to content
         </a>
       
@@ -108,7 +108,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Aichronicles ingest
+              Aichronicles hook
             
           </span>
         </div>
@@ -600,13 +600,13 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#aichronicles-ingest" class="md-nav__link">
+  <a href="#aichronicles-hook" class="md-nav__link">
     <span class="md-ellipsis">
-      aichronicles ingest
+      aichronicles hook
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="aichronicles ingest">
+    <nav class="md-nav" aria-label="aichronicles hook">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -656,7 +656,7 @@
                   
 
   
-    <a href="https://github.com/toabctl/aichronicles/edit/main/docs/reference/cli/aichronicles_ingest.md" title="Edit this page" class="md-content__button md-icon">
+    <a href="https://github.com/toabctl/aichronicles/edit/main/docs/reference/cli/aichronicles_hook.md" title="Edit this page" class="md-content__button md-icon">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -664,24 +664,24 @@
   
 
 
-  <h1>Aichronicles ingest</h1>
+  <h1>Aichronicles hook</h1>
 
-<h2 id="aichronicles-ingest">aichronicles ingest<a class="headerlink" href="#aichronicles-ingest" title="Permanent link">&para;</a></h2>
-<p>Read a hook payload on stdin and forward as an envelope</p>
+<h2 id="aichronicles-hook">aichronicles hook<a class="headerlink" href="#aichronicles-hook" title="Permanent link">&para;</a></h2>
+<p>Read a hook payload on stdin and forward as an envelope to aichronicles-api</p>
 <h3 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h3>
-<p>ingest is invoked by AI coding agent hooks (Claude Code by
-default; pass --agent codex to consume OpenAI Codex CLI hook
+<p>hook is invoked by AI coding agent hooks (Claude Code by
+default; pass --agent gemini-cli to consume Gemini CLI hook
 payloads). It reads a JSON hook payload from stdin, wraps it
-in the canonical Envelope, and POSTs to aichroniclesd over a
-Unix socket.</p>
+in the canonical Envelope, and POSTs to aichronicles-api over
+a Unix socket. The api daemon applies redaction server-side.</p>
 <p>Blocking policy: this command NEVER fails the hook. Errors are
 logged to stderr as structured records and the process exits 0.</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>aichronicles ingest [flags]
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>aichronicles hook [flags]
 </span></code></pre></div>
 <h3 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h3>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>      --agent string    source agent slug (claude-code | gemini-cli) (default &quot;claude-code&quot;)
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  -h, --help            help for ingest
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>      --socket string   daemon UDS path (overrides $AICHRONICLES_SOCKET; defaults to XDG_RUNTIME_DIR)
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  -h, --help            help for hook
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>      --socket string   aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET; defaults to XDG_RUNTIME_DIR/aichronicles/api.sock)
 </span></code></pre></div>
 <h3 id="see-also">SEE ALSO<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h3>
 <ul>

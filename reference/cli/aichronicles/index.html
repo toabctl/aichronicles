@@ -669,7 +669,7 @@
 <h2 id="aichronicles">aichronicles<a class="headerlink" href="#aichronicles" title="Permanent link">&para;</a></h2>
 <p>Capture AI coding agent session events</p>
 <h3 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h3>
-<p>aichronicles is the client binary for the aichroniclesd ingest daemon. It receives hook payloads, wraps them in the canonical Envelope, and forwards to the daemon over a Unix domain socket.</p>
+<p>aichronicles is the CLI for the aichronicles-api daemon. The <code>hook</code> subcommand receives hook payloads from Claude Code / Gemini CLI, wraps them in the canonical Envelope, and forwards to the api over a Unix domain socket; other subcommands (summarize, reflect, propose, sessions, search, ...) read and write through the same UDS.</p>
 <h3 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h3>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>  -h, --help   help for aichronicles
 </span></code></pre></div>
@@ -678,13 +678,13 @@
 <li><a href="../aichronicles_audit/">aichronicles audit</a>  - Scan stored events for credential patterns (read-only)</li>
 <li><a href="../aichronicles_backfill-extractions/">aichronicles backfill-extractions</a>    - Re-run extractors over every raw envelope and rewrite the extractions table</li>
 <li><a href="../aichronicles_digest/">aichronicles digest</a>    - Periodic LLM-driven digests stored as queryable artefacts</li>
-<li><a href="../aichronicles_doctor/">aichronicles doctor</a>    - Probe the running daemon and report whether it is accepting events</li>
+<li><a href="../aichronicles_doctor/">aichronicles doctor</a>    - Probe the running aichronicles-api daemon and report health</li>
 <li><a href="../aichronicles_facts/">aichronicles facts</a>  - Typed semantic-fact memory induced from sessions (MIRIX semantic layer)</li>
-<li><a href="../aichronicles_import-claude/">aichronicles import-claude</a>  - Import Claude Code's own ~/.claude transcripts into the store</li>
+<li><a href="../aichronicles_hook/">aichronicles hook</a>    - Read a hook payload on stdin and forward as an envelope to aichronicles-api</li>
+<li><a href="../aichronicles_import-claude/">aichronicles import-claude</a>  - Walk Claude Code .jsonl transcripts and stream them into aichronicles-api</li>
 <li><a href="../aichronicles_import-gemini/">aichronicles import-gemini</a>  - Import gemini-cli session JSON files into the store</li>
-<li><a href="../aichronicles_import-jsonl/">aichronicles import-jsonl</a>    - Replay events.jsonl into the SQLite store</li>
+<li><a href="../aichronicles_import-jsonl/">aichronicles import-jsonl</a>    - Replay events.jsonl into the SQLite store via aichronicles-api</li>
 <li><a href="../aichronicles_induction/">aichronicles induction</a>  - Online single-session induction (AWM-style auto-skill-extraction)</li>
-<li><a href="../aichronicles_ingest/">aichronicles ingest</a>    - Read a hook payload on stdin and forward as an envelope</li>
 <li><a href="../aichronicles_insights/">aichronicles insights</a>    - Cross-session usage digest (sessions, top tools, top skills, activity-by-hour)</li>
 <li><a href="../aichronicles_mcp-serve/">aichronicles mcp-serve</a>  - Run an MCP server over stdio exposing the user's session history</li>
 <li><a href="../aichronicles_meta/">aichronicles meta</a>    - Cadence-gated meta-analyses (propose / reflect / challenge / reflect_weekly / skill_revision)</li>

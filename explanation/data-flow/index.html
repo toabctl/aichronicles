@@ -950,44 +950,45 @@ manual flow (B, E), plus the read-only MCP path (C).</p>
 <h2 id="a-capturing-one-hook-event">A. Capturing one hook event<a class="headerlink" href="#a-capturing-one-hook-event" title="Permanent link">&para;</a></h2>
 <p>Claude Code fires a hook subprocess for each interesting event
 (<code>UserPromptSubmit</code>, <code>PostToolUse</code>, etc.). The subprocess is
-<code>aichronicles ingest</code>, which reads the hook payload from stdin,
-edge-redacts it, wraps it in our canonical envelope, and POSTs to
-the daemon over UDS.</p>
+<code>aichronicles hook</code>, which reads the hook payload from stdin,
+translates it into our canonical envelope, and POSTs to the api
+over UDS. Redaction runs server-side in the api — the hook
+subprocess sends the raw envelope.</p>
 <pre class="mermaid"><code>sequenceDiagram
     autonumber
     participant CC as Claude Code
-    participant IC as aichronicles ingest&lt;br/&gt;(subprocess)
-    participant D as aichroniclesd&lt;br/&gt;(daemon)
+    participant HK as aichronicles hook&lt;br/&gt;(subprocess)
+    participant API as aichronicles-api&lt;br/&gt;(daemon)
     participant SQ as SQLite&lt;br/&gt;(store.db)
 
-    CC-&gt;&gt;IC: spawn + pipe hook JSON to stdin
-    IC-&gt;&gt;IC: claude.HookTranslator (or gemini.HookTranslator).Translate
-    Note over IC: builds Envelope, applies Redactor.&lt;br/&gt;redaction.applied=true on return
-    IC-&gt;&gt;D: POST /v1/ingest (UDS, 250ms ctx deadline)
-    D-&gt;&gt;D: validate envelope (V==1, slug, UUID)
-    D-&gt;&gt;D: events.Pipeline.Process: redaction-required gate
-    D-&gt;&gt;D: events.Pipeline: run ExtractorRegistry (URL / Bash / FilePath / WebFetch / Skill)
-    D-&gt;&gt;SQ: store.Sink.Write — BeginTx
-    D-&gt;&gt;SQ: INSERT raw_envelopes (verbatim JSON)
+    CC-&gt;&gt;HK: spawn + pipe hook JSON to stdin
+    HK-&gt;&gt;HK: claude.HookTranslator (or gemini.HookTranslator).Translate
+    Note over HK: builds Envelope (raw bytes — no redaction)
+    HK-&gt;&gt;API: POST /v1/ingest (UDS, 250ms ctx deadline)
+    API-&gt;&gt;API: validate envelope (V==1, slug, UUID)
+    API-&gt;&gt;API: events.Pipeline.Redactor: scrub server-side
+    API-&gt;&gt;API: events.Pipeline: run ExtractorRegistry (URL / Bash / FilePath / WebFetch / Skill)
+    API-&gt;&gt;SQ: store.Sink.Write — BeginTx
+    API-&gt;&gt;SQ: INSERT raw_envelopes (post-redaction JSON)
     SQ-&gt;&gt;SQ: trigger: update sessions agg
-    D-&gt;&gt;SQ: INSERT events (typed projection)
+    API-&gt;&gt;SQ: INSERT events (typed projection)
     SQ-&gt;&gt;SQ: trigger: events_fts insert
-    D-&gt;&gt;SQ: INSERT extractions (per-event Extractions slice)
-    D-&gt;&gt;SQ: Commit
-    D--&gt;&gt;IC: 200 + Ack {event_id, session_id, deduped}
-    IC--&gt;&gt;CC: exit 0</code></pre>
+    API-&gt;&gt;SQ: INSERT extractions (per-event Extractions slice)
+    API-&gt;&gt;SQ: Commit
+    API--&gt;&gt;HK: 200 + Ack {event_id, session_id, deduped}
+    HK--&gt;&gt;CC: exit 0</code></pre>
 <p>A few non-obvious properties of this flow:</p>
 <ul>
 <li><strong>The 250 ms context deadline on step 4 is a hard cap on how long
-  ingest can hold up the hook.</strong> If the daemon is wedged or slow,
-  the POST aborts, ingest logs a warning, exits 0, and Claude Code
-  carries on. The hook never blocks the user.</li>
-<li><strong>Step 6 is defense-in-depth.</strong> The daemon doesn't trust the
-  CLI's edge-redaction claim; it explicitly verifies
-  <code>Redaction.Applied == true</code> on the envelope. A forgetful or
-  third-party client gets HTTP 400. The daemon does <em>not</em>
-  silently re-scrub — that would mask a broken client from
-  operator view.</li>
+  the hook subprocess can hold up the agent.</strong> If the api is
+  wedged or slow, the POST aborts, the hook logs a warning, exits
+  0, and Claude Code carries on. The hook never blocks the user.</li>
+<li><strong>Step 6 is the redaction gate.</strong> The api owns redaction —
+  hook clients send raw bytes and a <code>redaction.applied=true</code>
+  claim from a client is ignored. The api applies its own
+  scrub and overwrites <code>envelope.Redaction</code> with the result. A
+  malicious or buggy hook subprocess therefore cannot smuggle
+  secrets past the gate.</li>
 <li><strong>Steps 8-13 run in one transaction</strong> so a partial failure
   (e.g. an extractor bug crashing step 13) rolls back the entire
   envelope. <code>raw_envelopes</code> only ever contains rows whose
@@ -1014,12 +1015,7 @@ the daemon over UDS.</p>
 <tr>
 <td>HTTP 400 "Envelope validation failed"</td>
 <td>Bad UUID, bad agent slug, missing required field</td>
-<td>ingest warns to stderr; event lost</td>
-</tr>
-<tr>
-<td>HTTP 400 "Redaction required"</td>
-<td><code>redaction.applied != true</code></td>
-<td>ingest warns; event lost</td>
+<td>hook warns to stderr; event lost</td>
 </tr>
 <tr>
 <td>HTTP 413 "Envelope too large"</td>
@@ -1029,21 +1025,21 @@ the daemon over UDS.</p>
 <tr>
 <td>HTTP 500 "Storage error"</td>
 <td>SQLite locked, disk full</td>
-<td>ingest warns; daemon journal has detail</td>
+<td>hook warns; api journal has detail</td>
 </tr>
 <tr>
 <td>Connection refused</td>
-<td>Daemon not running</td>
-<td>ingest warns; outage notification fires once per outage</td>
+<td>api not running</td>
+<td>hook warns; outage notification fires once per outage</td>
 </tr>
 <tr>
 <td>ctx deadline exceeded</td>
-<td>Daemon slow</td>
-<td>ingest warns; event lost (no retry on the hook path by design)</td>
+<td>api slow</td>
+<td>hook warns; event lost (no retry on the hook path by design)</td>
 </tr>
 </tbody>
 </table>
-<p>The ingest CLI never returns a non-zero exit code, no matter what
+<p>The hook CLI never returns a non-zero exit code, no matter what
 goes wrong. That's load-bearing for the "never block Claude Code"
 contract.</p>
 <h2 id="b-generating-one-summary">B. Generating one summary<a class="headerlink" href="#b-generating-one-summary" title="Permanent link">&para;</a></h2>
@@ -1296,7 +1292,7 @@ time and starts in <code>pending</code>. The state machine:</p>
   details.</li>
 <li><strong>Daemon graceful shutdown.</strong> <code>srv.Shutdown(ctx)</code> with a 10s
   drain budget; in-flight POSTs finish. See
-  <code>cmd/aichroniclesd/main.go:run</code>.</li>
+  <code>cmd/aichronicles-api/main.go:run</code>.</li>
 </ul>
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>

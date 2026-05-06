@@ -829,31 +829,31 @@ add the LLM-using flow in <a href="../first-summary/">Your first summary</a>.</p
 </ul>
 <h2 id="1-install-15s">1. Install (≈15s)<a class="headerlink" href="#1-install-15s" title="Permanent link">&para;</a></h2>
 <div class="language-fish highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>go install github.com/toabctl/aichronicles/cmd/aichronicles@latest
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>go install github.com/toabctl/aichronicles/cmd/aichroniclesd@latest
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>ln -sf ~/go/bin/aichronicles  ~/.local/bin/aichronicles
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>ln -sf ~/go/bin/aichroniclesd ~/.local/bin/aichroniclesd
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>go install github.com/toabctl/aichronicles/cmd/aichronicles-api@latest
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>ln -sf ~/go/bin/aichronicles      ~/.local/bin/aichronicles
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>ln -sf ~/go/bin/aichronicles-api  ~/.local/bin/aichronicles-api
 </span></code></pre></div>
-<p>The systemd unit expects <code>aichroniclesd</code> at <code>~/.local/bin/</code>, hence
-the symlink. Confirm both are on <code>$PATH</code>:</p>
-<div class="language-fish highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>which aichronicles aichroniclesd
+<p>The systemd unit expects <code>aichronicles-api</code> at <code>~/.local/bin/</code>,
+hence the symlink. Confirm both are on <code>$PATH</code>:</p>
+<div class="language-fish highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>which aichronicles aichronicles-api
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="c"># /home/you/.local/bin/aichronicles</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="c"># /home/you/.local/bin/aichroniclesd</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="c"># /home/you/.local/bin/aichronicles-api</span>
 </span></code></pre></div>
 <h2 id="2-bring-up-the-daemon-15s">2. Bring up the daemon (≈15s)<a class="headerlink" href="#2-bring-up-the-daemon-15s" title="Permanent link">&para;</a></h2>
 <div class="language-fish highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>aichronicles setup systemd
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>systemctl --user start aichronicles.socket
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>systemctl --user start aichronicles-api.socket
 </span></code></pre></div>
 <p>What happened: <code>setup systemd</code> wrote two unit files
-(<code>aichronicles.socket</code>, <code>aichronicles.service</code>) to
+(<code>aichronicles-api.socket</code>, <code>aichronicles-api.service</code>) to
 <code>~/.config/systemd/user/</code>, told systemd to reload, and enabled the
 socket so it starts on every login. Starting the socket gets the
 listener up; the service starts on demand the first time anything
 connects.</p>
 <p>Checkpoint:</p>
-<div class="language-fish highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>systemctl --user is-active aichronicles.socket
+<div class="language-fish highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>systemctl --user is-active aichronicles-api.socket
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="c"># active</span>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>curl --silent --unix-socket /run/user/<span class="o">(</span>id -u<span class="o">)</span>/aichronicles/sock <span class="se">\</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>curl --silent --unix-socket /run/user/<span class="o">(</span>id -u<span class="o">)</span>/aichronicles/api.sock <span class="se">\</span>
 </span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>     http://unix/v1/healthz
 </span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c"># {&quot;status&quot;:&quot;ok&quot;}</span>
 </span></code></pre></div>
@@ -871,12 +871,14 @@ and preserve any existing hook entries other tools have written.</p>
 <code>SessionEnd</code>, <code>PostToolUseFailure</code>). For Gemini, the event-name
 set is the agent's equivalent (<code>BeforeAgent</code>, <code>AfterModel</code>,
 <code>AfterTool</code>, <code>SessionStart</code>, <code>SessionEnd</code>). Each hook runs
-<code>aichronicles ingest --agent &lt;slug&gt;</code> as a subprocess, which pipes
-the hook payload through the edge redactor and POSTs the envelope
-to the daemon over the UDS.</p>
-<p>The hook never fails the agent: ingest exits 0 even if the daemon
-is unreachable. Outages fire one desktop notification per outage
-so you find out without it blocking your session.</p>
+<code>aichronicles hook --agent &lt;slug&gt;</code> as a subprocess, which
+translates the hook payload to an envelope and POSTs it to the
+api over the UDS. Redaction runs server-side in the api — the
+hook subprocess sends raw bytes; the api scrubs secrets before
+the envelope hits disk.</p>
+<p>The hook never fails the agent: it exits 0 even if the api is
+unreachable. Outages fire one desktop notification per outage so
+you find out without it blocking your session.</p>
 <h2 id="4-verify-capture-15s">4. Verify capture (≈15s)<a class="headerlink" href="#4-verify-capture-15s" title="Permanent link">&para;</a></h2>
 <p>Open Claude Code and type any prompt. As soon as the
 <code>UserPromptSubmit</code> hook fires, the daemon receives an envelope and
@@ -896,8 +898,8 @@ prompt</code>.</p>
 <h2 id="youre-done">You're done<a class="headerlink" href="#youre-done" title="Permanent link">&para;</a></h2>
 <p>You now have a corpus that grows automatically as you use Claude
 Code. Every prompt, tool call, and response is in SQLite at
-<code>~/.local/state/aichronicles/store.db</code>, with secrets scrubbed at
-ingest time.</p>
+<code>~/.local/state/aichronicles/store.db</code>, with secrets scrubbed
+server-side by the api before they hit disk.</p>
 <h2 id="whats-next">What's next<a class="headerlink" href="#whats-next" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../first-summary/"><strong>Your first summary</strong></a> — wire an API key and
@@ -912,16 +914,16 @@ ingest time.</p>
 </ul>
 <h2 id="if-something-broke">If something broke<a class="headerlink" href="#if-something-broke" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>systemctl --user is-active aichronicles.socket</code> returns
-  <code>inactive</code></strong> — <code>journalctl --user -u aichronicles.socket -n 30</code>
-  usually has the cause. Most often: <code>~/.local/bin/aichroniclesd</code>
+<li><strong><code>systemctl --user is-active aichronicles-api.socket</code> returns
+  <code>inactive</code></strong> — <code>journalctl --user -u aichronicles-api.socket -n 30</code>
+  usually has the cause. Most often: <code>~/.local/bin/aichronicles-api</code>
   isn't where the unit expects it. Check the symlink.</li>
 <li><strong><code>aichronicles sessions</code> returns no rows after triggering a
-  hook</strong> — the hook is silently failing. Look for ingest errors in
-  Claude Code's debug output, or check the daemon's logs:
-  <code>journalctl --user -u aichronicles.service -n 30</code>.</li>
-<li><strong>A red desktop notification "aichronicles: daemon unreachable"</strong> —
-  the daemon stopped. <code>systemctl --user restart aichronicles.service</code>
+  hook</strong> — the hook is silently failing. Look for hook errors in
+  Claude Code's debug output, or check the api's logs:
+  <code>journalctl --user -u aichronicles-api.service -n 30</code>.</li>
+<li><strong>A red desktop notification "aichronicles: api unreachable"</strong> —
+  the api stopped. <code>systemctl --user restart aichronicles-api.service</code>
   and check the journal.</li>
 <li><strong>Anything else</strong> — see
   <a href="../how-to/troubleshooting.md">troubleshooting</a> (TODO).</li>

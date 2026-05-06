@@ -667,11 +667,11 @@
   <h1>Aichronicles doctor</h1>
 
 <h2 id="aichronicles-doctor">aichronicles doctor<a class="headerlink" href="#aichronicles-doctor" title="Permanent link">&para;</a></h2>
-<p>Probe the running daemon and report whether it is accepting events</p>
+<p>Probe the running aichronicles-api daemon and report health</p>
 <h3 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h3>
 <p>doctor performs a real connect + roundtrip against the
-daemon's UDS healthz endpoint and reports whether ingest
-would currently succeed. Exits 0 when the daemon answers,
+daemon's UDS healthz endpoint and reports whether the api
+is currently answering. Exits 0 when the daemon answers,
 non-zero otherwise, so the command can be wired to a
 status bar, a cron job, or a shell prompt indicator.</p>
 <p>Catches the failure mode where the daemon process is
@@ -684,7 +684,7 @@ drops every hook fire and is invisible to <code>pgrep</code> or
 <h3 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h3>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>  -h, --help            help for doctor
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  -q, --quiet           suppress all output; use the exit code only
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>      --socket string   daemon UDS path (overrides $AICHRONICLES_SOCKET; defaults to XDG_RUNTIME_DIR)
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>      --socket string   aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 </span></code></pre></div>
 <h3 id="see-also">SEE ALSO<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h3>
 <ul>
