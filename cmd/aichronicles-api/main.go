@@ -232,6 +232,8 @@ func startWebListener(bind string, port int, st *store.Store, logger *slog.Logge
 	httpSrv := &http.Server{
 		Handler:           wsrv.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 

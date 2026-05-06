@@ -67,6 +67,12 @@ func (s *Server) streamHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Disable the per-request WriteTimeout for the lifetime of
+	// this SSE connection; the server-wide bound is right for
+	// regular requests but would sever live streams. r.Context()
+	// + the streamMaxConcurrent cap remain the lifecycle bounds.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	w.Header().Set("X-Accel-Buffering", "no") // disable nginx buffering when present
