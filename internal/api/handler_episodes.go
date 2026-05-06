@@ -21,14 +21,11 @@ func (s *Server) handleEpisodesList(w http.ResponseWriter, r *http.Request) {
 		Cwd:           q.Get("cwd"),
 		QueryContains: q.Get("query_contains"),
 	}
-	if v := q.Get("since_ms"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid since_ms", "")
-			return
-		}
-		opts.SinceMs = n
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return
 	}
+	opts.SinceMs = sinceMs
 	if v := q.Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n <= 0 {

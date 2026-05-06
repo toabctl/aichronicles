@@ -29,19 +29,11 @@ const defaultSessionListWindow = 30 * 24 * time.Hour
 func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
-	var sinceMs int64
-	if v := q.Get("since_ms"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			writeProblem(w, http.StatusBadRequest, "Invalid since_ms", err.Error())
-			return
-		}
-		if n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid since_ms", "must be non-negative")
-			return
-		}
-		sinceMs = n
-	} else {
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return
+	}
+	if q.Get("since_ms") == "" {
 		sinceMs = time.Now().Add(-defaultSessionListWindow).UnixMilli()
 	}
 

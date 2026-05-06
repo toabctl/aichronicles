@@ -14,14 +14,9 @@ import (
 // GET /v1/sessions/missing-summary?since_ms=&cwd=&agent=&limit=.
 func (s *Server) handleSessionsMissingSummary(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	var sinceMs int64
-	if v := q.Get("since_ms"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid since_ms", "")
-			return
-		}
-		sinceMs = n
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return
 	}
 	limit := 200
 	if v := q.Get("limit"); v != "" {
@@ -50,21 +45,15 @@ func (s *Server) handleSessionsMissingSummary(w http.ResponseWriter, r *http.Req
 // GET /v1/sessions/needing-segmentation?idle_cutoff_ms=&idle_ms=&min_events=&limit=.
 func (s *Server) handleSessionsNeedingSegmentation(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	var idleCutoff, idleMs int64
-	var minEvents, limit int
-	for k, dst := range map[string]*int64{
-		"idle_cutoff_ms": &idleCutoff,
-		"idle_ms":        &idleMs,
-	} {
-		if v := q.Get(k); v != "" {
-			n, err := strconv.ParseInt(v, 10, 64)
-			if err != nil || n < 0 {
-				writeProblem(w, http.StatusBadRequest, "Invalid "+k, "")
-				return
-			}
-			*dst = n
-		}
+	idleCutoff, ok := parseInt64Query(w, r, "idle_cutoff_ms")
+	if !ok {
+		return
 	}
+	idleMs, ok := parseInt64Query(w, r, "idle_ms")
+	if !ok {
+		return
+	}
+	var minEvents, limit int
 	for k, dst := range map[string]*int{
 		"min_events": &minEvents,
 		"limit":      &limit,
@@ -124,21 +113,15 @@ func (s *Server) handleSessionsForCompletion(w http.ResponseWriter, r *http.Requ
 // handleInductionCandidates serves GET /v1/induction/candidates.
 func (s *Server) handleInductionCandidates(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	var nowMs, idleMs int64
-	var minEvents, limit int
-	for k, dst := range map[string]*int64{
-		"now_ms":            &nowMs,
-		"idle_threshold_ms": &idleMs,
-	} {
-		if v := q.Get(k); v != "" {
-			n, err := strconv.ParseInt(v, 10, 64)
-			if err != nil || n < 0 {
-				writeProblem(w, http.StatusBadRequest, "Invalid "+k, "")
-				return
-			}
-			*dst = n
-		}
+	nowMs, ok := parseInt64Query(w, r, "now_ms")
+	if !ok {
+		return
 	}
+	idleMs, ok := parseInt64Query(w, r, "idle_threshold_ms")
+	if !ok {
+		return
+	}
+	var minEvents, limit int
 	for k, dst := range map[string]*int{
 		"min_events": &minEvents,
 		"limit":      &limit,
@@ -182,16 +165,11 @@ func (s *Server) handleInductionCandidates(w http.ResponseWriter, r *http.Reques
 // handleFailureShapes serves GET /v1/proposals/failure-shapes.
 func (s *Server) handleFailureShapes(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	var sinceMs int64
-	var limit int
-	if v := q.Get("since_ms"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid since_ms", "")
-			return
-		}
-		sinceMs = n
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return
 	}
+	var limit int
 	if v := q.Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 0 {
@@ -240,21 +218,15 @@ func (s *Server) handleSkillFailures(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "Missing skill", "")
 		return
 	}
-	var sinceMs, windowMs int64
-	var limit int
-	for k, dst := range map[string]*int64{
-		"since_ms":  &sinceMs,
-		"window_ms": &windowMs,
-	} {
-		if v := q.Get(k); v != "" {
-			n, err := strconv.ParseInt(v, 10, 64)
-			if err != nil || n < 0 {
-				writeProblem(w, http.StatusBadRequest, "Invalid "+k, "")
-				return
-			}
-			*dst = n
-		}
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return
 	}
+	windowMs, ok := parseInt64Query(w, r, "window_ms")
+	if !ok {
+		return
+	}
+	var limit int
 	if v := q.Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 0 {
@@ -286,21 +258,15 @@ func (s *Server) handleSkillFailures(w http.ResponseWriter, r *http.Request) {
 // GET /v1/skill-candidates/effectiveness?since_ms=&window_ms=&limit=.
 func (s *Server) handleSkillCandidatesEffectiveness(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	var sinceMs, windowMs int64
-	var limit int
-	for k, dst := range map[string]*int64{
-		"since_ms":  &sinceMs,
-		"window_ms": &windowMs,
-	} {
-		if v := q.Get(k); v != "" {
-			n, err := strconv.ParseInt(v, 10, 64)
-			if err != nil || n < 0 {
-				writeProblem(w, http.StatusBadRequest, "Invalid "+k, "")
-				return
-			}
-			*dst = n
-		}
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return
 	}
+	windowMs, ok := parseInt64Query(w, r, "window_ms")
+	if !ok {
+		return
+	}
+	var limit int
 	if v := q.Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 0 {
@@ -342,16 +308,11 @@ func (s *Server) handleSkillCandidatesEffectiveness(w http.ResponseWriter, r *ht
 // has not acted on (decision IS NULL).
 func (s *Server) handleSkillCandidatesPending(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	var sinceMs int64
-	var limit int
-	if v := q.Get("since_ms"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid since_ms", "")
-			return
-		}
-		sinceMs = n
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return
 	}
+	var limit int
 	if v := q.Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 0 {

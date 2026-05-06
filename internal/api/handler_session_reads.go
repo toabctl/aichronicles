@@ -188,14 +188,9 @@ func (s *Server) handleSessionOutcome(w http.ResponseWriter, r *http.Request) {
 // to build a window of cross-session input.
 func (s *Server) handleSessionDigests(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	var sinceMs int64
-	if v := q.Get("since_ms"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid since_ms", "")
-			return
-		}
-		sinceMs = n
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return
 	}
 	limit := api.DefaultPageLimit
 	if v := q.Get("limit"); v != "" {

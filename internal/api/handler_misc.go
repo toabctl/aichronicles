@@ -135,14 +135,9 @@ func (s *Server) handleUnresolvedForCwd(w http.ResponseWriter, r *http.Request) 
 		writeProblem(w, http.StatusBadRequest, "Missing cwd", "")
 		return
 	}
-	var sinceMs int64
-	if v := q.Get("since_ms"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid since_ms", "")
-			return
-		}
-		sinceMs = n
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return
 	}
 	maxSess := positiveOrZero(q.Get("max_sessions"))
 	if maxSess < 0 {
@@ -175,14 +170,9 @@ func (s *Server) handleUnresolvedForCwd(w http.ResponseWriter, r *http.Request) 
 
 // handleProjectsAggregates serves GET /v1/projects/aggregates?since_ms=.
 func (s *Server) handleProjectsAggregates(w http.ResponseWriter, r *http.Request) {
-	var sinceMs int64
-	if v := r.URL.Query().Get("since_ms"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid since_ms", "")
-			return
-		}
-		sinceMs = n
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return
 	}
 	rows, err := store.LoadProjectAggregates(r.Context(), s.store.DB(), sinceMs)
 	if err != nil {
@@ -234,14 +224,9 @@ func (s *Server) handleSubagentSpans(w http.ResponseWriter, r *http.Request) {
 // handleInsights serves GET /v1/insights?since_ms=&top_tools=&top_skills=&top_sessions=.
 func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	var sinceMs int64
-	if v := q.Get("since_ms"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid since_ms", "")
-			return
-		}
-		sinceMs = n
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return
 	}
 	lim := store.InsightsLimits{}
 	if v := q.Get("top_tools"); v != "" {

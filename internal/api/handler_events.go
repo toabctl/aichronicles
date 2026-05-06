@@ -25,18 +25,9 @@ func (s *Server) handleEventsList(w http.ResponseWriter, r *http.Request) {
 
 	sessionID := q.Get("session_id")
 
-	var sinceSeq int64
-	if v := q.Get("since_seq"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			writeProblem(w, http.StatusBadRequest, "Invalid since_seq", err.Error())
-			return
-		}
-		if n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid since_seq", "must be non-negative")
-			return
-		}
-		sinceSeq = n
+	sinceSeq, ok := parseInt64Query(w, r, "since_seq")
+	if !ok {
+		return
 	}
 
 	limit := api.DefaultPageLimit

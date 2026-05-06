@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/pkg/api"
@@ -18,16 +17,9 @@ import (
 // emits cost figures because the price list lives in the user's
 // $XDG_CONFIG_HOME/aichronicles/prices.toml, not in the daemon.
 func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-
-	var sinceMs int64
-	if v := q.Get("since_ms"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid since_ms", "")
-			return
-		}
-		sinceMs = n
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return
 	}
 
 	rows, err := store.LoadTokenUsage(r.Context(), s.store.DB(), sinceMs)

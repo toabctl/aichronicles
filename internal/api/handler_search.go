@@ -54,14 +54,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		WithFailures:      q.Get("with_failures") == "true",
 		NoDedup:           q.Get("no_dedup") == "true",
 	}
-	if v := q.Get("since_ms"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid since_ms", "")
-			return
-		}
-		opts.SinceMs = n
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return
 	}
+	opts.SinceMs = sinceMs
 	if v := q.Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n <= 0 {

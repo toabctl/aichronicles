@@ -15,22 +15,13 @@ import (
 func (s *Server) handleSkillsStaleness(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
-	var sinceMs, windowMs int64
-	if v := q.Get("since_ms"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid since_ms", "")
-			return
-		}
-		sinceMs = n
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return
 	}
-	if v := q.Get("window_ms"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid window_ms", "")
-			return
-		}
-		windowMs = n
+	windowMs, ok := parseInt64Query(w, r, "window_ms")
+	if !ok {
+		return
 	}
 
 	lim := store.SkillStalenessLimits{}
@@ -81,22 +72,13 @@ func (s *Server) handleSkillsStaleness(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSkillsImpact(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
-	var sinceMs, windowMs int64
-	if v := q.Get("since_ms"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid since_ms", "")
-			return
-		}
-		sinceMs = n
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return
 	}
-	if v := q.Get("window_ms"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid window_ms", "")
-			return
-		}
-		windowMs = n
+	windowMs, ok := parseInt64Query(w, r, "window_ms")
+	if !ok {
+		return
 	}
 
 	lim := store.SkillImpactLimits{}
@@ -134,16 +116,9 @@ func (s *Server) handleSkillsImpact(w http.ResponseWriter, r *http.Request) {
 // window. Backed by skills.LoadInvoked. since_ms is optional;
 // zero means "all time".
 func (s *Server) handleSkillsInvoked(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-
-	var sinceMs int64
-	if v := q.Get("since_ms"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid since_ms", "")
-			return
-		}
-		sinceMs = n
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return
 	}
 
 	rows, err := skills.LoadInvoked(r.Context(), s.store.DB(), sinceMs)
