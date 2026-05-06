@@ -38,7 +38,7 @@ func (s *fakeSink) Flush(_ context.Context) error {
 	return s.flushErr
 }
 
-func (s *fakeSink) Close() error {
+func (s *fakeSink) Close(_ context.Context) error {
 	s.closed++
 	return nil
 }

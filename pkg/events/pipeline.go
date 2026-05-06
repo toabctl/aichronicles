@@ -100,7 +100,7 @@ func (p *Pipeline) Process(ctx context.Context, e Event) (Result, error) {
 // lifecycle. Pattern:
 //
 //	sink := store.NewBufferedSink(s)
-//	defer sink.Close()
+//	defer sink.Close(ctx)
 //	stats, err := pipeline.Run(ctx, src)
 func (p *Pipeline) Run(ctx context.Context, src Source) (Stats, error) {
 	var stats Stats

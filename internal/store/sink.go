@@ -83,7 +83,7 @@ func (s *Sink) Write(ctx context.Context, e events.Event) (events.Result, error)
 func (s *Sink) Flush(_ context.Context) error { return nil }
 
 // Close is a no-op; the *Store is owned by the caller.
-func (s *Sink) Close() error { return nil }
+func (s *Sink) Close(_ context.Context) error { return nil }
 
 // Stats returns the running totals. Single-tx sinks update on every
 // successful Write.
@@ -225,9 +225,10 @@ func (b *BufferedSink) Flush(ctx context.Context) error {
 	return nil
 }
 
-// Close flushes any remaining buffered events.
-func (b *BufferedSink) Close() error {
-	return b.Flush(context.Background())
+// Close flushes any remaining buffered events under the provided
+// ctx. Cancelling ctx aborts the final drain.
+func (b *BufferedSink) Close(ctx context.Context) error {
+	return b.Flush(ctx)
 }
 
 // Stats returns the running totals. Buffered sinks update on each

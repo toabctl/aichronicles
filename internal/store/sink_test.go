@@ -190,7 +190,7 @@ func TestBufferedSink_Close_FlushesPending(t *testing.T) {
 	if _, err := sink.Write(context.Background(), events.Event{Envelope: env, Raw: raw}); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
-	if err := sink.Close(); err != nil {
+	if err := sink.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 	var n int

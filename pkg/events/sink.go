@@ -15,6 +15,8 @@ import "context"
 //     implements Flush as a no-op.
 //   - Close flushes and releases resources (close DB handles,
 //     drop file descriptors). After Close, the Sink is unusable.
+//     The ctx bounds any final flush; cancel it to abort an
+//     in-progress drain on shutdown.
 //   - Stats returns running totals reflecting WHAT HAS COMMITTED
 //     so far. Single-tx sinks update on each Write; buffered
 //     sinks update on Flush. Pipeline.Run reads Sink.Stats() at
@@ -28,7 +30,7 @@ import "context"
 type Sink interface {
 	Write(ctx context.Context, e Event) (Result, error)
 	Flush(ctx context.Context) error
-	Close() error
+	Close(ctx context.Context) error
 	Stats() SinkStats
 }
 
