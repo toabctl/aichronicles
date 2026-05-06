@@ -9,7 +9,7 @@
 //
 // Block A's redact.Outbound is the last line of defense before a
 // prompt leaves the process. That shim is invoked by the prompt
-// builders in pkg/llm/prompts, NOT here — this package is the
+// builders in internal/llm/prompts, NOT here — this package is the
 // dumb transport layer. Keeping the egress scrub at prompt-build time
 // lets callers choose to abort (via redact.MustClean) if a sensitive
 // pattern appears, before anything crosses the network.

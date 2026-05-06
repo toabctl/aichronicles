@@ -111,7 +111,7 @@ func LoadUnresolvedForCwd(
 
 	// Inline struct mirrors the slice of fields BuildSummary's
 	// SummaryResult has — kept local so unresolved.go doesn't
-	// import pkg/llm/prompts (which would induce a cycle when
+	// import internal/llm/prompts (which would induce a cycle when
 	// the prompts package eventually imports back into store).
 	type summaryShape struct {
 		Topic      string   `json:"topic"`

@@ -103,7 +103,7 @@ docs-check:
 		(echo "docs are stale — run 'make docs' and commit the result" && exit 1)
 
 # Dependency-direction guard. Verifies the layering invariants
-# the architecture relies on (pkg/api has no SQL/HTTP imports;
+# the architecture relies on (internal/wire has no SQL/HTTP imports;
 # internal/apiclient does not reach into internal/store; etc).
 # CI should run this on every PR before review.
 depcheck:

@@ -160,7 +160,7 @@ type DigestWeeklyOptions struct {
 // WeeklyDigestEnvelope is a re-export of prompts.WeeklyDigestEnvelope
 // kept here for backwards compatibility with the in-package callers.
 // New callers (especially anything outside internal/cli) should
-// reference the canonical type in pkg/llm/prompts directly so that
+// reference the canonical type in internal/llm/prompts directly so that
 // the cli package doesn't accumulate import-cycle pressure when
 // other layers (web, mcp) need to read the persisted body shape.
 type WeeklyDigestEnvelope = prompts.WeeklyDigestEnvelope

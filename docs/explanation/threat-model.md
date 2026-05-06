@@ -86,11 +86,11 @@ scrubbed. A separate egress layer protects the read path that
 
 **Hook write path** — events:
 
-- **Server-side (`internal/api` + `pkg/events.Pipeline.Redactor`):**
+- **Server-side (`internal/api` + `internal/events.Pipeline.Redactor`):**
   Every envelope routed through `POST /v1/ingest` runs through
   `redact.Default()` inside the api before being written to the
   store. Source-of-truth: the patterns in
-  `pkg/redact/builtin.go`. Patterns that fired land in
+  `internal/redact/builtin.go`. Patterns that fired land in
   `envelope.Redaction.Patterns`.
 
 **LLM-response write path** — `llm_outputs`:

@@ -5,7 +5,7 @@ package wire
 // at the handler boundary so the wire stays decoupled from the
 // SQLite-flavored row shape.
 //
-// Nullable text columns use *string (not pkg/events.NullString)
+// Nullable text columns use *string (not internal/events.NullString)
 // so JSON encoding is plain "field": "value" or "field": null,
 // and clients in any language can decode it without bespoke
 // helpers.

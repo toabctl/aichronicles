@@ -383,7 +383,7 @@ func unmarshalLLMBody(body string, target any) error {
 }
 
 // wireEventsToStore converts wire.SessionEvent wire rows back into
-// the events.EventView shape pkg/llm/prompts consumes. Mechanical
+// the events.EventView shape internal/llm/prompts consumes. Mechanical
 // projection: nullable string fields rehydrate the events.NullString
 // struct from the wire's *string. Used by RunSummarize after
 // pulling /v1/sessions/{id}/events through the apiclient.

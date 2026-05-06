@@ -14,7 +14,7 @@ import "strings"
 // ahead", "/loop", "what's next?") while keeping short-but-real
 // prompts ("fix the OAuth login bug").
 //
-// Same bar pkg/llm/prompts uses to decide whether to skip a
+// Same bar internal/llm/prompts uses to decide whether to skip a
 // summary-less session in the meta-LLM digest.
 const SubstantiveMinRunes = 30
 

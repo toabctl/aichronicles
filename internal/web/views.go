@@ -177,7 +177,7 @@ type RelatedSessionEntry struct {
 // SessionSummary is the rendered shape of an llm_outputs row of
 // kind='summary'. Mirrors prompts.SummaryResult one-for-one but
 // kept in this package so the template doesn't reach into
-// pkg/llm/prompts directly.
+// internal/llm/prompts directly.
 type SessionSummary struct {
 	Topic       string
 	WhatWasDone []string

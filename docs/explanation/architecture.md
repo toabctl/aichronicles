@@ -16,8 +16,9 @@ parts" — not duplicated here so the two can't drift.
 aichronicles is organised as a hexagonal / ports-and-adapters
 shape with three rings:
 
-  - **Public domain core** (`pkg/events`) at the center.
-  - **Public wire layer** (`pkg/api`) one ring out — typed
+  - **Domain core** (`internal/events`) at the center — no SQL,
+    no HTTP, no I/O.
+  - **Wire layer** (`internal/wire`) one ring out — typed
     request/response shapes for the HTTP API, transport-agnostic.
   - **Infrastructure adapters** (`internal/store` for SQLite,
     `internal/api` for the HTTP daemon, `internal/apiclient`
@@ -44,8 +45,8 @@ shape with three rings:
                                                  │
                                                  ▼
               ┌──────────────────┐    ┌──────────────────┐
- Wire layer   │   pkg/api        │    │   pkg/events     │  ← Domain core
- (public)     │ Problem, Cursor, │    │   envelope, kind,│     public, no SQL,
+ Wire layer   │   internal/wire  │    │ internal/events  │  ← Domain core
+              │ Problem, Cursor, │    │ envelope, kind,  │     no SQL,
               │ EventList,       │    │   episode, view, │     no HTTP, no I/O
               │ SessionDigest,   │    │   redact, role,  │
               │ SearchHit,       │    │   nullable       │
@@ -136,8 +137,8 @@ cmd/
   aichronicles-api/     unified daemon entrypoint (UDS HTTP server:
                         /v1/* JSON, /v1/stream SSE, web HTML)
 
-pkg/                    public, no stability promise
-  api/                  wire types — request/response shapes for the
+internal/               private; only this binary imports
+  wire/                 wire types — request/response shapes for the
                         HTTP API, transport-agnostic. JSON tags on
                         every exported field; *string / *int64 for
                         nullable columns (no sql.NullString); RFC
@@ -147,8 +148,8 @@ pkg/                    public, no stability promise
                         episodes.go, search.go, facts.go, insights.go,
                         skills.go, llm_outputs.go, projects.go,
                         unresolved.go, subagents.go, writes.go,
-                        stream.go. CI guard (Phase D): pkg/api does
-                        not import database/sql or net/http.
+                        stream.go. CI guard: internal/wire does not
+                        import database/sql or net/http.
   events/               domain core
     envelope.go         Envelope, Tool, Subagent, Redaction, Ack,
                         Validate, ValidationError, ErrInvalid,
@@ -178,21 +179,13 @@ pkg/                    public, no stability promise
       gemini/
         hook.go         HookTranslator
         transcript.go   TranscriptSource
-
   redact/               detector library + scanner combinators
-                        (no aichronicles-internal deps)
+                        (no other internal/* deps)
   llm/                  provider-neutral interface
     config.go           Provider / Config / FromConfig switchboard
     anthropic.go        adapter using anthropic-sdk-go
     openai.go           adapter using openai-go
     prompts/            BuildSummary / BuildReflect / BuildPropose
-
-  ingest/               wire schema (legacy alias kept for backward
-                        import paths; canonical home is pkg/events
-                        — see "events vs ingest" below if you find
-                        the alias still in use anywhere)
-
-internal/               private; only this binary imports
   agents/               Claude Code / Gemini CLI integration metadata
                         (slug, hook event names, settings.json paths
                         — consumed only by `setup` / `teardown`)
@@ -310,21 +303,21 @@ integration/            //go:build integration tests
 
 ### Non-obvious choices
 
-- **`pkg/events` is the domain core.** It imports nothing from
+- **`internal/events` is the domain core.** It imports nothing from
   `internal/*`, no `database/sql`, no `net/http`. It owns the event
   model end-to-end: shape, validation, pipeline, sources, sinks,
   extractors, and the read-side primitives (`EventView`, `Episode`).
   The package has no stability promise but is intentionally
   embeddable.
 
-- **Sources are sub-packaged by agent.** `pkg/events/sources/claude`
-  and `pkg/events/sources/gemini` each export a `HookTranslator`
+- **Sources are sub-packaged by agent.** `internal/events/sources/claude`
+  and `internal/events/sources/gemini` each export a `HookTranslator`
   (single-shot, used by `aichronicles hook`) and a `JSONLSource`
   / `TranscriptSource` (streaming, used by importers). Adding a
-  third agent = one new sub-package; nothing in `pkg/events`
+  third agent = one new sub-package; nothing in `internal/events`
   changes.
 
-- **The Sink interface lives in `pkg/events`; the SQLite implementation
+- **The Sink interface lives in `internal/events`; the SQLite implementation
   lives in `internal/store`.** Two implementations: `Sink` (one tx
   per Write — for the daemon's HTTP path) and `BufferedSink` (chunked
   commits with row-by-row fallback — for batch importers). Both
@@ -350,10 +343,12 @@ integration/            //go:build integration tests
 ### events vs ingest
 
 `pkg/ingest` no longer exists; everything that used to live there
-lives under `pkg/events` (with the same canonical type names). If
+lives under `internal/events` (with the same canonical type names). If
 you find a stale reference in a doc or comment, treat it as drift
 to fix. The migration was done in commits `7062490` (rename) and
-`c1e4717` (flatten).
+`c1e4717` (flatten). A subsequent move flattened pkg/{api,events,llm,redact}
+into internal/* (with pkg/api → internal/wire to clear the
+internal/api naming clash).
 
 ### Dependency direction
 
@@ -362,37 +357,37 @@ The arrow is "imports":
 ```
 cmd/aichronicles-api ──▶ internal/api
 cmd/aichronicles     ──▶ internal/cli
-internal/cli         ──▶ pkg/events, pkg/events/sources/{claude,gemini},
-                         internal/store, internal/apiclient, pkg/api,
-                         internal/agents, internal/mcp, pkg/llm,
-                         pkg/llm/prompts, pkg/redact,
+internal/cli         ──▶ internal/events, internal/events/sources/{claude,gemini},
+                         internal/store, internal/apiclient, internal/wire,
+                         internal/agents, internal/mcp, internal/llm,
+                         internal/llm/prompts, internal/redact,
                          internal/{config,paths,notify,nullable,preview,...}
-internal/api         ──▶ pkg/api, pkg/events, internal/store, pkg/redact
-internal/apiclient   ──▶ pkg/api, pkg/events
+internal/api         ──▶ internal/wire, internal/events, internal/store, internal/redact
+internal/apiclient   ──▶ internal/wire, internal/events
 internal/agents      ──▶ (no internal deps)
-internal/mcp         ──▶ pkg/events, internal/store, pkg/redact
+internal/mcp         ──▶ internal/events, internal/store, internal/redact
                          (Phase B: will switch to internal/apiclient)
-internal/web         ──▶ pkg/events, internal/store, pkg/llm/prompts
+internal/web         ──▶ internal/events, internal/store, internal/llm/prompts
                          (Phase B: will fold into internal/api)
-internal/store       ──▶ pkg/events
-pkg/llm/prompts      ──▶ pkg/events, pkg/llm, pkg/redact, internal/store
-pkg/llm              ──▶ pkg/redact (egress scrub)
-pkg/events/sources/* ──▶ pkg/events, internal/agents (slug only)
-pkg/api              ──▶ (stdlib only)
-pkg/events           ──▶ pkg/redact (for ScannerRedactor adapter)
-pkg/redact           ──▶ (no aichronicles deps)
+internal/store       ──▶ internal/events
+internal/llm/prompts      ──▶ internal/events, internal/llm, internal/redact, internal/store
+internal/llm              ──▶ internal/redact (egress scrub)
+internal/events/sources/* ──▶ internal/events, internal/agents (slug only)
+internal/wire              ──▶ (stdlib only)
+internal/events           ──▶ internal/redact (for ScannerRedactor adapter)
+internal/redact           ──▶ (no aichronicles deps)
 ```
 
 Enforced rules:
 
 | Rule | Status |
 |---|---|
-| `pkg/events` does not import `database/sql` | ✅ |
-| `pkg/events` does not import `net/http` | ✅ |
-| `pkg/events` does not import `internal/*` | ✅ |
-| `pkg/api` does not import `database/sql` | ✅ |
-| `pkg/api` does not import `net/http` | ✅ |
-| `pkg/api` does not import `internal/*` | ✅ |
+| `internal/events` does not import `database/sql` | ✅ |
+| `internal/events` does not import `net/http` | ✅ |
+| `internal/events` does not import `internal/*` | ✅ |
+| `internal/wire` does not import `database/sql` | ✅ |
+| `internal/wire` does not import `net/http` | ✅ |
+| `internal/wire` does not import `internal/*` | ✅ |
 | `internal/store` is the only SQL-aware package | ✅ |
 | `internal/apiclient` does not import `internal/store` | ✅ |
 | No import cycles | ✅ |
@@ -401,7 +396,7 @@ Phase D will lift these from "asserted in this doc" to
 "checked in CI" via a small dependency-direction guard.
 
 Mixed read-side discipline (currently): some types are
-domain-clean (`EventView`, `Episode` in `pkg/events`); most
+domain-clean (`EventView`, `Episode` in `internal/events`); most
 read-side types (`SessionDigestRow`, `LiveEvent`, `SubagentSpan`,
 `SkillStaleness`, …) still live in `internal/store` with
 `sql.NullString` fields. Consumers reach into `internal/store` for
@@ -411,7 +406,7 @@ lives where.
 
 ## The events Pipeline
 
-`pkg/events.Pipeline` is the orchestrator. Three call sites use
+`internal/events.Pipeline` is the orchestrator. Three call sites use
 it:
 
 - **API HTTP handler** (`internal/api/server.go`): one
@@ -490,7 +485,7 @@ expectation. Then `make docs` regenerates
 
 ## LLM provider abstraction
 
-Two adapters — `pkg/llm/anthropic.go` and `pkg/llm/openai.go` —
+Two adapters — `internal/llm/anthropic.go` and `internal/llm/openai.go` —
 behind one provider-neutral interface
 (`Client.Complete(ctx, Request) *Response`). Both wrap official
 vendor SDKs:
@@ -545,7 +540,7 @@ The threat model page describes trust boundaries narratively.
 Where they're enforced in code:
 
 - **Server-side redaction (THE enforcement point):**
-  `pkg/events/pipeline.go::Pipeline.Process` runs the
+  `internal/events/pipeline.go::Pipeline.Process` runs the
   configured `events.Redactor` on every envelope before
   extractor dispatch and Sink.Write, then re-marshals
   `e.Raw` from the post-redaction Envelope so the SQLite
@@ -559,7 +554,7 @@ Where they're enforced in code:
   regardless of any `redaction.applied` claim on the wire.
   A buggy or malicious client cannot smuggle secrets past
   the gate by lying about pre-redaction.
-- **Sources are pure translators:** `pkg/events/sources/{claude,
+- **Sources are pure translators:** `internal/events/sources/{claude,
   gemini}/{hook,jsonl,transcript}.go` no longer hold a Redactor
   field. Translation produces an unredacted envelope; the
   consuming Pipeline scrubs.
@@ -573,11 +568,11 @@ Where they're enforced in code:
   redactor never sees an LLM response, so the store is the
   enforcement point for LLM-egress data.
 - **LLM-egress redaction (outbound network):** prompt builders
-  in `pkg/llm/prompts/prompts.go` route every user-content
+  in `internal/llm/prompts/prompts.go` route every user-content
   string through `redact.Outbound` before composing the user
   message.
-- **API error scrub:** `pkg/llm/anthropic.go::scrubAnthropicError`
-  and `pkg/llm/openai.go::scrubOpenAIError`.
+- **API error scrub:** `internal/llm/anthropic.go::scrubAnthropicError`
+  and `internal/llm/openai.go::scrubOpenAIError`.
 - **Config-file mode check:** `internal/config/config.go::LoadFrom`
   refuses 0644-or-permissive files when any provider has
   `api_key_command` set.
