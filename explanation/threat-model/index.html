@@ -1158,11 +1158,11 @@ scrubbed. A separate egress layer protects the read path that
 <em>does</em> leave the local trust boundary — the LLM call.</p>
 <p><strong>Hook write path</strong> — events:</p>
 <ul>
-<li><strong>Server-side (<code>internal/api</code> + <code>pkg/events.Pipeline.Redactor</code>):</strong>
+<li><strong>Server-side (<code>internal/api</code> + <code>internal/events.Pipeline.Redactor</code>):</strong>
   Every envelope routed through <code>POST /v1/ingest</code> runs through
   <code>redact.Default()</code> inside the api before being written to the
   store. Source-of-truth: the patterns in
-  <code>pkg/redact/builtin.go</code>. Patterns that fired land in
+  <code>internal/redact/builtin.go</code>. Patterns that fired land in
   <code>envelope.Redaction.Patterns</code>.</li>
 </ul>
 <p><strong>LLM-response write path</strong> — <code>llm_outputs</code>:</p>
