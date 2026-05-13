@@ -8,6 +8,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // digestsDefaultLimit caps how many recent digests we render. The
@@ -29,10 +30,7 @@ func (s *Server) digestsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rows, err := store.LoadLLMOutputs(r.Context(), s.store.DB(), store.LLMOutputFilter{
-		Kind:  store.LLMKindReflectWeekly,
-		Limit: limit,
-	})
+	rows, err := s.api.LLMOutputsList(r.Context(), string(store.LLMKindReflectWeekly), "", limit)
 	if err != nil {
 		s.log.Error("digestsHandler: load", "err", err)
 		http.Error(w, "could not load digests", http.StatusInternalServerError)
@@ -59,7 +57,7 @@ func (s *Server) digestsHandler(w http.ResponseWriter, r *http.Request) {
 // render time, not persisted, to avoid double-wrapping cache hits).
 // The CLI's decodeStoredEnvelope reads the same shape; this is
 // the matching web-side reader.
-func buildDigestCards(rows []store.LLMOutput, now time.Time) []DigestCard {
+func buildDigestCards(rows []wire.LLMOutput, now time.Time) []DigestCard {
 	out := make([]DigestCard, 0, len(rows))
 	for _, row := range rows {
 		card := DigestCard{

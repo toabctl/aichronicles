@@ -1,13 +1,10 @@
 package api
 
 import (
-	"context"
-	"database/sql"
 	"errors"
 	"net/http"
 	"time"
 
-	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -42,21 +39,33 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cwd := q.Get("cwd")
+	facets := store.SessionListFacets{
+		Cwd:               q.Get("cwd"),
+		SourceAgent:       q.Get("source_agent"),
+		Project:           q.Get("project"),
+		ToolName:          q.Get("tool_name"),
+		SkillName:         q.Get("skill_name"),
+		FilePathSubstring: q.Get("file_path_substring"),
+		WithFailures:      q.Get("with_failures") == "true",
+		WithoutSummary:    q.Get("without_summary") == "true",
+	}
 
-	// When cwd or event_count are required, fall back to an
-	// inline SQL that matches the legacy MCP list_sessions
-	// shape (event_count + optional cwd filter). The plain
-	// LoadRecentSessionDigests path stays the default for
-	// callers that don't need either.
-	if cwd != "" {
-		rows, err := loadSessionsForListEndpoint(r.Context(), s.store.DB(), cwd, sinceMs, limit)
+	// When any filter is set we run the rich list query that
+	// supports faceted EXISTS clauses + event_count + first_prompt.
+	// The plain LoadRecentSessionDigests path stays the default for
+	// the unfiltered case (the cheapest read).
+	if facets.Any() {
+		rows, err := store.LoadSessionsForListFaceted(r.Context(), s.store.DB(), facets, sinceMs, limit)
 		if err != nil {
-			s.slog.Error("loadSessionsForListEndpoint", "err", err)
+			s.slog.Error("LoadSessionsForListFaceted", "err", err)
 			writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 			return
 		}
-		writeJSON(w, http.StatusOK, wire.SessionListResponse{Sessions: rows})
+		out := wire.SessionListResponse{Sessions: make([]wire.SessionDigest, 0, len(rows))}
+		for _, row := range rows {
+			out.Sessions = append(out.Sessions, sessionDigestRowToWire(row))
+		}
+		writeJSON(w, http.StatusOK, out)
 		return
 	}
 
@@ -74,45 +83,6 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 		out.Sessions = append(out.Sessions, sessionDigestRowToWire(row))
 	}
 	writeJSON(w, http.StatusOK, out)
-}
-
-// loadSessionsForListEndpoint runs the cwd + since_ms + limit
-// session query that backs MCP list_sessions. Inline so the api
-// doesn't need to widen the legacy LoadRecentSessionDigests
-// signature; consumers that need a richer shape will land in a
-// dedicated store helper later.
-func loadSessionsForListEndpoint(ctx context.Context, db *sql.DB, cwd string, sinceMs int64, limit int) ([]wire.SessionDigest, error) {
-	q := `SELECT s.id, s.started_at_ms, s.ended_at_ms, s.event_count,
-		s.cwd, s.first_prompt_text, s.summary_topic
-		FROM sessions s
-		WHERE s.cwd = ? AND ` + store.EffectiveTsExpr + ` >= ?
-		ORDER BY ` + store.EffectiveTsExpr + ` DESC
-		LIMIT ?`
-	rows, err := db.QueryContext(ctx, q, cwd, sinceMs, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	out := make([]wire.SessionDigest, 0)
-	for rows.Next() {
-		var id string
-		var started, ended sql.NullInt64
-		var ec int
-		var cwdN, fp, topic sql.NullString
-		if err := rows.Scan(&id, &started, &ended, &ec, &cwdN, &fp, &topic); err != nil {
-			return nil, err
-		}
-		out = append(out, wire.SessionDigest{
-			ID:            id,
-			StartedAtMs:   nullable.Int64Ptr(started),
-			EndedAtMs:     nullable.Int64Ptr(ended),
-			Cwd:           nullable.StringPtr(cwdN),
-			FirstPrompt:   nullable.StringPtr(fp),
-			LatestSummary: nullable.StringPtr(topic),
-			EventCount:    ec,
-		})
-	}
-	return out, rows.Err()
 }
 
 // handleSessionsGet serves GET /v1/sessions/{id}.
@@ -205,13 +175,32 @@ func (s *Server) handleSessionsRelated(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// handleSessionsSourceAgents serves GET /v1/sessions/source-agents.
+// Distinct source_agent values from the sessions table, alphabetised.
+// Empty result returns 200 with an empty array — fresh DB.
+func (s *Server) handleSessionsSourceAgents(w http.ResponseWriter, r *http.Request) {
+	agents, err := store.LoadDistinctSourceAgents(r.Context(), s.store.DB())
+	if err != nil {
+		s.slog.Error("LoadDistinctSourceAgents", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	if agents == nil {
+		agents = []string{}
+	}
+	writeJSON(w, http.StatusOK, wire.SourceAgentsResponse{SourceAgents: agents})
+}
+
 func sessionDigestRowToWire(row store.SessionDigestRow) wire.SessionDigest {
 	return wire.SessionDigest{
-		ID:            row.ID,
-		StartedAtMs:   row.StartedAtMs,
-		EndedAtMs:     row.EndedAtMs,
-		Cwd:           row.Cwd,
-		FirstPrompt:   row.FirstPrompt,
-		LatestSummary: row.LatestSummary,
+		ID:              row.ID,
+		StartedAtMs:     row.StartedAtMs,
+		EndedAtMs:       row.EndedAtMs,
+		Cwd:             row.Cwd,
+		FirstPrompt:     row.FirstPrompt,
+		LatestSummary:   row.LatestSummary,
+		EventCount:      row.EventCount,
+		SourceAgent:     row.SourceAgent,
+		SourceSessionID: row.SourceSessionID,
 	}
 }

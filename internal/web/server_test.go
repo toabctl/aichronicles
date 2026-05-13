@@ -5,11 +5,14 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/api"
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/store"
 )
 
@@ -27,10 +30,25 @@ func openTempStore(t *testing.T) *store.Store {
 	return st
 }
 
+// newTestAPIClient stands up a real api.Server backed by st on an
+// httptest.Server and returns an apiclient pointing at it. Web
+// tests use this so they exercise the same wire path production
+// uses; tests still get a *store.Store handle for direct seeding,
+// since the api's POST surface isn't sufficient for arbitrary
+// fixture setup (events, sessions, llm_outputs).
+func newTestAPIClient(t *testing.T, st *store.Store) *apiclient.Client {
+	t.Helper()
+	apiSrv := api.NewServer(st, nil)
+	httpSrv := httptest.NewServer(apiSrv.Handler())
+	t.Cleanup(httpSrv.Close)
+	return apiclient.NewClientForTesting(httpSrv.Client(), httpSrv.URL)
+}
+
 // startTestServer wires NewServer onto a Listener bound to an
 // ephemeral 127.0.0.1 port, runs it in a goroutine, and returns
 // the base URL plus a cleanup func that triggers shutdown via
-// ctx cancel. Used by every route-level test.
+// ctx cancel. The web reads through a real api.Server / apiclient
+// pair fronted by httptest, matching production's process split.
 func startTestServer(t *testing.T, st *store.Store) (baseURL string, stop func()) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -38,7 +56,7 @@ func startTestServer(t *testing.T, st *store.Store) (baseURL string, stop func()
 		t.Fatalf("listen: %v", err)
 	}
 	cfg := Config{Listener: ln, ShutdownTimeout: time.Second}
-	s := NewServer(st, cfg, nil)
+	s := NewServer(newTestAPIClient(t, st), cfg, nil)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
@@ -127,7 +145,7 @@ func TestRun_GracefulShutdownOnContextCancel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	s := NewServer(st, Config{Listener: ln, ShutdownTimeout: time.Second}, nil)
+	s := NewServer(newTestAPIClient(t, st), Config{Listener: ln, ShutdownTimeout: time.Second}, nil)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	runErr := make(chan error, 1)
@@ -173,7 +191,7 @@ func TestIsPublicBind(t *testing.T) {
 func TestNewServer_DefaultsApplied(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)
-	s := NewServer(st, Config{}, nil)
+	s := NewServer(newTestAPIClient(t, st), Config{}, nil)
 	if s.cfg.Bind != DefaultBind {
 		t.Errorf("Bind: got %q, want %q", s.cfg.Bind, DefaultBind)
 	}

@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -11,11 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/toabctl/aichronicles/internal/events"
-	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/preview"
-	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/timefmt"
+	"github.com/toabctl/aichronicles/internal/wire"
 
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 )
@@ -41,13 +38,13 @@ const sessionsListLimit = 100
 // removing one preserves the others.
 func (s *Server) sessionsHandler(w http.ResponseWriter, r *http.Request) {
 	filters := readSessionListFilters(r)
-	rows, err := loadSessionsForList(r.Context(), s.store, sessionsListLimit, filters)
+	rows, err := loadSessionsForList(r.Context(), s, sessionsListLimit, filters)
 	if err != nil {
 		s.log.Error("sessionsHandler: load", "err", err)
 		http.Error(w, "could not load sessions", http.StatusInternalServerError)
 		return
 	}
-	agents, err := loadDistinctSourceAgents(r.Context(), s.store)
+	agents, err := s.api.SourceAgents(r.Context())
 	if err != nil {
 		s.log.Error("sessionsHandler: load agents", "err", err)
 		// Non-fatal — the list still renders, just without filter chips.
@@ -215,162 +212,57 @@ func filtersToURL(basePath string, f sessionListFilters) string {
 	return basePath + "?" + v.Encode()
 }
 
-// loadDistinctSourceAgents returns the set of source_agent slugs
-// present in the sessions table, sorted alphabetically. Used to
-// render filter chips on the sessions list — we don't hardcode
-// "claude-code | gemini-cli" because the list grows whenever a
-// new agent's importer / setup command lands.
-func loadDistinctSourceAgents(ctx context.Context, st *store.Store) ([]string, error) {
-	rows, err := st.DB().QueryContext(ctx,
-		`SELECT DISTINCT source_agent FROM sessions ORDER BY source_agent ASC`)
-	if err != nil {
-		return nil, fmt.Errorf("query distinct source_agent: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var out []string
-	for rows.Next() {
-		var s string
-		if err := rows.Scan(&s); err != nil {
-			return nil, fmt.Errorf("scan: %w", err)
-		}
-		out = append(out, s)
-	}
-	return out, rows.Err()
-}
-
-// loadSessionsForList runs the read query backing the sessions page.
-// One SQL roundtrip pulls the session rows + first-prompt preview;
-// a second indexed query fetches each session's cached summary so
-// the row can show the model-attributed topic alongside the prompt.
+// loadSessionsForList runs the read flow backing the sessions page.
+// Three apiclient round-trips: (1) the faceted session list, (2)
+// batch summary lookup for the badge tooltip + topic, (3) batch
+// latest-event lookup for the status dot + Latest column.
 //
-// All filters in the struct are optional; multiple combine with AND.
-// Empty / false values are skipped. Tool / skill / file / failures
-// are session-level: a session matches if ANY of its events satisfies
-// the predicate.
-func loadSessionsForList(ctx context.Context, st *store.Store, limit int, f sessionListFilters) ([]SessionRow, error) {
-	q := `
-		SELECT s.id,
-		       s.started_at_ms,
-		       s.ended_at_ms,
-		       s.event_count,
-		       s.cwd,
-		       s.source_agent,
-		       s.first_prompt_text AS first_prompt
-		  FROM sessions s`
-	var conds []string
-	args := []any{}
-	if f.Agent != "" {
-		conds = append(conds, "s.source_agent = ?")
-		args = append(args, f.Agent)
-	}
-	if f.Project != "" {
-		// Match sessions whose latest cwd is the project root or
-		// any descendant. Approximation: a session that started
-		// in /proj but cd'd to /elsewhere mid-way will still be
-		// indexed by its latest cwd, which is the trade-off
-		// sessions.cwd makes today. Good enough for a click-
-		// through filter; the /projects page uses start cwd for
-		// its rollup.
-		conds = append(conds, "(s.cwd = ? OR s.cwd LIKE ?)")
-		args = append(args, f.Project, f.Project+"/%")
-	}
-	if f.Tool != "" {
-		// EXISTS over events (covered by idx_events_session_ts and
-		// the partial idx for tool-bearing rows). Cheap because
-		// SQLite short-circuits on the first hit.
-		conds = append(conds, `EXISTS (
-			SELECT 1 FROM events e
-			 WHERE e.session_id = s.id AND e.tool_name = ?
-		)`)
-		args = append(args, f.Tool)
-	}
-	if f.Skill != "" {
-		// extractions kind=skill_load value=<name> is the canonical
-		// signal — see internal/events/SkillLoadExtractor.
-		conds = append(conds, `EXISTS (
-			SELECT 1 FROM extractions x
-			 WHERE x.session_id = s.id AND x.kind = ? AND x.value = ?
-		)`)
-		args = append(args, events.ExtractionKindSkillLoad, f.Skill)
-	}
-	if f.File != "" {
-		// Substring LIKE so a partial path ("migrate.go",
-		// "internal/store") matches. Same shape the CLI's
-		// FilePathSubstring filter uses.
-		conds = append(conds, `EXISTS (
-			SELECT 1 FROM extractions x
-			 WHERE x.session_id = s.id AND x.kind = ? AND x.value LIKE ?
-		)`)
-		args = append(args, events.ExtractionKindFilePath, "%"+f.File+"%")
-	}
-	if f.WithFailures {
-		conds = append(conds, `EXISTS (
-			SELECT 1 FROM events e
-			 WHERE e.session_id = s.id AND e.kind = ?
-		)`)
-		args = append(args, events.KindToolFailure)
-	}
-	if f.NoSummary {
-		// NOT EXISTS over llm_outputs(kind=summary). NOT EXISTS
-		// short-circuits on the first match, so this stays cheap
-		// even on a large llm_outputs table — the per-session
-		// scan stops as soon as one summary row is found.
-		conds = append(conds, `NOT EXISTS (
-			SELECT 1 FROM llm_outputs lo
-			 WHERE lo.session_id = s.id AND lo.kind = ?
-		)`)
-		args = append(args, string(store.LLMKindSummary))
-	}
-	if len(conds) > 0 {
-		q += " WHERE " + strings.Join(conds, " AND ")
-	}
-	q += " ORDER BY " + store.EffectiveTsExpr + " DESC LIMIT ?"
-	args = append(args, limit)
-
-	rows, err := st.DB().QueryContext(ctx, q, args...)
+// All filters in the struct are optional; multiple combine with AND
+// server-side. Empty / false values are skipped.
+func loadSessionsForList(ctx context.Context, s *Server, limit int, f sessionListFilters) ([]SessionRow, error) {
+	digests, err := s.api.Sessions(ctx, wire.SessionListRequest{
+		Limit: limit,
+		// SinceMs=1 means "any session, no time cutoff." The api
+		// applies a 30-day default when since_ms is unset; the web
+		// list deliberately shows the full corpus capped at limit,
+		// so we pass a tiny epoch value to disable the cutoff
+		// without changing the wire contract.
+		SinceMs:           1,
+		SourceAgent:       f.Agent,
+		Project:           f.Project,
+		ToolName:          f.Tool,
+		SkillName:         f.Skill,
+		FilePathSubstring: f.File,
+		WithFailures:      f.WithFailures,
+		WithoutSummary:    f.NoSummary,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("query sessions: %w", err)
+		return nil, fmt.Errorf("list sessions: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 
 	now := time.Now()
-	var out []SessionRow
-	var ids []string
-	for rows.Next() {
-		var (
-			id          string
-			startedMs   sql.NullInt64
-			endedMs     sql.NullInt64
-			eventCount  int
-			cwd         sql.NullString
-			sourceAgent string
-			firstPrompt sql.NullString
-		)
-		if err := rows.Scan(&id, &startedMs, &endedMs, &eventCount, &cwd, &sourceAgent, &firstPrompt); err != nil {
-			return nil, fmt.Errorf("scan session row: %w", err)
-		}
+	out := make([]SessionRow, 0, len(digests.Sessions))
+	ids := make([]string, 0, len(digests.Sessions))
+	for _, d := range digests.Sessions {
 		out = append(out, SessionRow{
-			ID:           id,
-			ShortID:      shortID(id),
-			LastActivity: relativeTime(effectiveTs(startedMs, endedMs), now),
-			EventCount:   eventCount,
-			Cwd:          orDash(cwd),
-			SourceAgent:  sourceAgent,
-			FirstPrompt:  truncatePreview(firstPrompt),
+			ID:           d.ID,
+			ShortID:      shortID(d.ID),
+			LastActivity: relativeTime(effectiveTsPtr(d.StartedAtMs, d.EndedAtMs), now),
+			EventCount:   d.EventCount,
+			Cwd:          orDashPtr(d.Cwd),
+			SourceAgent:  d.SourceAgent,
+			FirstPrompt:  truncatePreviewString(derefOr(d.FirstPrompt, "")),
 		})
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate session rows: %w", err)
+		ids = append(ids, d.ID)
 	}
 
-	summaries, err := store.LoadSummariesIndexedByID(ctx, st.DB(), ids)
-	if err != nil {
-		return nil, fmt.Errorf("load summaries: %w", err)
+	summaries, sErr := s.api.SummariesBatch(ctx, ids)
+	if sErr != nil {
+		return nil, fmt.Errorf("load summaries: %w", sErr)
 	}
-	latestEvents, err := store.LoadLatestEventsIndexedByID(ctx, st.DB(), ids)
-	if err != nil {
-		return nil, fmt.Errorf("load latest events: %w", err)
+	latestEvents, eErr := s.api.EventsLatestBatch(ctx, ids)
+	if eErr != nil {
+		return nil, fmt.Errorf("load latest events: %w", eErr)
 	}
 
 	for i := range out {
@@ -385,7 +277,7 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int, f sess
 		// formally ended (session_end), its timestamp tells us
 		// whether activity is fresh enough to count as "active".
 		// Sessions without any events fall to "idle".
-		var latestPtr *store.LiveEvent
+		var latestPtr *wire.Event
 		if e, ok := latestEvents[out[i].ID]; ok {
 			latestPtr = &e
 			out[i].LatestEventHTML = template.HTML(renderLatestEventCell(e))
@@ -394,6 +286,18 @@ func loadSessionsForList(ctx context.Context, st *store.Store, limit int, f sess
 		out[i].StatusDotHTML = template.HTML(renderStatusDot(out[i].ID, status, title, false))
 	}
 	return out, nil
+}
+
+// effectiveTsPtr is the *int64 sibling of effectiveTs: returns
+// *ended when set, else *started, else 0.
+func effectiveTsPtr(started, ended *int64) int64 {
+	if ended != nil && *ended != 0 {
+		return *ended
+	}
+	if started != nil && *started != 0 {
+		return *started
+	}
+	return 0
 }
 
 // pickRowPreview chooses the row's primary description text +
@@ -487,19 +391,6 @@ func shortID(id string) string {
 	return id
 }
 
-// effectiveTs picks ended_at_ms if set, else started_at_ms, else 0.
-// Same expression the schema's idx_sessions_effective_ts index is
-// built on.
-func effectiveTs(startedMs, endedMs sql.NullInt64) int64 {
-	if endedMs.Valid {
-		return endedMs.Int64
-	}
-	if startedMs.Valid {
-		return startedMs.Int64
-	}
-	return 0
-}
-
 // relativeTime renders an epoch-millis timestamp as "2h ago" /
 // "3d ago" relative to now. Zero / future times render as "-".
 // Thin wrapper over internal/timefmt — kept here so handlers
@@ -516,16 +407,9 @@ func relativeTime(ms int64, now time.Time) string {
 	return r
 }
 
-// orDash returns the string content of a sql.NullString, or "-"
-// when NULL or empty. Thin wrapper over internal/nullable so the
-// display contract stays identical across surfaces.
-func orDash(s sql.NullString) string {
-	return nullable.OrDash(s)
-}
-
-// orDashPtr is the *string equivalent of orDash, used by store
-// types that have moved off sql.NullString. Same display
-// contract: nil OR empty → "-".
+// orDashPtr returns *s when non-empty, else "-". Display contract
+// shared by every table cell that surfaces a possibly-null wire
+// column.
 func orDashPtr(s *string) string {
 	if s == nil || *s == "" {
 		return "-"
@@ -533,20 +417,10 @@ func orDashPtr(s *string) string {
 	return *s
 }
 
-// truncatePreview flattens whitespace and rune-caps a prompt
-// preview for use in a single table cell. Wraps internal/preview
-// so the cap matches MCP's oneLineSnippet and the CLI snippet
+// truncatePreviewString flattens whitespace and rune-caps a prompt
+// preview for use in a single table cell. Wraps internal/preview so
+// the cap matches MCP's oneLineSnippet and the CLI snippet
 // renderers — one number to tweak when the layout changes.
-func truncatePreview(s sql.NullString) string {
-	if !s.Valid || s.String == "" {
-		return "-"
-	}
-	return preview.OneLine(s.String)
-}
-
-// truncatePreviewString is the plain-string variant of
-// truncatePreview, for callers that already have a string and
-// want the same flatten-and-cap rendering.
 func truncatePreviewString(s string) string {
 	if s == "" {
 		return "-"

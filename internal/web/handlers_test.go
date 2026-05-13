@@ -1,7 +1,6 @@
 package web
 
 import (
-	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -602,17 +601,16 @@ func TestTruncatePreview(t *testing.T) {
 	t.Parallel()
 	// Whitespace flattening + rune cap behaviour.
 	cases := []struct {
-		in   sql.NullString
+		in   string
 		want string
 	}{
-		{sql.NullString{}, "-"},
-		{sql.NullString{Valid: true, String: ""}, "-"},
-		{sql.NullString{Valid: true, String: "hello\nworld"}, "hello world"},
-		{sql.NullString{Valid: true, String: "  short  "}, "  short  "},
+		{"", "-"},
+		{"hello\nworld", "hello world"},
+		{"  short  ", "  short  "},
 	}
 	for _, tc := range cases {
-		if got := truncatePreview(tc.in); got != tc.want {
-			t.Errorf("truncatePreview(%+v) = %q, want %q", tc.in, got, tc.want)
+		if got := truncatePreviewString(tc.in); got != tc.want {
+			t.Errorf("truncatePreviewString(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

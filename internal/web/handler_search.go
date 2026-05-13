@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/searchquery"
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // searchPageLimit caps how many hits the fragment returns. The
@@ -58,14 +58,14 @@ func (s *Server) searchHitsHandler(w http.ResponseWriter, r *http.Request) {
 	compact := r.URL.Query().Get("compact") == "1"
 	facets := readSessionListFilters(r)
 
-	view := buildSearchHits(r, s.store, q, kind, since, compact, facets, s.now())
+	view := buildSearchHits(r, s, q, kind, since, compact, facets, s.now())
 	s.renderFragment(w, "hits", view)
 }
 
 // buildSearchHits performs the search and shapes the result for
 // the hits fragment. Extracted from the handler so tests can
 // drive it directly without going through the HTTP layer.
-func buildSearchHits(r *http.Request, st *store.Store, q, kind, since string, compact bool, facets sessionListFilters, now time.Time) SearchHits {
+func buildSearchHits(r *http.Request, s *Server, q, kind, since string, compact bool, facets sessionListFilters, now time.Time) SearchHits {
 	if q == "" {
 		// Empty query is the page's initial state — render an
 		// empty Hits with no Error so the template falls through
@@ -73,8 +73,12 @@ func buildSearchHits(r *http.Request, st *store.Store, q, kind, since string, co
 		return SearchHits{Compact: compact, Query: q}
 	}
 
-	fts, err := searchquery.ToFTS5(q)
-	if err != nil {
+	// Run searchquery client-side just to detect ErrEmpty / ErrSyntax
+	// up front and short-circuit the empty-state / syntax-error UX
+	// without a network hop. The wire request carries the raw q;
+	// the api re-parses to FTS5 server-side so every consumer
+	// (CLI, MCP, web) gets the same SearchEvents path.
+	if _, err := searchquery.ToFTS5(q); err != nil {
 		switch {
 		case errors.Is(err, searchquery.ErrEmpty):
 			return SearchHits{Compact: compact, Query: q}
@@ -89,24 +93,19 @@ func buildSearchHits(r *http.Request, st *store.Store, q, kind, since string, co
 	if compact {
 		limit = searchCompactLimit
 	}
-	opts := store.SearchEventOpts{
-		Query: fts,
-		Kind:  kind,
-		Limit: limit,
-		// Web defaults to relevance-with-recency-boost, same as
-		// the CLI. Agents asking via MCP get OrderRecency; humans
-		// browsing the web UI get rank.
-		Order: store.OrderRank,
-		NowMs: now.UnixMilli(),
-		// Faceted filters mirror the CLI surface from #96. Empty
-		// values fall through to the unfiltered behavior in
-		// store.SearchEvents.
+	req := wire.SearchRequest{
+		Q:                 q,
+		Kind:              kind,
+		Limit:             limit,
 		SourceAgent:       facets.Agent,
 		ToolName:          facets.Tool,
 		SkillName:         facets.Skill,
 		FilePathSubstring: facets.File,
 		WithFailures:      facets.WithFailures,
 	}
+	// The api defaults to recency-boosted rank order (store.OrderRank
+	// is the zero value of SearchOrder) — same default the CLI and
+	// web both want; no Order knob on the wire.
 	if since != "" {
 		d, ok := parseSinceWindow(since)
 		if !ok {
@@ -120,13 +119,14 @@ func buildSearchHits(r *http.Request, st *store.Store, q, kind, since string, co
 				Query:   q,
 			}
 		}
-		opts.SinceMs = now.Add(-d).UnixMilli()
+		req.SinceMs = now.Add(-d).UnixMilli()
 	}
 
-	hits, err := store.SearchEvents(r.Context(), st.DB(), opts)
+	resp, err := s.api.Search(r.Context(), req)
 	if err != nil {
 		return SearchHits{Error: "search failed: " + err.Error(), Compact: compact, Query: q}
 	}
+	hits := resp.Hits
 
 	out := SearchHits{
 		Hits:    make([]SearchHitRow, 0, len(hits)),
@@ -149,11 +149,11 @@ func buildSearchHits(r *http.Request, st *store.Store, q, kind, since string, co
 	// in compact mode — the popover stays dense, one line per row.
 	if !compact && len(out.Hits) > 0 {
 		ids := uniqueSessionIDs(out.Hits)
-		summaries, err := store.LoadSummariesIndexedByID(r.Context(), st.DB(), ids)
+		summaries, err := s.api.SummariesBatch(r.Context(), ids)
 		if err == nil {
 			for i := range out.Hits {
-				if s, ok := summaries[out.Hits[i].SessionID]; ok {
-					out.Hits[i].SummaryTopic = parseSummaryTopic(s.Body)
+				if sm, ok := summaries[out.Hits[i].SessionID]; ok {
+					out.Hits[i].SummaryTopic = parseSummaryTopic(sm.Body)
 				}
 			}
 		}
@@ -187,7 +187,7 @@ func uniqueSessionIDs(hits []SearchHitRow) []string {
 // content_text when snippet() returned empty — defensive: should
 // not happen for hits but keeps the table from rendering blank
 // cells if it ever does.
-func pickHitSnippet(h store.SearchEventHit) string {
+func pickHitSnippet(h wire.SearchHit) string {
 	if h.Snippet != nil && *h.Snippet != "" {
 		return *h.Snippet
 	}

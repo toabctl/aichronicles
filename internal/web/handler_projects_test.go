@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 func TestProjectsPage_RendersEmptyStateOnEmptyStore(t *testing.T) {
@@ -68,7 +68,7 @@ func TestBuildProjectsPage_RollsCwdsToProjectRoot(t *testing.T) {
 	// duplicates at the SQL layer; here we feed two rows so
 	// buildProjectsPage's bucket logic gets exercised even on
 	// systems where /tmp has no markers.
-	aggs := []store.ProjectAggregate{
+	aggs := []wire.ProjectAggregate{
 		{Cwd: "/tmp/proj-a", Sessions: 2, Events: 10, LastActivityMs: rec(0)},
 		{Cwd: "/tmp/proj-b", Sessions: 1, Events: 5, LastActivityMs: rec(-time.Hour)},
 	}

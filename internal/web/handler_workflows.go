@@ -20,10 +20,7 @@ import (
 // as flat slices so the template stays free of nested lookups.
 func (s *Server) workflowsHandler(w http.ResponseWriter, r *http.Request) {
 	const corpusCap = 200
-	rows, err := store.LoadLLMOutputs(r.Context(), s.store.DB(), store.LLMOutputFilter{
-		Kind:  store.LLMKindInduction,
-		Limit: corpusCap,
-	})
+	rows, err := s.api.LLMOutputsList(r.Context(), string(store.LLMKindInduction), "", corpusCap)
 	if err != nil {
 		s.log.Error("workflowsHandler: load induction rows", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

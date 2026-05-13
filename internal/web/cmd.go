@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/paths"
-	"github.com/toabctl/aichronicles/internal/store"
 )
 
 // defaultIdleTimeout is the auto-shutdown window applied when the
@@ -33,7 +33,7 @@ const defaultIdleTimeout = 5 * time.Minute
 // remains the canonical writer.
 func NewCommand() *cobra.Command {
 	var cfg Config
-	var dbPath string
+	var sockPath string
 	var idleTimeout time.Duration
 
 	cmd := &cobra.Command{
@@ -41,10 +41,11 @@ func NewCommand() *cobra.Command {
 		Short: "Serve a local web UI for browsing sessions and summaries",
 		Long: "Starts a small HTTP server on localhost that lists captured\n" +
 			"sessions, surfaces cached LLM summaries, and exposes the same\n" +
-			"FTS5 search the CLI uses. Reads the SQLite store directly via\n" +
-			"WAL — does not go through the daemon's UDS. Runs as its own\n" +
-			"process (aichronicles-web.service) so a wedged template or\n" +
-			"runaway view query can't tear down the ingest worker.\n\n" +
+			"FTS5 search the CLI uses. Reads pass through the aichronicles-api\n" +
+			"daemon's UDS via internal/apiclient — the daemon stays the only\n" +
+			"process that opens the SQLite file. Runs as its own service\n" +
+			"(aichronicles-web.service) so a wedged template or runaway view\n" +
+			"query can't tear down the ingest worker.\n\n" +
 			"Default bind is 127.0.0.1; pass --bind to change. Binding to\n" +
 			"a non-loopback address surfaces a startup warning. The server\n" +
 			"has no authentication; the localhost-only boundary is the\n" +
@@ -56,15 +57,11 @@ func NewCommand() *cobra.Command {
 			"service exits between bursts and the .socket unit relaunches\n" +
 			"it on the next request.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			resolvedDB, err := paths.ResolveStorePath(dbPath)
+			resolvedSock, err := paths.ResolveAPISocketPath(sockPath)
 			if err != nil {
 				return err
 			}
-			st, err := store.Open(resolvedDB)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = st.Close() }()
+			apiC := apiclient.NewClient(resolvedSock)
 
 			log := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(),
 				&slog.HandlerOptions{Level: slog.LevelInfo})).With("cmd", "aichronicles web")
@@ -94,7 +91,8 @@ func NewCommand() *cobra.Command {
 					"bind", cfg.Bind)
 			}
 
-			s := NewServer(st, cfg, log)
+			s := NewServer(apiC, cfg, log)
+			log.Info("aichronicles-web dialing api", "socket", resolvedSock)
 
 			// SIGINT / SIGTERM trigger graceful shutdown via
 			// ctx cancellation. Run blocks until then.
@@ -111,8 +109,8 @@ func NewCommand() *cobra.Command {
 		"address to listen on (loopback by default; set to 0.0.0.0 for LAN access; ignored under systemd socket activation)")
 	cmd.Flags().IntVar(&cfg.Port, "port", DefaultPort,
 		"port to listen on (ignored under systemd socket activation)")
-	cmd.Flags().StringVar(&dbPath, "db", "",
-		"SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockPath, "socket", "",
+		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET; defaults to $XDG_RUNTIME_DIR/aichronicles/api.sock)")
 	cmd.Flags().DurationVar(&idleTimeout, "idle-timeout", 0,
 		"shut down after this long with zero open connections (0 = no auto-shutdown when launched directly; defaults to 5m under systemd socket activation)")
 

@@ -4,7 +4,7 @@ import (
 	"html"
 	"time"
 
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // activityWindow defines how recent a session's last event must be
@@ -39,7 +39,7 @@ const activityWindow = 5 * time.Minute
 // latest may be nil for a session with no events yet; in that
 // case the fallback is "idle" with a tooltip distinguishing it
 // from a stale session.
-func sessionStatus(latest *store.LiveEvent, now time.Time) (status, title string) {
+func sessionStatus(latest *wire.Event, now time.Time) (status, title string) {
 	if latest == nil || latest.TsSourceMs <= 0 {
 		return "idle", "no events yet"
 	}
@@ -84,7 +84,7 @@ func renderStatusDot(sessionID, status, title string, oob bool) string {
 // As with renderStatusDot, the same renderer powers initial
 // page render and live SSE updates so the cell looks identical
 // before and after a swap.
-func renderLatestEventCell(e store.LiveEvent) string {
+func renderLatestEventCell(e wire.Event) string {
 	snippet := truncateForStream(derefOr(e.Snippet, ""))
 	kind := html.EscapeString(e.Kind)
 	return `<span class="ts">` + html.EscapeString(time.UnixMilli(e.TsSourceMs).UTC().Format("15:04:05")) + `</span> ` +

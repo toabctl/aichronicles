@@ -5,8 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/toabctl/aichronicles/internal/skills"
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // skillsDefaultDays is the window the /skills page covers by
@@ -36,40 +35,39 @@ func (s *Server) skillsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	sinceMs := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
 
-	installed, err := skills.CollectInstalled(r.Context(), s.store.DB(), sinceMs)
+	installedResp, err := s.api.InstalledSkills(r.Context(), sinceMs)
 	if err != nil {
-		s.log.Error("skillsHandler: collect installed", "err", err)
+		s.log.Error("skillsHandler: installed", "err", err)
 		// Non-fatal: the page can still render the other two
 		// sections without the installed list.
-		installed = nil
 	}
-	invoked, err := skills.LoadInvoked(r.Context(), s.store.DB(), sinceMs)
+	invokedResp, err := s.api.InvokedSkills(r.Context(), sinceMs)
 	if err != nil {
-		s.log.Error("skillsHandler: load invoked", "err", err)
-		invoked = nil
+		s.log.Error("skillsHandler: invoked", "err", err)
 	}
 	const staleWindowMs = int64(10 * 60 * 1000) // matches CLI default
-	stale, err := store.LoadSkillStaleness(r.Context(), s.store.DB(),
-		sinceMs, staleWindowMs, store.SkillStalenessLimits{})
+	staleResp, err := s.api.SkillStaleness(r.Context(), wire.SkillStalenessRequest{
+		SinceMs:  sinceMs,
+		WindowMs: staleWindowMs,
+	})
 	if err != nil {
-		s.log.Error("skillsHandler: load staleness", "err", err)
-		stale = nil
+		s.log.Error("skillsHandler: staleness", "err", err)
 	}
 
 	page := SkillsPage{
 		Title:     "Skills",
 		Days:      days,
-		Installed: installed,
-		Invoked:   invoked,
-		Stale:     buildStaleRows(stale),
+		Installed: installedResp.Skills,
+		Invoked:   invokedResp.Skills,
+		Stale:     buildStaleRows(staleResp.Skills),
 	}
 	s.render(w, r, "skills", page)
 }
 
-// buildStaleRows lifts store.SkillStaleness into the rendering
+// buildStaleRows lifts wire.SkillStaleness into the rendering
 // shape: short id list pre-truncated, rate as a percentage, and
 // the example session ids ready to drop into /sessions/ links.
-func buildStaleRows(rows []store.SkillStaleness) []StaleSkillRow {
+func buildStaleRows(rows []wire.SkillStaleness) []StaleSkillRow {
 	out := make([]StaleSkillRow, 0, len(rows))
 	for _, r := range rows {
 		row := StaleSkillRow{

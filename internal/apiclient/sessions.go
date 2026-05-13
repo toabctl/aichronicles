@@ -21,6 +21,27 @@ func (c *Client) Sessions(ctx context.Context, req wire.SessionListRequest) (wir
 	if req.Limit > 0 {
 		q.Set("limit", strconv.Itoa(req.Limit))
 	}
+	if req.SourceAgent != "" {
+		q.Set("source_agent", req.SourceAgent)
+	}
+	if req.Project != "" {
+		q.Set("project", req.Project)
+	}
+	if req.ToolName != "" {
+		q.Set("tool_name", req.ToolName)
+	}
+	if req.SkillName != "" {
+		q.Set("skill_name", req.SkillName)
+	}
+	if req.FilePathSubstring != "" {
+		q.Set("file_path_substring", req.FilePathSubstring)
+	}
+	if req.WithFailures {
+		q.Set("with_failures", "true")
+	}
+	if req.WithoutSummary {
+		q.Set("without_summary", "true")
+	}
 
 	path := "/v1/sessions"
 	if encoded := q.Encode(); encoded != "" {
@@ -57,6 +78,17 @@ func (c *Client) ResolveSession(ctx context.Context, prefix string) (string, err
 		return "", err
 	}
 	return out.ID, nil
+}
+
+// SourceAgents queries GET /v1/sessions/source-agents. Distinct
+// sessions.source_agent values, alphabetised — used by the web's
+// faceted session-list picker.
+func (c *Client) SourceAgents(ctx context.Context) ([]string, error) {
+	var out wire.SourceAgentsResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/sessions/source-agents", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.SourceAgents, nil
 }
 
 // SessionStartCwd queries GET /v1/sessions/{id}/start-cwd. Returns

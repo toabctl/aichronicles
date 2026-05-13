@@ -1,7 +1,6 @@
 package web
 
 import (
-	"database/sql"
 	"net/http"
 	"strings"
 	"testing"
@@ -346,20 +345,21 @@ func TestSessionDetail_MalformedSummaryDoesNotCrash(t *testing.T) {
 
 func TestSessionDetail_EndedActiveLabel(t *testing.T) {
 	t.Parallel()
+	validMs := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC).UnixMilli()
+	zeroMs := int64(0)
 	cases := []struct {
 		name string
-		ms   sql.NullInt64
+		ms   *int64
 		want string
 	}{
-		{"valid ended", sql.NullInt64{Int64: time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC).UnixMilli(), Valid: true},
-			"2026-04-24"},
-		{"null is active", sql.NullInt64{}, "(active)"},
-		{"zero is active", sql.NullInt64{Int64: 0, Valid: true}, "(active)"},
+		{"valid ended", &validMs, "2026-04-24"},
+		{"nil is active", nil, "(active)"},
+		{"zero is active", &zeroMs, "(active)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := endedOrActive(tc.ms)
+			got := endedOrActivePtr(tc.ms)
 			if !strings.Contains(got, tc.want) {
 				t.Errorf("got %q, want substring %q", got, tc.want)
 			}
@@ -369,67 +369,71 @@ func TestSessionDetail_EndedActiveLabel(t *testing.T) {
 
 func TestBuildResumeCommand(t *testing.T) {
 	t.Parallel()
+	cwdFoo := "/home/tom/devel/foo"
+	cwdEmpty := ""
+	cwdAic := "/home/tom/devel/aichronicles"
+	cwdX := "/x"
 	cases := []struct {
 		name     string
 		agent    string
 		sourceID string
-		cwd      sql.NullString
+		cwd      *string
 		want     string
 	}{
 		{
 			name:     "claude-code with cwd",
 			agent:    "claude-code",
 			sourceID: "5c407125-a64a-46c1-96d5-65ca14bdd9fc",
-			cwd:      sql.NullString{String: "/home/tom/devel/foo", Valid: true},
+			cwd:      &cwdFoo,
 			want:     "cd /home/tom/devel/foo && claude --resume 5c407125-a64a-46c1-96d5-65ca14bdd9fc",
 		},
 		{
 			name:     "claude-code without cwd",
 			agent:    "claude-code",
 			sourceID: "abc",
-			cwd:      sql.NullString{},
+			cwd:      nil,
 			want:     "claude --resume abc",
 		},
 		{
-			name:     "claude-code with empty-but-valid cwd",
+			name:     "claude-code with empty-but-non-nil cwd",
 			agent:    "claude-code",
 			sourceID: "abc",
-			cwd:      sql.NullString{String: "", Valid: true},
+			cwd:      &cwdEmpty,
 			want:     "claude --resume abc",
 		},
 		{
 			name:     "gemini-cli with cwd",
 			agent:    "gemini-cli",
 			sourceID: "9a640b1c-eefa-40ef-897a-0437f0931706",
-			cwd:      sql.NullString{String: "/home/tom/devel/aichronicles", Valid: true},
+			cwd:      &cwdAic,
 			want:     "cd /home/tom/devel/aichronicles && gemini --resume 9a640b1c-eefa-40ef-897a-0437f0931706",
 		},
 		{
 			name:     "gemini-cli without cwd",
 			agent:    "gemini-cli",
 			sourceID: "9a640b1c-eefa-40ef-897a-0437f0931706",
-			cwd:      sql.NullString{},
+			cwd:      nil,
 			want:     "gemini --resume 9a640b1c-eefa-40ef-897a-0437f0931706",
 		},
 		{
 			name:     "unknown agent yields empty (button is hidden)",
 			agent:    "some-future-agent",
 			sourceID: "abc",
-			cwd:      sql.NullString{String: "/x", Valid: true},
+			cwd:      &cwdX,
 			want:     "",
 		},
 		{
 			name:     "missing source id yields empty",
 			agent:    "claude-code",
 			sourceID: "",
-			cwd:      sql.NullString{String: "/x", Valid: true},
+			cwd:      &cwdX,
 			want:     "",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := buildResumeCommand(tc.agent, tc.sourceID, tc.cwd)
+			got := buildResumeCommandPtr(tc.agent, tc.sourceID, tc.cwd)
 			if got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}

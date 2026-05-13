@@ -525,6 +525,18 @@ type SessionDigestRow struct {
 	Cwd           *string
 	FirstPrompt   *string
 	LatestSummary *string
+	// SourceAgent / SourceSessionID identify the upstream agent
+	// (claude-code / gemini-cli / …) and its native session id.
+	// Populated by LoadSessionDigest (the detail-path loader) and
+	// LoadSessionsForListFaceted (the faceted-list loader); plain
+	// LoadRecentSessionDigests leaves them empty since the list
+	// response can omit them.
+	SourceAgent     string
+	SourceSessionID string
+	// EventCount is populated by the faceted-list loader (which
+	// reads sessions.event_count directly). Plain digest loaders
+	// leave it 0; consumers branch on the value.
+	EventCount int
 }
 
 // LoadRecentSessionDigests returns the most-recently-ended sessions
@@ -579,6 +591,166 @@ func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs int64, li
 	return out, rows.Err()
 }
 
+// SessionListFacets bundles the faceted-filter knobs the web's
+// sessions page exposes. Empty / false fields disable each facet
+// independently; AND-combined when more than one is set.
+type SessionListFacets struct {
+	Cwd               string
+	SourceAgent       string
+	Project           string // matches s.cwd = project OR s.cwd LIKE project/%
+	ToolName          string
+	SkillName         string
+	FilePathSubstring string
+	WithFailures      bool
+	WithoutSummary    bool
+}
+
+// Any reports whether at least one facet field is set. Used by the
+// api handler to decide between the plain LoadRecentSessionDigests
+// path and the richer faceted query.
+func (f SessionListFacets) Any() bool {
+	return f.Cwd != "" || f.SourceAgent != "" || f.Project != "" ||
+		f.ToolName != "" || f.SkillName != "" || f.FilePathSubstring != "" ||
+		f.WithFailures || f.WithoutSummary
+}
+
+// LoadSessionsForListFaceted runs the faceted session-list query
+// behind GET /v1/sessions when any facet is set. Each filter adds
+// an AND clause; EXISTS subqueries cover tool/skill/file/failure/
+// no-summary so a session matches when ANY of its events satisfies
+// the predicate. Returns wire.SessionDigest directly to spare a
+// projection at the handler boundary — the row shape is the same
+// the list endpoint already ships for the unfiltered path.
+//
+// Result is ordered by EffectiveTsExpr DESC (newest first), capped
+// at limit. limit ≤0 falls back to defaultSessionsForListLimit.
+func LoadSessionsForListFaceted(ctx context.Context, db *sql.DB, f SessionListFacets, sinceMs int64, limit int) ([]SessionDigestRow, error) {
+	if limit <= 0 {
+		limit = defaultSessionsForListLimit
+	}
+	q := `
+		SELECT s.id, s.started_at_ms, s.ended_at_ms, s.event_count,
+		       s.cwd, s.first_prompt_text, s.summary_topic,
+		       s.source_agent, s.source_session_id
+		  FROM sessions s`
+	var conds []string
+	args := []any{}
+
+	if sinceMs > 0 {
+		conds = append(conds, EffectiveTsExpr+" >= ?")
+		args = append(args, sinceMs)
+	}
+	if f.Cwd != "" {
+		conds = append(conds, "s.cwd = ?")
+		args = append(args, f.Cwd)
+	}
+	if f.SourceAgent != "" {
+		conds = append(conds, "s.source_agent = ?")
+		args = append(args, f.SourceAgent)
+	}
+	if f.Project != "" {
+		conds = append(conds, "(s.cwd = ? OR s.cwd LIKE ?)")
+		args = append(args, f.Project, f.Project+"/%")
+	}
+	if f.ToolName != "" {
+		conds = append(conds, `EXISTS (
+			SELECT 1 FROM events e
+			 WHERE e.session_id = s.id AND e.tool_name = ?
+		)`)
+		args = append(args, f.ToolName)
+	}
+	if f.SkillName != "" {
+		conds = append(conds, `EXISTS (
+			SELECT 1 FROM extractions x
+			 WHERE x.session_id = s.id AND x.kind = ? AND x.value = ?
+		)`)
+		args = append(args, events.ExtractionKindSkillLoad, f.SkillName)
+	}
+	if f.FilePathSubstring != "" {
+		conds = append(conds, `EXISTS (
+			SELECT 1 FROM extractions x
+			 WHERE x.session_id = s.id AND x.kind = ? AND x.value LIKE ?
+		)`)
+		args = append(args, events.ExtractionKindFilePath, "%"+f.FilePathSubstring+"%")
+	}
+	if f.WithFailures {
+		conds = append(conds, `EXISTS (
+			SELECT 1 FROM events e
+			 WHERE e.session_id = s.id AND e.kind = ?
+		)`)
+		args = append(args, events.KindToolFailure)
+	}
+	if f.WithoutSummary {
+		conds = append(conds, `NOT EXISTS (
+			SELECT 1 FROM llm_outputs lo
+			 WHERE lo.session_id = s.id AND lo.kind = ?
+		)`)
+		args = append(args, string(LLMKindSummary))
+	}
+
+	if len(conds) > 0 {
+		q += " WHERE " + strings.Join(conds, " AND ")
+	}
+	q += " ORDER BY " + EffectiveTsExpr + " DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query sessions for list: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]SessionDigestRow, 0)
+	for rows.Next() {
+		var (
+			row             SessionDigestRow
+			startedAtMs     sql.NullInt64
+			endedAtMs       sql.NullInt64
+			cwd             sql.NullString
+			firstPrompt     sql.NullString
+			summaryTopic    sql.NullString
+			sourceAgent     string
+			sourceSessionID string
+		)
+		if err := rows.Scan(&row.ID, &startedAtMs, &endedAtMs, &row.EventCount,
+			&cwd, &firstPrompt, &summaryTopic, &sourceAgent, &sourceSessionID); err != nil {
+			return nil, fmt.Errorf("scan faceted session row: %w", err)
+		}
+		row.StartedAtMs = nullable.Int64Ptr(startedAtMs)
+		row.EndedAtMs = nullable.Int64Ptr(endedAtMs)
+		row.Cwd = nullable.StringPtr(cwd)
+		row.FirstPrompt = nullable.StringPtr(firstPrompt)
+		row.LatestSummary = nullable.StringPtr(summaryTopic)
+		row.SourceAgent = sourceAgent
+		row.SourceSessionID = sourceSessionID
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+const defaultSessionsForListLimit = 200
+
+// LoadDistinctSourceAgents returns every distinct sessions.source_agent
+// value, alphabetised. Used by the web's session-list facet picker
+// to render an agent <select> without hardcoding agent slugs.
+func LoadDistinctSourceAgents(ctx context.Context, db *sql.DB) ([]string, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT DISTINCT source_agent FROM sessions ORDER BY source_agent ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("query distinct source_agent: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, fmt.Errorf("scan source_agent: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // LoadSessionDigest returns the SessionDigestRow for a single
 // session_id, or (nil, nil) if no such session exists. Same row
 // shape as LoadRecentSessionDigests — including the latest_summary
@@ -595,7 +767,8 @@ func LoadSessionDigest(ctx context.Context, db *sql.DB, sessionID string) (*Sess
 			s.first_prompt_text AS first_prompt,
 			(SELECT body FROM llm_outputs
 				WHERE session_id = s.id AND kind = ?
-				ORDER BY created_at_ms DESC LIMIT 1) AS latest_summary
+				ORDER BY created_at_ms DESC LIMIT 1) AS latest_summary,
+			s.source_agent, s.source_session_id
 		FROM sessions s
 		WHERE s.id = ?`,
 		string(LLMKindSummary), sessionID,
@@ -608,7 +781,8 @@ func LoadSessionDigest(ctx context.Context, db *sql.DB, sessionID string) (*Sess
 		firstPrompt sql.NullString
 		latestSum   sql.NullString
 	)
-	switch err := row.Scan(&r.ID, &startedAtMs, &endedAtMs, &cwd, &firstPrompt, &latestSum); {
+	switch err := row.Scan(&r.ID, &startedAtMs, &endedAtMs, &cwd, &firstPrompt, &latestSum,
+		&r.SourceAgent, &r.SourceSessionID); {
 	case errors.Is(err, sql.ErrNoRows):
 		return nil, nil
 	case err != nil:

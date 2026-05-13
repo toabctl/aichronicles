@@ -10,6 +10,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // proposeDefaultLimit caps how many propose rows /propose renders.
@@ -39,10 +40,7 @@ func (s *Server) proposeHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rows, err := store.LoadLLMOutputs(r.Context(), s.store.DB(), store.LLMOutputFilter{
-		Kind:  store.LLMKindPropose,
-		Limit: limit,
-	})
+	rows, err := s.api.LLMOutputsList(r.Context(), string(store.LLMKindPropose), "", limit)
 	if err != nil {
 		s.log.Error("proposeHandler: load", "err", err)
 		http.Error(w, "could not load proposals", http.StatusInternalServerError)
@@ -71,12 +69,14 @@ func (s *Server) proposeHandler(w http.ResponseWriter, r *http.Request) {
 func loadProposalLifecycle(ctx context.Context, s *Server, page *ProposePage, now time.Time) error {
 	priorSinceMs := now.Add(-90 * 24 * time.Hour).UnixMilli()
 
-	added, err := store.LoadSkillCandidateEffectiveness(ctx, s.store.DB(),
-		priorSinceMs, 0, 100)
+	addedResp, err := s.api.SkillCandidatesEffectiveness(ctx, wire.SkillCandidateEffectivenessRequest{
+		SinceMs: priorSinceMs,
+		Limit:   100,
+	})
 	if err != nil {
 		return fmt.Errorf("added: %w", err)
 	}
-	for _, e := range added {
+	for _, e := range addedResp.Rows {
 		row := ProposalRow{
 			SkillName:        e.SkillName,
 			ProposedAgo:      relativeTime(e.ProposedAtMs, now),
@@ -95,12 +95,11 @@ func loadProposalLifecycle(ctx context.Context, s *Server, page *ProposePage, no
 		}
 	}
 
-	pending, err := store.LoadPendingSkillCandidates(ctx, s.store.DB(),
-		priorSinceMs, 100)
+	pendingResp, err := s.api.SkillCandidatesPending(ctx, priorSinceMs, 100)
 	if err != nil {
 		return fmt.Errorf("pending: %w", err)
 	}
-	for _, u := range pending {
+	for _, u := range pendingResp.Candidates {
 		page.Pending = append(page.Pending, ProposalRow{
 			SkillName:   u.SkillName,
 			ProposedAgo: relativeTime(u.ProposedAtMs, now),
@@ -114,7 +113,7 @@ func loadProposalLifecycle(ctx context.Context, s *Server, page *ProposePage, no
 // ProposeCard. Body parses are best-effort: a row whose JSON
 // doesn't parse falls through to the raw-body branch so a single
 // malformed artifact doesn't blank the page.
-func buildProposeCards(rows []store.LLMOutput, now time.Time) []ProposeCard {
+func buildProposeCards(rows []wire.LLMOutput, now time.Time) []ProposeCard {
 	out := make([]ProposeCard, 0, len(rows))
 	for _, row := range rows {
 		card := ProposeCard{

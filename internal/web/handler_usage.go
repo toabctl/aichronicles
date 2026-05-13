@@ -9,7 +9,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/pricing"
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // usageDefaultDays mirrors the CLI's `aichronicles usage` default —
@@ -66,7 +66,7 @@ func (s *Server) usageHandler(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	sinceMs := now.Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
 
-	rows, err := store.LoadTokenUsage(r.Context(), s.store.DB(), sinceMs)
+	resp, err := s.api.Usage(r.Context(), wire.UsageRequest{SinceMs: sinceMs})
 	if err != nil {
 		s.log.Error("usageHandler: load", "err", err)
 		http.Error(w, "could not load usage", http.StatusInternalServerError)
@@ -79,7 +79,7 @@ func (s *Server) usageHandler(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("usage: prices file unreadable, hiding COST column", "err", perr)
 	}
 
-	page := buildUsagePage(rows, prices, days, now)
+	page := buildUsagePage(resp.Rows, resp.Totals, prices, days, now)
 	s.render(w, r, "usage", page)
 }
 
@@ -94,8 +94,7 @@ func loadPricesForWeb() (pricing.Prices, error) {
 	return pricing.Load(path)
 }
 
-func buildUsagePage(rows []store.TokenUsageRow, prices pricing.Prices, days int, now time.Time) UsagePage {
-	totals := store.SumTokenUsage(rows)
+func buildUsagePage(rows []wire.UsageRow, totals wire.UsageTotals, prices pricing.Prices, days int, now time.Time) UsagePage {
 	page := UsagePage{
 		Title: "Usage",
 		Days:  days,

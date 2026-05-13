@@ -6,10 +6,11 @@ Serve a local web UI for browsing sessions and summaries
 
 Starts a small HTTP server on localhost that lists captured
 sessions, surfaces cached LLM summaries, and exposes the same
-FTS5 search the CLI uses. Reads the SQLite store directly via
-WAL — does not go through the daemon's UDS. Runs as its own
-process (aichronicles-web.service) so a wedged template or
-runaway view query can't tear down the ingest worker.
+FTS5 search the CLI uses. Reads pass through the aichronicles-api
+daemon's UDS via internal/apiclient — the daemon stays the only
+process that opens the SQLite file. Runs as its own service
+(aichronicles-web.service) so a wedged template or runaway view
+query can't tear down the ingest worker.
 
 Default bind is 127.0.0.1; pass --bind to change. Binding to
 a non-loopback address surfaces a startup warning. The server
@@ -31,10 +32,10 @@ aichronicles web [flags]
 
 ```
       --bind string             address to listen on (loopback by default; set to 0.0.0.0 for LAN access; ignored under systemd socket activation) (default "127.0.0.1")
-      --db string               SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
   -h, --help                    help for web
       --idle-timeout duration   shut down after this long with zero open connections (0 = no auto-shutdown when launched directly; defaults to 5m under systemd socket activation)
       --port int                port to listen on (ignored under systemd socket activation) (default 7878)
+      --socket string           aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET; defaults to $XDG_RUNTIME_DIR/aichronicles/api.sock)
 ```
 
 ### SEE ALSO

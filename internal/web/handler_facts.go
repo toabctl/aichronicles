@@ -5,9 +5,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/timefmt"
 )
+
+// factsIndexLimit caps how many distinct subjects /facts (no
+// subject) renders. Matches the prior raw-SQL LIMIT 200; the wire
+// endpoint clamps internally too.
+const factsIndexLimit = 200
 
 // factsHandler renders /facts. Two modes:
 //
@@ -24,40 +28,30 @@ func (s *Server) factsHandler(w http.ResponseWriter, r *http.Request) {
 	subject := strings.TrimSpace(r.URL.Query().Get("subject"))
 
 	if subject == "" {
-		// Index mode: pull every distinct subject (capped) so the
-		// user can pick one. FactSubjectsLike requires a needle, so
-		// we use a SELECT DISTINCT directly to scan the corpus.
-		// Empty result is a normal first-run state.
-		rows, err := s.store.DB().QueryContext(r.Context(),
-			`SELECT DISTINCT subject FROM semantic_facts ORDER BY subject ASC LIMIT 200`)
+		// Index mode: the api endpoint returns every distinct
+		// semantic_facts.subject (capped). Empty result is a normal
+		// first-run state and renders the "no facts yet" hint.
+		resp, err := s.api.FactSubjects(r.Context(), "", factsIndexLimit)
 		if err != nil {
 			s.log.Error("factsHandler: list subjects", "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		defer func() { _ = rows.Close() }()
-		for rows.Next() {
-			var sub string
-			if err := rows.Scan(&sub); err != nil {
-				s.log.Error("factsHandler: scan subject", "err", err)
-				continue
-			}
-			page.Subjects = append(page.Subjects, sub)
-		}
+		page.Subjects = resp.Subjects
 		s.render(w, r, "facts", page)
 		return
 	}
 
 	// Detail mode.
 	page.Subject = subject
-	facts, err := store.LoadFactsForSubject(r.Context(), s.store.DB(), subject, 0)
+	resp, err := s.api.Facts(r.Context(), subject, 0)
 	if err != nil {
 		s.log.Error("factsHandler: load facts", "subject", subject, "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	now := time.Now().UTC()
-	for _, f := range facts {
+	for _, f := range resp.Facts {
 		row := FactRow{
 			Predicate:   f.Predicate,
 			Object:      f.Object,

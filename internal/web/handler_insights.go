@@ -1,12 +1,12 @@
 package web
 
 import (
-	"database/sql"
 	"net/http"
 	"strconv"
 	"time"
 
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // insightsDefaultDays matches `aichronicles insights`'s default
@@ -25,7 +25,7 @@ func (s *Server) insightsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	sinceMs := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
 
-	report, err := store.LoadInsights(r.Context(), s.store.DB(), sinceMs, store.InsightsLimits{})
+	report, err := s.api.Insights(r.Context(), apiclient.InsightsRequest{SinceMs: sinceMs})
 	if err != nil {
 		s.log.Error("insightsHandler: load", "err", err)
 		http.Error(w, "could not load insights", http.StatusInternalServerError)
@@ -36,11 +36,11 @@ func (s *Server) insightsHandler(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "insights", page)
 }
 
-// buildInsightsPage shapes the store report into the rendering
+// buildInsightsPage shapes the wire report into the rendering
 // view: pre-formatted strings + bar widths for the activity
 // histogram + percentages for top-tools. Done server-side so the
 // template stays free of helpers.
-func buildInsightsPage(r *store.InsightsReport, days int) InsightsPage {
+func buildInsightsPage(r wire.Insights, days int) InsightsPage {
 	now := time.Now()
 	page := InsightsPage{
 		Title:    "Insights",
@@ -103,7 +103,7 @@ func buildInsightsPage(r *store.InsightsReport, days int) InsightsPage {
 			EventCount: ts.EventCount,
 			Cwd:        orDashPtr(ts.Cwd),
 		}
-		row.FirstPrompt = truncatePreview(sql.NullString{String: ts.FirstPrompt, Valid: ts.FirstPrompt != ""})
+		row.FirstPrompt = truncatePreviewString(ts.FirstPrompt)
 		if ts.StartedAtMs != nil {
 			row.Started = time.UnixMilli(*ts.StartedAtMs).UTC().Format("2006-01-02")
 		} else {

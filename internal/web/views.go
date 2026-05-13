@@ -3,8 +3,7 @@ package web
 import (
 	"html/template"
 
-	"github.com/toabctl/aichronicles/internal/llm/prompts"
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // Page is the common envelope every route's view data sits inside.
@@ -236,8 +235,8 @@ type ProjectRow struct {
 type SkillsPage struct {
 	Title     string
 	Days      int
-	Installed []prompts.InstalledSkill
-	Invoked   []prompts.InvokedSkill
+	Installed []wire.InstalledSkill
+	Invoked   []wire.InvokedSkill
 	Stale     []StaleSkillRow
 }
 
@@ -330,7 +329,7 @@ type InsightsPage struct {
 	Since          string // "2026-04-01"
 	Until          string
 	Empty          bool
-	Overview       store.InsightsOverview
+	Overview       wire.InsightsOverview
 	TopTools       []InsightsToolRow
 	TopSkills      []InsightsSkillRow
 	ActivityByHour []InsightsHourRow // 24 entries

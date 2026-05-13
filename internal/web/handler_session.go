@@ -2,17 +2,16 @@ package web
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
-	"github.com/toabctl/aichronicles/internal/timefmt"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // eventsPerSessionPage caps how many events the detail view
@@ -39,14 +38,14 @@ var errSessionNotFound = errors.New("session not found")
 // links/bookmarks normalise.
 func (s *Server) sessionDetailHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	resolved, err := store.ResolveSessionIDPrefix(r.Context(), s.store.DB(), id)
+	resolved, err := s.api.ResolveSession(r.Context(), id)
 	switch {
-	case errors.Is(err, store.ErrNoSuchSession):
+	case errors.Is(err, apiclient.ErrNotFound):
 		http.NotFound(w, r)
 		return
-	case errors.Is(err, store.ErrAmbiguousSessionPrefix):
-		// Surface the candidate list the store error embeds so
-		// the user can pick. 400 (not 404): the resource is
+	case errors.Is(err, apiclient.ErrConflict):
+		// Ambiguous prefix: the api surfaces the candidate list in
+		// the problem detail. 400 (not 404): the resource is
 		// reachable, the request was just under-specified.
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -60,7 +59,7 @@ func (s *Server) sessionDetailHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	detail, err := loadSessionDetail(r.Context(), s.store, resolved)
+	detail, err := loadSessionDetail(r.Context(), s, resolved)
 	if err != nil {
 		if errors.Is(err, errSessionNotFound) {
 			http.NotFound(w, r)
@@ -73,28 +72,26 @@ func (s *Server) sessionDetailHandler(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "session", detail)
 }
 
-// loadSessionDetail builds the SessionDetail view for one id.
-// Four queries: the session row, the latest cached summary
-// (filtered by kind=summary), the most recent N events, and the
-// session_links pointing in either direction.
-func loadSessionDetail(ctx context.Context, st *store.Store, id string) (*SessionDetail, error) {
-	header, err := loadSessionHeader(ctx, st, id)
+// loadSessionDetail builds the SessionDetail view for one id by
+// fanning a few apiclient calls — the daemon owns SQL access.
+func loadSessionDetail(ctx context.Context, s *Server, id string) (*SessionDetail, error) {
+	header, err := loadSessionHeader(ctx, s, id)
 	if err != nil {
 		return nil, err
 	}
-	summary, err := loadLatestSummary(ctx, st, id)
+	summary, err := loadLatestSummary(ctx, s, id)
 	if err != nil {
 		return nil, fmt.Errorf("load summary: %w", err)
 	}
-	events, err := loadEventRows(ctx, st, id, eventsPerSessionPage)
+	events, err := loadEventRows(ctx, s, id, eventsPerSessionPage)
 	if err != nil {
 		return nil, fmt.Errorf("load events: %w", err)
 	}
-	related, err := loadRelatedSessions(ctx, st, id)
+	related, err := loadRelatedSessions(ctx, s, id)
 	if err != nil {
 		return nil, fmt.Errorf("load related sessions: %w", err)
 	}
-	episodes, err := loadEpisodeRows(ctx, st, id)
+	episodes, err := loadEpisodeRows(ctx, s, id)
 	if err != nil {
 		return nil, fmt.Errorf("load episodes: %w", err)
 	}
@@ -109,14 +106,14 @@ func loadSessionDetail(ctx context.Context, st *store.Store, id string) (*Sessio
 // and renders each row for the Episodes section on the detail page.
 // Returns an empty slice (not error) when the daemon hasn't
 // segmented this session yet — the template hides the section.
-func loadEpisodeRows(ctx context.Context, st *store.Store, sessionID string) ([]EpisodeRow, error) {
-	episodes, err := store.LoadEpisodesBySession(ctx, st.DB(), sessionID)
+func loadEpisodeRows(ctx context.Context, s *Server, sessionID string) ([]EpisodeRow, error) {
+	resp, err := s.api.Episodes(ctx, wire.EpisodeListRequest{SessionID: sessionID})
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now()
-	out := make([]EpisodeRow, 0, len(episodes))
-	for _, ep := range episodes {
+	out := make([]EpisodeRow, 0, len(resp.Episodes))
+	for _, ep := range resp.Episodes {
 		row := EpisodeRow{
 			Ordinal:       ep.Ordinal,
 			Started:       relativeTime(ep.StartedAtMs, now),
@@ -124,8 +121,8 @@ func loadEpisodeRows(ctx context.Context, st *store.Store, sessionID string) ([]
 			IntentSummary: ep.IntentSummary,
 			EventCount:    ep.EventCount,
 		}
-		if ep.Cwd.Valid {
-			row.Cwd = ep.Cwd.String
+		if ep.Cwd != nil {
+			row.Cwd = *ep.Cwd
 		}
 		out = append(out, row)
 	}
@@ -140,12 +137,12 @@ func loadEpisodeRows(ctx context.Context, st *store.Store, sessionID string) ([]
 //
 // Returns nil when neither direction has any links, so the
 // template can hide the entire sidebar with a single nil-check.
-func loadRelatedSessions(ctx context.Context, st *store.Store, id string) ([]RelatedSessionGroup, error) {
-	outgoing, err := store.LoadSessionLinksFrom(ctx, st.DB(), id)
+func loadRelatedSessions(ctx context.Context, s *Server, id string) ([]RelatedSessionGroup, error) {
+	outgoing, err := s.api.SessionLinksFrom(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	incoming, err := store.LoadSessionLinksTo(ctx, st.DB(), id)
+	incoming, err := s.api.SessionLinksTo(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -155,14 +152,14 @@ func loadRelatedSessions(ctx context.Context, st *store.Store, id string) ([]Rel
 
 	// Topics for every distinct linked id, batch-fetched so the
 	// sidebar doesn't issue one query per row.
-	relatedIDs := make(map[string]struct{})
+	idSet := make(map[string]struct{})
 	for _, l := range outgoing {
-		relatedIDs[l.ToSessionID] = struct{}{}
+		idSet[l.ToSessionID] = struct{}{}
 	}
 	for _, l := range incoming {
-		relatedIDs[l.FromSessionID] = struct{}{}
+		idSet[l.FromSessionID] = struct{}{}
 	}
-	topics, err := loadTopicsForSessions(ctx, st, relatedIDs)
+	topics, err := loadTopicsForSessions(ctx, s, idSet)
 	if err != nil {
 		return nil, err
 	}
@@ -172,8 +169,8 @@ func loadRelatedSessions(ctx context.Context, st *store.Store, id string) ([]Rel
 	// after ("Y builds on this session") so a reader's eye lands
 	// on the more proximate framing first.
 	type bucket struct {
-		out []store.SessionLink
-		in  []store.SessionLink
+		out []wire.SessionLinkRow
+		in  []wire.SessionLinkRow
 	}
 	by := make(map[string]*bucket)
 	for _, l := range outgoing {
@@ -248,95 +245,73 @@ func relatedSessionLabel(kind string) string {
 
 // loadTopicsForSessions fetches the latest summary topic for each
 // id in the set. Missing ids are returned with empty string —
-// callers fall back to the short id when topic is "".
-func loadTopicsForSessions(ctx context.Context, st *store.Store, ids map[string]struct{}) (map[string]string, error) {
+// callers fall back to the short id when topic is "". Backed by
+// the /v1/summaries/batch endpoint; sessions without a cached
+// summary surface as empty topics.
+func loadTopicsForSessions(ctx context.Context, s *Server, ids map[string]struct{}) (map[string]string, error) {
 	out := make(map[string]string, len(ids))
 	if len(ids) == 0 {
 		return out, nil
 	}
-	// Build a placeholder list for IN (?, ?, ?…).
-	placeholders := make([]string, 0, len(ids))
-	args := make([]any, 0, len(ids))
+	idList := make([]string, 0, len(ids))
 	for id := range ids {
-		placeholders = append(placeholders, "?")
-		args = append(args, id)
+		idList = append(idList, id)
 	}
-	q := `
-	  SELECT s.id, COALESCE(s.summary_topic, '')
-	    FROM sessions s
-	   WHERE s.id IN (` + strings.Join(placeholders, ",") + `)`
-	rows, err := st.DB().QueryContext(ctx, q, args...)
+	summaries, err := s.api.SummariesBatch(ctx, idList)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var id, topic string
-		if err := rows.Scan(&id, &topic); err != nil {
-			return nil, err
-		}
-		out[id] = topic
+	for id, sm := range summaries {
+		out[id] = parseSummaryTopic(sm.Body)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
-// loadSessionHeader pulls the sessions row for one id and
-// renders its display fields. Returns errSessionNotFound when
-// the row doesn't exist; the handler maps that to 404.
-func loadSessionHeader(ctx context.Context, st *store.Store, id string) (*SessionDetail, error) {
-	const q = `
-		SELECT id, started_at_ms, ended_at_ms, event_count, cwd,
-		       source_agent, source_session_id
-		  FROM sessions WHERE id = ?`
-	row := st.DB().QueryRowContext(ctx, q, id)
-
-	var (
-		gotID           string
-		startedMs       sql.NullInt64
-		endedMs         sql.NullInt64
-		eventCount      int
-		cwd             sql.NullString
-		sourceAgent     string
-		sourceSessionID string
-	)
-	if err := row.Scan(&gotID, &startedMs, &endedMs, &eventCount, &cwd,
-		&sourceAgent, &sourceSessionID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+// loadSessionHeader pulls the session detail row from the api and
+// renders its display fields. Returns errSessionNotFound when the
+// row doesn't exist; the handler maps that to 404.
+//
+// The detail endpoint (/v1/sessions/{id}) returns the SessionDigest
+// shape, which lacks source_agent / source_session_id — those are
+// fed into the Resume button via a second tiny call once the api
+// exposes them. For now we leave the Resume command empty when we
+// can't compute it; the template hides the button.
+func loadSessionHeader(ctx context.Context, s *Server, id string) (*SessionDetail, error) {
+	digest, err := s.api.Session(ctx, id)
+	if err != nil {
+		if errors.Is(err, apiclient.ErrNotFound) {
 			return nil, errSessionNotFound
 		}
-		return nil, fmt.Errorf("scan session row: %w", err)
+		return nil, fmt.Errorf("get session: %w", err)
 	}
 
 	// The resume command MUST cd into the session's *start* cwd, not
 	// sessions.cwd: Claude looks up transcripts under
 	// ~/.claude/projects/<encoded-cwd>/ keyed by the cwd at session
-	// start. The trigger keeps sessions.cwd as the latest cwd seen
-	// (useful for "where was this session most recently working"),
-	// which breaks resume whenever the user cd'd mid-session. Falls
-	// back to sessions.cwd if the lookup turns up nothing.
-	resumeCwd, err := store.LoadSessionStartCwd(ctx, st.DB(), gotID)
+	// start. Falls back to sessions.cwd if no start_cwd was recorded.
+	resumeCwd, err := s.api.SessionStartCwd(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("load start cwd: %w", err)
 	}
-	if !resumeCwd.Valid {
-		resumeCwd = cwd
+	if resumeCwd == nil {
+		resumeCwd = digest.Cwd
 	}
 
 	return &SessionDetail{
-		Title:           "session " + shortID(gotID),
-		ID:              gotID,
-		ShortID:         shortID(gotID),
-		Cwd:             orDash(cwd),
-		StartedAt:       absoluteOrDash(startedMs),
-		EndedAt:         endedOrActive(endedMs),
-		EventCount:      eventCount,
-		SourceAgent:     sourceAgent,
-		SourceSessionID: sourceSessionID,
-		ResumeCommand:   buildResumeCommand(sourceAgent, sourceSessionID, resumeCwd),
+		Title:           "session " + shortID(digest.ID),
+		ID:              digest.ID,
+		ShortID:         shortID(digest.ID),
+		Cwd:             orDashPtr(digest.Cwd),
+		StartedAt:       absoluteOrDashPtr(digest.StartedAtMs),
+		EndedAt:         endedOrActivePtr(digest.EndedAtMs),
+		EventCount:      digest.EventCount,
+		SourceAgent:     digest.SourceAgent,
+		SourceSessionID: digest.SourceSessionID,
+		ResumeCommand:   buildResumeCommandPtr(digest.SourceAgent, digest.SourceSessionID, resumeCwd),
 	}, nil
 }
 
-// buildResumeCommand renders the shell one-liner the Resume
+// buildResumeCommandPtr renders the shell one-liner the Resume
 // button copies to the clipboard. cd-then-launch so the agent
 // resumes against the same workspace it was captured in;
 // `claude --resume` keys off cwd, not just the session id.
@@ -344,7 +319,7 @@ func loadSessionHeader(ctx context.Context, st *store.Store, id string) (*Sessio
 // Returns "" for unknown / empty agents — the template branches
 // on that to hide the button rather than show a copy action that
 // pastes "" into the user's terminal.
-func buildResumeCommand(agent, sourceSessionID string, cwd sql.NullString) string {
+func buildResumeCommandPtr(agent, sourceSessionID string, cwd *string) string {
 	if sourceSessionID == "" {
 		return ""
 	}
@@ -367,8 +342,8 @@ func buildResumeCommand(agent, sourceSessionID string, cwd sql.NullString) strin
 		// we haven't modelled yet; emit nothing rather than guess.
 		return ""
 	}
-	if cwd.Valid && cwd.String != "" {
-		return "cd " + cwd.String + " && " + base
+	if cwd != nil && *cwd != "" {
+		return "cd " + *cwd + " && " + base
 	}
 	return base
 }
@@ -376,15 +351,15 @@ func buildResumeCommand(agent, sourceSessionID string, cwd sql.NullString) strin
 // loadLatestSummary returns the most recent summary llm_outputs
 // row for sessionID, parsed into the rendering shape. nil when
 // no summary has been generated for this session yet.
-func loadLatestSummary(ctx context.Context, st *store.Store, sessionID string) (*SessionSummary, error) {
-	outs, err := store.LoadLLMOutputsForSession(ctx, st.DB(), sessionID)
+func loadLatestSummary(ctx context.Context, s *Server, sessionID string) (*SessionSummary, error) {
+	outs, err := s.api.SessionLLMOutputs(ctx, sessionID, "", 0)
 	if err != nil {
 		return nil, err
 	}
-	// Pick the most recent kind=summary output. LoadLLMOutputsForSession
+	// Pick the most recent kind=summary output. SessionLLMOutputs
 	// orders by created_at_ms DESC, so the first match is the latest.
 	for _, o := range outs {
-		if o.Kind != store.LLMKindSummary {
+		if o.Kind != string(store.LLMKindSummary) {
 			continue
 		}
 		var parsed prompts.SummaryResult
@@ -417,39 +392,52 @@ func loadLatestSummary(ctx context.Context, st *store.Store, sessionID string) (
 
 // loadEventRows pulls the most recent `limit` events for the
 // session and renders each one for the timeline.
-func loadEventRows(ctx context.Context, st *store.Store, sessionID string, limit int) ([]EventRow, error) {
-	events, err := store.LoadEventsForSession(ctx, st.DB(), sessionID, limit)
+func loadEventRows(ctx context.Context, s *Server, sessionID string, limit int) ([]EventRow, error) {
+	resp, err := s.api.SessionEvents(ctx, sessionID, limit, false)
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now()
-	out := make([]EventRow, 0, len(events))
-	for _, e := range events {
+	out := make([]EventRow, 0, len(resp.Events))
+	for _, e := range resp.Events {
 		out = append(out, EventRow{
 			When:    relativeTime(e.TsSourceMs, now),
 			Kind:    e.Kind,
-			Role:    e.Role.OrEmpty(),
-			Tool:    e.ToolName.OrEmpty(),
-			Snippet: truncatePreviewString(e.ContentText.OrEmpty()),
+			Role:    derefStringOrEmpty(e.Role),
+			Tool:    derefStringOrEmpty(e.ToolName),
+			Snippet: truncatePreviewString(derefStringOrEmpty(e.ContentText)),
 		})
 	}
 	return out, nil
 }
 
-// absoluteOrDash renders a started/ended timestamp in a
-// machine-readable UTC form, or "-" when the column is NULL.
-// Wraps internal/timefmt so the date layout stays consistent
-// with the CLI table output.
-func absoluteOrDash(ms sql.NullInt64) string {
-	return timefmt.AbsoluteOrDash(ms)
+// absoluteOrDashPtr renders a started/ended timestamp in a
+// machine-readable UTC form, or "-" when the pointer is nil.
+// Pointer-aware sibling of internal/timefmt.AbsoluteOrDash, used
+// where wire types deliver *int64 instead of sql.NullInt64.
+func absoluteOrDashPtr(ms *int64) string {
+	if ms == nil || *ms == 0 {
+		return "-"
+	}
+	return time.UnixMilli(*ms).UTC().Format("2006-01-02 15:04 UTC")
 }
 
-// endedOrActive renders the session-end timestamp. NULL means
-// "no SessionEnd captured yet" — show "(active)" so the user
-// can tell at a glance.
-func endedOrActive(ms sql.NullInt64) string {
-	if !ms.Valid || ms.Int64 == 0 {
+// endedOrActivePtr renders the session-end timestamp. nil means
+// "no SessionEnd captured yet" — show "(active)" so the user can
+// tell at a glance.
+func endedOrActivePtr(ms *int64) string {
+	if ms == nil || *ms == 0 {
 		return "(active)"
 	}
-	return time.UnixMilli(ms.Int64).UTC().Format("2006-01-02 15:04 UTC")
+	return time.UnixMilli(*ms).UTC().Format("2006-01-02 15:04 UTC")
+}
+
+// derefStringOrEmpty unwraps a *string, returning "" for nil. Tiny
+// local helper used by per-event projection where wire types ship
+// *string for nullable columns.
+func derefStringOrEmpty(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }

@@ -2,13 +2,11 @@
 // HTTP server that lists sessions, surfaces cached LLM summaries,
 // and exposes the same FTS5 search the CLI and MCP server use.
 //
-// Like `aichronicles mcp-serve`, the web server is a short-lived
-// CLI subprocess (not part of `aichroniclesd`): it opens the
-// SQLite store directly in read mode, never writes, never proxies
-// through the daemon's UDS. SQLite WAL handles the read/write
-// concurrency between us and the daemon. The daemon's UDS is the
-// write path; the web server is a read path. Same boundary the
-// MCP server already uses.
+// Topology: the web is a SEPARATE process from the api daemon
+// (aichronicles-web.service, blast-radius-isolated from the api's
+// ingest worker). Reads go through the api's UDS via
+// internal/apiclient — same boundary internal/mcp uses — so the
+// daemon stays the single SQLite-aware process in production.
 //
 // Default bind is 127.0.0.1 — the localhost-only boundary is the
 // auth model, mirroring the daemon's 0600 UDS. Binding to a
@@ -30,7 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/apiclient"
 )
 
 // assetsFS holds every file under internal/web/assets/. Templates
@@ -93,7 +91,7 @@ type Config struct {
 // kicked off via Run. Safe to call Run concurrently with multiple
 // requests, not safe to call Run twice.
 type Server struct {
-	store     *store.Store
+	api       *apiclient.Client
 	cfg       Config
 	log       *slog.Logger
 	mux       *http.ServeMux
@@ -106,11 +104,11 @@ type Server struct {
 	streamCount atomic.Int32
 }
 
-// NewServer wires the routes against st. The caller retains
-// ownership of st — closing it is the caller's job. log is used
-// for startup, shutdown, and per-request access lines; pass
-// slog.Default() if you don't have a project logger handy.
-func NewServer(st *store.Store, cfg Config, log *slog.Logger) *Server {
+// NewServer wires the routes against api. The caller retains
+// ownership of api. log is used for startup, shutdown, and
+// per-request access lines; pass slog.Default() if you don't have
+// a project logger handy.
+func NewServer(api *apiclient.Client, cfg Config, log *slog.Logger) *Server {
 	if cfg.Bind == "" {
 		cfg.Bind = DefaultBind
 	}
@@ -124,7 +122,7 @@ func NewServer(st *store.Store, cfg Config, log *slog.Logger) *Server {
 		log = slog.Default()
 	}
 	s := &Server{
-		store:     st,
+		api:       api,
 		cfg:       cfg,
 		log:       log,
 		mux:       http.NewServeMux(),

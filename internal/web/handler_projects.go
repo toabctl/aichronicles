@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/skills"
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // projectsDefaultDays is the window /projects covers by default.
@@ -29,14 +29,14 @@ func (s *Server) projectsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	sinceMs := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
 
-	aggs, err := store.LoadProjectAggregates(r.Context(), s.store.DB(), sinceMs)
+	resp, err := s.api.ProjectAggregates(r.Context(), sinceMs)
 	if err != nil {
 		s.log.Error("projectsHandler: load", "err", err)
 		http.Error(w, "could not load projects", http.StatusInternalServerError)
 		return
 	}
 
-	page := buildProjectsPage(aggs, days, time.Now().UTC())
+	page := buildProjectsPage(resp.Projects, days, time.Now().UTC())
 	s.render(w, r, "projects", page)
 }
 
@@ -44,7 +44,7 @@ func (s *Server) projectsHandler(w http.ResponseWriter, r *http.Request) {
 // roots: walk each cwd up to the nearest .claude/.git/go.mod
 // ancestor, then sum sessions+events into the bucket keyed by
 // that ancestor.
-func buildProjectsPage(aggs []store.ProjectAggregate, days int, now time.Time) ProjectsPage {
+func buildProjectsPage(aggs []wire.ProjectAggregate, days int, now time.Time) ProjectsPage {
 	type bucket struct {
 		Sessions       int
 		Events         int

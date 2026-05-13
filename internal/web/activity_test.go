@@ -5,15 +5,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 func TestSessionStatus(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
 
-	mk := func(kind string, ageBack time.Duration) *store.LiveEvent {
-		return &store.LiveEvent{
+	mk := func(kind string, ageBack time.Duration) *wire.Event {
+		return &wire.Event{
 			Kind:       kind,
 			TsSourceMs: now.Add(-ageBack).UnixMilli(),
 		}
@@ -21,7 +21,7 @@ func TestSessionStatus(t *testing.T) {
 
 	cases := []struct {
 		name        string
-		latest      *store.LiveEvent
+		latest      *wire.Event
 		wantStatus  string
 		wantInTitle string
 	}{
@@ -69,7 +69,7 @@ func TestSessionStatus(t *testing.T) {
 		},
 		{
 			name:        "zero ts on latest → idle, no events yet",
-			latest:      &store.LiveEvent{Kind: "user_prompt", TsSourceMs: 0},
+			latest:      &wire.Event{Kind: "user_prompt", TsSourceMs: 0},
 			wantStatus:  "idle",
 			wantInTitle: "no events yet",
 		},
@@ -138,7 +138,7 @@ func TestRenderStatusDot_EscapesHostileInput(t *testing.T) {
 
 func TestRenderLatestEventCell(t *testing.T) {
 	t.Parallel()
-	e := store.LiveEvent{
+	e := wire.Event{
 		EventID:    "evt-1",
 		SessionID:  "sess-1",
 		Kind:       "user_prompt",
@@ -159,7 +159,7 @@ func TestRenderLatestEventCell(t *testing.T) {
 
 func TestRenderLatestEventCell_EscapesSnippetAndKind(t *testing.T) {
 	t.Parallel()
-	e := store.LiveEvent{
+	e := wire.Event{
 		Kind:       `<img src=x onerror=1>`,
 		TsSourceMs: 1,
 		Snippet:    ptrTo(`</span><script>alert(1)</script>`),
@@ -175,7 +175,7 @@ func TestRenderLatestEventCell_EscapesSnippetAndKind(t *testing.T) {
 
 func TestRenderLatestEventCell_FlattenSnippetWhitespace(t *testing.T) {
 	t.Parallel()
-	e := store.LiveEvent{
+	e := wire.Event{
 		Kind:       "tool_use",
 		TsSourceMs: 1,
 		Snippet:    ptrTo("line one\nline two\tline three"),

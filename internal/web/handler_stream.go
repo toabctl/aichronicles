@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 const (
@@ -85,11 +85,16 @@ func (s *Server) streamHandler(w http.ResponseWriter, r *http.Request) {
 	// a new tab doesn't get the entire historical event stream
 	// fired at it. Clients that want backfill ask for it via
 	// the regular paginated endpoints.
-	cursor, err := store.LatestIngestSeq(r.Context(), s.store.DB())
+	// Initial cursor from the api's current LatestSeq watermark.
+	// Request limit=1 instead of asking for all events — we only
+	// want the seq, and the wire response carries it on every body
+	// so even a one-row probe is sufficient.
+	probe, err := s.api.Events(r.Context(), wire.EventListRequest{Limit: 1})
 	if err != nil {
 		s.log.Error("stream: load latest seq", "err", err)
 		return
 	}
+	cursor := probe.LatestSeq
 	// Clients can ask to resume from a specific seq via ?since_seq=
 	// — useful when the connection drops and we want to catch up
 	// without sending all history.
@@ -118,9 +123,12 @@ func (s *Server) streamHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			flusher.Flush()
 		case <-pollTicker.C:
-			events, err := store.LoadEventsSinceSeq(
-				r.Context(), s.store.DB(), cursor, sessionFilter, streamBatchLimit,
-			)
+			batch, err := s.api.Events(r.Context(), wire.EventListRequest{
+				SessionID: sessionFilter,
+				SinceSeq:  cursor,
+				Limit:     streamBatchLimit,
+			})
+			events := batch.Events
 			if err != nil {
 				s.log.Error("stream: poll events", "err", err)
 				// Soft failure — try again next tick rather
@@ -164,7 +172,7 @@ func (s *Server) streamHandler(w http.ResponseWriter, r *http.Request) {
 // `<ul id="livefeed">`. The `id:` line lets the browser's
 // EventSource send a Last-Event-ID header on reconnect, matching
 // the ?since_seq resume parameter.
-func writeLiveFeedFrame(w http.ResponseWriter, e store.LiveEvent) error {
+func writeLiveFeedFrame(w http.ResponseWriter, e wire.Event) error {
 	frag := renderLiveEventFragment(e)
 	_, err := fmt.Fprintf(w, "id: %d\nevent: event\ndata: %s\n\n",
 		e.IngestSeq, frag)
@@ -184,7 +192,7 @@ func writeLiveFeedFrame(w http.ResponseWriter, e store.LiveEvent) error {
 // lines is concatenated by the browser, but htmx's parser is
 // happier with one line, and our renderers already flatten newlines
 // from snippets via truncateForStream.
-func writeSessionFrame(w http.ResponseWriter, e store.LiveEvent, now time.Time) error {
+func writeSessionFrame(w http.ResponseWriter, e wire.Event, now time.Time) error {
 	cell := renderLatestEventCell(e)
 	status, title := sessionStatus(&e, now)
 	dot := renderStatusDot(e.SessionID, status, title, true /* OOB */)
@@ -198,7 +206,7 @@ func writeSessionFrame(w http.ResponseWriter, e store.LiveEvent, now time.Time) 
 // at every interpolation point so neither the snippet nor the cwd
 // can break out of the markup. Kept inline (not a template) so the
 // SSE hot path doesn't pay template-lookup cost per event.
-func renderLiveEventFragment(e store.LiveEvent) string {
+func renderLiveEventFragment(e wire.Event) string {
 	short := shortID(e.SessionID)
 	cwd := "-"
 	if e.Cwd != nil && derefOr(e.Cwd, "") != "" {
