@@ -356,6 +356,59 @@ func TestFactSubjectsLike_RejectsEmptyNeedle(t *testing.T) {
 	}
 }
 
+// TestLoadDistinctFactSubjects_ReturnsSortedDistinct covers the
+// no-needle variant added for the web's facts-index page. Subjects
+// must be returned in alphabetical order, dedup'd across multiple
+// facts for the same subject.
+func TestLoadDistinctFactSubjects_ReturnsSortedDistinct(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+	loID := mkFactsRow(t, s, 1_700_000_000_000)
+
+	// Three subjects, with two facts on one of them — dedup must
+	// collapse to three rows in alphabetical order.
+	rows := []SemanticFact{
+		{SourceLLMOutputID: loID, Subject: "/work/zebra", Predicate: "primary_language", Object: "Go", Confidence: 1, AssertedAtMs: 1},
+		{SourceLLMOutputID: loID, Subject: "/work/alpha", Predicate: "primary_language", Object: "Go", Confidence: 1, AssertedAtMs: 1},
+		{SourceLLMOutputID: loID, Subject: "/work/middle", Predicate: "primary_language", Object: "Go", Confidence: 1, AssertedAtMs: 1},
+		{SourceLLMOutputID: loID, Subject: "/work/alpha", Predicate: "framework", Object: "stdlib", Confidence: 1, AssertedAtMs: 2},
+	}
+	for _, r := range rows {
+		if _, err := SaveSemanticFact(ctx, s.DB(), r); err != nil {
+			t.Fatalf("save %s: %v", r.Subject, err)
+		}
+	}
+
+	got, err := LoadDistinctFactSubjects(ctx, s.DB(), 0)
+	if err != nil {
+		t.Fatalf("LoadDistinctFactSubjects: %v", err)
+	}
+	want := []string{"/work/alpha", "/work/middle", "/work/zebra"}
+	if len(got) != len(want) {
+		t.Fatalf("len=%d got=%v want=%v", len(got), got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("subject[%d]: got %q want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestLoadDistinctFactSubjects_EmptyTable verifies the empty-DB
+// case returns (nil, nil) rather than an error.
+func TestLoadDistinctFactSubjects_EmptyTable(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	got, err := LoadDistinctFactSubjects(context.Background(), s.DB(), 0)
+	if err != nil {
+		t.Fatalf("LoadDistinctFactSubjects: %v", err)
+	}
+	if got != nil {
+		t.Errorf("got %v, want nil", got)
+	}
+}
+
 func TestLoadFactsForSubject_RejectsEmptySubject(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)

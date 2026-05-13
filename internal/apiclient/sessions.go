@@ -59,6 +59,45 @@ func (c *Client) ResolveSession(ctx context.Context, prefix string) (string, err
 	return out.ID, nil
 }
 
+// SessionStartCwd queries GET /v1/sessions/{id}/start-cwd. Returns
+// (nil, nil) when the session has no recorded start cwd; the consumer
+// (typically a "resume" affordance) decides whether to fall back to
+// sessions.cwd or hide the button. Returns ErrNotFound only when the
+// session id itself doesn't exist.
+func (c *Client) SessionStartCwd(ctx context.Context, id string) (*string, error) {
+	var out wire.SessionStartCwdResponse
+	if err := c.do(ctx, http.MethodGet,
+		"/v1/sessions/"+url.PathEscape(id)+"/start-cwd", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Cwd, nil
+}
+
+// SessionLinksFrom queries GET /v1/session-links?from=X — outgoing
+// links from a session. Returns an empty slice (not nil) when none
+// exist so renderers can iterate without nil checks.
+func (c *Client) SessionLinksFrom(ctx context.Context, id string) ([]wire.SessionLinkRow, error) {
+	q := url.Values{}
+	q.Set("from", id)
+	var out wire.SessionLinksResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/session-links?"+q.Encode(), nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Links, nil
+}
+
+// SessionLinksTo queries GET /v1/session-links?to=X — incoming
+// reverse-index of links pointing AT a session.
+func (c *Client) SessionLinksTo(ctx context.Context, id string) ([]wire.SessionLinkRow, error) {
+	q := url.Values{}
+	q.Set("to", id)
+	var out wire.SessionLinksResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/session-links?"+q.Encode(), nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Links, nil
+}
+
 // RelatedSessions queries GET /v1/sessions/{id}/related.
 func (c *Client) RelatedSessions(ctx context.Context, id string, limit int) (wire.CandidateSessionListResponse, error) {
 	path := "/v1/sessions/" + url.PathEscape(id) + "/related"

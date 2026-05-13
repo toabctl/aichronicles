@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -40,4 +41,20 @@ func (c *Client) Events(ctx context.Context, req wire.EventListRequest) (wire.Ev
 		return wire.EventListResponse{}, err
 	}
 	return out, nil
+}
+
+// EventsLatestBatch fetches each session's most recent event in one
+// round-trip. Keyed by session_id; sessions with zero events are
+// absent. Empty ids returns an empty map (no HTTP call).
+func (c *Client) EventsLatestBatch(ctx context.Context, ids []string) (map[string]wire.Event, error) {
+	if len(ids) == 0 {
+		return map[string]wire.Event{}, nil
+	}
+	q := url.Values{}
+	q.Set("session_ids", strings.Join(ids, ","))
+	var out wire.LatestEventsBatchResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/events/latest?"+q.Encode(), nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Events, nil
 }

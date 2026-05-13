@@ -52,16 +52,45 @@ func (s *Server) handleEventsList(w http.ResponseWriter, r *http.Request) {
 		LatestSeq: latest,
 	}
 	for _, e := range rows {
-		out.Events = append(out.Events, wire.Event{
-			IngestSeq:  e.IngestSeq,
-			EventID:    e.EventID,
-			SessionID:  e.SessionID,
-			Kind:       e.Kind,
-			TsSourceMs: e.TsSourceMs,
-			TsServerMs: e.TsServerMs,
-			Cwd:        e.Cwd,
-			Snippet:    e.Snippet,
-		})
+		out.Events = append(out.Events, liveEventToWire(e))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// handleEventsLatestBatch serves GET /v1/events/latest?session_ids=id1,id2.
+// Returns a {session_id → Event} map carrying each session's most
+// recent event. Sessions with no events are omitted. Used by the
+// web's session-list page to render "latest activity" per row in
+// one round-trip; replaces an N-query loop.
+func (s *Server) handleEventsLatestBatch(w http.ResponseWriter, r *http.Request) {
+	ids := parseSessionIDsQuery(r.URL.Query().Get("session_ids"))
+	if len(ids) == 0 {
+		writeProblem(w, http.StatusBadRequest, "Missing session_ids",
+			"session_ids is a comma-separated list of ids")
+		return
+	}
+	rows, err := store.LoadLatestEventsIndexedByID(r.Context(), s.store.DB(), ids)
+	if err != nil {
+		s.slog.Error("LoadLatestEventsIndexedByID", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	out := wire.LatestEventsBatchResponse{Events: make(map[string]wire.Event, len(rows))}
+	for id, e := range rows {
+		out.Events[id] = liveEventToWire(e)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func liveEventToWire(e store.LiveEvent) wire.Event {
+	return wire.Event{
+		IngestSeq:  e.IngestSeq,
+		EventID:    e.EventID,
+		SessionID:  e.SessionID,
+		Kind:       e.Kind,
+		TsSourceMs: e.TsSourceMs,
+		TsServerMs: e.TsServerMs,
+		Cwd:        e.Cwd,
+		Snippet:    e.Snippet,
+	}
 }

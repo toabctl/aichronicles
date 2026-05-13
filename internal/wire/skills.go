@@ -70,3 +70,30 @@ type InvokedSkillsRequest struct {
 type InvokedSkillsResponse struct {
 	Skills []InvokedSkill `json:"skills"`
 }
+
+// InstalledSkill is the wire shape for one /v1/skills/installed row:
+// a SKILL.md file the daemon discovered on disk (global ~/.claude/skills
+// or project-local under any observed session cwd). Mirrors
+// prompts.InstalledSkill 1:1 so the handler projection is a direct
+// copy.
+type InstalledSkill struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	// Source is the discovery scope: "global" for ~/.claude/skills,
+	// "project:<abs-path>" for project-local installs, "plugin:<id>"
+	// for plugin-provided. Renderers group rows by this prefix.
+	Source string `json:"source"`
+}
+
+// InstalledSkillsRequest is the query-shape for
+// GET /v1/skills/installed. SinceMs scopes which session cwds the
+// daemon walks for project-local discovery (older sessions are
+// ignored so a long-running install doesn't pile up dead roots).
+type InstalledSkillsRequest struct {
+	SinceMs int64 `json:"since_ms,omitempty"`
+}
+
+// InstalledSkillsResponse is the body for /v1/skills/installed.
+type InstalledSkillsResponse struct {
+	Skills []InstalledSkill `json:"skills"`
+}

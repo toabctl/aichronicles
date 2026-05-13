@@ -32,6 +32,26 @@ func (c *Client) SkillImpact(ctx context.Context, req wire.SkillImpactRequest) (
 	return out, nil
 }
 
+// InstalledSkills queries GET /v1/skills/installed. The daemon walks
+// ~/.claude/skills (global) and every project root derived from
+// sessions newer than sinceMs (project-local) and returns the
+// deduplicated, alphabetised slice.
+func (c *Client) InstalledSkills(ctx context.Context, sinceMs int64) (wire.InstalledSkillsResponse, error) {
+	q := url.Values{}
+	if sinceMs > 0 {
+		q.Set("since_ms", strconv.FormatInt(sinceMs, 10))
+	}
+	path := "/v1/skills/installed"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out wire.InstalledSkillsResponse
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return wire.InstalledSkillsResponse{}, err
+	}
+	return out, nil
+}
+
 // InvokedSkills queries GET /v1/skills/invoked. sinceMs of 0
 // means "all time". Returns skills sorted by descending count.
 func (c *Client) InvokedSkills(ctx context.Context, sinceMs int64) (wire.InvokedSkillsResponse, error) {

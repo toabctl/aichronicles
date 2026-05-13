@@ -213,6 +213,43 @@ func FactSubjectsLike(ctx context.Context, db *sql.DB, needle string, limit int)
 	return out, rows.Err()
 }
 
+// LoadDistinctFactSubjects returns every distinct semantic_facts.subject
+// in alphabetical order, capped at `limit` rows. Sister of
+// FactSubjectsLike for callers that want the FULL index rather than a
+// needle-filtered slice (web's /facts page uses it for the index of
+// projects with stored facts).
+//
+// limit ≤0 falls back to defaultDistinctFactSubjectsLimit (200) so
+// pathological corpora don't ship megabytes of subject strings to a
+// renderer that only needs a few hundred.
+func LoadDistinctFactSubjects(ctx context.Context, db *sql.DB, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = defaultDistinctFactSubjectsLimit
+	}
+	rows, err := db.QueryContext(ctx,
+		`SELECT DISTINCT subject
+		   FROM semantic_facts
+		  ORDER BY subject ASC
+		  LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query distinct fact subjects: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, fmt.Errorf("scan distinct subject: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+const defaultDistinctFactSubjectsLimit = 200
+
 // scanSemanticFacts iterates rows from a SELECT * shaped query and
 // produces the slice. Shared between LoadFactsForSubject and
 // LoadRecentFacts so the column order stays in lockstep.

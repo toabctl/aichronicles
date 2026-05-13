@@ -3,9 +3,36 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestParseSessionIDsQuery(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{name: "empty", in: "", want: nil},
+		{name: "single", in: "abc", want: []string{"abc"}},
+		{name: "comma list", in: "a,b,c", want: []string{"a", "b", "c"}},
+		{name: "trims whitespace", in: " a , b ,c ", want: []string{"a", "b", "c"}},
+		{name: "dedupes first wins", in: "a,b,a,c,b", want: []string{"a", "b", "c"}},
+		{name: "only commas", in: ",,,", want: nil},
+		{name: "only whitespace", in: "  ,  ,", want: nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := parseSessionIDsQuery(tc.in)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("got %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+}
 
 func TestParseInt64Query(t *testing.T) {
 	t.Parallel()

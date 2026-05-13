@@ -9,13 +9,20 @@ import (
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
-func TestHandleFactsSubjects_RequiresContains(t *testing.T) {
+// TestHandleFactsSubjects_NoContainsReturnsDistinctList verifies the
+// "no contains" mode added for the web's facts-index page: empty
+// param returns the distinct list (200 with an array), not 400 like
+// the original autocomplete-only contract did.
+func TestHandleFactsSubjects_NoContainsReturnsDistinctList(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/facts/subjects", nil))
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("status=%d, want 400", rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s, want 200", rr.Code, rr.Body.String())
+	}
+	if !contains(rr.Body.String(), `"subjects":[]`) {
+		t.Errorf("expected empty subjects:[]; got %s", rr.Body.String())
 	}
 }
 

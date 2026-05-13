@@ -91,6 +91,59 @@ func TestHandleSessionsGet_Found(t *testing.T) {
 	}
 }
 
+// TestHandleSessionStartCwd_NullForUnknownSession covers the
+// "no recorded cwd" branch: an unknown id returns 200 with cwd:null,
+// not 404. Documented contract — see handler_session_reads.go.
+func TestHandleSessionStartCwd_NullForUnknownSession(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr,
+		httptest.NewRequest(http.MethodGet, "/v1/sessions/nope/start-cwd", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s, want 200", rr.Code, rr.Body.String())
+	}
+	if !contains(rr.Body.String(), `"cwd":null`) {
+		t.Errorf("expected cwd:null; got %s", rr.Body.String())
+	}
+}
+
+func TestHandleSessionLinks_RejectsMissingFromAndTo(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr,
+		httptest.NewRequest(http.MethodGet, "/v1/session-links", nil))
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status=%d, want 400", rr.Code)
+	}
+}
+
+func TestHandleSessionLinks_RejectsBothFromAndTo(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr,
+		httptest.NewRequest(http.MethodGet, "/v1/session-links?from=a&to=b", nil))
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status=%d, want 400", rr.Code)
+	}
+}
+
+func TestHandleSessionLinks_FromReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr,
+		httptest.NewRequest(http.MethodGet, "/v1/session-links?from=unknown", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s, want 200", rr.Code, rr.Body.String())
+	}
+	if !contains(rr.Body.String(), `"links":[]`) {
+		t.Errorf("expected empty links:[]; got %s", rr.Body.String())
+	}
+}
+
 func TestHandleSessionsList_RejectsBadParams(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)

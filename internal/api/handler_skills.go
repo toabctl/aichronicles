@@ -91,6 +91,37 @@ func (s *Server) handleSkillsImpact(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// handleSkillsInstalled serves GET /v1/skills/installed: every
+// SKILL.md the daemon discovers on disk — global ~/.claude/skills/
+// plus project-local under any observed session cwd within the
+// since_ms window. Backed by skills.CollectInstalled.
+//
+// since_ms is optional; zero means "every project cwd ever
+// recorded" (use sparingly on large corpora — the daemon walks
+// every project root). For day-to-day rendering, callers pass a
+// 30-day window.
+func (s *Server) handleSkillsInstalled(w http.ResponseWriter, r *http.Request) {
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return
+	}
+	rows, err := skills.CollectInstalled(r.Context(), s.store.DB(), sinceMs)
+	if err != nil {
+		s.slog.Error("skills.CollectInstalled", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	out := wire.InstalledSkillsResponse{Skills: make([]wire.InstalledSkill, 0, len(rows))}
+	for _, r := range rows {
+		out.Skills = append(out.Skills, wire.InstalledSkill{
+			Name:        r.Name,
+			Description: r.Description,
+			Source:      r.Source,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // handleSkillsInvoked serves GET /v1/skills/invoked: per-skill
 // invocation counts derived from skill_load extractions in a
 // window. Backed by skills.LoadInvoked. since_ms is optional;

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -112,6 +113,24 @@ func (c *Client) Summary(ctx context.Context, sessionID string) (wire.LLMOutput,
 		return wire.LLMOutput{}, err
 	}
 	return out, nil
+}
+
+// SummariesBatch fetches latest summaries for many sessions in one
+// round-trip. Returns a map keyed by session_id; sessions without a
+// cached summary are absent (not nil-valued). An empty ids slice
+// returns an empty map and a 400 — the caller should skip the call
+// when it has nothing to fetch.
+func (c *Client) SummariesBatch(ctx context.Context, ids []string) (map[string]wire.LLMOutput, error) {
+	if len(ids) == 0 {
+		return map[string]wire.LLMOutput{}, nil
+	}
+	q := url.Values{}
+	q.Set("session_ids", strings.Join(ids, ","))
+	var out wire.SummariesBatchResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/summaries/batch?"+q.Encode(), nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Summaries, nil
 }
 
 // LLMOutputByHash fetches the cached llm output for a (kind,

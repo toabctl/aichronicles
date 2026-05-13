@@ -152,6 +152,76 @@ func (s *Server) handleSessionOutcome(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleSessionStartCwd serves GET /v1/sessions/{id}/start-cwd.
+// Returns {cwd: <string|null>}; null is a legitimate "no recorded
+// start cwd" state, not an error. The web's resume affordance is
+// the primary consumer.
+func (s *Server) handleSessionStartCwd(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing session id", "")
+		return
+	}
+	cwd, err := store.LoadSessionStartCwd(r.Context(), s.store.DB(), id)
+	if err != nil {
+		s.slog.Error("LoadSessionStartCwd", "session_id", id, "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	var out wire.SessionStartCwdResponse
+	if cwd.Valid {
+		v := cwd.String
+		out.Cwd = &v
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleSessionLinks serves GET /v1/session-links?from=X or ?to=X.
+// Exactly one of from / to must be set; an empty pair or both-set
+// is a 400 since the semantics differ (outgoing vs incoming
+// reverse-index).
+func (s *Server) handleSessionLinks(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	from := q.Get("from")
+	to := q.Get("to")
+	switch {
+	case from == "" && to == "":
+		writeProblem(w, http.StatusBadRequest, "Missing from or to",
+			"exactly one of from= or to= is required")
+		return
+	case from != "" && to != "":
+		writeProblem(w, http.StatusBadRequest, "Conflicting from and to",
+			"specify either from= or to=, not both")
+		return
+	}
+
+	var (
+		rows []store.SessionLink
+		err  error
+	)
+	if from != "" {
+		rows, err = store.LoadSessionLinksFrom(r.Context(), s.store.DB(), from)
+	} else {
+		rows, err = store.LoadSessionLinksTo(r.Context(), s.store.DB(), to)
+	}
+	if err != nil {
+		s.slog.Error("LoadSessionLinks", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	out := wire.SessionLinksResponse{Links: make([]wire.SessionLinkRow, 0, len(rows))}
+	for _, l := range rows {
+		out.Links = append(out.Links, wire.SessionLinkRow{
+			FromSessionID: l.FromSessionID,
+			ToSessionID:   l.ToSessionID,
+			Kind:          l.Kind,
+			Rationale:     l.Rationale,
+			CreatedAtMs:   l.CreatedAtMs,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // handleSessionDigests serves GET /v1/sessions/digests?since_ms=&limit=.
 // Returns the LoadRecentSessionDigests result — every session with
 // its summary topic + first prompt + cwd, used by reflect/propose

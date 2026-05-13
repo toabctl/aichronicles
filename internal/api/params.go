@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -71,6 +72,37 @@ func parsePositiveIntQuery(w http.ResponseWriter, r *http.Request, name string, 
 		return 0, false
 	}
 	return n, true
+}
+
+// parseSessionIDsQuery splits a comma-separated session_ids query
+// value into a deduplicated slice. Empty input returns nil so the
+// caller can detect "no ids" without a separate length check.
+// Whitespace around each id is trimmed; empty splits drop out.
+// Order is preserved (first occurrence wins) — useful when a
+// renderer wants to show results in the same order the client
+// asked.
+func parseSessionIDsQuery(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	seen := make(map[string]struct{}, len(parts))
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if _, dup := seen[p]; dup {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // positiveOrZero parses "" → 0, valid non-negative int → that

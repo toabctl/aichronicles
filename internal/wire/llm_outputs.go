@@ -14,3 +14,12 @@ type LLMOutput struct {
 	Body         string  `json:"body"`
 	CreatedAtMs  int64   `json:"created_at_ms"`
 }
+
+// SummariesBatchResponse is the body for GET /v1/summaries/batch.
+// Keyed by session_id; sessions without a cached summary are simply
+// absent from the map (no "null" sentinel). Used by the web's
+// session-list page to enrich N rows with their latest summary in a
+// single round-trip, avoiding N HTTP calls.
+type SummariesBatchResponse struct {
+	Summaries map[string]LLMOutput `json:"summaries"`
+}

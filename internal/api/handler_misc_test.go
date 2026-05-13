@@ -31,6 +31,31 @@ func TestHandleSummaries_NotFound(t *testing.T) {
 	}
 }
 
+func TestHandleSummariesBatch_RequiresIDs(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr,
+		httptest.NewRequest(http.MethodGet, "/v1/summaries/batch", nil))
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status=%d, want 400", rr.Code)
+	}
+}
+
+func TestHandleSummariesBatch_UnknownIDsReturnsEmptyMap(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr,
+		httptest.NewRequest(http.MethodGet, "/v1/summaries/batch?session_ids=ghost1,ghost2", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s, want 200", rr.Code, rr.Body.String())
+	}
+	if !contains(rr.Body.String(), `"summaries":{}`) {
+		t.Errorf("expected empty summaries:{}; got %s", rr.Body.String())
+	}
+}
+
 func TestHandleLLMOutput_RequiresKindAndHash(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)

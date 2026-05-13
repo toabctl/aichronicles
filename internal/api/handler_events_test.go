@@ -33,6 +33,31 @@ func ingestN(t *testing.T, srv *testServer, n int) []string {
 	return ids
 }
 
+func TestHandleEventsLatestBatch_RequiresIDs(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr,
+		httptest.NewRequest(http.MethodGet, "/v1/events/latest", nil))
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status=%d, want 400", rr.Code)
+	}
+}
+
+func TestHandleEventsLatestBatch_UnknownIDsReturnsEmptyMap(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr,
+		httptest.NewRequest(http.MethodGet, "/v1/events/latest?session_ids=ghost1,ghost2", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s, want 200", rr.Code, rr.Body.String())
+	}
+	if !contains(rr.Body.String(), `"events":{}`) {
+		t.Errorf("expected empty events:{}; got %s", rr.Body.String())
+	}
+}
+
 func TestHandleEventsList_EmptyDB(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)

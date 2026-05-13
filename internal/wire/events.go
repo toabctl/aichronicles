@@ -45,3 +45,11 @@ type EventListResponse struct {
 	Events    []Event `json:"events"`
 	LatestSeq int64   `json:"latest_seq"`
 }
+
+// LatestEventsBatchResponse is the body for GET /v1/events/latest.
+// Keyed by session_id; sessions whose latest event isn't found are
+// absent from the map. Used by the web's session-list page to render
+// "latest activity" per row in one round-trip.
+type LatestEventsBatchResponse struct {
+	Events map[string]Event `json:"events"`
+}

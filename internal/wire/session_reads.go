@@ -48,6 +48,33 @@ type SessionDigestsResponse struct {
 	Digests []SessionDigest `json:"digests"`
 }
 
+// SessionLinkRow is the wire shape for one session_links row returned
+// by GET /v1/session-links. Both ends are populated unconditionally
+// so the web's outgoing/incoming sidebars consume one shape.
+type SessionLinkRow struct {
+	FromSessionID string `json:"from_session_id"`
+	ToSessionID   string `json:"to_session_id"`
+	Kind          string `json:"kind"`
+	Rationale     string `json:"rationale"`
+	CreatedAtMs   int64  `json:"created_at_ms"`
+}
+
+// SessionLinksResponse is the body for GET /v1/session-links?from=X
+// or ?to=X.
+type SessionLinksResponse struct {
+	Links []SessionLinkRow `json:"links"`
+}
+
+// SessionStartCwdResponse is the body for GET /v1/sessions/{id}/start-cwd.
+// Cwd is nil when the session has no event with a recorded cwd — the
+// caller (web's resume button) decides whether to fall back to
+// sessions.cwd or hide the affordance entirely. The wire layer
+// returns 200-with-null rather than 404 because "no start_cwd" is a
+// normal state, not an error.
+type SessionStartCwdResponse struct {
+	Cwd *string `json:"cwd"`
+}
+
 // SessionOutcome is the wire shape for one session_outcomes row,
 // returned by GET /v1/sessions/{id}/outcome. The endpoint reads-
 // or-backfills, mirroring store.EnsureSessionOutcome — a

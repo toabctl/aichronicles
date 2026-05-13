@@ -100,6 +100,31 @@ func (s *Server) handleSummariesGet(w http.ResponseWriter, r *http.Request) {
 	writeProblem(w, http.StatusNotFound, "No summary for session", sessionID)
 }
 
+// handleSummariesBatch serves GET /v1/summaries/batch?session_ids=id1,id2,id3.
+// Returns a {session_id → LLMOutput} map for sessions that have a
+// cached summary; sessions without one are omitted from the map.
+// One round-trip replacing N /v1/summaries?session_id= calls — the
+// web's session-list page is the primary consumer.
+func (s *Server) handleSummariesBatch(w http.ResponseWriter, r *http.Request) {
+	ids := parseSessionIDsQuery(r.URL.Query().Get("session_ids"))
+	if len(ids) == 0 {
+		writeProblem(w, http.StatusBadRequest, "Missing session_ids",
+			"session_ids is a comma-separated list of ids")
+		return
+	}
+	rows, err := store.LoadSummariesIndexedByID(r.Context(), s.store.DB(), ids)
+	if err != nil {
+		s.slog.Error("LoadSummariesIndexedByID", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	out := wire.SummariesBatchResponse{Summaries: make(map[string]wire.LLMOutput, len(rows))}
+	for id, row := range rows {
+		out.Summaries[id] = llmOutputToWire(row)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // handleLLMOutputGet serves GET /v1/llm-outputs?kind=&prompt_hash=.
 // Used by callers that want to check the LLM-output cache by hash
 // before paying for a regeneration.
