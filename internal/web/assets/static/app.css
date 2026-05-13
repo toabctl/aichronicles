@@ -352,13 +352,47 @@ tr.nav-row:focus-visible {
   color: var(--pico-muted-color);
 }
 
-/* Sessions table — let the prompt cell breathe (it carries the
-   first prompt + cwd + topic) and keep the timestamp column tight.
-   The cwd is a sub-line of the prompt cell rather than its own
-   column because a column-wide cwd ate into the prompt + latest
-   columns at any reasonable page width. */
+/* Sessions table — fixed layout so column widths are governed by
+   the table itself, not by the widest cell content. Without
+   table-layout:fixed the browser auto-sizes columns to fit, which
+   meant a long "latest event" snippet (a wide Bash invocation, a
+   long file path) pushed the whole row past the container's width
+   and forced horizontal scroll on laptop displays. With fixed
+   layout the small columns (status, sid, ts, count, summary badge)
+   take their declared widths and the two text-heavy cells
+   (prompt-cell + latest) split the remainder; long snippets
+   ellipsize inside the latest cell instead of widening the table.
+   Column targeting is by :nth-child so the template can keep its
+   semantic class names without each cell needing a sizing class. */
+table.sessions {
+  table-layout: fixed;
+  width: 100%;
+}
+table.sessions th,
+table.sessions td {
+  padding-left: 0.4rem;
+  padding-right: 0.4rem;
+}
+table.sessions th:nth-child(1),
+table.sessions td:nth-child(1) { width: 1.4rem; }   /* status dot */
+table.sessions th:nth-child(2),
+table.sessions td:nth-child(2) { width: 6em; }      /* short sid */
+table.sessions th:nth-child(3),
+table.sessions td:nth-child(3) { width: 10em; }     /* last activity */
+table.sessions th:nth-child(4),
+table.sessions td:nth-child(4) { width: 4.5em; }    /* event count */
+table.sessions th:nth-child(7),
+table.sessions td:nth-child(7) { width: 5.5em; }    /* summary badge */
+/* Columns 5 (what & where) and 6 (latest event) inherit no width
+   and so share the remaining horizontal space ~50/50 under
+   table-layout:fixed. */
+
 table.sessions td.prompt-cell {
-  min-width: 18rem;
+  /* Long preview strings would otherwise overflow a fixed-width
+     cell because the default break opportunity is whitespace.
+     overflow-wrap:anywhere lets them break mid-word when they
+     have to. */
+  overflow-wrap: anywhere;
 }
 table.sessions td.prompt-cell .cwd {
   color: var(--pico-muted-color);
@@ -371,22 +405,19 @@ table.sessions td.ts {
   font-variant-numeric: tabular-nums;
 }
 table.sessions td.status-cell {
-  width: 1.4rem;
   text-align: center;
   padding-right: 0;
 }
 /* Latest-event cell: dense single-line preview that updates over
-   SSE. Cap width so a long snippet doesn't push every other column
-   to the right, but generous enough that the typical snippet ("Bash
-   systemctl --user restart …") isn't clipped at the first space.
-   The cell itself listens for sse-swap="session-<id>" and replaces
-   its innerHTML on each new event. */
+   SSE. table-layout:fixed gives it a defined column width; the
+   nowrap + overflow:hidden + ellipsis combo clips any snippet
+   that doesn't fit. The cell listens for sse-swap="session-<id>"
+   and replaces its innerHTML on each new event. */
 table.sessions td.latest {
   font-size: 0.875em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 48rem;
 }
 table.sessions td.latest .ts {
   font-family: var(--pico-font-family-monospace);
