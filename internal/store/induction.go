@@ -170,8 +170,7 @@ func HasInductionRun(ctx context.Context, db *sql.DB, sessionID string) (bool, e
 // without a separate body parse step.
 func LoadInductionRow(ctx context.Context, db *sql.DB, sessionID string) (*LLMOutput, error) {
 	row := db.QueryRowContext(ctx,
-		`SELECT id, session_id, kind, model, prompt_hash,
-		        input_tokens, output_tokens, body, created_at_ms
+		`SELECT `+llmOutputColumns+`
 		   FROM llm_outputs
 		  WHERE session_id = ? AND kind = ?
 		  ORDER BY created_at_ms DESC

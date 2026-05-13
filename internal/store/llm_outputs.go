@@ -159,8 +159,7 @@ func SaveLLMOutput(ctx context.Context, tx *sql.Tx, out *LLMOutput) (id int64, i
 // this exact prompt?" probe before calling the LLM.
 func LoadLLMOutputByHash(ctx context.Context, db *sql.DB, kind LLMOutputKind, promptHash string) (*LLMOutput, error) {
 	row := db.QueryRowContext(ctx,
-		`SELECT id, session_id, kind, model, prompt_hash,
-			input_tokens, output_tokens, body, created_at_ms
+		`SELECT `+llmOutputColumns+`
 		 FROM llm_outputs
 		 WHERE kind = ? AND prompt_hash = ?`,
 		string(kind), promptHash,
@@ -178,8 +177,7 @@ func LoadLLMOutputByHash(ctx context.Context, db *sql.DB, kind LLMOutputKind, pr
 // and want to act on that exact row regardless of recency.
 func LoadLLMOutputByID(ctx context.Context, db *sql.DB, id int64) (*LLMOutput, error) {
 	row := db.QueryRowContext(ctx,
-		`SELECT id, session_id, kind, model, prompt_hash,
-			input_tokens, output_tokens, body, created_at_ms
+		`SELECT `+llmOutputColumns+`
 		 FROM llm_outputs
 		 WHERE id = ?`,
 		id,
@@ -288,9 +286,7 @@ func LoadLLMOutputs(ctx context.Context, db *sql.DB, filter LLMOutputFilter) ([]
 		where = append(where, "kind = ?")
 		args = append(args, string(filter.Kind))
 	}
-	q := `SELECT id, session_id, kind, model, prompt_hash,
-			input_tokens, output_tokens, body, created_at_ms
-		 FROM llm_outputs`
+	q := `SELECT ` + llmOutputColumns + ` FROM llm_outputs`
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
@@ -318,8 +314,7 @@ func LoadLLMOutputs(ctx context.Context, db *sql.DB, filter LLMOutputFilter) ([]
 // session, newest first. Empty slice when there are none.
 func LoadLLMOutputsForSession(ctx context.Context, db *sql.DB, sessionID string) ([]LLMOutput, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, session_id, kind, model, prompt_hash,
-			input_tokens, output_tokens, body, created_at_ms
+		`SELECT `+llmOutputColumns+`
 		 FROM llm_outputs
 		 WHERE session_id = ?
 		 ORDER BY created_at_ms DESC`,
@@ -366,8 +361,7 @@ func LoadSummariesIndexedByID(ctx context.Context, db *sql.DB, sessionIDs []stri
 	}
 	args = append(args, string(LLMKindSummary))
 
-	q := `SELECT id, session_id, kind, model, prompt_hash,
-			input_tokens, output_tokens, body, created_at_ms
+	q := `SELECT ` + llmOutputColumns + `
 		FROM llm_outputs
 		WHERE session_id IN (` + placeholders + `) AND kind = ?
 		ORDER BY created_at_ms DESC`
@@ -403,6 +397,14 @@ func LoadSummariesIndexedByID(ctx context.Context, db *sql.DB, sessionIDs []stri
 type rowScanner interface {
 	Scan(dest ...any) error
 }
+
+// llmOutputColumns is the canonical column list for SELECTs that feed
+// scanLLMOutput. Keep this string and the scan helper in lockstep;
+// the projection appears in six loaders across this package and
+// induction.go, and a hand-typed deviation would silently column-
+// shift the scan.
+const llmOutputColumns = `id, session_id, kind, model, prompt_hash,
+	input_tokens, output_tokens, body, created_at_ms`
 
 func scanLLMOutput(r rowScanner) (*LLMOutput, error) {
 	var (
