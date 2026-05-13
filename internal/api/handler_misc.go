@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -210,7 +209,7 @@ func (s *Server) handleSubagentSpans(w http.ResponseWriter, r *http.Request) {
 		out.Spans = append(out.Spans, wire.SubagentSpan{
 			SessionID:    sp.SessionID,
 			SubagentID:   sp.SubagentID,
-			SubagentType: nullable.StringPtr(sp.SubagentType),
+			SubagentType: sp.SubagentType,
 			StartedAtMs:  sp.StartedAtMs,
 			EndedAtMs:    sp.EndedAtMs,
 			EventCount:   sp.EventCount,

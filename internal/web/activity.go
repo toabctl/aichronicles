@@ -85,7 +85,7 @@ func renderStatusDot(sessionID, status, title string, oob bool) string {
 // page render and live SSE updates so the cell looks identical
 // before and after a swap.
 func renderLatestEventCell(e store.LiveEvent) string {
-	snippet := truncateForStream(e.Snippet.String)
+	snippet := truncateForStream(derefOr(e.Snippet, ""))
 	kind := html.EscapeString(e.Kind)
 	return `<span class="ts">` + html.EscapeString(time.UnixMilli(e.TsSourceMs).UTC().Format("15:04:05")) + `</span> ` +
 		`<span class="badge badge-` + kind + `">` + kind + `</span> ` +

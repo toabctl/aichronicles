@@ -3,7 +3,6 @@ package api
 import (
 	"net/http"
 
-	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -60,8 +59,8 @@ func (s *Server) handleEventsList(w http.ResponseWriter, r *http.Request) {
 			Kind:       e.Kind,
 			TsSourceMs: e.TsSourceMs,
 			TsServerMs: e.TsServerMs,
-			Cwd:        nullable.StringPtr(e.Cwd),
-			Snippet:    nullable.StringPtr(e.Snippet),
+			Cwd:        e.Cwd,
+			Snippet:    e.Snippet,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

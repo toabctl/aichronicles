@@ -1,7 +1,6 @@
 package web
 
 import (
-	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -144,7 +143,7 @@ func TestRenderLatestEventCell(t *testing.T) {
 		SessionID:  "sess-1",
 		Kind:       "user_prompt",
 		TsSourceMs: time.Date(2026, 4, 24, 15, 42, 1, 0, time.UTC).UnixMilli(),
-		Snippet:    sql.NullString{String: "how do I parse jsonl in Go", Valid: true},
+		Snippet:    ptrTo("how do I parse jsonl in Go"),
 	}
 	got := renderLatestEventCell(e)
 	for _, want := range []string{
@@ -163,7 +162,7 @@ func TestRenderLatestEventCell_EscapesSnippetAndKind(t *testing.T) {
 	e := store.LiveEvent{
 		Kind:       `<img src=x onerror=1>`,
 		TsSourceMs: 1,
-		Snippet:    sql.NullString{String: `</span><script>alert(1)</script>`, Valid: true},
+		Snippet:    ptrTo(`</span><script>alert(1)</script>`),
 	}
 	got := renderLatestEventCell(e)
 	if strings.Contains(got, "<script>") {
@@ -179,7 +178,7 @@ func TestRenderLatestEventCell_FlattenSnippetWhitespace(t *testing.T) {
 	e := store.LiveEvent{
 		Kind:       "tool_use",
 		TsSourceMs: 1,
-		Snippet:    sql.NullString{String: "line one\nline two\tline three", Valid: true},
+		Snippet:    ptrTo("line one\nline two\tline three"),
 	}
 	got := renderLatestEventCell(e)
 	// truncateForStream replaces \n and \t with spaces so the SSE

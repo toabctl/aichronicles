@@ -553,3 +553,14 @@ func truncatePreviewString(s string) string {
 	}
 	return preview.OneLine(s)
 }
+
+// derefOr returns *s or fallback if s is nil. Tiny helper for the
+// many sites that consume the store's pointer-typed optional
+// fields (arch_review_2026_05_13 MEDIUM #10) and need a string in
+// hand for templates.
+func derefOr(s *string, fallback string) string {
+	if s == nil {
+		return fallback
+	}
+	return *s
+}

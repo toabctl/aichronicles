@@ -208,10 +208,10 @@ func (s *Server) handleSessionsRelated(w http.ResponseWriter, r *http.Request) {
 func sessionDigestRowToWire(row store.SessionDigestRow) wire.SessionDigest {
 	return wire.SessionDigest{
 		ID:            row.ID,
-		StartedAtMs:   nullable.Int64Ptr(row.StartedAtMs),
-		EndedAtMs:     nullable.Int64Ptr(row.EndedAtMs),
-		Cwd:           nullable.StringPtr(row.Cwd),
-		FirstPrompt:   nullable.StringPtr(row.FirstPrompt),
-		LatestSummary: nullable.StringPtr(row.LatestSummary),
+		StartedAtMs:   row.StartedAtMs,
+		EndedAtMs:     row.EndedAtMs,
+		Cwd:           row.Cwd,
+		FirstPrompt:   row.FirstPrompt,
+		LatestSummary: row.LatestSummary,
 	}
 }

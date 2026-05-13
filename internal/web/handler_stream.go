@@ -201,10 +201,10 @@ func writeSessionFrame(w http.ResponseWriter, e store.LiveEvent, now time.Time) 
 func renderLiveEventFragment(e store.LiveEvent) string {
 	short := shortID(e.SessionID)
 	cwd := "-"
-	if e.Cwd.Valid && e.Cwd.String != "" {
-		cwd = e.Cwd.String
+	if e.Cwd != nil && derefOr(e.Cwd, "") != "" {
+		cwd = derefOr(e.Cwd, "")
 	}
-	snippet := truncateForStream(e.Snippet.String)
+	snippet := truncateForStream(derefOr(e.Snippet, ""))
 	kind := html.EscapeString(e.Kind)
 	return `<li class="livefeed-row">` +
 		`<span class="ts">` + html.EscapeString(time.UnixMilli(e.TsSourceMs).UTC().Format("15:04:05")) + `</span> ` +

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/toabctl/aichronicles/internal/events"
+	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/preview"
 )
 
@@ -241,8 +242,12 @@ type LiveEvent struct {
 	Kind       string
 	TsSourceMs int64
 	TsServerMs int64
-	Cwd        sql.NullString
-	Snippet    sql.NullString
+	// Optional payload fields — nil when the event didn't carry
+	// the value (cwd missing for session-start synthetic events;
+	// Snippet nil for queries that didn't run the content_text
+	// truncation path).
+	Cwd     *string
+	Snippet *string
 }
 
 // LoadEventsSinceSeq returns events whose ingest_seq is strictly
@@ -283,11 +288,17 @@ func LoadEventsSinceSeq(ctx context.Context, db *sql.DB, cursor int64, sessionID
 
 	var out []LiveEvent
 	for rows.Next() {
-		var e LiveEvent
+		var (
+			e       LiveEvent
+			cwd     sql.NullString
+			snippet sql.NullString
+		)
 		if err := rows.Scan(&e.IngestSeq, &e.EventID, &e.SessionID, &e.Kind,
-			&e.TsSourceMs, &e.TsServerMs, &e.Cwd, &e.Snippet); err != nil {
+			&e.TsSourceMs, &e.TsServerMs, &cwd, &snippet); err != nil {
 			return nil, fmt.Errorf("scan live event: %w", err)
 		}
+		e.Cwd = nullable.StringPtr(cwd)
+		e.Snippet = nullable.StringPtr(snippet)
 		out = append(out, e)
 	}
 	if err := rows.Err(); err != nil {
@@ -339,11 +350,17 @@ func LoadLatestEventsIndexedByID(ctx context.Context, db *sql.DB, sessionIDs []s
 
 	out := make(map[string]LiveEvent, len(sessionIDs))
 	for rows.Next() {
-		var e LiveEvent
+		var (
+			e       LiveEvent
+			cwd     sql.NullString
+			snippet sql.NullString
+		)
 		if err := rows.Scan(&e.IngestSeq, &e.EventID, &e.SessionID, &e.Kind,
-			&e.TsSourceMs, &e.TsServerMs, &e.Cwd, &e.Snippet); err != nil {
+			&e.TsSourceMs, &e.TsServerMs, &cwd, &snippet); err != nil {
 			return nil, fmt.Errorf("scan latest event: %w", err)
 		}
+		e.Cwd = nullable.StringPtr(cwd)
+		e.Snippet = nullable.StringPtr(snippet)
 		out[e.SessionID] = e
 	}
 	return out, rows.Err()
@@ -393,9 +410,11 @@ func SubagentExists(ctx context.Context, db *sql.DB, subagentID string) (bool, e
 // thread aggregated from the subagent_id-bearing events that
 // share a (session_id, subagent_id) pair.
 type SubagentSpan struct {
-	SessionID    string
-	SubagentID   string
-	SubagentType sql.NullString
+	SessionID  string
+	SubagentID string
+	// SubagentType is nil for subagent rows missing an explicit
+	// type label.
+	SubagentType *string
 	StartedAtMs  int64
 	EndedAtMs    int64
 	EventCount   int
@@ -456,11 +475,15 @@ func LoadSubagentSpans(ctx context.Context, db *sql.DB, sessionID string, limit 
 
 	var out []SubagentSpan
 	for rows.Next() {
-		var s SubagentSpan
-		if err := rows.Scan(&s.SessionID, &s.SubagentID, &s.SubagentType,
+		var (
+			s            SubagentSpan
+			subagentType sql.NullString
+		)
+		if err := rows.Scan(&s.SessionID, &s.SubagentID, &subagentType,
 			&s.StartedAtMs, &s.EndedAtMs, &s.EventCount); err != nil {
 			return nil, fmt.Errorf("scan subagent span: %w", err)
 		}
+		s.SubagentType = nullable.StringPtr(subagentType)
 		out = append(out, s)
 	}
 	if err := rows.Err(); err != nil {
@@ -492,12 +515,16 @@ func eventsNullStringToSQL(n events.NullString) sql.NullString {
 // the DB-facing shape separate lets us evolve either side without
 // coupling.
 type SessionDigestRow struct {
-	ID            string
-	StartedAtMs   sql.NullInt64
-	EndedAtMs     sql.NullInt64
-	Cwd           sql.NullString
-	FirstPrompt   sql.NullString
-	LatestSummary sql.NullString
+	ID string
+	// All optional — Started/EndedAtMs nil for sessions that
+	// haven't completed yet, Cwd nil when no event captured one,
+	// FirstPrompt nil for sessions without a user_prompt event,
+	// LatestSummary nil when no summary llm_output exists.
+	StartedAtMs   *int64
+	EndedAtMs     *int64
+	Cwd           *string
+	FirstPrompt   *string
+	LatestSummary *string
 }
 
 // LoadRecentSessionDigests returns the most-recently-ended sessions
@@ -531,10 +558,22 @@ func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs int64, li
 
 	var out []SessionDigestRow
 	for rows.Next() {
-		var r SessionDigestRow
-		if err := rows.Scan(&r.ID, &r.StartedAtMs, &r.EndedAtMs, &r.Cwd, &r.FirstPrompt, &r.LatestSummary); err != nil {
+		var (
+			r           SessionDigestRow
+			startedAtMs sql.NullInt64
+			endedAtMs   sql.NullInt64
+			cwd         sql.NullString
+			firstPrompt sql.NullString
+			latestSum   sql.NullString
+		)
+		if err := rows.Scan(&r.ID, &startedAtMs, &endedAtMs, &cwd, &firstPrompt, &latestSum); err != nil {
 			return nil, fmt.Errorf("scan digest: %w", err)
 		}
+		r.StartedAtMs = nullable.Int64Ptr(startedAtMs)
+		r.EndedAtMs = nullable.Int64Ptr(endedAtMs)
+		r.Cwd = nullable.StringPtr(cwd)
+		r.FirstPrompt = nullable.StringPtr(firstPrompt)
+		r.LatestSummary = nullable.StringPtr(latestSum)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -561,13 +600,25 @@ func LoadSessionDigest(ctx context.Context, db *sql.DB, sessionID string) (*Sess
 		WHERE s.id = ?`,
 		string(LLMKindSummary), sessionID,
 	)
-	var r SessionDigestRow
-	switch err := row.Scan(&r.ID, &r.StartedAtMs, &r.EndedAtMs, &r.Cwd, &r.FirstPrompt, &r.LatestSummary); {
+	var (
+		r           SessionDigestRow
+		startedAtMs sql.NullInt64
+		endedAtMs   sql.NullInt64
+		cwd         sql.NullString
+		firstPrompt sql.NullString
+		latestSum   sql.NullString
+	)
+	switch err := row.Scan(&r.ID, &startedAtMs, &endedAtMs, &cwd, &firstPrompt, &latestSum); {
 	case errors.Is(err, sql.ErrNoRows):
 		return nil, nil
 	case err != nil:
 		return nil, fmt.Errorf("scan session digest: %w", err)
 	}
+	r.StartedAtMs = nullable.Int64Ptr(startedAtMs)
+	r.EndedAtMs = nullable.Int64Ptr(endedAtMs)
+	r.Cwd = nullable.StringPtr(cwd)
+	r.FirstPrompt = nullable.StringPtr(firstPrompt)
+	r.LatestSummary = nullable.StringPtr(latestSum)
 	return &r, nil
 }
 
@@ -635,12 +686,22 @@ func LoadSessionsMissingSummary(ctx context.Context, db *sql.DB, sinceMs int64, 
 
 	var out []SessionDigestRow
 	for rows.Next() {
-		var r SessionDigestRow
-		// LatestSummary stays at its zero value (Valid=false)
-		// since the WHERE clause guarantees no summary exists.
-		if err := rows.Scan(&r.ID, &r.StartedAtMs, &r.EndedAtMs, &r.Cwd, &r.FirstPrompt); err != nil {
+		var (
+			r           SessionDigestRow
+			startedAtMs sql.NullInt64
+			endedAtMs   sql.NullInt64
+			cwd         sql.NullString
+			firstPrompt sql.NullString
+		)
+		// LatestSummary stays nil since the WHERE clause
+		// guarantees no summary exists.
+		if err := rows.Scan(&r.ID, &startedAtMs, &endedAtMs, &cwd, &firstPrompt); err != nil {
 			return nil, fmt.Errorf("scan missing-summary row: %w", err)
 		}
+		r.StartedAtMs = nullable.Int64Ptr(startedAtMs)
+		r.EndedAtMs = nullable.Int64Ptr(endedAtMs)
+		r.Cwd = nullable.StringPtr(cwd)
+		r.FirstPrompt = nullable.StringPtr(firstPrompt)
 		out = append(out, r)
 	}
 	return out, rows.Err()
