@@ -24,8 +24,7 @@ func (s *Server) insightsHandler(w http.ResponseWriter, r *http.Request) {
 
 	report, err := s.api.Insights(r.Context(), apiclient.InsightsRequest{SinceMs: sinceMs})
 	if err != nil {
-		s.log.Error("insightsHandler: load", "err", err)
-		http.Error(w, "could not load insights", http.StatusInternalServerError)
+		s.internalError(w, "insightsHandler: load", "could not load insights", err)
 		return
 	}
 

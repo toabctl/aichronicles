@@ -23,8 +23,7 @@ func (s *Server) workflowsHandler(w http.ResponseWriter, r *http.Request) {
 	const corpusCap = 200
 	rows, err := s.api.LLMOutputsList(r.Context(), string(store.LLMKindInduction), "", corpusCap)
 	if err != nil {
-		s.log.Error("workflowsHandler: load induction rows", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		s.internalError(w, "workflowsHandler: load induction rows", "internal error", err)
 		return
 	}
 

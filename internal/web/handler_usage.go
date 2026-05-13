@@ -64,8 +64,7 @@ func (s *Server) usageHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.api.Usage(r.Context(), wire.UsageRequest{SinceMs: sinceMs})
 	if err != nil {
-		s.log.Error("usageHandler: load", "err", err)
-		http.Error(w, "could not load usage", http.StatusInternalServerError)
+		s.internalError(w, "usageHandler: load", "could not load usage", err)
 		return
 	}
 

@@ -27,8 +27,7 @@ func (s *Server) projectsHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.api.ProjectAggregates(r.Context(), sinceMs)
 	if err != nil {
-		s.log.Error("projectsHandler: load", "err", err)
-		http.Error(w, "could not load projects", http.StatusInternalServerError)
+		s.internalError(w, "projectsHandler: load", "could not load projects", err)
 		return
 	}
 

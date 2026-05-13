@@ -34,8 +34,7 @@ func (s *Server) factsHandler(w http.ResponseWriter, r *http.Request) {
 		// first-run state and renders the "no facts yet" hint.
 		resp, err := s.api.FactSubjects(r.Context(), "", factsIndexLimit)
 		if err != nil {
-			s.log.Error("factsHandler: list subjects", "err", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			s.internalError(w, "factsHandler: list subjects", "internal error", err)
 			return
 		}
 		page.Subjects = resp.Subjects

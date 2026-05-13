@@ -43,8 +43,7 @@ func (s *Server) proposeHandler(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.api.LLMOutputsList(r.Context(), string(store.LLMKindPropose), "", limit)
 	if err != nil {
-		s.log.Error("proposeHandler: load", "err", err)
-		http.Error(w, "could not load proposals", http.StatusInternalServerError)
+		s.internalError(w, "proposeHandler: load", "could not load proposals", err)
 		return
 	}
 

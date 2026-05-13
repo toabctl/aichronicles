@@ -40,8 +40,7 @@ func (s *Server) sessionsHandler(w http.ResponseWriter, r *http.Request) {
 	filters := readSessionListFilters(r)
 	rows, err := loadSessionsForList(r.Context(), s, sessionsListLimit, filters)
 	if err != nil {
-		s.log.Error("sessionsHandler: load", "err", err)
-		http.Error(w, "could not load sessions", http.StatusInternalServerError)
+		s.internalError(w, "sessionsHandler: load", "could not load sessions", err)
 		return
 	}
 	agents, err := s.api.SourceAgents(r.Context())

@@ -218,6 +218,19 @@ func staticFS() fs.FS {
 	return sub
 }
 
+// internalError is the canonical "loaded data from the api and it
+// failed" response: log the op + err at ERROR level (so the
+// operator sees the upstream message in the web log) and surface
+// a generic 500 with the user-facing message to the browser. Eight
+// handlers previously inlined the same three lines.
+//
+// userMsg should describe the resource the page failed to load
+// ("could not load digests") — visible to anyone hitting the URL.
+func (s *Server) internalError(w http.ResponseWriter, op, userMsg string, err error) {
+	s.log.Error(op, "err", err)
+	http.Error(w, userMsg, http.StatusInternalServerError)
+}
+
 // render picks the page-specific template set and executes the
 // "base" template against page data. Each set was loaded with
 // base.html plus exactly one content page, so "base" resolves to

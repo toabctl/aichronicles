@@ -33,8 +33,7 @@ func (s *Server) digestsHandler(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.api.LLMOutputsList(r.Context(), string(store.LLMKindReflectWeekly), "", limit)
 	if err != nil {
-		s.log.Error("digestsHandler: load", "err", err)
-		http.Error(w, "could not load digests", http.StatusInternalServerError)
+		s.internalError(w, "digestsHandler: load", "could not load digests", err)
 		return
 	}
 
