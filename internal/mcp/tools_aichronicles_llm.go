@@ -73,8 +73,8 @@ func searchWithSummaryHandler(c *apiclient.Client, newClient func() (llm.Client,
 			Kind       string `json:"kind"`
 			SinceHours int    `json:"since_hours"`
 		}
-		if err := json.Unmarshal(args, &req); err != nil {
-			return nil, &Error{Code: InvalidParams, Message: "search_with_summary: bad args: " + err.Error()}
+		if e := decodeArgs("search_with_summary", args, &req); e != nil {
+			return nil, e
 		}
 		if strings.TrimSpace(req.Query) == "" {
 			return TextError("search_with_summary: query is required"), nil

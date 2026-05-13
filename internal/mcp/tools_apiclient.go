@@ -78,8 +78,8 @@ func getUnresolvedForCwdAPIHandler(c *apiclient.Client) ToolHandler {
 			MaxSessions   int    `json:"max_sessions"`
 			MaxPerSession int    `json:"max_per_session"`
 		}
-		if err := json.Unmarshal(args, &req); err != nil {
-			return nil, &Error{Code: InvalidParams, Message: "get_unresolved_for_cwd: bad args: " + err.Error()}
+		if e := decodeArgs("get_unresolved_for_cwd", args, &req); e != nil {
+			return nil, e
 		}
 		if strings.TrimSpace(req.Cwd) == "" {
 			return TextError("get_unresolved_for_cwd: cwd is required"), nil
@@ -149,8 +149,8 @@ func getFactsForSubjectAPIHandler(c *apiclient.Client) ToolHandler {
 			Subject string `json:"subject"`
 			Limit   int    `json:"limit"`
 		}
-		if err := json.Unmarshal(args, &req); err != nil {
-			return nil, &Error{Code: InvalidParams, Message: "get_facts_for_subject: bad args: " + err.Error()}
+		if e := decodeArgs("get_facts_for_subject", args, &req); e != nil {
+			return nil, e
 		}
 		if strings.TrimSpace(req.Subject) == "" {
 			return TextError("get_facts_for_subject: subject is required"), nil
@@ -207,8 +207,8 @@ func findFactSubjectsAPIHandler(c *apiclient.Client) ToolHandler {
 			Contains string `json:"contains"`
 			Limit    int    `json:"limit"`
 		}
-		if err := json.Unmarshal(args, &req); err != nil {
-			return nil, &Error{Code: InvalidParams, Message: "find_fact_subjects: bad args: " + err.Error()}
+		if e := decodeArgs("find_fact_subjects", args, &req); e != nil {
+			return nil, e
 		}
 		if strings.TrimSpace(req.Contains) == "" {
 			return TextError("find_fact_subjects: contains is required"), nil
@@ -256,8 +256,8 @@ func getSkillStalenessAPIHandler(c *apiclient.Client) ToolHandler {
 			WindowMinutes int `json:"window_minutes"`
 		}
 		if len(args) > 0 {
-			if err := json.Unmarshal(args, &req); err != nil {
-				return nil, &Error{Code: InvalidParams, Message: "get_skill_staleness: bad args: " + err.Error()}
+			if e := decodeArgs("get_skill_staleness", args, &req); e != nil {
+				return nil, e
 			}
 		}
 		windowMs := int64(req.WindowMinutes) * 60 * 1000
@@ -321,8 +321,8 @@ func getInsightsAPIHandler(c *apiclient.Client) ToolHandler {
 			TopSkills int `json:"top_skills"`
 		}
 		if len(args) > 0 {
-			if err := json.Unmarshal(args, &req); err != nil {
-				return nil, &Error{Code: InvalidParams, Message: "get_insights: bad args: " + err.Error()}
+			if e := decodeArgs("get_insights", args, &req); e != nil {
+				return nil, e
 			}
 		}
 		sinceMs, days := timefmt.SinceMsFromDays(req.SinceDays, 30, 365, time.Now())
@@ -424,8 +424,8 @@ func findEpisodesAPIHandler(c *apiclient.Client) ToolHandler {
 			Limit     int    `json:"limit"`
 		}
 		if len(args) > 0 {
-			if err := json.Unmarshal(args, &req); err != nil {
-				return nil, &Error{Code: InvalidParams, Message: "find_episodes: bad args: " + err.Error()}
+			if e := decodeArgs("find_episodes", args, &req); e != nil {
+				return nil, e
 			}
 		}
 		if req.Limit <= 0 || req.Limit > 100 {
@@ -511,8 +511,8 @@ func listSubagentsAPIHandler(c *apiclient.Client) ToolHandler {
 			Limit     int    `json:"limit"`
 		}
 		if len(args) > 0 {
-			if err := json.Unmarshal(args, &req); err != nil {
-				return nil, &Error{Code: InvalidParams, Message: "list_subagents: bad args: " + err.Error()}
+			if e := decodeArgs("list_subagents", args, &req); e != nil {
+				return nil, e
 			}
 		}
 		if req.Limit <= 0 || req.Limit > 100 {
@@ -588,8 +588,8 @@ func searchEventsAPIHandler(c *apiclient.Client) ToolHandler {
 			SubagentID string `json:"subagent_id"`
 			Limit      int    `json:"limit"`
 		}
-		if err := json.Unmarshal(args, &req); err != nil {
-			return nil, &Error{Code: InvalidParams, Message: "search_events: bad args: " + err.Error()}
+		if e := decodeArgs("search_events", args, &req); e != nil {
+			return nil, e
 		}
 		if strings.TrimSpace(req.Query) == "" {
 			return TextError("search_events: query is required"), nil
@@ -675,8 +675,8 @@ func listSessionsAPIHandler(c *apiclient.Client) ToolHandler {
 			Limit      int    `json:"limit"`
 		}
 		if len(args) > 0 {
-			if err := json.Unmarshal(args, &req); err != nil {
-				return nil, &Error{Code: InvalidParams, Message: "list_sessions: bad args: " + err.Error()}
+			if e := decodeArgs("list_sessions", args, &req); e != nil {
+				return nil, e
 			}
 		}
 		if req.Limit <= 0 || req.Limit > 100 {
@@ -749,8 +749,8 @@ func getSummaryAPIHandler(c *apiclient.Client) ToolHandler {
 			SessionID string `json:"session_id"`
 			Kind      string `json:"kind"`
 		}
-		if err := json.Unmarshal(args, &req); err != nil {
-			return nil, &Error{Code: InvalidParams, Message: "get_summary: bad args: " + err.Error()}
+		if e := decodeArgs("get_summary", args, &req); e != nil {
+			return nil, e
 		}
 		if req.SessionID == "" {
 			return TextError("get_summary: session_id is required"), nil
@@ -819,8 +819,8 @@ func listWorkflowsAPIHandler(c *apiclient.Client) ToolHandler {
 			IncludeNotFound   bool   `json:"include_not_found"`
 		}
 		if len(args) > 0 {
-			if err := json.Unmarshal(args, &req); err != nil {
-				return nil, &Error{Code: InvalidParams, Message: "list_workflows: bad args: " + err.Error()}
+			if e := decodeArgs("list_workflows", args, &req); e != nil {
+				return nil, e
 			}
 		}
 		if req.Limit <= 0 || req.Limit > 50 {
@@ -931,8 +931,8 @@ func getProjectContextAPIHandler(c *apiclient.Client) ToolHandler {
 			SinceDays     int    `json:"since_days"`
 			MaxPerSection int    `json:"max_per_section"`
 		}
-		if err := json.Unmarshal(args, &req); err != nil {
-			return nil, &Error{Code: InvalidParams, Message: "get_project_context: bad args: " + err.Error()}
+		if e := decodeArgs("get_project_context", args, &req); e != nil {
+			return nil, e
 		}
 		if strings.TrimSpace(req.Cwd) == "" {
 			return TextError("get_project_context: cwd is required"), nil

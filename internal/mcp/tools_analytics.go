@@ -50,8 +50,8 @@ func listSkillsHandler(c *apiclient.Client) ToolHandler {
 			SinceDays int    `json:"since_days"`
 		}
 		if len(args) > 0 {
-			if err := json.Unmarshal(args, &req); err != nil {
-				return nil, &Error{Code: InvalidParams, Message: "list_skills: bad args: " + err.Error()}
+			if e := decodeArgs("list_skills", args, &req); e != nil {
+				return nil, e
 			}
 		}
 		sinceMs, days := timefmt.SinceMsFromDays(req.SinceDays, 30, 365, time.Now())

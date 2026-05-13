@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -8,6 +9,20 @@ import (
 	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/timefmt"
 )
+
+// decodeArgs is the canonical "unmarshal the tool's JSON args, 400
+// on parse failure" prologue. Every MCP handler runs the same line;
+// the helper folds 14 sites down to one. The InvalidParams Code
+// signals to the client that the request was malformed (vs a tool-
+// level error from a well-formed request).
+//
+// Caller convention: if e := decodeArgs("tool_name", args, &req); e != nil { return nil, e }
+func decodeArgs(toolName string, args json.RawMessage, dst any) *Error {
+	if err := json.Unmarshal(args, dst); err != nil {
+		return &Error{Code: InvalidParams, Message: toolName + ": bad args: " + err.Error()}
+	}
+	return nil
+}
 
 // mapAPIError is the canonical apiclient-error → MCP-result mapping
 // every tool runs after a c.X(...) call. Surfaces ErrSocketUnavailable
