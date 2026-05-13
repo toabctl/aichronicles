@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -159,12 +160,24 @@ func RunHook(stdin io.Reader, stderr io.Writer, socketFlag, agentSlug string) er
 		// Daemon-outage signal: any transport-level failure
 		// (socket missing, connection refused, timeout, EOF
 		// mid-response) flips the outage flag. HTTP-status
-		// errors (4xx/5xx with a problem body) do NOT — those
-		// mean the daemon is up but rejected the envelope, and
-		// treating them as "daemon unreachable" would produce
+		// errors (4xx/5xx with a problem body) usually do NOT —
+		// those mean the daemon is up but rejected the envelope,
+		// and treating them as "daemon unreachable" would produce
 		// false positives on validation drift.
+		//
+		// Exception: 503 Service Unavailable. The daemon returns
+		// 503 when ingest_pending exceeds [limits].ingest_queue_max
+		// — i.e. the worker is hopelessly behind. Without this
+		// branch, a saturated queue would silently drop every
+		// excess event with only a stderr line; the outage flag
+		// + desktop banner + recovery count we shipped earlier
+		// would never fire. Treat 503 as outage-class so the
+		// load condition is visible to the operator even though
+		// the daemon technically responded.
 		var httpErr *apiclient.HTTPError
-		if !errors.As(err, &httpErr) {
+		isHTTP := errors.As(err, &httpErr)
+		queueFull := isHTTP && httpErr.Status == http.StatusServiceUnavailable
+		if !isHTTP || queueFull {
 			// Bump the drop counter BEFORE deciding whether to
 			// notify — the desktop body line includes the running
 			// count so even a debounced banner reflects current

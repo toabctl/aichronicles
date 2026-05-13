@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -426,6 +427,49 @@ func TestCLI_IngestHangingDaemon_FlipsOutageFlag(t *testing.T) {
 	flag := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "aichronicles", "outage.flag")
 	if _, err := os.Stat(flag); err != nil {
 		t.Fatalf("hanging-daemon ingest must flip the outage flag at %s; got: %v",
+			flag, err)
+	}
+}
+
+// TestCLI_Ingest503QueueFull_FlipsOutageFlag pins a subtle bit of
+// the visibility contract: when the daemon is up and accepting
+// connections, but its ingest_pending queue is saturated (return
+// 503), the hook must still trip the outage flag. The
+// daemon-up-but-saturated case is functionally the same to the
+// user as daemon-down — events are being silently dropped — and
+// before this branch existed the outage counter / recovery banner
+// never fired for a queue-full condition. Regression test for
+// arch_review_2026_05_13 HIGH #2.
+func TestCLI_Ingest503QueueFull_FlipsOutageFlag(t *testing.T) {
+	isolateEnv(t)
+	sockPath := filepath.Join(t.TempDir(), "sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	srv503 := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"title":"Ingest queue is full","status":503,"detail":"pending=10000 max=10000"}`))
+		}),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() { _ = srv503.Serve(ln) }()
+	defer func() { _ = srv503.Close() }()
+
+	hook := []byte(`{"session_id":"qf","hook_event_name":"UserPromptSubmit","cwd":"/","prompt":"hi"}`)
+	var stderr bytes.Buffer
+	if err := cli.RunHook(bytes.NewReader(hook), &stderr, sockPath, ""); err != nil {
+		t.Fatalf("RunHook must not surface 503 to the hook, got: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "event_dropped") {
+		t.Errorf("expected stderr to log the dropped event, got %q", stderr.String())
+	}
+	flag := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "aichronicles", "outage.flag")
+	if _, err := os.Stat(flag); err != nil {
+		t.Fatalf("503-queue-full must flip the outage flag at %s; got: %v",
 			flag, err)
 	}
 }
