@@ -31,8 +31,7 @@ func (s *Server) handleSkillsStaleness(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := store.LoadSkillStaleness(r.Context(), s.store.DB(), sinceMs, windowMs, lim)
 	if err != nil {
-		s.slog.Error("LoadSkillStaleness", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadSkillStaleness", err)
 		return
 	}
 
@@ -73,8 +72,7 @@ func (s *Server) handleSkillsImpact(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := store.LoadSkillImpact(r.Context(), s.store.DB(), sinceMs, windowMs, lim)
 	if err != nil {
-		s.slog.Error("LoadSkillImpact", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadSkillImpact", err)
 		return
 	}
 
@@ -107,8 +105,7 @@ func (s *Server) handleSkillsInstalled(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := skills.CollectInstalled(r.Context(), s.store.DB(), sinceMs)
 	if err != nil {
-		s.slog.Error("skills.CollectInstalled", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "skills.CollectInstalled", err)
 		return
 	}
 	out := wire.InstalledSkillsResponse{Skills: make([]wire.InstalledSkill, 0, len(rows))}
@@ -134,8 +131,7 @@ func (s *Server) handleSkillsInvoked(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := skills.LoadInvoked(r.Context(), s.store.DB(), sinceMs)
 	if err != nil {
-		s.slog.Error("skills.LoadInvoked", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "skills.LoadInvoked", err)
 		return
 	}
 

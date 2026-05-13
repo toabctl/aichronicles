@@ -35,15 +35,13 @@ func (s *Server) handleEventsList(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := store.LoadEventsSinceSeq(r.Context(), s.store.DB(), sinceSeq, sessionID, limit)
 	if err != nil {
-		s.slog.Error("LoadEventsSinceSeq", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadEventsSinceSeq", err)
 		return
 	}
 
 	latest, err := store.LatestIngestSeq(r.Context(), s.store.DB())
 	if err != nil {
-		s.slog.Error("LatestIngestSeq", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LatestIngestSeq", err)
 		return
 	}
 
@@ -71,8 +69,7 @@ func (s *Server) handleEventsLatestBatch(w http.ResponseWriter, r *http.Request)
 	}
 	rows, err := store.LoadLatestEventsIndexedByID(r.Context(), s.store.DB(), ids)
 	if err != nil {
-		s.slog.Error("LoadLatestEventsIndexedByID", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadLatestEventsIndexedByID", err)
 		return
 	}
 	out := wire.LatestEventsBatchResponse{Events: make(map[string]wire.Event, len(rows))}

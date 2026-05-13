@@ -64,8 +64,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	hits, err := store.SearchEvents(r.Context(), s.store.DB(), opts)
 	if err != nil {
-		s.slog.Error("SearchEvents", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "SearchEvents", err)
 		return
 	}
 

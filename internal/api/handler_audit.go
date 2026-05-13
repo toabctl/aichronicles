@@ -42,8 +42,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	sqlText, args := buildAuditQuery(sinceMs, limit)
 	rows, err := s.store.DB().QueryContext(r.Context(), sqlText, args...)
 	if err != nil {
-		s.slog.Error("audit query", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "audit query", err)
 		return
 	}
 	defer func() { _ = rows.Close() }()
@@ -61,8 +60,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 			content sql.NullString
 		)
 		if err := rows.Scan(&sess, &tsMs, &kind, &content); err != nil {
-			s.slog.Error("audit scan", "err", err)
-			writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+			s.storeError(w, "audit scan", err)
 			return
 		}
 		resp.Scanned++
@@ -90,8 +88,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if err := rows.Err(); err != nil {
-		s.slog.Error("audit rows.Err", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "audit rows.Err", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)

@@ -35,8 +35,7 @@ func (s *Server) handleFactsSubjects(w http.ResponseWriter, r *http.Request) {
 		subjects, err = store.FactSubjectsLike(r.Context(), s.store.DB(), contains, limit)
 	}
 	if err != nil {
-		s.slog.Error("FactsSubjects", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "FactsSubjects", err)
 		return
 	}
 	if subjects == nil {
@@ -61,8 +60,7 @@ func (s *Server) handleFactsList(w http.ResponseWriter, r *http.Request) {
 		rows, err = store.LoadRecentFacts(r.Context(), s.store.DB(), limit)
 	}
 	if err != nil {
-		s.slog.Error("LoadFacts", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadFacts", err)
 		return
 	}
 	out := wire.FactsResponse{Facts: make([]wire.SemanticFact, 0, len(rows))}

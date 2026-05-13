@@ -46,8 +46,7 @@ func (s *Server) handleSkillCandidatesRecord(w http.ResponseWriter, r *http.Requ
 	}
 	if err := store.RecordSkillCandidateWithMetadata(r.Context(), s.store.DB(),
 		req.LLMOutputID, req.SkillName, req.ProposedAtMs, meta); err != nil {
-		s.slog.Error("RecordSkillCandidate", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "RecordSkillCandidate", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wire.RecordSkillCandidateResponse{Inserted: true})
@@ -133,8 +132,7 @@ func (s *Server) handleSkillCandidatesList(w http.ResponseWriter, r *http.Reques
 
 	rows, err := store.LoadSkillCandidatesByName(r.Context(), s.store.DB(), name, limit)
 	if err != nil {
-		s.slog.Error("LoadSkillCandidatesByName", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadSkillCandidatesByName", err)
 		return
 	}
 

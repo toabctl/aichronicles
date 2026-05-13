@@ -26,8 +26,7 @@ func (s *Server) handleSessionsMissingSummary(w http.ResponseWriter, r *http.Req
 	rows, err := store.LoadSessionsMissingSummary(r.Context(), s.store.DB(),
 		sinceMs, store.SessionFilter{Cwd: q.Get("cwd"), Agent: q.Get("agent")}, limit)
 	if err != nil {
-		s.slog.Error("LoadSessionsMissingSummary", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadSessionsMissingSummary", err)
 		return
 	}
 	out := wire.SessionsMissingSummaryResponse{Sessions: make([]wire.SessionDigest, 0, len(rows))}
@@ -62,8 +61,7 @@ func (s *Server) handleSessionsNeedingSegmentation(w http.ResponseWriter, r *htt
 	ids, err := store.LoadSessionsNeedingSegmentation(r.Context(), s.store.DB(),
 		idleCutoff, idleMs, minEvents, limit)
 	if err != nil {
-		s.slog.Error("LoadSessionsNeedingSegmentation", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadSessionsNeedingSegmentation", err)
 		return
 	}
 	if ids == nil {
@@ -82,8 +80,7 @@ func (s *Server) handleSessionsForCompletion(w http.ResponseWriter, r *http.Requ
 	}
 	rows, err := store.LoadSessionsForCompletion(r.Context(), s.store.DB(), prefix, limit)
 	if err != nil {
-		s.slog.Error("LoadSessionsForCompletion", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadSessionsForCompletion", err)
 		return
 	}
 	out := wire.SessionCompletionsResponse{Sessions: make([]wire.SessionCompletion, 0, len(rows))}
@@ -120,8 +117,7 @@ func (s *Server) handleInductionCandidates(w http.ResponseWriter, r *http.Reques
 	rows, err := store.LoadInductionCandidates(r.Context(), s.store.DB(),
 		nowMs, idleMs, minEvents, limit)
 	if err != nil {
-		s.slog.Error("LoadInductionCandidates", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadInductionCandidates", err)
 		return
 	}
 	out := wire.InductionCandidatesResponse{Candidates: make([]wire.InductionCandidate, 0, len(rows))}
@@ -150,8 +146,7 @@ func (s *Server) handleFailureShapes(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := store.LoadFailureShapes(r.Context(), s.store.DB(), sinceMs, limit)
 	if err != nil {
-		s.slog.Error("LoadFailureShapes", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadFailureShapes", err)
 		return
 	}
 	out := wire.FailureShapesResponse{Shapes: make([]wire.FailureShape, 0, len(rows))}
@@ -193,8 +188,7 @@ func (s *Server) handleSkillFailures(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := store.LoadSkillFailures(r.Context(), s.store.DB(), skill, sinceMs, windowMs, limit)
 	if err != nil {
-		s.slog.Error("LoadSkillFailures", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadSkillFailures", err)
 		return
 	}
 	out := wire.SkillFailuresResponse{Failures: make([]wire.SkillFailureContext, 0, len(rows))}
@@ -228,8 +222,7 @@ func (s *Server) handleSkillCandidatesEffectiveness(w http.ResponseWriter, r *ht
 	}
 	rows, err := store.LoadSkillCandidateEffectiveness(r.Context(), s.store.DB(), sinceMs, windowMs, limit)
 	if err != nil {
-		s.slog.Error("LoadSkillCandidateEffectiveness", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadSkillCandidateEffectiveness", err)
 		return
 	}
 	out := wire.SkillCandidateEffectivenessResponse{Rows: make([]wire.SkillCandidateEffectiveness, 0, len(rows))}
@@ -265,8 +258,7 @@ func (s *Server) handleSkillCandidatesPending(w http.ResponseWriter, r *http.Req
 	}
 	rows, err := store.LoadPendingSkillCandidates(r.Context(), s.store.DB(), sinceMs, limit)
 	if err != nil {
-		s.slog.Error("LoadPendingSkillCandidates", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadPendingSkillCandidates", err)
 		return
 	}
 	out := wire.PendingSkillCandidatesResponse{Candidates: make([]wire.SkillCandidate, 0, len(rows))}
@@ -289,8 +281,7 @@ func (s *Server) handleSkillCandidatesAdded(w http.ResponseWriter, r *http.Reque
 	}
 	row, err := store.LoadAddedSkillCandidate(r.Context(), s.store.DB(), name)
 	if err != nil {
-		s.slog.Error("LoadAddedSkillCandidate", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadAddedSkillCandidate", err)
 		return
 	}
 	if row == nil {
@@ -324,14 +315,12 @@ func (s *Server) handleSegmentSession(w http.ResponseWriter, r *http.Request) {
 	}
 	evs, err := store.LoadEventsForSession(r.Context(), s.store.DB(), id, store.LoadEventsForSessionUnbounded)
 	if err != nil {
-		s.slog.Error("LoadEventsForSession (segment)", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadEventsForSession (segment)", err)
 		return
 	}
 	episodes := store.SegmentSession(id, evs, req.IdleGapMs)
 	if _, err := store.SaveEpisodes(r.Context(), s.store.DB(), id, episodes); err != nil {
-		s.slog.Error("SaveEpisodes", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "SaveEpisodes", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wire.SegmentSessionResponse{Episodes: len(episodes)})
@@ -388,8 +377,7 @@ func (s *Server) handleSkillCandidateUpdate(w http.ResponseWriter, r *http.Reque
 // finished before issuing follow-up work.
 func (s *Server) handleVacuum(w http.ResponseWriter, r *http.Request) {
 	if err := store.Vacuum(r.Context(), s.store.DB()); err != nil {
-		s.slog.Error("Vacuum", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "Vacuum", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wire.VacuumResponse{})
@@ -401,8 +389,7 @@ func (s *Server) handleVacuum(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDBInfo(w http.ResponseWriter, r *http.Request) {
 	info, err := store.QueryPageInfo(r.Context(), s.store.DB())
 	if err != nil {
-		s.slog.Error("QueryPageInfo", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "QueryPageInfo", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wire.DBPageInfoResponse{
@@ -419,8 +406,7 @@ func (s *Server) handleDBInfo(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleIngestStats(w http.ResponseWriter, r *http.Request) {
 	stats, err := store.QueryIngestPendingStats(r.Context(), s.store.DB())
 	if err != nil {
-		s.slog.Error("QueryIngestPendingStats", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "QueryIngestPendingStats", err)
 		return
 	}
 	resp := wire.IngestStatsResponse{

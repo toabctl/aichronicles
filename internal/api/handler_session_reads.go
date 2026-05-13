@@ -40,8 +40,7 @@ func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := store.LoadEventsForSession(r.Context(), s.store.DB(), id, limit)
 	if err != nil {
-		s.slog.Error("LoadEventsForSession", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadEventsForSession", err)
 		return
 	}
 	out := wire.SessionEventsResponse{Events: make([]wire.SessionEvent, 0, len(rows))}
@@ -81,8 +80,7 @@ func (s *Server) handleSessionExtractions(w http.ResponseWriter, r *http.Request
 	}
 	rows, err := store.LoadExtractionsForSession(r.Context(), s.store.DB(), id, kind)
 	if err != nil {
-		s.slog.Error("LoadExtractionsForSession", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadExtractionsForSession", err)
 		return
 	}
 	out := wire.SessionExtractionsResponse{Extractions: make([]wire.Extraction, 0, len(rows))}
@@ -109,8 +107,7 @@ func (s *Server) handleSessionCandidatePriors(w http.ResponseWriter, r *http.Req
 	}
 	rows, err := store.LoadCandidatePriorSessions(r.Context(), s.store.DB(), id, limit)
 	if err != nil {
-		s.slog.Error("LoadCandidatePriorSessions", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadCandidatePriorSessions", err)
 		return
 	}
 	out := wire.CandidateSessionListResponse{Candidates: make([]wire.CandidateSession, 0, len(rows))}
@@ -205,8 +202,7 @@ func (s *Server) handleSessionLinks(w http.ResponseWriter, r *http.Request) {
 		rows, err = store.LoadSessionLinksTo(r.Context(), s.store.DB(), to)
 	}
 	if err != nil {
-		s.slog.Error("LoadSessionLinks", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadSessionLinks", err)
 		return
 	}
 	out := wire.SessionLinksResponse{Links: make([]wire.SessionLinkRow, 0, len(rows))}
@@ -237,8 +233,7 @@ func (s *Server) handleSessionDigests(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := store.LoadRecentSessionDigests(r.Context(), s.store.DB(), sinceMs, limit)
 	if err != nil {
-		s.slog.Error("LoadRecentSessionDigests", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadRecentSessionDigests", err)
 		return
 	}
 	out := wire.SessionDigestsResponse{Digests: make([]wire.SessionDigest, 0, len(rows))}

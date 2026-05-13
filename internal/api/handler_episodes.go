@@ -32,8 +32,7 @@ func (s *Server) handleEpisodesList(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := store.FindEpisodes(r.Context(), s.store.DB(), opts)
 	if err != nil {
-		s.slog.Error("FindEpisodes", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "FindEpisodes", err)
 		return
 	}
 	out := wire.EpisodeListResponse{Episodes: make([]wire.Episode, 0, len(rows))}

@@ -61,20 +61,17 @@ func (s *Server) handleLLMOutputSave(w http.ResponseWriter, r *http.Request) {
 
 	tx, err := s.store.DB().BeginTx(r.Context(), nil)
 	if err != nil {
-		s.slog.Error("BeginTx", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "BeginTx", err)
 		return
 	}
 	id, inserted, err := store.SaveLLMOutput(r.Context(), tx, out)
 	if err != nil {
 		_ = tx.Rollback()
-		s.slog.Error("SaveLLMOutput", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "SaveLLMOutput", err)
 		return
 	}
 	if err := tx.Commit(); err != nil {
-		s.slog.Error("Commit", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "Commit", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wire.SaveLLMOutputResponse{ID: id, Inserted: inserted})
@@ -102,8 +99,7 @@ func (s *Server) handleEpisodesSave(w http.ResponseWriter, r *http.Request) {
 	}
 	n, err := store.SaveEpisodes(r.Context(), s.store.DB(), req.SessionID, eps)
 	if err != nil {
-		s.slog.Error("SaveEpisodes", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "SaveEpisodes", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wire.SaveEpisodesResponse{Saved: n})
@@ -146,8 +142,7 @@ func (s *Server) handleFactsSave(w http.ResponseWriter, r *http.Request) {
 	f.EvidenceQuote = req.EvidenceQuote
 	id, err := store.SaveSemanticFact(r.Context(), s.store.DB(), f)
 	if err != nil {
-		s.slog.Error("SaveSemanticFact", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "SaveSemanticFact", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wire.SaveSemanticFactResponse{ID: id})
@@ -184,8 +179,7 @@ func (s *Server) handleSessionOutcomeSave(w http.ResponseWriter, r *http.Request
 			writeProblem(w, http.StatusBadRequest, "Session does not exist", req.SessionID)
 			return
 		}
-		s.slog.Error("SaveSessionOutcome", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "SaveSessionOutcome", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -241,8 +235,7 @@ func (s *Server) handleSessionLinksSave(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 	if err := store.SaveSessionLinks(r.Context(), s.store.DB(), req.FromSessionID, links); err != nil {
-		s.slog.Error("SaveSessionLinks", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "SaveSessionLinks", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

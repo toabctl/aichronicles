@@ -26,8 +26,7 @@ func (s *Server) handleSessionLLMOutputs(w http.ResponseWriter, r *http.Request)
 	}
 	rows, err := store.LoadLLMOutputsForSession(r.Context(), s.store.DB(), id)
 	if err != nil {
-		s.slog.Error("LoadLLMOutputsForSession", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadLLMOutputsForSession", err)
 		return
 	}
 	out := make([]wire.LLMOutput, 0, len(rows))
@@ -61,8 +60,7 @@ func (s *Server) handleLLMOutputsList(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := store.LoadLLMOutputs(r.Context(), s.store.DB(), filter)
 	if err != nil {
-		s.slog.Error("LoadLLMOutputs", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadLLMOutputs", err)
 		return
 	}
 	out := make([]wire.LLMOutput, 0, len(rows))
@@ -83,8 +81,7 @@ func (s *Server) handleSummariesGet(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := store.LoadLLMOutputsForSession(r.Context(), s.store.DB(), sessionID)
 	if err != nil {
-		s.slog.Error("LoadLLMOutputsForSession", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadLLMOutputsForSession", err)
 		return
 	}
 	for _, o := range rows {
@@ -110,8 +107,7 @@ func (s *Server) handleSummariesBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := store.LoadSummariesIndexedByID(r.Context(), s.store.DB(), ids)
 	if err != nil {
-		s.slog.Error("LoadSummariesIndexedByID", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadSummariesIndexedByID", err)
 		return
 	}
 	out := wire.SummariesBatchResponse{Summaries: make(map[string]wire.LLMOutput, len(rows))}
@@ -134,8 +130,7 @@ func (s *Server) handleLLMOutputGet(w http.ResponseWriter, r *http.Request) {
 	}
 	row, err := store.LoadLLMOutputByHash(r.Context(), s.store.DB(), store.LLMOutputKind(kind), hash)
 	if err != nil {
-		s.slog.Error("LoadLLMOutputByHash", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadLLMOutputByHash", err)
 		return
 	}
 	if row == nil {
@@ -170,8 +165,7 @@ func (s *Server) handleUnresolvedForCwd(w http.ResponseWriter, r *http.Request) 
 	}
 	rows, err := store.LoadUnresolvedForCwd(r.Context(), s.store.DB(), cwd, sinceMs, maxSess, maxItems)
 	if err != nil {
-		s.slog.Error("LoadUnresolvedForCwd", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadUnresolvedForCwd", err)
 		return
 	}
 	out := wire.UnresolvedResponse{Items: make([]wire.UnresolvedItem, 0, len(rows))}
@@ -195,8 +189,7 @@ func (s *Server) handleProjectsAggregates(w http.ResponseWriter, r *http.Request
 	}
 	rows, err := store.LoadProjectAggregates(r.Context(), s.store.DB(), sinceMs)
 	if err != nil {
-		s.slog.Error("LoadProjectAggregates", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadProjectAggregates", err)
 		return
 	}
 	out := wire.ProjectAggregatesResponse{Projects: make([]wire.ProjectAggregate, 0, len(rows))}
@@ -221,8 +214,7 @@ func (s *Server) handleSubagentSpans(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := store.LoadSubagentSpans(r.Context(), s.store.DB(), sessionID, limit)
 	if err != nil {
-		s.slog.Error("LoadSubagentSpans", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadSubagentSpans", err)
 		return
 	}
 	out := wire.SubagentsResponse{Spans: make([]wire.SubagentSpan, 0, len(rows))}
@@ -257,8 +249,7 @@ func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 	}
 	rep, err := store.LoadInsights(r.Context(), s.store.DB(), sinceMs, lim)
 	if err != nil {
-		s.slog.Error("LoadInsights", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadInsights", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, insightsToWire(rep))
@@ -342,8 +333,7 @@ func (s *Server) handleLLMOutputByID(w http.ResponseWriter, r *http.Request) {
 	}
 	row, err := store.LoadLLMOutputByID(r.Context(), s.store.DB(), id)
 	if err != nil {
-		s.slog.Error("LoadLLMOutputByID", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadLLMOutputByID", err)
 		return
 	}
 	if row == nil {
@@ -364,8 +354,7 @@ func (s *Server) handleLLMOutputsLastCreated(w http.ResponseWriter, r *http.Requ
 	}
 	last, err := store.LastLLMOutputCreatedAt(r.Context(), s.store.DB(), store.LLMOutputKind(kind))
 	if err != nil {
-		s.slog.Error("LastLLMOutputCreatedAt", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LastLLMOutputCreatedAt", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wire.LLMOutputLastCreatedAtResponse{LastCreatedAtMs: last})
@@ -385,8 +374,7 @@ func (s *Server) handleLLMOutputExistsForSession(w http.ResponseWriter, r *http.
 	}
 	has, err := store.HasLLMOutputForSession(r.Context(), s.store.DB(), sessionID, store.LLMOutputKind(kind))
 	if err != nil {
-		s.slog.Error("HasLLMOutputForSession", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "HasLLMOutputForSession", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wire.LLMOutputExistsResponse{Exists: has})

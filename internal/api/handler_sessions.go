@@ -57,8 +57,7 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 	if facets.Any() {
 		rows, err := store.LoadSessionsForListFaceted(r.Context(), s.store.DB(), facets, sinceMs, limit)
 		if err != nil {
-			s.slog.Error("LoadSessionsForListFaceted", "err", err)
-			writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+			s.storeError(w, "LoadSessionsForListFaceted", err)
 			return
 		}
 		out := wire.SessionListResponse{Sessions: make([]wire.SessionDigest, 0, len(rows))}
@@ -71,8 +70,7 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := store.LoadRecentSessionDigests(r.Context(), s.store.DB(), sinceMs, limit)
 	if err != nil {
-		s.slog.Error("LoadRecentSessionDigests", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadRecentSessionDigests", err)
 		return
 	}
 
@@ -94,8 +92,7 @@ func (s *Server) handleSessionsGet(w http.ResponseWriter, r *http.Request) {
 	}
 	row, err := store.LoadSessionDigest(r.Context(), s.store.DB(), id)
 	if err != nil {
-		s.slog.Error("LoadSessionDigest", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadSessionDigest", err)
 		return
 	}
 	if row == nil {
@@ -155,8 +152,7 @@ func (s *Server) handleSessionsRelated(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := store.LoadCandidatePriorSessions(r.Context(), s.store.DB(), id, limit)
 	if err != nil {
-		s.slog.Error("LoadCandidatePriorSessions", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadCandidatePriorSessions", err)
 		return
 	}
 
@@ -181,8 +177,7 @@ func (s *Server) handleSessionsRelated(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSessionsSourceAgents(w http.ResponseWriter, r *http.Request) {
 	agents, err := store.LoadDistinctSourceAgents(r.Context(), s.store.DB())
 	if err != nil {
-		s.slog.Error("LoadDistinctSourceAgents", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadDistinctSourceAgents", err)
 		return
 	}
 	if agents == nil {

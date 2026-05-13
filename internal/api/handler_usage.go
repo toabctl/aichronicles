@@ -24,8 +24,7 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := store.LoadTokenUsage(r.Context(), s.store.DB(), sinceMs)
 	if err != nil {
-		s.slog.Error("LoadTokenUsage", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "LoadTokenUsage", err)
 		return
 	}
 	totals := store.SumTokenUsage(rows)

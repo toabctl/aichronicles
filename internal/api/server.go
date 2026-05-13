@@ -446,6 +446,18 @@ func writeProblem(w http.ResponseWriter, status int, title, detail string) {
 	_ = json.NewEncoder(w).Encode(wire.Problem{Title: title, Status: status, Detail: detail})
 }
 
+// storeError is the canonical "store layer returned an error"
+// response: log the op + err at ERROR level (so the operator sees
+// the underlying SQL message in the daemon log) and surface a
+// generic 500 to the client (so internal details don't leak across
+// the wire). Every handler that calls store.Load*/store.Save*/etc.
+// uses this — sixty-plus sites previously inlined the same three
+// lines.
+func (s *Server) storeError(w http.ResponseWriter, op string, err error) {
+	s.slog.Error(op, "err", err)
+	writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+}
+
 // writeJSON renders a 2xx JSON response.
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
