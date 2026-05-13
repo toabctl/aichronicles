@@ -83,8 +83,11 @@ func AbsoluteOrDash(n sql.NullInt64) string {
 }
 
 // AbsoluteRFC3339OrDash is AbsoluteRFC3339 + the NullInt64 fallback.
+// Mirrors AbsoluteOrDash: a zero Int64 is treated as missing (a NULL
+// column can surface as Valid=true, Int64=0 in some scan paths, and
+// epoch-1970 is never a meaningful timestamp here).
 func AbsoluteRFC3339OrDash(n sql.NullInt64) string {
-	if !n.Valid {
+	if !n.Valid || n.Int64 == 0 {
 		return "-"
 	}
 	return AbsoluteRFC3339(n.Int64)

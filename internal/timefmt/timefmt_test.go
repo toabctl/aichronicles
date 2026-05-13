@@ -67,3 +67,17 @@ func TestAbsoluteOrDash(t *testing.T) {
 		t.Errorf("valid: got %q", got)
 	}
 }
+
+func TestAbsoluteRFC3339OrDash(t *testing.T) {
+	t.Parallel()
+	if got := AbsoluteRFC3339OrDash(sql.NullInt64{Valid: false}); got != "-" {
+		t.Errorf("invalid: got %q, want -", got)
+	}
+	if got := AbsoluteRFC3339OrDash(sql.NullInt64{Valid: true, Int64: 0}); got != "-" {
+		t.Errorf("zero: got %q, want -", got)
+	}
+	ts := time.Date(2026, 4, 28, 13, 45, 0, 0, time.UTC).UnixMilli()
+	if got := AbsoluteRFC3339OrDash(sql.NullInt64{Valid: true, Int64: ts}); got != "2026-04-28T13:45:00Z" {
+		t.Errorf("valid: got %q", got)
+	}
+}
