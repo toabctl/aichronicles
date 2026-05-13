@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -289,7 +290,16 @@ func startWebListener(bind string, port int, st *store.Store, logger *slog.Logge
 
 	wsrv := web.NewServer(st, web.Config{Bind: bind, Port: port}, logger.With("component", "web"))
 	httpSrv := &http.Server{
-		Handler:           wsrv.Handler(),
+		// recoverPanic wraps the web mux so a panicking template
+		// handler logs its stack and returns 500 instead of taking
+		// down the whole daemon process. Go's http.Server already
+		// recovers panics per-request (the connection closes), but
+		// it's silent — the operator never learns. Since the web
+		// surface lives in-process with the ingest worker, a
+		// visible panic log is the minimum decoupling we can offer
+		// without splitting into a separate supervised unit (left
+		// as architectural follow-up).
+		Handler:           recoverPanic(wsrv.Handler(), logger.With("component", "web")),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       60 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -316,4 +326,36 @@ func isLoopbackBind(bind string) bool {
 		return ip.IsLoopback()
 	}
 	return false
+}
+
+// recoverPanic wraps an http.Handler so a panicking sub-handler
+// logs its panic value + stack and returns 500. Without this, a
+// template-render panic relies on Go's stdlib recovery — which
+// closes the connection and stays silent. The web UI shares the
+// daemon process with the ingest worker, so a silent panic is
+// strictly worse: operators see "events stopped ingesting" but
+// have nothing in the journal to explain it.
+//
+// Architectural follow-up (arch_review_2026_05_13 HIGH #4):
+// fully split web into a separate supervised unit so even a
+// runtime.Goexit or OOM in the web path can't reach the ingest
+// goroutine.
+func recoverPanic(next http.Handler, log *slog.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rv := recover(); rv != nil {
+				log.Error("web handler panicked",
+					"method", r.Method,
+					"path", r.URL.Path,
+					"panic", fmt.Sprintf("%v", rv),
+					"stack", string(debug.Stack()))
+				// Don't write headers if the handler already
+				// did — that's a noisy log line, but the
+				// underlying connection error is the real
+				// signal. http.Server will close the conn.
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
