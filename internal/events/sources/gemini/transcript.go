@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"iter"
 	"log/slog"
 	"os"
@@ -68,36 +67,11 @@ func (s *TranscriptSource) Events(ctx context.Context) iter.Seq2[events.Event, e
 		cwdMap = loadProjectsMap()
 	}
 	return func(yield func(events.Event, error) bool) {
-		if s.Root == "" {
-			return
-		}
-		info, err := os.Stat(s.Root)
+		files, err := events.WalkSourceFiles(ctx, s.Root, ".json")
 		if err != nil {
-			yield(events.Event{}, fmt.Errorf("stat %s: %w", s.Root, err))
+			yield(events.Event{}, err)
 			return
 		}
-		var files []string
-		if info.IsDir() {
-			err := filepath.WalkDir(s.Root, func(path string, d fs.DirEntry, werr error) error {
-				if werr != nil {
-					return werr
-				}
-				if d.IsDir() {
-					return nil
-				}
-				if strings.HasSuffix(path, ".json") {
-					files = append(files, path)
-				}
-				return nil
-			})
-			if err != nil {
-				yield(events.Event{}, fmt.Errorf("walk %s: %w", s.Root, err))
-				return
-			}
-		} else {
-			files = []string{s.Root}
-		}
-
 		for _, path := range files {
 			if ctx.Err() != nil {
 				yield(events.Event{}, ctx.Err())
