@@ -219,24 +219,36 @@ func searchAgainst(ctx context.Context, db *sql.DB, opts SearchEventOpts, index 
 
 	var hits []SearchEventHit
 	for rows.Next() {
-		var (
-			h       SearchEventHit
-			cwd     sql.NullString
-			content sql.NullString
-			snippet sql.NullString
-		)
-		if err := rows.Scan(&h.SessionID, &h.Kind, &cwd, &h.TsSourceMs, &content, &snippet); err != nil {
+		h, err := scanSearchEventHit(rows)
+		if err != nil {
 			return nil, fmt.Errorf("SearchEvents: scan: %w", err)
 		}
-		h.Cwd = nullable.StringPtr(cwd)
-		h.Content = nullable.StringPtr(content)
-		h.Snippet = nullable.StringPtr(snippet)
 		hits = append(hits, h)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("SearchEvents: iterate: %w", err)
 	}
 	return hits, nil
+}
+
+// scanSearchEventHit scans one row in the 6-column projection used
+// by both the FTS path (searchAgainst) and the extractions path
+// (searchExtractions). The Cwd / Content / Snippet columns are
+// nullable; everything else is required.
+func scanSearchEventHit(rows *sql.Rows) (SearchEventHit, error) {
+	var (
+		h       SearchEventHit
+		cwd     sql.NullString
+		content sql.NullString
+		snippet sql.NullString
+	)
+	if err := rows.Scan(&h.SessionID, &h.Kind, &cwd, &h.TsSourceMs, &content, &snippet); err != nil {
+		return SearchEventHit{}, err
+	}
+	h.Cwd = nullable.StringPtr(cwd)
+	h.Content = nullable.StringPtr(content)
+	h.Snippet = nullable.StringPtr(snippet)
+	return h, nil
 }
 
 // appendCommonFilters writes the shared scalar / facet filter
@@ -452,18 +464,10 @@ func searchExtractions(ctx context.Context, db *sql.DB, opts SearchEventOpts) ([
 
 	var hits []SearchEventHit
 	for rows.Next() {
-		var (
-			h       SearchEventHit
-			cwd     sql.NullString
-			content sql.NullString
-			snippet sql.NullString
-		)
-		if err := rows.Scan(&h.SessionID, &h.Kind, &cwd, &h.TsSourceMs, &content, &snippet); err != nil {
+		h, err := scanSearchEventHit(rows)
+		if err != nil {
 			return nil, fmt.Errorf("SearchEvents: extractions scan: %w", err)
 		}
-		h.Cwd = nullable.StringPtr(cwd)
-		h.Content = nullable.StringPtr(content)
-		h.Snippet = nullable.StringPtr(snippet)
 		hits = append(hits, h)
 	}
 	if err := rows.Err(); err != nil {

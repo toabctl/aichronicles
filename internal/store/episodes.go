@@ -280,8 +280,7 @@ func FindEpisodes(ctx context.Context, db *sql.DB, opts FindEpisodesOpts) ([]eve
 	// the same wall clock, or seeded fixtures with hardcoded ts)
 	// would otherwise return in engine-defined order — visible as
 	// flaky pagination and non-deterministic LIMIT'd recall.
-	q := `SELECT id, session_id, ordinal, started_at_ms, ended_at_ms,
-	             cwd, intent_summary, event_count, first_event_id
+	q := `SELECT ` + episodeColumns + `
 	        FROM episodes
 	       WHERE 1=1` + filter.String() + `
 	       ORDER BY ended_at_ms DESC, id DESC
@@ -294,16 +293,10 @@ func FindEpisodes(ctx context.Context, db *sql.DB, opts FindEpisodesOpts) ([]eve
 	defer func() { _ = rows.Close() }()
 	var out []events.Episode
 	for rows.Next() {
-		var (
-			ep  events.Episode
-			cwd sql.NullString
-		)
-		if err := rows.Scan(&ep.ID, &ep.SessionID, &ep.Ordinal,
-			&ep.StartedAtMs, &ep.EndedAtMs, &cwd, &ep.IntentSummary,
-			&ep.EventCount, &ep.FirstEventID); err != nil {
-			return nil, fmt.Errorf("scan: %w", err)
+		ep, err := scanEpisode(rows)
+		if err != nil {
+			return nil, err
 		}
-		ep.Cwd = nullStringToEvents(cwd)
 		out = append(out, ep)
 	}
 	return out, rows.Err()
@@ -384,8 +377,7 @@ func LoadEpisodesBySession(ctx context.Context, db *sql.DB, sessionID string) ([
 		return nil, errors.New("LoadEpisodesBySession: session_id is required")
 	}
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, session_id, ordinal, started_at_ms, ended_at_ms,
-		        cwd, intent_summary, event_count, first_event_id
+		`SELECT `+episodeColumns+`
 		   FROM episodes
 		  WHERE session_id = ?
 		  ORDER BY ordinal ASC`,
@@ -397,17 +389,33 @@ func LoadEpisodesBySession(ctx context.Context, db *sql.DB, sessionID string) ([
 	defer func() { _ = rows.Close() }()
 	var out []events.Episode
 	for rows.Next() {
-		var (
-			ep  events.Episode
-			cwd sql.NullString
-		)
-		if err := rows.Scan(&ep.ID, &ep.SessionID, &ep.Ordinal,
-			&ep.StartedAtMs, &ep.EndedAtMs, &cwd, &ep.IntentSummary,
-			&ep.EventCount, &ep.FirstEventID); err != nil {
-			return nil, fmt.Errorf("scan: %w", err)
+		ep, err := scanEpisode(rows)
+		if err != nil {
+			return nil, err
 		}
-		ep.Cwd = nullStringToEvents(cwd)
 		out = append(out, ep)
 	}
 	return out, rows.Err()
+}
+
+// episodeColumns is the canonical column list for SELECTs that feed
+// scanEpisode. Keep this string and the scan helper in lockstep.
+const episodeColumns = `id, session_id, ordinal, started_at_ms, ended_at_ms,
+	cwd, intent_summary, event_count, first_event_id`
+
+// scanEpisode scans one row in episodeColumns order. The cwd column
+// is the only nullable in the projection; intent_summary is empty-
+// string when absent rather than NULL.
+func scanEpisode(rows *sql.Rows) (events.Episode, error) {
+	var (
+		ep  events.Episode
+		cwd sql.NullString
+	)
+	if err := rows.Scan(&ep.ID, &ep.SessionID, &ep.Ordinal,
+		&ep.StartedAtMs, &ep.EndedAtMs, &cwd, &ep.IntentSummary,
+		&ep.EventCount, &ep.FirstEventID); err != nil {
+		return events.Episode{}, fmt.Errorf("scan: %w", err)
+	}
+	ep.Cwd = nullStringToEvents(cwd)
+	return ep, nil
 }

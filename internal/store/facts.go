@@ -136,8 +136,7 @@ func LoadFactsForSubject(ctx context.Context, db *sql.DB, subject string, limit 
 		limit = 100
 	}
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, source_llm_output_id, subject, predicate, object,
-		        confidence, evidence_session_id, evidence_quote, asserted_at_ms
+		`SELECT `+semanticFactColumns+`
 		   FROM semantic_facts
 		  WHERE subject = ?
 		  ORDER BY predicate ASC, asserted_at_ms DESC
@@ -161,8 +160,7 @@ func LoadRecentFacts(ctx context.Context, db *sql.DB, limit int) ([]SemanticFact
 		limit = 50
 	}
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, source_llm_output_id, subject, predicate, object,
-		        confidence, evidence_session_id, evidence_quote, asserted_at_ms
+		`SELECT `+semanticFactColumns+`
 		   FROM semantic_facts
 		  ORDER BY asserted_at_ms DESC
 		  LIMIT ?`,
@@ -249,6 +247,12 @@ func LoadDistinctFactSubjects(ctx context.Context, db *sql.DB, limit int) ([]str
 }
 
 const defaultDistinctFactSubjectsLimit = 200
+
+// semanticFactColumns is the canonical column list for SELECTs that
+// feed scanSemanticFacts. Keep this string and the scan helper in
+// lockstep.
+const semanticFactColumns = `id, source_llm_output_id, subject, predicate, object,
+	confidence, evidence_session_id, evidence_quote, asserted_at_ms`
 
 // scanSemanticFacts iterates rows from a SELECT * shaped query and
 // produces the slice. Shared between LoadFactsForSubject and
