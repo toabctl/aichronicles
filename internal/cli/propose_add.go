@@ -23,6 +23,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/timefmt"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -216,7 +217,7 @@ func loadLatestProposal(ctx context.Context, c *apiclient.Client, wantID int64) 
 func renderProposalIndex(out io.Writer, r *prompts.ProposalResult, output *wire.LLMOutput) {
 	_, _ = fmt.Fprintf(out, "propose output id=%d  generated=%s  model=%s\n\n",
 		output.ID,
-		time.UnixMilli(output.CreatedAtMs).UTC().Format("2006-01-02 15:04 UTC"),
+		timefmt.Absolute(output.CreatedAtMs),
 		output.Model,
 	)
 	if len(r.Skills) == 0 {
@@ -869,7 +870,7 @@ func refuseDiscardedSkillName(ctx context.Context, c *apiclient.Client, candidat
 		if r.Decision == string(store.MaintenanceDiscard) {
 			when := "earlier"
 			if r.DecisionAtMs != nil {
-				when = time.UnixMilli(*r.DecisionAtMs).UTC().Format("2006-01-02 15:04 UTC")
+				when = timefmt.Absolute(*r.DecisionAtMs)
 			}
 			return fmt.Errorf("skill %q was previously discarded (%s) — "+
 				"add it again only if you've changed your mind. "+

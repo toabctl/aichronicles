@@ -19,6 +19,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/timefmt"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -738,7 +739,7 @@ func renderInductionList(out io.Writer, rows []wire.LLMOutput, format OutputForm
 		if r.SessionID != nil && *r.SessionID != "" {
 			sessShort = preview.ShortID(*r.SessionID)
 		}
-		when := time.UnixMilli(r.CreatedAtMs).UTC().Format("2006-01-02 15:04 UTC")
+		when := timefmt.Absolute(r.CreatedAtMs)
 		fmt.Fprintf(&b, "%-8s  %-19s  %s\n", sessShort, when, outcome)
 	}
 	_, err := io.WriteString(out, b.String())

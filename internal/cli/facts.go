@@ -18,6 +18,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/timefmt"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -417,7 +418,7 @@ func renderFactsList(out io.Writer, rows []wire.LLMOutput, format OutputFormat) 
 		if r.SessionID != nil && *r.SessionID != "" {
 			sessShort = preview.ShortID(*r.SessionID)
 		}
-		when := time.UnixMilli(r.CreatedAtMs).UTC().Format("2006-01-02 15:04 UTC")
+		when := timefmt.Absolute(r.CreatedAtMs)
 		fmt.Fprintf(&b, "%-8s  %-19s  %s\n", sessShort, when, outcome)
 	}
 	_, err := io.WriteString(out, b.String())
@@ -442,7 +443,7 @@ func renderFactsForSubject(out io.Writer, subject string, facts []wire.SemanticF
 	for _, f := range facts {
 		fmt.Fprintf(&b, "  %s = %s  (conf=%.2f, asserted %s)\n",
 			f.Predicate, f.Object, f.Confidence,
-			time.UnixMilli(f.AssertedAtMs).UTC().Format("2006-01-02 15:04 UTC"))
+			timefmt.Absolute(f.AssertedAtMs))
 		if f.EvidenceQuote != nil && *f.EvidenceQuote != "" {
 			fmt.Fprintf(&b, "    quote: %s\n", *f.EvidenceQuote)
 		}

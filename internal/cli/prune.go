@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/toabctl/aichronicles/internal/timefmt"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -80,7 +81,7 @@ func formatPruneResponse(r wire.PruneResponse, window time.Duration) string {
 	if r.DryRun {
 		verb = "would delete (dry-run; pass --yes to commit)"
 	}
-	cutoff := time.UnixMilli(r.CutoffMs).UTC().Format("2006-01-02 15:04 UTC")
+	cutoff := timefmt.Absolute(r.CutoffMs)
 	fmt.Fprintf(&b, "prune (older than %s, cutoff %s) — %s:\n", humanDuration(window), cutoff, verb)
 	fmt.Fprintf(&b, "  sessions:       %d\n", r.Sessions)
 	fmt.Fprintf(&b, "  raw_envelopes:  %d\n", r.RawEnvelopes)

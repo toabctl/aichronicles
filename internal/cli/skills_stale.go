@@ -12,6 +12,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/preview"
+	"github.com/toabctl/aichronicles/internal/timefmt"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -153,27 +154,19 @@ func renderSkillImpact(out io.Writer, rows []wire.SkillImpact, since, window tim
 	return err
 }
 
-// relativeTimeOrDash formats an epoch-millis as "Nh ago" / "Nd
-// ago", or "-" when the timestamp is missing.
+// relativeTimeOrDash wraps timefmt.Relative with the table-cell
+// empty-state token "-". Distinct from timefmt.RelativeOrDash only
+// in suppressing future timestamps (treats clock-skew futures as
+// missing rather than rendering "future?"), so the "stale" column
+// stays scannable.
 func relativeTimeOrDash(ms int64, now time.Time) string {
 	if ms <= 0 {
 		return "-"
 	}
-	d := now.Sub(time.UnixMilli(ms))
-	switch {
-	case d < 0:
+	if time.UnixMilli(ms).After(now) {
 		return "-"
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
-	case d < 30*24*time.Hour:
-		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
-	default:
-		return time.UnixMilli(ms).UTC().Format("2006-01-02")
 	}
+	return timefmt.Relative(ms, now)
 }
 
 func newSkillsStaleCmd() *cobra.Command {

@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/internal/timefmt"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -164,26 +165,13 @@ func renderUnresolved(out io.Writer, cwd string, items []wire.UnresolvedItem, fo
 	return err
 }
 
-// relativeTimeOrAbsent renders epoch-millis as "Nh ago"/"Nd ago",
-// or "still active" when ms == 0 (session hasn't ended yet — the
-// summary lives ahead of the close).
+// relativeTimeOrAbsent wraps timefmt.Relative with the CLI-specific
+// empty-state token "still active" (a session that hasn't ended yet
+// has its summary written ahead of close; ms == 0 means "not yet
+// closed", not "missing").
 func relativeTimeOrAbsent(ms int64, now time.Time) string {
 	if ms <= 0 {
 		return "still active"
 	}
-	d := now.Sub(time.UnixMilli(ms))
-	switch {
-	case d < 0:
-		return "future?"
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
-	case d < 30*24*time.Hour:
-		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
-	default:
-		return time.UnixMilli(ms).UTC().Format("2006-01-02")
-	}
+	return timefmt.Relative(ms, now)
 }
