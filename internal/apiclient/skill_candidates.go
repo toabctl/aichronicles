@@ -3,8 +3,6 @@ package apiclient
 import (
 	"context"
 	"net/http"
-	"net/url"
-	"strconv"
 
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -33,13 +31,11 @@ func (c *Client) SkillCandidateDecision(ctx context.Context, req wire.SkillCandi
 // Returns every candidate row matching the natural key, newest
 // proposed first. limit <= 0 defaults to the server-side cap.
 func (c *Client) SkillCandidatesByName(ctx context.Context, name string, limit int) (wire.SkillCandidatesResponse, error) {
-	q := url.Values{}
-	q.Set("name", name)
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
-	}
+	var q qparams
+	q.SetString("name", name)
+	q.SetInt("limit", limit)
 	var out wire.SkillCandidatesResponse
-	if err := c.do(ctx, http.MethodGet, "/v1/skill-candidates?"+q.Encode(), nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/skill-candidates"), nil, &out); err != nil {
 		return wire.SkillCandidatesResponse{}, err
 	}
 	return out, nil

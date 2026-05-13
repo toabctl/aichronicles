@@ -53,19 +53,11 @@ func (c *Client) LLMOutputExistsForSession(ctx context.Context, sessionID, kind 
 // optionally filtered by kind. Used by MCP get_summary (when
 // kind != summary).
 func (c *Client) SessionLLMOutputs(ctx context.Context, sessionID, kind string, limit int) ([]wire.LLMOutput, error) {
-	q := url.Values{}
-	if kind != "" {
-		q.Set("kind", kind)
-	}
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
-	}
-	path := "/v1/sessions/" + url.PathEscape(sessionID) + "/llm-outputs"
-	if encoded := q.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
+	var q qparams
+	q.SetString("kind", kind)
+	q.SetInt("limit", limit)
 	var out wire.LLMOutputsListResponse
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/sessions/"+url.PathEscape(sessionID)+"/llm-outputs"), nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Outputs, nil
@@ -74,22 +66,12 @@ func (c *Client) SessionLLMOutputs(ctx context.Context, sessionID, kind string, 
 // LLMOutputsList fetches a filtered list of LLM outputs across
 // sessions. Used by MCP list_workflows (kind=induction).
 func (c *Client) LLMOutputsList(ctx context.Context, kind, sessionID string, limit int) ([]wire.LLMOutput, error) {
-	q := url.Values{}
-	if kind != "" {
-		q.Set("kind", kind)
-	}
-	if sessionID != "" {
-		q.Set("session_id", sessionID)
-	}
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
-	}
-	path := "/v1/llm-outputs/list"
-	if encoded := q.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
+	var q qparams
+	q.SetString("kind", kind)
+	q.SetString("session_id", sessionID)
+	q.SetInt("limit", limit)
 	var out wire.LLMOutputsListResponse
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/llm-outputs/list"), nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Outputs, nil
@@ -148,19 +130,13 @@ type UnresolvedRequest struct {
 }
 
 func (c *Client) Unresolved(ctx context.Context, req UnresolvedRequest) (wire.UnresolvedResponse, error) {
-	q := url.Values{}
-	q.Set("cwd", req.Cwd)
-	if req.SinceMs > 0 {
-		q.Set("since_ms", strconv.FormatInt(req.SinceMs, 10))
-	}
-	if req.MaxSessions > 0 {
-		q.Set("max_sessions", strconv.Itoa(req.MaxSessions))
-	}
-	if req.MaxItemsPerSession > 0 {
-		q.Set("max_items_per_session", strconv.Itoa(req.MaxItemsPerSession))
-	}
+	var q qparams
+	q.SetString("cwd", req.Cwd)
+	q.SetInt64("since_ms", req.SinceMs)
+	q.SetInt("max_sessions", req.MaxSessions)
+	q.SetInt("max_items_per_session", req.MaxItemsPerSession)
 	var out wire.UnresolvedResponse
-	if err := c.do(ctx, http.MethodGet, "/v1/unresolved?"+q.Encode(), nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/unresolved"), nil, &out); err != nil {
 		return wire.UnresolvedResponse{}, err
 	}
 	return out, nil
@@ -168,12 +144,10 @@ func (c *Client) Unresolved(ctx context.Context, req UnresolvedRequest) (wire.Un
 
 // ProjectAggregates fetches /v1/projects/aggregates.
 func (c *Client) ProjectAggregates(ctx context.Context, sinceMs int64) (wire.ProjectAggregatesResponse, error) {
-	path := "/v1/projects/aggregates"
-	if sinceMs > 0 {
-		path += "?since_ms=" + strconv.FormatInt(sinceMs, 10)
-	}
+	var q qparams
+	q.SetInt64("since_ms", sinceMs)
 	var out wire.ProjectAggregatesResponse
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/projects/aggregates"), nil, &out); err != nil {
 		return wire.ProjectAggregatesResponse{}, err
 	}
 	return out, nil
@@ -181,19 +155,11 @@ func (c *Client) ProjectAggregates(ctx context.Context, sinceMs int64) (wire.Pro
 
 // SubagentSpans fetches /v1/subagents.
 func (c *Client) SubagentSpans(ctx context.Context, sessionID string, limit int) (wire.SubagentsResponse, error) {
-	q := url.Values{}
-	if sessionID != "" {
-		q.Set("session_id", sessionID)
-	}
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
-	}
-	path := "/v1/subagents"
-	if encoded := q.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
+	var q qparams
+	q.SetString("session_id", sessionID)
+	q.SetInt("limit", limit)
 	var out wire.SubagentsResponse
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/subagents"), nil, &out); err != nil {
 		return wire.SubagentsResponse{}, err
 	}
 	return out, nil
@@ -208,25 +174,13 @@ type InsightsRequest struct {
 }
 
 func (c *Client) Insights(ctx context.Context, req InsightsRequest) (wire.Insights, error) {
-	q := url.Values{}
-	if req.SinceMs > 0 {
-		q.Set("since_ms", strconv.FormatInt(req.SinceMs, 10))
-	}
-	if req.TopTools > 0 {
-		q.Set("top_tools", strconv.Itoa(req.TopTools))
-	}
-	if req.TopSkills > 0 {
-		q.Set("top_skills", strconv.Itoa(req.TopSkills))
-	}
-	if req.TopSessions > 0 {
-		q.Set("top_sessions", strconv.Itoa(req.TopSessions))
-	}
-	path := "/v1/insights"
-	if encoded := q.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
+	var q qparams
+	q.SetInt64("since_ms", req.SinceMs)
+	q.SetInt("top_tools", req.TopTools)
+	q.SetInt("top_skills", req.TopSkills)
+	q.SetInt("top_sessions", req.TopSessions)
 	var out wire.Insights
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/insights"), nil, &out); err != nil {
 		return wire.Insights{}, err
 	}
 	return out, nil

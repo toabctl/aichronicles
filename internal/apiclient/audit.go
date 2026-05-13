@@ -3,8 +3,6 @@ package apiclient
 import (
 	"context"
 	"net/http"
-	"net/url"
-	"strconv"
 
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -15,19 +13,11 @@ import (
 // aggregate counters. Snippet bytes never carry the raw secret —
 // the matched span is rendered as <pattern> on the wire.
 func (c *Client) Audit(ctx context.Context, req wire.AuditRequest) (wire.AuditResponse, error) {
-	q := url.Values{}
-	if req.SinceMs > 0 {
-		q.Set("since_ms", strconv.FormatInt(req.SinceMs, 10))
-	}
-	if req.Limit > 0 {
-		q.Set("limit", strconv.Itoa(req.Limit))
-	}
-	path := "/v1/audit"
-	if encoded := q.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
+	var q qparams
+	q.SetInt64("since_ms", req.SinceMs)
+	q.SetInt("limit", req.Limit)
 	var out wire.AuditResponse
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/audit"), nil, &out); err != nil {
 		return wire.AuditResponse{}, err
 	}
 	return out, nil

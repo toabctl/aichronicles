@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"strconv"
 
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -16,18 +15,13 @@ import (
 //   - unbounded=true: every event in the session, no LIMIT clause
 //     (used by the segmenter)
 func (c *Client) SessionEvents(ctx context.Context, sessionID string, limit int, unbounded bool) (wire.SessionEventsResponse, error) {
-	q := url.Values{}
-	if unbounded {
-		q.Set("unbounded", "true")
-	} else if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
-	}
-	path := "/v1/sessions/" + url.PathEscape(sessionID) + "/events"
-	if encoded := q.Encode(); encoded != "" {
-		path += "?" + encoded
+	var q qparams
+	q.SetBool("unbounded", unbounded)
+	if !unbounded {
+		q.SetInt("limit", limit)
 	}
 	var out wire.SessionEventsResponse
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/sessions/"+url.PathEscape(sessionID)+"/events"), nil, &out); err != nil {
 		return wire.SessionEventsResponse{}, err
 	}
 	return out, nil
@@ -36,11 +30,10 @@ func (c *Client) SessionEvents(ctx context.Context, sessionID string, limit int,
 // SessionExtractions queries GET /v1/sessions/{id}/extractions?kind=.
 // kind is required ("url", "file_path", "shell_command", ...).
 func (c *Client) SessionExtractions(ctx context.Context, sessionID, kind string) (wire.SessionExtractionsResponse, error) {
-	q := url.Values{}
-	q.Set("kind", kind)
-	path := "/v1/sessions/" + url.PathEscape(sessionID) + "/extractions?" + q.Encode()
+	var q qparams
+	q.SetString("kind", kind)
 	var out wire.SessionExtractionsResponse
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/sessions/"+url.PathEscape(sessionID)+"/extractions"), nil, &out); err != nil {
 		return wire.SessionExtractionsResponse{}, err
 	}
 	return out, nil
@@ -48,12 +41,10 @@ func (c *Client) SessionExtractions(ctx context.Context, sessionID, kind string)
 
 // SessionCandidatePriors queries GET /v1/sessions/{id}/candidate-priors?limit=.
 func (c *Client) SessionCandidatePriors(ctx context.Context, sessionID string, limit int) (wire.CandidateSessionListResponse, error) {
-	path := "/v1/sessions/" + url.PathEscape(sessionID) + "/candidate-priors"
-	if limit > 0 {
-		path += "?limit=" + strconv.Itoa(limit)
-	}
+	var q qparams
+	q.SetInt("limit", limit)
 	var out wire.CandidateSessionListResponse
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/sessions/"+url.PathEscape(sessionID)+"/candidate-priors"), nil, &out); err != nil {
 		return wire.CandidateSessionListResponse{}, err
 	}
 	return out, nil
@@ -75,19 +66,11 @@ func (c *Client) SessionOutcome(ctx context.Context, sessionID string) (wire.Ses
 // rows for reflect/propose's window. Distinct from
 // c.Sessions which serves the cwd-scoped MCP path.
 func (c *Client) SessionDigests(ctx context.Context, sinceMs int64, limit int) (wire.SessionDigestsResponse, error) {
-	q := url.Values{}
-	if sinceMs > 0 {
-		q.Set("since_ms", strconv.FormatInt(sinceMs, 10))
-	}
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
-	}
-	path := "/v1/sessions/digests"
-	if encoded := q.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
+	var q qparams
+	q.SetInt64("since_ms", sinceMs)
+	q.SetInt("limit", limit)
 	var out wire.SessionDigestsResponse
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/sessions/digests"), nil, &out); err != nil {
 		return wire.SessionDigestsResponse{}, err
 	}
 	return out, nil

@@ -4,52 +4,26 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"strconv"
 
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // Sessions queries GET /v1/sessions.
 func (c *Client) Sessions(ctx context.Context, req wire.SessionListRequest) (wire.SessionListResponse, error) {
-	q := url.Values{}
-	if req.SinceMs > 0 {
-		q.Set("since_ms", strconv.FormatInt(req.SinceMs, 10))
-	}
-	if req.Cwd != "" {
-		q.Set("cwd", req.Cwd)
-	}
-	if req.Limit > 0 {
-		q.Set("limit", strconv.Itoa(req.Limit))
-	}
-	if req.SourceAgent != "" {
-		q.Set("source_agent", req.SourceAgent)
-	}
-	if req.Project != "" {
-		q.Set("project", req.Project)
-	}
-	if req.ToolName != "" {
-		q.Set("tool_name", req.ToolName)
-	}
-	if req.SkillName != "" {
-		q.Set("skill_name", req.SkillName)
-	}
-	if req.FilePathSubstring != "" {
-		q.Set("file_path_substring", req.FilePathSubstring)
-	}
-	if req.WithFailures {
-		q.Set("with_failures", "true")
-	}
-	if req.WithoutSummary {
-		q.Set("without_summary", "true")
-	}
-
-	path := "/v1/sessions"
-	if encoded := q.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
+	var q qparams
+	q.SetInt64("since_ms", req.SinceMs)
+	q.SetString("cwd", req.Cwd)
+	q.SetInt("limit", req.Limit)
+	q.SetString("source_agent", req.SourceAgent)
+	q.SetString("project", req.Project)
+	q.SetString("tool_name", req.ToolName)
+	q.SetString("skill_name", req.SkillName)
+	q.SetString("file_path_substring", req.FilePathSubstring)
+	q.SetBool("with_failures", req.WithFailures)
+	q.SetBool("without_summary", req.WithoutSummary)
 
 	var out wire.SessionListResponse
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/sessions"), nil, &out); err != nil {
 		return wire.SessionListResponse{}, err
 	}
 	return out, nil
@@ -71,10 +45,10 @@ func (c *Client) Session(ctx context.Context, id string) (wire.SessionDigest, er
 // prefix is ambiguous (multiple matches). Used by CLIs and the
 // MCP server to accept short prefixes from humans.
 func (c *Client) ResolveSession(ctx context.Context, prefix string) (string, error) {
-	q := url.Values{}
-	q.Set("prefix", prefix)
+	var q qparams
+	q.SetString("prefix", prefix)
 	var out wire.ResolveSessionResponse
-	if err := c.do(ctx, http.MethodGet, "/v1/sessions/resolve?"+q.Encode(), nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/sessions/resolve"), nil, &out); err != nil {
 		return "", err
 	}
 	return out.ID, nil
@@ -109,10 +83,10 @@ func (c *Client) SessionStartCwd(ctx context.Context, id string) (*string, error
 // links from a session. Returns an empty slice (not nil) when none
 // exist so renderers can iterate without nil checks.
 func (c *Client) SessionLinksFrom(ctx context.Context, id string) ([]wire.SessionLinkRow, error) {
-	q := url.Values{}
-	q.Set("from", id)
+	var q qparams
+	q.SetString("from", id)
 	var out wire.SessionLinksResponse
-	if err := c.do(ctx, http.MethodGet, "/v1/session-links?"+q.Encode(), nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/session-links"), nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Links, nil
@@ -121,10 +95,10 @@ func (c *Client) SessionLinksFrom(ctx context.Context, id string) ([]wire.Sessio
 // SessionLinksTo queries GET /v1/session-links?to=X — incoming
 // reverse-index of links pointing AT a session.
 func (c *Client) SessionLinksTo(ctx context.Context, id string) ([]wire.SessionLinkRow, error) {
-	q := url.Values{}
-	q.Set("to", id)
+	var q qparams
+	q.SetString("to", id)
 	var out wire.SessionLinksResponse
-	if err := c.do(ctx, http.MethodGet, "/v1/session-links?"+q.Encode(), nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/session-links"), nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Links, nil
@@ -132,12 +106,10 @@ func (c *Client) SessionLinksTo(ctx context.Context, id string) ([]wire.SessionL
 
 // RelatedSessions queries GET /v1/sessions/{id}/related.
 func (c *Client) RelatedSessions(ctx context.Context, id string, limit int) (wire.CandidateSessionListResponse, error) {
-	path := "/v1/sessions/" + url.PathEscape(id) + "/related"
-	if limit > 0 {
-		path += "?limit=" + strconv.Itoa(limit)
-	}
+	var q qparams
+	q.SetInt("limit", limit)
 	var out wire.CandidateSessionListResponse
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/sessions/"+url.PathEscape(id)+"/related"), nil, &out); err != nil {
 		return wire.CandidateSessionListResponse{}, err
 	}
 	return out, nil

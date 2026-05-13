@@ -3,7 +3,6 @@ package apiclient
 import (
 	"context"
 	"net/http"
-	"net/url"
 	"strconv"
 
 	"github.com/toabctl/aichronicles/internal/wire"
@@ -11,25 +10,13 @@ import (
 
 // SessionsMissingSummary queries GET /v1/sessions/missing-summary.
 func (c *Client) SessionsMissingSummary(ctx context.Context, req wire.SessionsMissingSummaryRequest) (wire.SessionsMissingSummaryResponse, error) {
-	q := url.Values{}
-	if req.SinceMs > 0 {
-		q.Set("since_ms", strconv.FormatInt(req.SinceMs, 10))
-	}
-	if req.Cwd != "" {
-		q.Set("cwd", req.Cwd)
-	}
-	if req.Agent != "" {
-		q.Set("agent", req.Agent)
-	}
-	if req.Limit > 0 {
-		q.Set("limit", strconv.Itoa(req.Limit))
-	}
-	path := "/v1/sessions/missing-summary"
-	if encoded := q.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
+	var q qparams
+	q.SetInt64("since_ms", req.SinceMs)
+	q.SetString("cwd", req.Cwd)
+	q.SetString("agent", req.Agent)
+	q.SetInt("limit", req.Limit)
 	var out wire.SessionsMissingSummaryResponse
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/sessions/missing-summary"), nil, &out); err != nil {
 		return wire.SessionsMissingSummaryResponse{}, err
 	}
 	return out, nil
@@ -38,25 +25,13 @@ func (c *Client) SessionsMissingSummary(ctx context.Context, req wire.SessionsMi
 // SessionsNeedingSegmentation queries
 // GET /v1/sessions/needing-segmentation.
 func (c *Client) SessionsNeedingSegmentation(ctx context.Context, req wire.SessionsNeedingSegmentationRequest) (wire.SessionsNeedingSegmentationResponse, error) {
-	q := url.Values{}
-	if req.IdleCutoffMs > 0 {
-		q.Set("idle_cutoff_ms", strconv.FormatInt(req.IdleCutoffMs, 10))
-	}
-	if req.IdleMs > 0 {
-		q.Set("idle_ms", strconv.FormatInt(req.IdleMs, 10))
-	}
-	if req.MinEvents > 0 {
-		q.Set("min_events", strconv.Itoa(req.MinEvents))
-	}
-	if req.Limit > 0 {
-		q.Set("limit", strconv.Itoa(req.Limit))
-	}
-	path := "/v1/sessions/needing-segmentation"
-	if encoded := q.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
+	var q qparams
+	q.SetInt64("idle_cutoff_ms", req.IdleCutoffMs)
+	q.SetInt64("idle_ms", req.IdleMs)
+	q.SetInt("min_events", req.MinEvents)
+	q.SetInt("limit", req.Limit)
 	var out wire.SessionsNeedingSegmentationResponse
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/sessions/needing-segmentation"), nil, &out); err != nil {
 		return wire.SessionsNeedingSegmentationResponse{}, err
 	}
 	return out, nil
@@ -64,19 +39,11 @@ func (c *Client) SessionsNeedingSegmentation(ctx context.Context, req wire.Sessi
 
 // SessionsForCompletion queries GET /v1/sessions/completions.
 func (c *Client) SessionsForCompletion(ctx context.Context, prefix string, limit int) (wire.SessionCompletionsResponse, error) {
-	q := url.Values{}
-	if prefix != "" {
-		q.Set("prefix", prefix)
-	}
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
-	}
-	path := "/v1/sessions/completions"
-	if encoded := q.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
+	var q qparams
+	q.SetString("prefix", prefix)
+	q.SetInt("limit", limit)
 	var out wire.SessionCompletionsResponse
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/sessions/completions"), nil, &out); err != nil {
 		return wire.SessionCompletionsResponse{}, err
 	}
 	return out, nil
@@ -88,7 +55,7 @@ func (c *Client) SessionsForCompletion(ctx context.Context, prefix string, limit
 // count produced.
 func (c *Client) SegmentSession(ctx context.Context, sessionID string, req wire.SegmentSessionRequest) (wire.SegmentSessionResponse, error) {
 	var out wire.SegmentSessionResponse
-	if err := c.do(ctx, http.MethodPost, "/v1/sessions/"+url.PathEscape(sessionID)+"/segment", req, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/v1/sessions/"+sessionID+"/segment", req, &out); err != nil {
 		return wire.SegmentSessionResponse{}, err
 	}
 	return out, nil
@@ -96,25 +63,13 @@ func (c *Client) SegmentSession(ctx context.Context, sessionID string, req wire.
 
 // InductionCandidates queries GET /v1/induction/candidates.
 func (c *Client) InductionCandidates(ctx context.Context, req wire.InductionCandidatesRequest) (wire.InductionCandidatesResponse, error) {
-	q := url.Values{}
-	if req.NowMs > 0 {
-		q.Set("now_ms", strconv.FormatInt(req.NowMs, 10))
-	}
-	if req.IdleThresholdMs > 0 {
-		q.Set("idle_threshold_ms", strconv.FormatInt(req.IdleThresholdMs, 10))
-	}
-	if req.MinEvents > 0 {
-		q.Set("min_events", strconv.Itoa(req.MinEvents))
-	}
-	if req.Limit > 0 {
-		q.Set("limit", strconv.Itoa(req.Limit))
-	}
-	path := "/v1/induction/candidates"
-	if encoded := q.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
+	var q qparams
+	q.SetInt64("now_ms", req.NowMs)
+	q.SetInt64("idle_threshold_ms", req.IdleThresholdMs)
+	q.SetInt("min_events", req.MinEvents)
+	q.SetInt("limit", req.Limit)
 	var out wire.InductionCandidatesResponse
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/induction/candidates"), nil, &out); err != nil {
 		return wire.InductionCandidatesResponse{}, err
 	}
 	return out, nil
@@ -122,19 +77,11 @@ func (c *Client) InductionCandidates(ctx context.Context, req wire.InductionCand
 
 // FailureShapes queries GET /v1/proposals/failure-shapes.
 func (c *Client) FailureShapes(ctx context.Context, sinceMs int64, limit int) (wire.FailureShapesResponse, error) {
-	q := url.Values{}
-	if sinceMs > 0 {
-		q.Set("since_ms", strconv.FormatInt(sinceMs, 10))
-	}
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
-	}
-	path := "/v1/proposals/failure-shapes"
-	if encoded := q.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
+	var q qparams
+	q.SetInt64("since_ms", sinceMs)
+	q.SetInt("limit", limit)
 	var out wire.FailureShapesResponse
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/proposals/failure-shapes"), nil, &out); err != nil {
 		return wire.FailureShapesResponse{}, err
 	}
 	return out, nil
@@ -142,19 +89,13 @@ func (c *Client) FailureShapes(ctx context.Context, sinceMs int64, limit int) (w
 
 // SkillFailures queries GET /v1/skills/failures.
 func (c *Client) SkillFailures(ctx context.Context, req wire.SkillFailuresRequest) (wire.SkillFailuresResponse, error) {
-	q := url.Values{}
-	q.Set("skill", req.Skill)
-	if req.SinceMs > 0 {
-		q.Set("since_ms", strconv.FormatInt(req.SinceMs, 10))
-	}
-	if req.WindowMs > 0 {
-		q.Set("window_ms", strconv.FormatInt(req.WindowMs, 10))
-	}
-	if req.Limit > 0 {
-		q.Set("limit", strconv.Itoa(req.Limit))
-	}
+	var q qparams
+	q.SetString("skill", req.Skill)
+	q.SetInt64("since_ms", req.SinceMs)
+	q.SetInt64("window_ms", req.WindowMs)
+	q.SetInt("limit", req.Limit)
 	var out wire.SkillFailuresResponse
-	if err := c.do(ctx, http.MethodGet, "/v1/skills/failures?"+q.Encode(), nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/skills/failures"), nil, &out); err != nil {
 		return wire.SkillFailuresResponse{}, err
 	}
 	return out, nil
@@ -163,22 +104,12 @@ func (c *Client) SkillFailures(ctx context.Context, req wire.SkillFailuresReques
 // SkillCandidatesEffectiveness queries
 // GET /v1/skill-candidates/effectiveness.
 func (c *Client) SkillCandidatesEffectiveness(ctx context.Context, req wire.SkillCandidateEffectivenessRequest) (wire.SkillCandidateEffectivenessResponse, error) {
-	q := url.Values{}
-	if req.SinceMs > 0 {
-		q.Set("since_ms", strconv.FormatInt(req.SinceMs, 10))
-	}
-	if req.WindowMs > 0 {
-		q.Set("window_ms", strconv.FormatInt(req.WindowMs, 10))
-	}
-	if req.Limit > 0 {
-		q.Set("limit", strconv.Itoa(req.Limit))
-	}
-	path := "/v1/skill-candidates/effectiveness"
-	if encoded := q.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
+	var q qparams
+	q.SetInt64("since_ms", req.SinceMs)
+	q.SetInt64("window_ms", req.WindowMs)
+	q.SetInt("limit", req.Limit)
 	var out wire.SkillCandidateEffectivenessResponse
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/skill-candidates/effectiveness"), nil, &out); err != nil {
 		return wire.SkillCandidateEffectivenessResponse{}, err
 	}
 	return out, nil
@@ -186,19 +117,11 @@ func (c *Client) SkillCandidatesEffectiveness(ctx context.Context, req wire.Skil
 
 // SkillCandidatesPending queries GET /v1/skill-candidates/pending.
 func (c *Client) SkillCandidatesPending(ctx context.Context, sinceMs int64, limit int) (wire.PendingSkillCandidatesResponse, error) {
-	q := url.Values{}
-	if sinceMs > 0 {
-		q.Set("since_ms", strconv.FormatInt(sinceMs, 10))
-	}
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
-	}
-	path := "/v1/skill-candidates/pending"
-	if encoded := q.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
+	var q qparams
+	q.SetInt64("since_ms", sinceMs)
+	q.SetInt("limit", limit)
 	var out wire.PendingSkillCandidatesResponse
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/skill-candidates/pending"), nil, &out); err != nil {
 		return wire.PendingSkillCandidatesResponse{}, err
 	}
 	return out, nil
@@ -208,10 +131,10 @@ func (c *Client) SkillCandidatesPending(ctx context.Context, sinceMs int64, limi
 // ErrNotFound when no candidate row exists for the named skill
 // (the skill is hand-authored).
 func (c *Client) AddedSkillCandidate(ctx context.Context, name string) (wire.SkillCandidate, error) {
-	q := url.Values{}
-	q.Set("name", name)
+	var q qparams
+	q.SetString("name", name)
 	var out wire.AddedSkillCandidateResponse
-	if err := c.do(ctx, http.MethodGet, "/v1/skill-candidates/added?"+q.Encode(), nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/skill-candidates/added"), nil, &out); err != nil {
 		return wire.SkillCandidate{}, err
 	}
 	return out.Candidate, nil
