@@ -83,8 +83,8 @@ func newSummarizeCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
-	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
+	addModelFlag(cmd, &model)
+	addForceLLMCacheFlag(cmd, &force)
 	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)
 	return cmd

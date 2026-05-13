@@ -143,7 +143,7 @@ func newInductionSweepCmd() *cobra.Command {
 		"skip sessions with fewer than this many events")
 	cmd.Flags().IntVar(&limit, "limit", defaultInductionLimit,
 		"max sessions to process in one sweep")
-	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
+	addModelFlag(cmd, &model)
 	addDBFlag(cmd, &dbPath)
 	cmd.Flags().BoolVar(&skipSummarize, "skip-summarize", false,
 		"skip phase 1 (auto-summarize). Sessions without summaries will be skipped — keeps summarize manual.")
@@ -210,8 +210,8 @@ func newInductionRunCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&session, "session", "", "session id (full or unique prefix) to induce on")
-	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
-	cmd.Flags().BoolVar(&force, "force", false, "bypass the cache and re-call the LLM")
+	addModelFlag(cmd, &model)
+	addForceLLMCacheFlag(cmd, &force)
 	addDBFlag(cmd, &dbPath)
 	addFormatFlag(cmd, &formatIn)
 	return cmd

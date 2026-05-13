@@ -105,7 +105,7 @@ func newSkillsEvolveCmd() *cobra.Command {
 		"how many failure examples to include in the prompt")
 	cmd.Flags().BoolVar(&force, "force", false,
 		"bypass the cache and re-call the LLM even if a revision was already drafted")
-	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
+	addModelFlag(cmd, &model)
 	addSocketFlag(cmd, &sockFlag)
 	return cmd
 }

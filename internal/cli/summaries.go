@@ -196,7 +196,7 @@ func newSummariesFillCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 100, "max sessions to summarize in this run")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "filter by exact cwd")
 	cmd.Flags().StringVar(&agent, "agent", "", "filter by source_agent (claude-code | codex)")
-	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
+	addModelFlag(cmd, &model)
 	addDBFlag(cmd, &dbPath)
 	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)

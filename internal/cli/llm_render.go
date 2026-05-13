@@ -7,12 +7,34 @@ import (
 	"os"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/store"
 )
+
+// addModelFlag wires the canonical --model flag. Used by every CLI
+// subcommand that issues an LLM call; the help string lived in 9+
+// places verbatim before this helper.
+func addModelFlag(cmd *cobra.Command, target *string) {
+	cmd.Flags().StringVar(target, "model", "", "LLM model id (default: provider's default)")
+}
+
+// addForceLLMCacheFlag wires the canonical --force flag for commands
+// that read from the llm_outputs cache. The flag means "ignore the
+// cache and re-call the LLM"; the wording lived in five sites with
+// minor drift ("the cache" vs "the llm_outputs cache") which this
+// helper folds back to one canonical phrasing.
+//
+// Use addForceFlag for commands whose --force means something else
+// (e.g. propose_add's "overwrite existing files").
+func addForceLLMCacheFlag(cmd *cobra.Command, target *bool) {
+	cmd.Flags().BoolVar(target, "force", false,
+		"bypass the llm_outputs cache and re-call the LLM")
+}
 
 // providerLabel returns a short human-readable name for the
 // configured LLM provider — used in command headers so the user

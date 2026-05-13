@@ -102,8 +102,8 @@ func newFactsInduceCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&session, "session", "", "session id (full or unique prefix) to induce facts from")
-	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
-	cmd.Flags().BoolVar(&force, "force", false, "bypass the cache and re-call the LLM")
+	addModelFlag(cmd, &model)
+	addForceLLMCacheFlag(cmd, &force)
 	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)
 	return cmd

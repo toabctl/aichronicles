@@ -105,8 +105,8 @@ func newDigestWeeklyCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&weekOf, "week-of", "",
 		"target a specific Monday (YYYY-MM-DD); default is the previous completed week")
-	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
-	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
+	addForceLLMCacheFlag(cmd, &force)
+	addModelFlag(cmd, &model)
 	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)
 	return cmd
