@@ -7,3 +7,13 @@ package store
 // MEDIUM #10); this helper lets test fixtures write
 // `Cwd: ptrTo("/x")` instead of declaring a temp variable.
 func ptrTo[T any](v T) *T { return &v }
+
+// derefStr returns *s or "" if s is nil. Used by tests that compare
+// against literal strings in error messages — the explicit deref
+// keeps test failure output readable.
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}

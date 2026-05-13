@@ -188,10 +188,13 @@ func uniqueSessionIDs(hits []SearchHitRow) []string {
 // not happen for hits but keeps the table from rendering blank
 // cells if it ever does.
 func pickHitSnippet(h store.SearchEventHit) string {
-	if h.Snippet.Valid && h.Snippet.String != "" {
-		return h.Snippet.String
+	if h.Snippet != nil && *h.Snippet != "" {
+		return *h.Snippet
 	}
-	return truncatePreview(h.Content)
+	if h.Content == nil {
+		return "-"
+	}
+	return truncatePreviewString(*h.Content)
 }
 
 // parseSinceWindow turns a few preset duration strings (matching

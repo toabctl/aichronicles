@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/events"
+	"github.com/toabctl/aichronicles/internal/nullable"
 )
 
 // SearchOrder selects how SearchEvents orders its result rows.
@@ -134,12 +135,17 @@ type SearchEventOpts struct {
 // Content for hit display: it's tokenizer-aware and shows what the
 // user was looking for rather than the start of the document.
 type SearchEventHit struct {
-	SessionID  string
-	Kind       string
-	Cwd        sql.NullString
+	SessionID string
+	Kind      string
+	// Cwd / Content / Snippet are optional — see
+	// arch_review_2026_05_13 MEDIUM #10. Cwd is nil for sessions
+	// that never had one captured; Content for purely metadata
+	// kinds; Snippet for results from queries that didn't
+	// produce a SQLite snippet() call.
+	Cwd        *string
 	TsSourceMs int64
-	Content    sql.NullString
-	Snippet    sql.NullString
+	Content    *string
+	Snippet    *string
 }
 
 // FTS index names. Three virtual tables back search:
@@ -213,10 +219,18 @@ func searchAgainst(ctx context.Context, db *sql.DB, opts SearchEventOpts, index 
 
 	var hits []SearchEventHit
 	for rows.Next() {
-		var h SearchEventHit
-		if err := rows.Scan(&h.SessionID, &h.Kind, &h.Cwd, &h.TsSourceMs, &h.Content, &h.Snippet); err != nil {
+		var (
+			h       SearchEventHit
+			cwd     sql.NullString
+			content sql.NullString
+			snippet sql.NullString
+		)
+		if err := rows.Scan(&h.SessionID, &h.Kind, &cwd, &h.TsSourceMs, &content, &snippet); err != nil {
 			return nil, fmt.Errorf("SearchEvents: scan: %w", err)
 		}
+		h.Cwd = nullable.StringPtr(cwd)
+		h.Content = nullable.StringPtr(content)
+		h.Snippet = nullable.StringPtr(snippet)
 		hits = append(hits, h)
 	}
 	if err := rows.Err(); err != nil {
@@ -438,10 +452,18 @@ func searchExtractions(ctx context.Context, db *sql.DB, opts SearchEventOpts) ([
 
 	var hits []SearchEventHit
 	for rows.Next() {
-		var h SearchEventHit
-		if err := rows.Scan(&h.SessionID, &h.Kind, &h.Cwd, &h.TsSourceMs, &h.Content, &h.Snippet); err != nil {
+		var (
+			h       SearchEventHit
+			cwd     sql.NullString
+			content sql.NullString
+			snippet sql.NullString
+		)
+		if err := rows.Scan(&h.SessionID, &h.Kind, &cwd, &h.TsSourceMs, &content, &snippet); err != nil {
 			return nil, fmt.Errorf("SearchEvents: extractions scan: %w", err)
 		}
+		h.Cwd = nullable.StringPtr(cwd)
+		h.Content = nullable.StringPtr(content)
+		h.Snippet = nullable.StringPtr(snippet)
 		hits = append(hits, h)
 	}
 	if err := rows.Err(); err != nil {

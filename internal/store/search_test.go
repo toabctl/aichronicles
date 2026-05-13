@@ -108,8 +108,8 @@ func TestSearchEvents_FindsByKeyword(t *testing.T) {
 	if len(hits) != 1 {
 		t.Fatalf("hits: got %d, want 1", len(hits))
 	}
-	if hits[0].Content.String != "what is jsonl format" {
-		t.Errorf("content: got %q", hits[0].Content.String)
+	if derefStr(hits[0].Content) != "what is jsonl format" {
+		t.Errorf("content: got %q", derefStr(hits[0].Content))
 	}
 }
 
@@ -182,8 +182,8 @@ func TestSearchEvents_RespectsSinceFilter(t *testing.T) {
 	if len(hits) != 1 {
 		t.Fatalf("hits: got %d, want 1", len(hits))
 	}
-	if hits[0].Content.String != "fresh marker" {
-		t.Errorf("expected fresh marker, got %q", hits[0].Content.String)
+	if derefStr(hits[0].Content) != "fresh marker" {
+		t.Errorf("expected fresh marker, got %q", derefStr(hits[0].Content))
 	}
 }
 
@@ -293,8 +293,8 @@ func TestSearchEvents_TrigramFallbackOnSubstring(t *testing.T) {
 	if len(hits) != 1 {
 		t.Fatalf("trigram fallback: got %d hits, want 1", len(hits))
 	}
-	if !contains(hits[0].Content.String, "MongoDB") {
-		t.Errorf("expected MongoDB in content, got %q", hits[0].Content.String)
+	if !contains(derefStr(hits[0].Content), "MongoDB") {
+		t.Errorf("expected MongoDB in content, got %q", derefStr(hits[0].Content))
 	}
 }
 
@@ -324,8 +324,8 @@ func TestSearchEvents_PrimaryWinsWhenItHasHits(t *testing.T) {
 	if len(hits) != 1 {
 		t.Fatalf("primary path: got %d hits, want 1 (trigram fallback should NOT have run)", len(hits))
 	}
-	if !contains(hits[0].Content.String, "I love mongo") {
-		t.Errorf("expected primary's row, got %q", hits[0].Content.String)
+	if !contains(derefStr(hits[0].Content), "I love mongo") {
+		t.Errorf("expected primary's row, got %q", derefStr(hits[0].Content))
 	}
 }
 
@@ -375,11 +375,11 @@ func TestSearchEvents_SnippetPopulated(t *testing.T) {
 	if len(hits) != 1 {
 		t.Fatalf("hits: got %d, want 1", len(hits))
 	}
-	if !hits[0].Snippet.Valid || hits[0].Snippet.String == "" {
+	if hits[0].Snippet == nil || derefStr(hits[0].Snippet) == "" {
 		t.Fatalf("snippet should be populated, got %+v", hits[0].Snippet)
 	}
-	if !strings.Contains(hits[0].Snippet.String, "cluster") {
-		t.Errorf("snippet should contain matched term, got %q", hits[0].Snippet.String)
+	if !strings.Contains(derefStr(hits[0].Snippet), "cluster") {
+		t.Errorf("snippet should contain matched term, got %q", derefStr(hits[0].Snippet))
 	}
 }
 
@@ -403,7 +403,7 @@ func TestSearchEvents_SnippetCentersOnMatch(t *testing.T) {
 	if len(hits) != 1 {
 		t.Fatalf("hits: got %d, want 1", len(hits))
 	}
-	snip := hits[0].Snippet.String
+	snip := derefStr(hits[0].Snippet)
 	if !strings.Contains(snip, "payload") {
 		t.Errorf("snippet must contain match: %q", snip)
 	}
@@ -432,8 +432,8 @@ func TestSearchEvents_SnippetEllipsisOnTruncation(t *testing.T) {
 	if len(hits) != 1 {
 		t.Fatalf("hits: got %d, want 1", len(hits))
 	}
-	if !strings.Contains(hits[0].Snippet.String, "…") {
-		t.Errorf("snippet should carry ellipsis on truncation: %q", hits[0].Snippet.String)
+	if !strings.Contains(derefStr(hits[0].Snippet), "…") {
+		t.Errorf("snippet should carry ellipsis on truncation: %q", derefStr(hits[0].Snippet))
 	}
 }
 
@@ -473,9 +473,9 @@ func TestSearchEvents_RecencyBoostClampsFutureTimestamps(t *testing.T) {
 	if len(hits) != 2 {
 		t.Fatalf("hits: got %d, want 2", len(hits))
 	}
-	if !contains(hits[0].Content.String, "focused present doc") {
+	if !contains(derefStr(hits[0].Content), "focused present doc") {
 		t.Errorf("strong-relevance present row should win; recency clamp broken\nfirst: %q",
-			hits[0].Content.String)
+			derefStr(hits[0].Content))
 	}
 }
 
@@ -544,9 +544,9 @@ func TestSearchEvents_RecencyBoostInsideHalfDaysKeepsRelevance(t *testing.T) {
 	if len(hits) != 2 {
 		t.Fatalf("hits: got %d, want 2", len(hits))
 	}
-	if !contains(hits[0].Content.String, "focused recent document") {
+	if !contains(derefStr(hits[0].Content), "focused recent document") {
 		t.Errorf("strong-relevance row 14d old should win, got first hit %q",
-			hits[0].Content.String)
+			derefStr(hits[0].Content))
 	}
 }
 
@@ -616,9 +616,9 @@ func TestSearchEvents_OrderRecencyIgnoresRelevance(t *testing.T) {
 		t.Fatalf("hits: got %d, want 2", len(hits))
 	}
 	// New row should come first regardless of its weak relevance.
-	if !contains(hits[0].Content.String, "rare just once") {
+	if !contains(derefStr(hits[0].Content), "rare just once") {
 		t.Errorf("OrderRecency should put new row first, got %q",
-			hits[0].Content.String)
+			derefStr(hits[0].Content))
 	}
 }
 
@@ -670,13 +670,13 @@ func TestSearchEvents_ExtractionsFallbackFindsByFilePath(t *testing.T) {
 	// Snippet must be the labelled extraction-kind preview, not the
 	// content_text — that's how the caller knows it came via the
 	// typed-fact path.
-	if !strings.HasPrefix(hits[0].Snippet.String, "[file_path] ") {
+	if !strings.HasPrefix(derefStr(hits[0].Snippet), "[file_path] ") {
 		t.Errorf("snippet should be labelled with extraction kind, got %q",
-			hits[0].Snippet.String)
+			derefStr(hits[0].Snippet))
 	}
-	if !contains(hits[0].Snippet.String, "internal/store/migrate.go") {
+	if !contains(derefStr(hits[0].Snippet), "internal/store/migrate.go") {
 		t.Errorf("snippet should carry the matched extraction value, got %q",
-			hits[0].Snippet.String)
+			derefStr(hits[0].Snippet))
 	}
 }
 
@@ -709,8 +709,8 @@ func TestSearchEvents_ExtractionsFallbackSkippedWhenPrimaryHits(t *testing.T) {
 	if len(hits) != 1 {
 		t.Fatalf("primary should suppress fallback: got %d hits, want 1", len(hits))
 	}
-	if !contains(hits[0].Content.String, "for review") {
-		t.Errorf("expected primary's row, got %q", hits[0].Content.String)
+	if !contains(derefStr(hits[0].Content), "for review") {
+		t.Errorf("expected primary's row, got %q", derefStr(hits[0].Content))
 	}
 }
 
