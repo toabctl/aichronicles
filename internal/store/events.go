@@ -324,11 +324,7 @@ func LoadLatestEventsIndexedByID(ctx context.Context, db *sql.DB, sessionIDs []s
 		return map[string]LiveEvent{}, nil
 	}
 
-	placeholders := strings.Repeat(",?", len(sessionIDs))[1:]
-	args := make([]any, 0, len(sessionIDs))
-	for _, id := range sessionIDs {
-		args = append(args, id)
-	}
+	placeholders, args := inPlaceholders(sessionIDs)
 
 	q := `SELECT r.ingest_seq, e.event_id, e.session_id, e.kind,
 		       e.ts_source_ms, r.ts_server_ms, e.cwd, e.content_text

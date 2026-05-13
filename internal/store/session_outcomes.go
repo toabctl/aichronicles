@@ -403,11 +403,7 @@ func LoadSessionOutcomes(ctx context.Context, db *sql.DB, sessionIDs []string) (
 	if len(sessionIDs) == 0 {
 		return out, nil
 	}
-	placeholders := strings.Repeat(",?", len(sessionIDs))[1:]
-	args := make([]any, len(sessionIDs))
-	for i, id := range sessionIDs {
-		args[i] = id
-	}
+	placeholders, args := inPlaceholders(sessionIDs)
 	q := `SELECT ` + sessionOutcomeColumns + `
 	        FROM session_outcomes
 	       WHERE session_id IN (` + placeholders + `)`

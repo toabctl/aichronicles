@@ -354,11 +354,7 @@ func LoadSummariesIndexedByID(ctx context.Context, db *sql.DB, sessionIDs []stri
 		return map[string]LLMOutput{}, nil
 	}
 
-	placeholders := strings.Repeat(",?", len(sessionIDs))[1:]
-	args := make([]any, 0, len(sessionIDs)+1)
-	for _, id := range sessionIDs {
-		args = append(args, id)
-	}
+	placeholders, args := inPlaceholders(sessionIDs)
 	args = append(args, string(LLMKindSummary))
 
 	q := `SELECT ` + llmOutputColumns + `

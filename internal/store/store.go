@@ -214,3 +214,21 @@ func (s *Store) SetMaxOpenConns(n int) {
 func (s *Store) DB() *sql.DB {
 	return s.db
 }
+
+// inPlaceholders prepares the (?,?,...) placeholder string and the
+// []any argument slice for a SQL `IN` clause. Returns ("", nil)
+// when ids is empty so the caller can short-circuit to a no-query
+// result.
+//
+// Centralised so the `strings.Repeat(",?", N)[1:]` micro-trick lives
+// in one place rather than three.
+func inPlaceholders(ids []string) (string, []any) {
+	if len(ids) == 0 {
+		return "", nil
+	}
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	return strings.Repeat(",?", len(ids))[1:], args
+}
