@@ -3,6 +3,15 @@ Description=aichronicles web UI
 Requires=aichronicles-web.socket
 After=aichronicles-web.socket
 
+# Wait for the api daemon before serving any reads. The api is the
+# write-owner and (today) the SQLite migrator — if web starts first
+# against an un-migrated or partially-migrated schema its queries
+# break. After= waits for api.service's READY=1 (Type=notify) so
+# the schema is guaranteed migrated before the first GET lands.
+# Not Requires=: web is a separate blast-radius unit and we don't
+# want api crashes to cascade-stop the UI.
+After=aichronicles-api.service
+
 [Service]
 # Reference the binary by absolute path via %h: systemd's spawned-
 # service environment does not reliably inherit the user manager's

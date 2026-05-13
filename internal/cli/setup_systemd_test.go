@@ -164,6 +164,19 @@ func TestDefaultSystemdUserDir_FallsBackToHome(t *testing.T) {
 	}
 }
 
+// TestEmbeddedWebServiceOrdersAfterAPI guards a load-bearing systemd
+// directive: aichronicles-web.service MUST declare
+// After=aichronicles-api.service so a fresh boot (or `make install`
+// bouncing both) doesn't activate web against an un-migrated SQLite
+// schema. Regression-protects the embedded asset.
+func TestEmbeddedWebServiceOrdersAfterAPI(t *testing.T) {
+	t.Parallel()
+	if !bytes.Contains(systemdWebServiceUnit, []byte("After=aichronicles-api.service")) {
+		t.Fatalf("aichronicles-web.service must declare After=aichronicles-api.service; got:\n%s",
+			systemdWebServiceUnit)
+	}
+}
+
 // fileMtime is a tiny helper for idempotency checks.
 func fileMtime(t *testing.T, path string) int64 {
 	t.Helper()
