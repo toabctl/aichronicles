@@ -1,9 +1,12 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // One representative happy-path / validation test per misc
@@ -120,6 +123,62 @@ func TestHandleInsights_EmptyDB(t *testing.T) {
 	// an empty DB the window still renders.
 	if !contains(rr.Body.String(), `"window"`) {
 		t.Errorf("expected window key; got %s", rr.Body.String())
+	}
+}
+
+// TestHandleLLMOutputsList_WireShape pins the JSON envelope of the
+// list endpoints to wire.LLMOutputsListResponse so the server and
+// apiclient can never silently disagree on the "outputs" key.
+func TestHandleLLMOutputsList_WireShape(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/llm-outputs/list", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var got wire.LLMOutputsListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v body=%s", err, rr.Body.String())
+	}
+	if got.Outputs == nil {
+		t.Errorf("Outputs is nil, want empty slice")
+	}
+}
+
+func TestHandleLLMOutputsLastCreated_WireShape(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr,
+		httptest.NewRequest(http.MethodGet, "/v1/llm-outputs/last-created-at?kind=summary", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var got wire.LLMOutputLastCreatedAtResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v body=%s", err, rr.Body.String())
+	}
+	if !contains(rr.Body.String(), `"last_created_at_ms"`) {
+		t.Errorf("missing last_created_at_ms key: %s", rr.Body.String())
+	}
+}
+
+func TestHandleLLMOutputExists_WireShape(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr,
+		httptest.NewRequest(http.MethodGet, "/v1/llm-outputs/exists?session_id=ghost&kind=summary", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var got wire.LLMOutputExistsResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v body=%s", err, rr.Body.String())
+	}
+	if got.Exists {
+		t.Errorf("Exists=true for ghost session, want false")
 	}
 }
 

@@ -23,3 +23,24 @@ type LLMOutput struct {
 type SummariesBatchResponse struct {
 	Summaries map[string]LLMOutput `json:"summaries"`
 }
+
+// LLMOutputsListResponse is the body for GET /v1/llm-outputs/list
+// and GET /v1/sessions/{id}/llm-outputs. Wrapped in an object (not a
+// bare array) so future fields like pagination cursors don't break
+// existing clients.
+type LLMOutputsListResponse struct {
+	Outputs []LLMOutput `json:"outputs"`
+}
+
+// LLMOutputLastCreatedAtResponse is the body for
+// GET /v1/llm-outputs/last-created-at?kind=. LastCreatedAtMs is 0
+// when no rows of that kind exist.
+type LLMOutputLastCreatedAtResponse struct {
+	LastCreatedAtMs int64 `json:"last_created_at_ms"`
+}
+
+// LLMOutputExistsResponse is the body for
+// GET /v1/llm-outputs/exists?session_id=&kind=.
+type LLMOutputExistsResponse struct {
+	Exists bool `json:"exists"`
+}

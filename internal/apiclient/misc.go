@@ -27,9 +27,7 @@ func (c *Client) LLMOutputByID(ctx context.Context, id int64) (wire.LLMOutput, e
 func (c *Client) LLMOutputLastCreatedAt(ctx context.Context, kind string) (int64, error) {
 	q := url.Values{}
 	q.Set("kind", kind)
-	var out struct {
-		LastCreatedAtMs int64 `json:"last_created_at_ms"`
-	}
+	var out wire.LLMOutputLastCreatedAtResponse
 	if err := c.do(ctx, http.MethodGet, "/v1/llm-outputs/last-created-at?"+q.Encode(), nil, &out); err != nil {
 		return 0, err
 	}
@@ -44,9 +42,7 @@ func (c *Client) LLMOutputExistsForSession(ctx context.Context, sessionID, kind 
 	q := url.Values{}
 	q.Set("session_id", sessionID)
 	q.Set("kind", kind)
-	var out struct {
-		Exists bool `json:"exists"`
-	}
+	var out wire.LLMOutputExistsResponse
 	if err := c.do(ctx, http.MethodGet, "/v1/llm-outputs/exists?"+q.Encode(), nil, &out); err != nil {
 		return false, err
 	}
@@ -68,9 +64,7 @@ func (c *Client) SessionLLMOutputs(ctx context.Context, sessionID, kind string, 
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out struct {
-		Outputs []wire.LLMOutput `json:"outputs"`
-	}
+	var out wire.LLMOutputsListResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
@@ -94,9 +88,7 @@ func (c *Client) LLMOutputsList(ctx context.Context, kind, sessionID string, lim
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var out struct {
-		Outputs []wire.LLMOutput `json:"outputs"`
-	}
+	var out wire.LLMOutputsListResponse
 	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}

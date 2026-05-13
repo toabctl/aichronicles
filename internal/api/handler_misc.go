@@ -40,9 +40,7 @@ func (s *Server) handleSessionLLMOutputs(w http.ResponseWriter, r *http.Request)
 			break
 		}
 	}
-	writeJSON(w, http.StatusOK, struct {
-		Outputs []wire.LLMOutput `json:"outputs"`
-	}{Outputs: out})
+	writeJSON(w, http.StatusOK, wire.LLMOutputsListResponse{Outputs: out})
 }
 
 // handleLLMOutputsList serves
@@ -71,9 +69,7 @@ func (s *Server) handleLLMOutputsList(w http.ResponseWriter, r *http.Request) {
 	for _, o := range rows {
 		out = append(out, llmOutputToWire(o))
 	}
-	writeJSON(w, http.StatusOK, struct {
-		Outputs []wire.LLMOutput `json:"outputs"`
-	}{Outputs: out})
+	writeJSON(w, http.StatusOK, wire.LLMOutputsListResponse{Outputs: out})
 }
 
 // handleSummariesGet serves GET /v1/summaries?session_id=<id>.
@@ -372,9 +368,7 @@ func (s *Server) handleLLMOutputsLastCreated(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	writeJSON(w, http.StatusOK, struct {
-		LastCreatedAtMs int64 `json:"last_created_at_ms"`
-	}{LastCreatedAtMs: last})
+	writeJSON(w, http.StatusOK, wire.LLMOutputLastCreatedAtResponse{LastCreatedAtMs: last})
 }
 
 // handleLLMOutputExistsForSession serves
@@ -395,7 +389,5 @@ func (s *Server) handleLLMOutputExistsForSession(w http.ResponseWriter, r *http.
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
-	writeJSON(w, http.StatusOK, struct {
-		Exists bool `json:"exists"`
-	}{Exists: has})
+	writeJSON(w, http.StatusOK, wire.LLMOutputExistsResponse{Exists: has})
 }
