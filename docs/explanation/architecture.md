@@ -134,8 +134,8 @@ single-writer invariant holds by exclusion.
 ```
 cmd/
   aichronicles/         CLI multiplexer entrypoint
-  aichronicles-api/     unified daemon entrypoint (UDS HTTP server:
-                        /v1/* JSON, /v1/stream SSE, web HTML)
+  aichronicles-api/     api daemon entrypoint (UDS HTTP server:
+                        /v1/* JSON, /v1/stream SSE — write-owner)
 
 internal/               private; only this binary imports
   wire/                 wire types — request/response shapes for the
@@ -224,38 +224,37 @@ internal/               private; only this binary imports
                         CI guard (Phase D): apiclient does not import
                         internal/store.
 
-  cli/                  cobra subcommands. Phase B in-progress: each
-                        command is being migrated from direct
-                        *store.Store access to internal/apiclient.
+  cli/                  cobra subcommands. Reads go through
+                        internal/apiclient; a handful of LLM-cache and
+                        maintenance commands still open the store
+                        directly (see "Read-migration" above).
     apiclient.go        openAPIClient(sockFlag) shared helper
     hook.go             hook subprocess body (was ingest.go);
                         translators are pure, daemon redacts
     setup*.go,          systemd + agent-hook wiring (defaultHookCommand
     teardown*.go        is "aichronicles hook"; teardown also removes
                         legacy aichronicles.{service,socket})
-    import_claude.go,   backfill paths — each builds an
+    import_claude.go,   bulk import paths — each builds an
     import_gemini.go,   events.Pipeline + events.Source +
     import_jsonl.go     store.BufferedSink and calls Pipeline.Run.
-                        Will move to POST /v1/import streaming once
-                        that endpoint lands.
-    summarize.go,       LLM-using subcommands; some still consume
-    reflect.go,         events.EventView etc. via store loaders.
-    propose*.go,        Phase B will switch them to apiclient.
-    induction.go,
+    summarize.go,       LLM-using subcommands. Reads through
+    reflect.go,         apiclient; write llm_outputs / skill_candidates
+    propose*.go,        directly via openStore (see #1 in the open
+    induction.go,       arch debt).
     facts.go,
     digest.go,
     insights.go,
     skills_*.go
-    audit.go, scrub.go  redaction inspection
+    audit.go, scrub.go  redaction inspection / in-place rewrite
     search.go           FTS5 search
     sessions.go         session listing
-    unresolved.go       MIGRATED: talks to /v1/unresolved via apiclient
+    unresolved.go       talks to /v1/unresolved via apiclient
     mcp_serve.go        MCP host (cobra wrapper around internal/mcp)
     meta_sweep.go       cadence-gated meta-analyses dispatcher
     assets/             embedded systemd unit files
                         (aichronicles-api.{service,socket} for the
-                        unified daemon, aichronicles-web.{...} for the
-                        legacy web UI, aichronicles-cron-*.{service,timer}
+                        api daemon, aichronicles-web.{...} for the
+                        HTML browser, aichronicles-cron-*.{service,timer}
                         for periodic work)
 
   store/                SQLite layer; ~25 files
@@ -365,10 +364,11 @@ internal/cli         ──▶ internal/events, internal/events/sources/{claude,
 internal/api         ──▶ internal/wire, internal/events, internal/store, internal/redact
 internal/apiclient   ──▶ internal/wire, internal/events
 internal/agents      ──▶ (no internal deps)
-internal/mcp         ──▶ internal/events, internal/store, internal/redact
-                         (Phase B: will switch to internal/apiclient)
+internal/mcp         ──▶ internal/apiclient, internal/events, internal/llm
+                         (cross-process; reads via the api UDS)
 internal/web         ──▶ internal/events, internal/store, internal/llm/prompts
-                         (Phase B: will fold into internal/api)
+                         (separate process; reads SQLite directly via WAL —
+                          slated to migrate to apiclient like mcp did)
 internal/store       ──▶ internal/events
 internal/llm/prompts      ──▶ internal/events, internal/llm, internal/redact, internal/store
 internal/llm              ──▶ internal/redact (egress scrub)

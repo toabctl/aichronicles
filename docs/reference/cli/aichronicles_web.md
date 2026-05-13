@@ -6,9 +6,10 @@ Serve a local web UI for browsing sessions and summaries
 
 Starts a small HTTP server on localhost that lists captured
 sessions, surfaces cached LLM summaries, and exposes the same
-FTS5 search the CLI uses. Reads the SQLite store directly in
-read-only mode — does not go through the daemon's UDS, does
-not write.
+FTS5 search the CLI uses. Reads the SQLite store directly via
+WAL — does not go through the daemon's UDS. Runs as its own
+process (aichronicles-web.service) so a wedged template or
+runaway view query can't tear down the ingest worker.
 
 Default bind is 127.0.0.1; pass --bind to change. Binding to
 a non-loopback address surfaces a startup warning. The server

@@ -1,5 +1,5 @@
 [Unit]
-Description=aichronicles-api unified daemon socket
+Description=aichronicles-api JSON/SSE daemon socket
 
 [Socket]
 # %t = $XDG_RUNTIME_DIR (typically /run/user/<uid>), tmpfs, per-user.

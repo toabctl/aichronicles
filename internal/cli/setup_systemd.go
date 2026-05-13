@@ -28,12 +28,11 @@ var systemdWebServiceUnit []byte
 // in dependency order (socket before its service so a partial
 // install lands in a functional state). Two pairs:
 //
-//   - aichronicles-api.socket / .service  — the unified daemon
-//     (UDS, long-lived under default.target; serves reads + writes
-//   - SSE + web HTML)
-//   - aichronicles-web.socket / .service  — the web UI (TCP
-//     loopback, socket-activated and idle-shutdown after 5 min of
-//     no traffic)
+//   - aichronicles-api.socket / .service  — the JSON/SSE daemon
+//     (UDS, long-lived under default.target; sole SQLite writer)
+//   - aichronicles-web.socket / .service  — the HTML browser
+//     (TCP loopback, socket-activated; idle-shutdown after 5 min
+//     of no traffic; reads SQLite via WAL alongside the api)
 //
 // Both are enabled together by `aichronicles setup systemd` and
 // removed together by `aichronicles teardown systemd`.
@@ -71,8 +70,8 @@ func newSetupSystemdCmd() *cobra.Command {
 			"~/.config/systemd/user/, reloads the user manager, and enables\n" +
 			"both sockets so the matching service starts on demand when\n" +
 			"someone connects:\n\n" +
-			"  - aichronicles-api.socket    UDS for the unified daemon\n" +
-			"  - aichronicles-api.service   the long-lived read+write+SSE+web daemon\n" +
+			"  - aichronicles-api.socket    UDS for the api daemon\n" +
+			"  - aichronicles-api.service   long-lived JSON/SSE daemon; sole SQLite writer\n" +
 			"  - aichronicles-web.socket    TCP 127.0.0.1:7878 for the web UI\n" +
 			"  - aichronicles-web.service   web UI; idle-shutdown after 5m\n\n" +
 			"The service units expect `aichronicles` and `aichronicles-api`\n" +

@@ -9,8 +9,8 @@ Writes the api and web-UI unit pairs into
 both sockets so the matching service starts on demand when
 someone connects:
 
-  - aichronicles-api.socket    UDS for the unified daemon
-  - aichronicles-api.service   the long-lived read+write+SSE+web daemon
+  - aichronicles-api.socket    UDS for the api daemon
+  - aichronicles-api.service   long-lived JSON/SSE daemon; sole SQLite writer
   - aichronicles-web.socket    TCP 127.0.0.1:7878 for the web UI
   - aichronicles-web.service   web UI; idle-shutdown after 5m
 

@@ -23,14 +23,14 @@ const defaultIdleTimeout = 5 * time.Minute
 
 // NewCommand returns the `aichronicles web` cobra command.
 //
-// As of the Phase B daemon fold-in, the unified aichronicles-api
-// daemon serves the HTML browser on its own TCP listener
-// (default 127.0.0.1:7474). This standalone subcommand stays for
-// operators who want to run the browser in a separate process
-// (e.g. a different uid, or against a read-only DB clone) — it
-// opens the SQLite file directly, just like the api does, and
-// reads the same shape. New deployments should prefer the api
-// daemon's built-in web surface.
+// The web UI runs as its own process — separate from the
+// aichronicles-api daemon — so an HTML-template panic or a
+// memory-hungry view query can't tear down the ingest worker.
+// Operators get the pair via `aichronicles setup systemd`:
+// aichronicles-api.{socket,service} for the write/UDS surface,
+// aichronicles-web.{socket,service} for the loopback-TCP HTML
+// surface. SQLite WAL handles concurrent readers; the api
+// remains the canonical writer.
 func NewCommand() *cobra.Command {
 	var cfg Config
 	var dbPath string
@@ -41,9 +41,10 @@ func NewCommand() *cobra.Command {
 		Short: "Serve a local web UI for browsing sessions and summaries",
 		Long: "Starts a small HTTP server on localhost that lists captured\n" +
 			"sessions, surfaces cached LLM summaries, and exposes the same\n" +
-			"FTS5 search the CLI uses. Reads the SQLite store directly in\n" +
-			"read-only mode — does not go through the daemon's UDS, does\n" +
-			"not write.\n\n" +
+			"FTS5 search the CLI uses. Reads the SQLite store directly via\n" +
+			"WAL — does not go through the daemon's UDS. Runs as its own\n" +
+			"process (aichronicles-web.service) so a wedged template or\n" +
+			"runaway view query can't tear down the ingest worker.\n\n" +
 			"Default bind is 127.0.0.1; pass --bind to change. Binding to\n" +
 			"a non-loopback address surfaces a startup warning. The server\n" +
 			"has no authentication; the localhost-only boundary is the\n" +
