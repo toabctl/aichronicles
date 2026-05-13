@@ -1,7 +1,6 @@
 package web
 
 import (
-	"database/sql"
 	"net/http"
 	"net/url"
 	"strings"
@@ -294,7 +293,7 @@ func TestSearchHits_FullModeShowsSummaryTopic(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
-		SessionID:   sql.NullString{String: id, Valid: true},
+		SessionID:   ptrTo(id),
 		Kind:        store.LLMKindSummary,
 		Model:       "claude-sonnet-4-6",
 		PromptHash:  "h-search-topic",
@@ -334,7 +333,7 @@ func TestSearchHits_CompactModeOmitsSummaryTopic(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
-		SessionID:   sql.NullString{String: id, Valid: true},
+		SessionID:   ptrTo(id),
 		Kind:        store.LLMKindSummary,
 		Model:       "claude-sonnet-4-6",
 		PromptHash:  "h-popover",

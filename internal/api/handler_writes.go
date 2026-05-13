@@ -55,15 +55,9 @@ func (s *Server) handleLLMOutputSave(w http.ResponseWriter, r *http.Request) {
 		Body:        req.Body,
 		CreatedAtMs: req.CreatedAtMs,
 	}
-	if req.SessionID != nil {
-		out.SessionID = sql.NullString{String: *req.SessionID, Valid: true}
-	}
-	if req.InputTokens != nil {
-		out.InputTokens = sql.NullInt64{Int64: *req.InputTokens, Valid: true}
-	}
-	if req.OutputTokens != nil {
-		out.OutputTokens = sql.NullInt64{Int64: *req.OutputTokens, Valid: true}
-	}
+	out.SessionID = req.SessionID
+	out.InputTokens = req.InputTokens
+	out.OutputTokens = req.OutputTokens
 
 	tx, err := s.store.DB().BeginTx(r.Context(), nil)
 	if err != nil {

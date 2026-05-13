@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -744,7 +743,7 @@ func TestLoadLatestProposal_WrongKindIsError(t *testing.T) {
 	id, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
 		// session_id NULL: skips FK check (we just need any
 		// non-propose row for this negative-path test).
-		SessionID:   sql.NullString{},
+		SessionID:   nil,
 		Kind:        store.LLMKindSummary,
 		Model:       "x",
 		PromptHash:  "wk-test",

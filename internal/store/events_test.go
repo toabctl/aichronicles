@@ -447,7 +447,7 @@ func TestLoadSessionsMissingSummary_ExcludesSessionsWithSummary(t *testing.T) {
 	idA := events.DeriveSessionID("claude-code", "sess-A")
 	withTx(t, s, func(tx *sql.Tx) {
 		out := &LLMOutput{
-			SessionID:   sql.NullString{String: idA, Valid: true},
+			SessionID:   ptrTo(idA),
 			Kind:        LLMKindSummary,
 			Model:       "test",
 			PromptHash:  "hash-A",

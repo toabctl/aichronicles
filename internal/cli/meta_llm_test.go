@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,7 +62,7 @@ func seedSessionsForMeta(t *testing.T, count int) *store.Store {
 		sessID := events.DeriveSessionID("claude-code", sessNative)
 		tx, _ := s.DB().Begin()
 		if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
-			SessionID:   sql.NullString{String: sessID, Valid: true},
+			SessionID:   ptrTo(sessID),
 			Kind:        store.LLMKindSummary,
 			Model:       "test",
 			PromptHash:  fmt.Sprintf("hash-meta-%d", i),
@@ -178,7 +177,7 @@ func TestRunReflect_PrefersExistingSummaryOverFirstPrompt(t *testing.T) {
 	_ = s.DB().QueryRow(`SELECT id FROM sessions LIMIT 1`).Scan(&sessID)
 	tx, _ := s.DB().Begin()
 	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
-		SessionID:  sqlStringValid(sessID),
+		SessionID:  ptrTo(sessID),
 		Kind:       store.LLMKindSummary,
 		Model:      "m",
 		PromptHash: "hash-for-summary",
@@ -290,10 +289,4 @@ func TestRunPropose_ReflectAndProposeCoexistUnderSameInput(t *testing.T) {
 	if n != 2 {
 		t.Errorf("expected 2 rows (one reflect, one propose), got %d", n)
 	}
-}
-
-// sqlStringValid returns a valid sql.NullString around s; tiny
-// convenience to keep test fixtures readable.
-func sqlStringValid(s string) sql.NullString {
-	return sql.NullString{String: s, Valid: s != ""}
 }

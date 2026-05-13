@@ -113,7 +113,7 @@ func seedSessionWithSummary(t *testing.T, s *store.Store, sourceID, prompt strin
 		WhatWasDone: []string{"work A", "work B"},
 	})
 	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
-		SessionID:   sqlNullStr(sid),
+		SessionID:   ptrTo(sid),
 		Kind:        store.LLMKindSummary,
 		Model:       "test-model",
 		PromptHash:  "h-" + sourceID,
@@ -123,16 +123,6 @@ func seedSessionWithSummary(t *testing.T, s *store.Store, sourceID, prompt strin
 		t.Fatalf("save summary: %v", err)
 	}
 	_ = tx.Commit()
-}
-
-func sqlNullStr(s string) (n struct {
-	String string
-	Valid  bool
-}) {
-	return struct {
-		String string
-		Valid  bool
-	}{String: s, Valid: s != ""}
 }
 
 // TestRunDigestWeekly_PersistsArtefactWithCorrectKind covers the

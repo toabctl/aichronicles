@@ -198,7 +198,7 @@ func TestPrune_LLMOutputsSurviveByDefault(t *testing.T) {
 
 	tx, _ := s.DB().Begin()
 	if _, _, err := SaveLLMOutput(t.Context(), tx, &LLMOutput{
-		SessionID:   sql.NullString{String: sid, Valid: true},
+		SessionID:   ptrTo(sid),
 		Kind:        LLMKindSummary,
 		Model:       "x",
 		PromptHash:  "h",
@@ -236,7 +236,7 @@ func TestPrune_IncludeLLMOutputsDeletesOldOnes(t *testing.T) {
 	tx, _ := s.DB().Begin()
 	for _, ts := range []time.Time{old, new} {
 		if _, _, err := SaveLLMOutput(t.Context(), tx, &LLMOutput{
-			SessionID:   sql.NullString{String: sidOld, Valid: true},
+			SessionID:   ptrTo(sidOld),
 			Kind:        LLMKindSummary,
 			Model:       "x",
 			PromptHash:  ts.Format("20060102"),

@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"testing"
 	"time"
 )
@@ -17,12 +16,12 @@ func seedLLMOutput(t *testing.T, s *Store, kind, model string, inputTok, outputT
 	}
 	defer func() { _ = tx.Rollback() }()
 	in := &LLMOutput{
-		SessionID:    sql.NullString{},
+		SessionID:    nil,
 		Kind:         LLMOutputKind(kind),
 		Model:        model,
 		PromptHash:   "h-" + kind + "-" + model + "-" + createdAt.Format("20060102150405"),
-		InputTokens:  sql.NullInt64{Int64: inputTok, Valid: true},
-		OutputTokens: sql.NullInt64{Int64: outputTok, Valid: true},
+		InputTokens:  ptrTo(int64(inputTok)),
+		OutputTokens: ptrTo(int64(outputTok)),
 		Body:         "{}",
 		CreatedAtMs:  createdAt.UnixMilli(),
 	}

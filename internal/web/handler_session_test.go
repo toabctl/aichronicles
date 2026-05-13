@@ -64,7 +64,7 @@ func TestSessionDetail_RendersCachedSummary(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
-		SessionID:   sql.NullString{String: id, Valid: true},
+		SessionID:   ptrTo(id),
 		Kind:        store.LLMKindSummary,
 		Model:       "claude-sonnet-4-6",
 		PromptHash:  "h1",
@@ -318,7 +318,7 @@ func TestSessionDetail_MalformedSummaryDoesNotCrash(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
-		SessionID:   sql.NullString{String: id, Valid: true},
+		SessionID:   ptrTo(id),
 		Kind:        store.LLMKindSummary,
 		Model:       "test",
 		PromptHash:  "h-bad",

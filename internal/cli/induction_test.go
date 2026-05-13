@@ -109,7 +109,7 @@ func TestRunInductionForSession_PersistsSkillProposal(t *testing.T) {
 	if row == nil {
 		t.Fatal("expected an induction row")
 	}
-	if !row.SessionID.Valid || row.SessionID.String != sessID {
+	if row.SessionID == nil || *row.SessionID != sessID {
 		t.Errorf("row.session_id = %+v, want %s", row.SessionID, sessID)
 	}
 	if row.Kind != store.LLMKindInduction {

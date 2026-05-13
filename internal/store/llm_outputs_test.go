@@ -11,8 +11,8 @@ func newOutput(kind LLMOutputKind, hash, body string) *LLMOutput {
 		Kind:         kind,
 		Model:        "claude-sonnet-4-6",
 		PromptHash:   hash,
-		InputTokens:  sql.NullInt64{Int64: 100, Valid: true},
-		OutputTokens: sql.NullInt64{Int64: 50, Valid: true},
+		InputTokens:  ptrTo(int64(100)),
+		OutputTokens: ptrTo(int64(50)),
 		Body:         body,
 		CreatedAtMs:  time.Now().UnixMilli(),
 	}
@@ -107,7 +107,7 @@ func TestLoadLLMOutputs_FilterBySession(t *testing.T) {
 
 	withTx(t, s, func(tx *sql.Tx) {
 		a := newOutput(LLMKindSummary, "with-session", "A")
-		a.SessionID = sql.NullString{String: realSID, Valid: true}
+		a.SessionID = ptrTo(realSID)
 		b := newOutput(LLMKindReflect, "no-session", "B") // multi-session → NULL
 		if _, _, err := SaveLLMOutput(t.Context(), tx, a); err != nil {
 			t.Fatalf("seed A: %v", err)
@@ -270,7 +270,7 @@ func TestLoadLLMOutputByHash_ReturnsRowWhenPresent(t *testing.T) {
 	if got.Body != "hello" {
 		t.Errorf("body: got %q", got.Body)
 	}
-	if got.InputTokens.Int64 != 100 {
+	if got.InputTokens == nil || *got.InputTokens != 100 {
 		t.Errorf("input_tokens: got %+v", got.InputTokens)
 	}
 }
@@ -289,7 +289,7 @@ func TestLoadLLMOutputsForSession_NewestFirst(t *testing.T) {
 
 	for i, hash := range []string{"h-old", "h-mid", "h-new"} {
 		o := newOutput(LLMKindSummary, hash, "body-"+hash)
-		o.SessionID = sql.NullString{String: "sess-1", Valid: true}
+		o.SessionID = ptrTo("sess-1")
 		o.CreatedAtMs = int64(100 + i*10)
 		withTx(t, s, func(tx *sql.Tx) {
 			if _, _, err := SaveLLMOutput(t.Context(), tx, o); err != nil {
@@ -351,7 +351,7 @@ func TestLoadSummariesIndexedByID_OnePerSessionNewestWins(t *testing.T) {
 
 	mkSummary := func(sessID, hash, body string, ts int64) *LLMOutput {
 		o := newOutput(LLMKindSummary, hash, body)
-		o.SessionID = sql.NullString{String: sessID, Valid: true}
+		o.SessionID = ptrTo(sessID)
 		o.CreatedAtMs = ts
 		return o
 	}
@@ -411,12 +411,12 @@ func TestLoadSummariesIndexedByID_IgnoresNonSummaryKinds(t *testing.T) {
 		for _, fx := range []*LLMOutput{
 			func() *LLMOutput {
 				o := newOutput(LLMKindReflect, "r1", "reflect body")
-				o.SessionID = sql.NullString{String: "sess-mix", Valid: true}
+				o.SessionID = ptrTo("sess-mix")
 				return o
 			}(),
 			func() *LLMOutput {
 				o := newOutput(LLMKindPropose, "p1", "propose body")
-				o.SessionID = sql.NullString{String: "sess-mix", Valid: true}
+				o.SessionID = ptrTo("sess-mix")
 				return o
 			}(),
 		} {
@@ -447,7 +447,7 @@ func TestLLMOutputs_SessionDeleteDetachesNotCascades(t *testing.T) {
 	}
 
 	o := newOutput(LLMKindSummary, "keep-me", "summary body")
-	o.SessionID = sql.NullString{String: "sess-x", Valid: true}
+	o.SessionID = ptrTo("sess-x")
 	withTx(t, s, func(tx *sql.Tx) {
 		if _, _, err := SaveLLMOutput(t.Context(), tx, o); err != nil {
 			t.Fatalf("seed: %v", err)
@@ -467,7 +467,7 @@ func TestLLMOutputs_SessionDeleteDetachesNotCascades(t *testing.T) {
 	if got == nil {
 		t.Fatal("output should survive session delete")
 	}
-	if got.SessionID.Valid {
-		t.Errorf("session_id should be NULL after parent delete, got %+v", got.SessionID)
+	if got.SessionID != nil {
+		t.Errorf("session_id should be NULL after parent delete, got %+v", *got.SessionID)
 	}
 }

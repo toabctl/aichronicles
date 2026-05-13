@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -31,18 +30,9 @@ func llmOutputsToWire(rows []store.LLMOutput) []wire.LLMOutput {
 			Body:        r.Body,
 			CreatedAtMs: r.CreatedAtMs,
 		}
-		if r.SessionID.Valid {
-			v := r.SessionID.String
-			o.SessionID = &v
-		}
-		if r.InputTokens.Valid {
-			v := r.InputTokens.Int64
-			o.InputTokens = &v
-		}
-		if r.OutputTokens.Valid {
-			v := r.OutputTokens.Int64
-			o.OutputTokens = &v
-		}
+		o.SessionID = r.SessionID
+		o.InputTokens = r.InputTokens
+		o.OutputTokens = r.OutputTokens
 		out = append(out, o)
 	}
 	return out
@@ -105,7 +95,7 @@ func seedSummariesFixtures(t *testing.T) (*store.Store, string) {
 	defer func() { _ = tx.Commit() }()
 
 	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
-		SessionID:   sql.NullString{String: sessID, Valid: true},
+		SessionID:   ptrTo(sessID),
 		Kind:        store.LLMKindSummary,
 		Model:       "claude",
 		PromptHash:  "h-sum-1",
@@ -355,7 +345,7 @@ func TestSummariesMissing_OnlyUnsummarizedRowsAppear(t *testing.T) {
 	// Plant a summary on A only.
 	tx, _ := s.DB().Begin()
 	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
-		SessionID:   sql.NullString{String: idA, Valid: true},
+		SessionID:   ptrTo(idA),
 		Kind:        store.LLMKindSummary,
 		Model:       "test",
 		PromptHash:  "h-A",

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/redact"
 )
 
@@ -69,16 +70,23 @@ const (
 	LLMKindSkillMerge LLMOutputKind = "skill_merge"
 )
 
-// LLMOutput mirrors one row of the llm_outputs table. Callers
-// populate SessionID.Valid=false for multi-session outputs.
+// LLMOutput mirrors one row of the llm_outputs table.
+//
+// SessionID is nil for multi-session outputs (e.g. weekly
+// digests that span many sessions). InputTokens / OutputTokens
+// are nil when the LLM provider didn't return usage counters
+// (older models, certain test paths). All three flipped from
+// sql.Null* to pointer types in the arch_review_2026_05_13
+// MEDIUM #10 sweep so callers branch on `if x != nil` instead
+// of unwrapping database/sql types.
 type LLMOutput struct {
 	ID           int64
-	SessionID    sql.NullString
+	SessionID    *string
 	Kind         LLMOutputKind
 	Model        string
 	PromptHash   string
-	InputTokens  sql.NullInt64
-	OutputTokens sql.NullInt64
+	InputTokens  *int64
+	OutputTokens *int64
 	Body         string
 	CreatedAtMs  int64
 }
@@ -380,13 +388,13 @@ func LoadSummariesIndexedByID(ctx context.Context, db *sql.DB, sessionIDs []stri
 		// Skip session_id NULL defensively — should never appear
 		// here since we filter by IN(non-null-list), but a NULL
 		// would map to the empty key and clobber.
-		if !item.SessionID.Valid {
+		if item.SessionID == nil {
 			continue
 		}
-		if _, seen := out[item.SessionID.String]; seen {
+		if _, seen := out[*item.SessionID]; seen {
 			continue
 		}
-		out[item.SessionID.String] = *item
+		out[*item.SessionID] = *item
 	}
 	return out, rows.Err()
 }
@@ -397,14 +405,22 @@ type rowScanner interface {
 }
 
 func scanLLMOutput(r rowScanner) (*LLMOutput, error) {
-	var o LLMOutput
-	var kind string
+	var (
+		o            LLMOutput
+		kind         string
+		sessionID    sql.NullString
+		inputTokens  sql.NullInt64
+		outputTokens sql.NullInt64
+	)
 	if err := r.Scan(
-		&o.ID, &o.SessionID, &kind, &o.Model, &o.PromptHash,
-		&o.InputTokens, &o.OutputTokens, &o.Body, &o.CreatedAtMs,
+		&o.ID, &sessionID, &kind, &o.Model, &o.PromptHash,
+		&inputTokens, &outputTokens, &o.Body, &o.CreatedAtMs,
 	); err != nil {
 		return nil, err
 	}
+	o.SessionID = nullable.StringPtr(sessionID)
+	o.InputTokens = nullable.Int64Ptr(inputTokens)
+	o.OutputTokens = nullable.Int64Ptr(outputTokens)
 	o.Kind = LLMOutputKind(kind)
 	return &o, nil
 }

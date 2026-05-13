@@ -1,7 +1,6 @@
 package web
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -32,7 +31,7 @@ func seedWeeklyDigest(t *testing.T, st *store.Store, result prompts.ReflectionRe
 	}
 	id, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
 		// Weekly digests are multi-session — session_id is NULL.
-		SessionID:   sql.NullString{},
+		SessionID:   nil,
 		Kind:        store.LLMKindReflectWeekly,
 		Model:       "claude-sonnet-4-6",
 		PromptHash:  "h-" + promptHashSalt,

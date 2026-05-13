@@ -1,7 +1,6 @@
 package web
 
 import (
-	"database/sql"
 	"net/http"
 	"strings"
 	"testing"
@@ -22,7 +21,7 @@ func seedSummaryRow(t *testing.T, st *store.Store, sessionID, topic string, ts t
 		t.Fatalf("begin: %v", err)
 	}
 	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
-		SessionID:   sql.NullString{String: sessionID, Valid: true},
+		SessionID:   ptrTo(sessionID),
 		Kind:        store.LLMKindSummary,
 		Model:       "fake-model",
 		PromptHash:  "h-" + sessionID,

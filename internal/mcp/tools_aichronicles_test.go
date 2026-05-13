@@ -3,7 +3,6 @@ package mcp
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"io"
 	"path/filepath"
@@ -539,7 +538,7 @@ func TestGetSummary_ReturnsStoredBody(t *testing.T) {
 	sessID := events.DeriveSessionID("claude-code", "sess-foo")
 	tx, _ := st.DB().Begin()
 	_, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
-		SessionID:   sql.NullString{String: sessID, Valid: true},
+		SessionID:   ptrTo(sessID),
 		Kind:        store.LLMKindSummary,
 		Model:       "claude-sonnet-4-6",
 		PromptHash:  "h1",
@@ -621,7 +620,7 @@ func TestGetSummary_AcceptsPrefix(t *testing.T) {
 	tx, _ := st.DB().Begin()
 	sessID := events.DeriveSessionID("claude-code", "sess-foo")
 	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
-		SessionID:   sql.NullString{String: sessID, Valid: true},
+		SessionID:   ptrTo(sessID),
 		Kind:        store.LLMKindSummary,
 		Model:       "test",
 		PromptHash:  "h-prefix",
@@ -926,7 +925,7 @@ func TestGetUnresolvedForCwd_ReturnsItems(t *testing.T) {
 	body := `{"topic":"jsonl parsing","what_was_done":["x"],"unresolved":["land the migration","verify the redaction passthrough"],"key_files":[],"links":[]}`
 	tx, _ := st.DB().Begin()
 	_, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
-		SessionID:   sql.NullString{String: sessID, Valid: true},
+		SessionID:   ptrTo(sessID),
 		Kind:        store.LLMKindSummary,
 		Model:       "fake-model",
 		PromptHash:  "h-unresolved",

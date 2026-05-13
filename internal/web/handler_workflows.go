@@ -46,9 +46,9 @@ func (s *Server) workflowsHandler(w http.ResponseWriter, r *http.Request) {
 			Preconditions: ind.Workflow.Preconditions,
 			SuccessChecks: ind.Workflow.SuccessChecks,
 		}
-		if r.SessionID.Valid {
-			row.SessionID = r.SessionID.String
-			row.SessionShort = shortID(r.SessionID.String)
+		if r.SessionID != nil {
+			row.SessionID = *r.SessionID
+			row.SessionShort = shortID(*r.SessionID)
 		}
 		for _, step := range ind.Workflow.Procedure {
 			row.Procedure = append(row.Procedure, step.Action)

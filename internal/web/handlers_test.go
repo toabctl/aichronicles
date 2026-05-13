@@ -225,7 +225,7 @@ func TestSessionsPage_HasSummaryBadgeOnlyForCachedRows(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
-		SessionID:   sql.NullString{String: withSummary, Valid: true},
+		SessionID:   ptrTo(withSummary),
 		Kind:        store.LLMKindSummary,
 		Model:       "test",
 		PromptHash:  "h-summary",
@@ -268,7 +268,7 @@ func TestSessionsPage_ShowsSummaryTopicInRow(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
-		SessionID:   sql.NullString{String: withTopic, Valid: true},
+		SessionID:   ptrTo(withTopic),
 		Kind:        store.LLMKindSummary,
 		Model:       "claude-sonnet-4-6",
 		PromptHash:  "h-topic",
@@ -315,7 +315,7 @@ func TestSessionsPage_SummaryBadgeCarriesTooltip(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
-		SessionID:  sql.NullString{String: id, Valid: true},
+		SessionID:  ptrTo(id),
 		Kind:       store.LLMKindSummary,
 		Model:      "claude-sonnet-4-6",
 		PromptHash: "h-tooltip",
@@ -371,7 +371,7 @@ func TestSessionsPage_MalformedSummaryBodyOmitsTopic(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
-		SessionID:   sql.NullString{String: id, Valid: true},
+		SessionID:   ptrTo(id),
 		Kind:        store.LLMKindSummary,
 		Model:       "test",
 		PromptHash:  "h-bad-list",

@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -178,8 +177,8 @@ func TestRunUsage_EndToEnd(t *testing.T) {
 		Model:        "test-model",
 		PromptHash:   "h1",
 		Body:         "{}",
-		InputTokens:  sql.NullInt64{Int64: 1234, Valid: true},
-		OutputTokens: sql.NullInt64{Int64: 567, Valid: true},
+		InputTokens:  ptrTo(int64(1234)),
+		OutputTokens: ptrTo(int64(567)),
 		CreatedAtMs:  now.UnixMilli(),
 	}); err != nil {
 		_ = tx.Rollback()

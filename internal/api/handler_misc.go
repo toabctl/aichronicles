@@ -249,12 +249,12 @@ func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 func llmOutputToWire(o store.LLMOutput) wire.LLMOutput {
 	return wire.LLMOutput{
 		ID:           o.ID,
-		SessionID:    nullable.StringPtr(o.SessionID),
+		SessionID:    o.SessionID,
 		Kind:         string(o.Kind),
 		Model:        o.Model,
 		PromptHash:   o.PromptHash,
-		InputTokens:  nullable.Int64Ptr(o.InputTokens),
-		OutputTokens: nullable.Int64Ptr(o.OutputTokens),
+		InputTokens:  o.InputTokens,
+		OutputTokens: o.OutputTokens,
 		Body:         o.Body,
 		CreatedAtMs:  o.CreatedAtMs,
 	}

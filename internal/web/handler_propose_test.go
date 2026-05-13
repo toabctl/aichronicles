@@ -1,7 +1,6 @@
 package web
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -27,7 +26,7 @@ func seedProposalRow(t *testing.T, st *store.Store, result prompts.ProposalResul
 	}
 	id, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
 		// Propose outputs are multi-session — session_id NULL.
-		SessionID:   sql.NullString{},
+		SessionID:   nil,
 		Kind:        store.LLMKindPropose,
 		Model:       "claude-sonnet-4-6",
 		PromptHash:  "h-" + strings.Join(skillNames(result), "-"),

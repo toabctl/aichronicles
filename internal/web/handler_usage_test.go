@@ -1,7 +1,6 @@
 package web
 
 import (
-	"database/sql"
 	"net/http"
 	"strings"
 	"testing"
@@ -48,8 +47,8 @@ func TestUsagePage_RendersTokenTotals(t *testing.T) {
 		Model:        "claude-sonnet-4-6",
 		PromptHash:   "h1",
 		Body:         "{}",
-		InputTokens:  sql.NullInt64{Int64: 12345, Valid: true},
-		OutputTokens: sql.NullInt64{Int64: 6789, Valid: true},
+		InputTokens:  ptrTo(int64(12345)),
+		OutputTokens: ptrTo(int64(6789)),
 		CreatedAtMs:  now.UnixMilli(),
 	}); err != nil {
 		_ = tx.Rollback()

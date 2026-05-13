@@ -5,7 +5,6 @@ package integration
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"io"
 	"net/http/httptest"
 	"path/filepath"
@@ -98,7 +97,7 @@ func TestE2E_IngestSummarizeFetchViaMCP(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	_, _, err = store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
-		SessionID:   sql.NullString{String: sessID, Valid: true},
+		SessionID:   &sessID,
 		Kind:        store.LLMKindSummary,
 		Model:       "claude-sonnet-4-6",
 		PromptHash:  "e2e-hash",
