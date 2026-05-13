@@ -28,7 +28,7 @@ import (
 func TestMCPServe_EndToEnd(t *testing.T) {
 	t.Parallel()
 
-	s, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	s, err := store.OpenMigrate(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}

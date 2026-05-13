@@ -19,7 +19,7 @@ import (
 // keep this package independent.
 func openTempStore(t *testing.T) *store.Store {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	st, err := store.OpenMigrate(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}

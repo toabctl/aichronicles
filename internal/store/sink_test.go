@@ -13,9 +13,9 @@ import (
 // Mirrors the pattern other store_test.go files use.
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "store.db"))
+	s, err := OpenMigrate(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("OpenMigrate: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	return s

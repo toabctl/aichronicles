@@ -164,14 +164,14 @@ func TestFTSTokenizer_BackfilledFromEvents(t *testing.T) {
 func TestFTSTokenizer_ReopenIsClean(t *testing.T) {
 	t.Parallel()
 	path := tempStorePath(t)
-	s1, err := Open(path)
+	s1, err := OpenMigrate(path)
 	if err != nil {
 		t.Fatalf("first Open: %v", err)
 	}
 	ingestText(t, s1, "sess-reopen", "deploy migrate.go fix")
 	_ = s1.Close()
 
-	s2, err := Open(path)
+	s2, err := OpenMigrate(path)
 	if err != nil {
 		t.Fatalf("second Open: %v", err)
 	}

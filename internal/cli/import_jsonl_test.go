@@ -31,7 +31,7 @@ func apiForStore(t *testing.T, st *store.Store) *apiclient.Client {
 // testStore opens a fresh Store in a temp dir and wires teardown.
 func testStore(t *testing.T) *store.Store {
 	t.Helper()
-	s, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	s, err := store.OpenMigrate(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}

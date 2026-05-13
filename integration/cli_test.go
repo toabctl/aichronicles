@@ -80,7 +80,7 @@ func TestCLI_IngestRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	sock := filepath.Join(dir, "sock")
 
-	s, err := store.Open(filepath.Join(dir, "store.db"))
+	s, err := store.OpenMigrate(filepath.Join(dir, "store.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestCLI_IngestRedactsSecretsEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	sock := filepath.Join(dir, "sock")
 
-	s, err := store.Open(filepath.Join(dir, "store.db"))
+	s, err := store.OpenMigrate(filepath.Join(dir, "store.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestCLI_IngestRespectsDenyPaths(t *testing.T) {
 	dir := t.TempDir()
 	sock := filepath.Join(dir, "sock")
 
-	s, err := store.Open(filepath.Join(dir, "store.db"))
+	s, err := store.OpenMigrate(filepath.Join(dir, "store.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
@@ -334,7 +334,7 @@ func TestCLI_IngestRecoveryClearsOutageFlag(t *testing.T) {
 	// Now: bring up a real daemon and ingest successfully.
 	dir := t.TempDir()
 	sock := filepath.Join(dir, "sock")
-	s, err := store.Open(filepath.Join(dir, "store.db"))
+	s, err := store.OpenMigrate(filepath.Join(dir, "store.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}

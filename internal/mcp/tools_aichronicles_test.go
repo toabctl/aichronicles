@@ -23,7 +23,7 @@ import (
 // to return.
 func openSeededStore(t *testing.T) *store.Store {
 	t.Helper()
-	s, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	s, err := store.OpenMigrate(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
@@ -757,7 +757,7 @@ func TestToolsCall_PassesUnredactedContentThrough(t *testing.T) {
 // tools.
 func seedSubagentEvents(t *testing.T) (*store.Store, string) {
 	t.Helper()
-	s, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	s, err := store.OpenMigrate(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}

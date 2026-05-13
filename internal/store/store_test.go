@@ -4,18 +4,21 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 )
 
 // openTemp creates a Store at a fresh temp path, failing the test on
-// any error, and ensures cleanup.
+// any error, and ensures cleanup. Uses OpenMigrate so tests get a
+// fully-migrated DB without needing a daemon — Open by contract
+// returns ErrSchemaTooOld on a fresh file.
 func openTemp(t *testing.T) *Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "store.db")
-	s, err := Open(path)
+	s, err := OpenMigrate(path)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("OpenMigrate: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	return s
@@ -56,7 +59,7 @@ func TestOpen_ReopenIsIdempotent(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "store.db")
 
-	s1, err := Open(path)
+	s1, err := OpenMigrate(path)
 	if err != nil {
 		t.Fatalf("first open: %v", err)
 	}
@@ -113,6 +116,46 @@ func TestOpen_BadPathReturnsError(t *testing.T) {
 	_, err := Open("/proc/self/attr/current/nope.db")
 	if err == nil {
 		t.Fatal("expected error for unusable path")
+	}
+}
+
+// TestOpen_FreshDBReturnsSchemaTooOld verifies that the consumer-side
+// Open refuses to operate on a never-initialised DB rather than
+// silently creating tables. The migrator (api daemon or
+// OpenMigrate-in-tests) is the only way to bootstrap.
+func TestOpen_FreshDBReturnsSchemaTooOld(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "fresh.db")
+	_, err := Open(path)
+	if !errors.Is(err, ErrSchemaTooOld) {
+		t.Fatalf("Open(fresh-db): got %v, want ErrSchemaTooOld", err)
+	}
+}
+
+// TestOpen_SchemaTooNew verifies that opening a DB whose
+// schema_version is AHEAD of the build's expected version surfaces
+// ErrSchemaTooNew — the downgrade guard.
+func TestOpen_SchemaTooNew(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "future.db")
+	// Migrate normally, then manually bump schema_version past the
+	// build's expected latest to simulate a forward-evolved DB.
+	s1, err := OpenMigrate(path)
+	if err != nil {
+		t.Fatalf("OpenMigrate seed: %v", err)
+	}
+	future := LatestSchemaVersion() + 1
+	if _, err := s1.DB().Exec(
+		`UPDATE meta SET value=? WHERE key='schema_version'`,
+		strconv.Itoa(future),
+	); err != nil {
+		t.Fatalf("bump schema_version: %v", err)
+	}
+	_ = s1.Close()
+
+	_, err = Open(path)
+	if !errors.Is(err, ErrSchemaTooNew) {
+		t.Fatalf("Open(future-db): got %v, want ErrSchemaTooNew", err)
 	}
 }
 

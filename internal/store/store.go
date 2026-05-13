@@ -13,7 +13,11 @@ package store
 import (
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
+	"io/fs"
+	"strings"
+	"sync"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver
 )
@@ -41,16 +45,74 @@ func MigrationsFS() embed.FS { return migrationsFS }
 // joined contexts (every consumer aliases the sessions table as `s`).
 const EffectiveTsExpr = "COALESCE(s.ended_at_ms, s.started_at_ms, 0)"
 
-// Store is the aichronicles persistence handle. Construct with Open;
-// call Close on shutdown. Safe for concurrent use (*sql.DB is; triggers
+// Store is the aichronicles persistence handle. Construct with Open
+// (consumers) or OpenMigrate (the api daemon and admin tools); call
+// Close on shutdown. Safe for concurrent use (*sql.DB is; triggers
 // and transactions handle write ordering).
 type Store struct {
 	db *sql.DB
 }
 
-// Open returns a Store backed by the SQLite file at path. The file and
-// its parent directories are created if missing. Migrations are applied
-// idempotently so calling Open on an existing DB is safe.
+// ErrSchemaTooOld is returned by Open when the DB's schema_version is
+// behind the build's embedded migrations. The migrator (api daemon, or
+// `aichronicles migrate` if/when added) must run before consumers can
+// open the DB.
+var ErrSchemaTooOld = errors.New("store: schema_version older than this build's expected version")
+
+// ErrSchemaTooNew is returned by Open when the DB's schema_version is
+// AHEAD of the build's embedded migrations — a downgrade scenario.
+// Refusing to open prevents an older binary from clobbering a newer
+// schema's data.
+var ErrSchemaTooNew = errors.New("store: schema_version newer than this build's expected version")
+
+// latestSchemaVersion is the highest migration version embedded in
+// migrationsFS. Computed once on first call. Used by Open to verify
+// schema parity and by OpenMigrate as the target version.
+var latestSchemaVersion = sync.OnceValue(func() int {
+	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	if err != nil {
+		// embed.FS is build-time — read failure means a corrupted
+		// binary, not a runtime condition. Panic so the daemon
+		// fails to start instead of running with a phantom schema.
+		panic("store: read embedded migrations dir: " + err.Error())
+	}
+	max := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+			continue
+		}
+		v, err := parseMigrationVersion(e.Name())
+		if err != nil {
+			panic("store: parse embedded migration filename " + e.Name() + ": " + err.Error())
+		}
+		if v > max {
+			max = v
+		}
+	}
+	return max
+})
+
+// LatestSchemaVersion returns the highest migration version embedded
+// in this build. Surfaced so callers (the daemon, an admin tool) can
+// log "running against schema vN" without re-walking the FS.
+func LatestSchemaVersion() int { return latestSchemaVersion() }
+
+// Open returns a Store backed by the SQLite file at path WITHOUT
+// running migrations, and verifies the DB's schema_version equals
+// the build's LatestSchemaVersion. The file and its parent directories
+// are created if missing.
+//
+// Consumer processes (web UI, CLI subcommands, MCP server) call Open.
+// Only the api daemon — the sole writer and migrator — calls
+// OpenMigrate. This separation prevents two processes from racing
+// on the migration sequence and surfaces version drift loudly
+// instead of papering over it: if a consumer's binary is newer
+// than the daemon's, Open returns ErrSchemaTooOld; if older,
+// ErrSchemaTooNew.
+//
+// On a never-initialised DB (schema_version=0, no meta table)
+// Open returns ErrSchemaTooOld so the caller knows to start the
+// daemon first.
 //
 // Pragmas applied to every pooled connection via the DSN:
 //   - journal_mode=WAL (concurrent readers during writes)
@@ -64,6 +126,48 @@ type Store struct {
 // statement. busy_timeout in particular MUST be set per-connection
 // for the pool to avoid SQLITE_BUSY under concurrent writers.
 func Open(path string) (*Store, error) {
+	s, err := openWithoutMigrate(path)
+	if err != nil {
+		return nil, err
+	}
+	current, err := s.currentSchemaVersion()
+	if err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	expected := latestSchemaVersion()
+	switch {
+	case current < expected:
+		_ = s.Close()
+		return nil, fmt.Errorf("%w: db=%d build=%d", ErrSchemaTooOld, current, expected)
+	case current > expected:
+		_ = s.Close()
+		return nil, fmt.Errorf("%w: db=%d build=%d", ErrSchemaTooNew, current, expected)
+	}
+	return s, nil
+}
+
+// OpenMigrate opens a Store and applies any pending migrations to
+// bring the DB up to LatestSchemaVersion. Reserved for the api daemon
+// (cmd/aichronicles-api) and tests; every other production caller
+// should use Open to surface schema drift instead of silently
+// migrating concurrently.
+func OpenMigrate(path string) (*Store, error) {
+	s, err := openWithoutMigrate(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.migrate(); err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// openWithoutMigrate is the shared body of Open and OpenMigrate:
+// resolve the DSN, configure pool sizing, return the wrapped Store.
+// No migration, no schema check.
+func openWithoutMigrate(path string) (*Store, error) {
 	dsn := "file:" + path +
 		"?_pragma=journal_mode(WAL)" +
 		"&_pragma=foreign_keys(ON)" +
@@ -78,13 +182,7 @@ func Open(path string) (*Store, error) {
 	// serializes writes internally — more connections = more waiting.
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(2)
-
-	s := &Store{db: db}
-	if err := s.migrate(); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	return s, nil
+	return &Store{db: db}, nil
 }
 
 // Close releases the underlying database handle.

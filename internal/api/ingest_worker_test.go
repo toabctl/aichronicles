@@ -24,7 +24,7 @@ import (
 // state machine.
 func newTestWorker(t *testing.T) (*IngestWorker, *store.Store, *sseBus) {
 	t.Helper()
-	s, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	s, err := store.OpenMigrate(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}

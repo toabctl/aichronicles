@@ -40,7 +40,7 @@ func pointStoreEnv(t *testing.T) string {
 // internal/web/handlers_test.go but local to the cli package.
 func seedSessionForCompletion(t *testing.T, dbPath, sourceSession, prompt string) string {
 	t.Helper()
-	s, err := store.Open(dbPath)
+	s, err := store.OpenMigrate(dbPath)
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestCompleteSessionID_ReturnsTabSeparatedDescriptions(t *testing.T) {
 	cmd := &cobra.Command{Use: "test"}
 	cmd.SetContext(context.Background())
 
-	st, err := store.Open(dbPath)
+	st, err := store.OpenMigrate(dbPath)
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestCompleteSessionID_PrefixFilters(t *testing.T) {
 	cmd := &cobra.Command{Use: "test"}
 	cmd.SetContext(context.Background())
 
-	st, err := store.Open(dbPath)
+	st, err := store.OpenMigrate(dbPath)
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}

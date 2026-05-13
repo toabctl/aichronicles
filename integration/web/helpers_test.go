@@ -83,7 +83,7 @@ type testEnv struct {
 func startEnv(t *testing.T) *testEnv {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "aichronicles.db")
-	st, err := store.Open(dbPath)
+	st, err := store.OpenMigrate(dbPath)
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}

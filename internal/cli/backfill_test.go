@@ -56,7 +56,7 @@ func seedSkillIngest(t *testing.T, s *store.Store, sessionKey, skillName string,
 
 func openTempCLIStore(t *testing.T) *store.Store {
 	t.Helper()
-	s, err := store.Open(t.TempDir() + "/store.db")
+	s, err := store.OpenMigrate(t.TempDir() + "/store.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

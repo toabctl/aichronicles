@@ -43,7 +43,7 @@ func TestE2E_IngestSummarizeFetchViaMCP(t *testing.T) {
 	dir := t.TempDir()
 	sock := filepath.Join(dir, "sock")
 
-	s, err := store.Open(filepath.Join(dir, "store.db"))
+	s, err := store.OpenMigrate(filepath.Join(dir, "store.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}

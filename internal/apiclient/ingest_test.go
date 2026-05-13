@@ -41,7 +41,7 @@ func validEnvelope(t *testing.T) events.Envelope {
 // each Ingest call.
 func newRealServerClient(t *testing.T) (*Client, *store.Store) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	st, err := store.OpenMigrate(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}

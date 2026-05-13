@@ -109,12 +109,18 @@ func run(sockFlag, dbFlag string) error {
 	if err := os.MkdirAll(filepath.Dir(resolvedDB), 0o700); err != nil {
 		return fmt.Errorf("ensure store dir: %w", err)
 	}
-	st, err := store.Open(resolvedDB)
+	// The api daemon is the sole migrator. Every other process
+	// (web, CLI subcommands, MCP via apiclient) calls plain
+	// store.Open and gets ErrSchemaTooOld if it starts before
+	// the daemon has finished bringing the schema current.
+	st, err := store.OpenMigrate(resolvedDB)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
 	st.SetMaxOpenConns(cfg.Limits.SQLiteMaxOpenConns)
+	logger.Info("aichronicles-api schema",
+		"version", store.LatestSchemaVersion())
 
 	srv := api.NewServer(st, logger).
 		WithMaxEnvelopeBytes(cfg.Limits.MaxEnvelopeBytes).

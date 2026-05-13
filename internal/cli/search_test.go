@@ -20,7 +20,7 @@ import (
 // multiple kinds, sessions, and timestamps for search tests.
 func seedStore(t *testing.T) (*store.Store, []events.Envelope) {
 	t.Helper()
-	s, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	s, err := store.OpenMigrate(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
