@@ -10,6 +10,18 @@ import (
 	"github.com/toabctl/aichronicles/internal/timefmt"
 )
 
+// clampLimit defaults n to def when zero/negative and caps it at
+// max otherwise. Used by tool handlers that take a `limit` field
+// declared in the JSON schema as `{"maximum": M, "default": D}` —
+// the helper folds the runtime clamp + default into one call so a
+// schema change can't silently leave the Go clamp stale.
+func clampLimit(n, def, max int) int {
+	if n <= 0 || n > max {
+		return def
+	}
+	return n
+}
+
 // decodeArgs is the canonical "unmarshal the tool's JSON args, 400
 // on parse failure" prologue. Every MCP handler runs the same line;
 // the helper folds 14 sites down to one. The InvalidParams Code

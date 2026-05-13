@@ -155,9 +155,7 @@ func getFactsForSubjectAPIHandler(c *apiclient.Client) ToolHandler {
 		if strings.TrimSpace(req.Subject) == "" {
 			return TextError("get_facts_for_subject: subject is required"), nil
 		}
-		if req.Limit <= 0 || req.Limit > 200 {
-			req.Limit = 50
-		}
+		req.Limit = clampLimit(req.Limit, 50, 200)
 		resp, err := c.Facts(ctx, req.Subject, req.Limit)
 		if r, e := mapAPIError("get_facts_for_subject: load:", err); r != nil || e != nil {
 			return r, e
@@ -213,9 +211,7 @@ func findFactSubjectsAPIHandler(c *apiclient.Client) ToolHandler {
 		if strings.TrimSpace(req.Contains) == "" {
 			return TextError("find_fact_subjects: contains is required"), nil
 		}
-		if req.Limit <= 0 || req.Limit > 100 {
-			req.Limit = 30
-		}
+		req.Limit = clampLimit(req.Limit, 30, 100)
 		resp, err := c.FactSubjects(ctx, req.Contains, req.Limit)
 		if r, e := mapAPIError("find_fact_subjects: load:", err); r != nil || e != nil {
 			return r, e
@@ -428,9 +424,7 @@ func findEpisodesAPIHandler(c *apiclient.Client) ToolHandler {
 				return nil, e
 			}
 		}
-		if req.Limit <= 0 || req.Limit > 100 {
-			req.Limit = 50
-		}
+		req.Limit = clampLimit(req.Limit, 50, 100)
 		var sinceMs int64
 		if req.SinceDays > 0 {
 			sinceMs, _ = timefmt.SinceMsFromDays(req.SinceDays, 0, 0, time.Now())
@@ -515,9 +509,7 @@ func listSubagentsAPIHandler(c *apiclient.Client) ToolHandler {
 				return nil, e
 			}
 		}
-		if req.Limit <= 0 || req.Limit > 100 {
-			req.Limit = 50
-		}
+		req.Limit = clampLimit(req.Limit, 50, 100)
 
 		sessionID := req.SessionID
 		if sessionID != "" {
@@ -594,9 +586,7 @@ func searchEventsAPIHandler(c *apiclient.Client) ToolHandler {
 		if strings.TrimSpace(req.Query) == "" {
 			return TextError("search_events: query is required"), nil
 		}
-		if req.Limit <= 0 || req.Limit > 100 {
-			req.Limit = 20
-		}
+		req.Limit = clampLimit(req.Limit, 20, 100)
 
 		// The api parses the user-facing query through
 		// internal/searchquery server-side and surfaces
@@ -679,9 +669,7 @@ func listSessionsAPIHandler(c *apiclient.Client) ToolHandler {
 				return nil, e
 			}
 		}
-		if req.Limit <= 0 || req.Limit > 100 {
-			req.Limit = 20
-		}
+		req.Limit = clampLimit(req.Limit, 20, 100)
 		var sinceMs int64
 		if req.SinceHours > 0 {
 			sinceMs = time.Now().Add(-time.Duration(req.SinceHours) * time.Hour).UnixMilli()
@@ -823,9 +811,7 @@ func listWorkflowsAPIHandler(c *apiclient.Client) ToolHandler {
 				return nil, e
 			}
 		}
-		if req.Limit <= 0 || req.Limit > 50 {
-			req.Limit = 10
-		}
+		req.Limit = clampLimit(req.Limit, 10, 50)
 		// Pull more than the cap because most induction rows
 		// have no workflow — filter post-fetch.
 		outs, err := c.LLMOutputsList(ctx, "induction", "", req.Limit*5)
