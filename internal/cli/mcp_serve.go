@@ -95,6 +95,6 @@ func newMCPServeCmd() *cobra.Command {
 			return srv.Run(cmd.Context(), cmd.InOrStdin(), os.Stdout)
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	addDBFlag(cmd, &dbPath)
 	return cmd
 }

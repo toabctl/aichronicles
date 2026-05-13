@@ -123,7 +123,7 @@ func newProposeCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the llm_outputs cache and re-call the LLM")
 	cmd.Flags().BoolVar(&challenge, "challenge", false,
 		"forward-looking mode: propose what to tackle NEXT (Voyager-style curriculum)")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	addDBFlag(cmd, &dbPath)
 	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)
 	cmd.AddCommand(newProposeAddCmd())

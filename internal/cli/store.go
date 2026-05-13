@@ -1,9 +1,21 @@
 package cli
 
 import (
+	"github.com/spf13/cobra"
+
 	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/store"
 )
+
+// addDBFlag wires the canonical --db flag onto cmd. Used by every
+// CLI subcommand that opens the SQLite store directly (mostly the
+// LLM-batch commands that talk to llm_outputs for caching). The
+// help text is the contract for the env var precedence — pinning
+// it here keeps the help consistent across commands.
+func addDBFlag(cmd *cobra.Command, target *string) {
+	cmd.Flags().StringVar(target, "db", "",
+		"SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+}
 
 // openStore is the canonical "resolve --db flag, open the store"
 // helper every CLI subcommand goes through. CLI flag wins over

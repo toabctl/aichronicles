@@ -144,7 +144,7 @@ func newInductionSweepCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", defaultInductionLimit,
 		"max sessions to process in one sweep")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	addDBFlag(cmd, &dbPath)
 	cmd.Flags().BoolVar(&skipSummarize, "skip-summarize", false,
 		"skip phase 1 (auto-summarize). Sessions without summaries will be skipped — keeps summarize manual.")
 	cmd.Flags().BoolVar(&skipFacts, "skip-facts", false,
@@ -212,7 +212,7 @@ func newInductionRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&session, "session", "", "session id (full or unique prefix) to induce on")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the cache and re-call the LLM")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	addDBFlag(cmd, &dbPath)
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }

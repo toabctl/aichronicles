@@ -66,8 +66,7 @@ func newBackfillExtractionsCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", "",
-		"SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	addDBFlag(cmd, &dbPath)
 	cmd.Flags().StringVar(&sockPath, "socket", "",
 		"aichronicles-api UDS path used to check whether the daemon is running (overrides $AICHRONICLES_API_SOCKET; XDG default)")
 	cmd.Flags().StringVar(&only, "only", "",

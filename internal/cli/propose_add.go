@@ -122,8 +122,7 @@ func newProposeAddCmd() *cobra.Command {
 				newClient, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", "",
-		"SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	addDBFlag(cmd, &dbPath)
 	addSocketFlag(cmd, &sockFlag)
 	cmd.Flags().StringVar(&skillName, "skill", "",
 		"name of a skill from the proposal to materialise")
