@@ -184,3 +184,41 @@ func TestNewServer_DefaultsApplied(t *testing.T) {
 		t.Errorf("ShutdownTimeout: zero, want non-zero default")
 	}
 }
+
+func TestServer_HandlerEmitsSecurityHeaders(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	resp, err := http.Get(base + "/")
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// Each header is a different failure mode if missing:
+	//   - X-Frame-Options DENY blocks clickjacking from a coresident
+	//     localhost iframe under --bind 0.0.0.0.
+	//   - X-Content-Type-Options nosniff prevents MIME-confusion XSS
+	//     on /static/*.
+	//   - Content-Security-Policy restricts script/style/font to
+	//     self origin; if an untrusted dependency leaks into a
+	//     template, this is the seatbelt.
+	//   - Referrer-Policy no-referrer keeps internal session ids
+	//     out of outbound Referer headers when a user clicks an
+	//     external link rendered in a /digests card.
+	for k, want := range map[string]string{
+		"X-Frame-Options":        "DENY",
+		"X-Content-Type-Options": "nosniff",
+		"Referrer-Policy":        "no-referrer",
+	} {
+		if got := resp.Header.Get(k); got != want {
+			t.Errorf("%s: got %q, want %q", k, got, want)
+		}
+	}
+	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") ||
+		!strings.Contains(csp, "frame-ancestors 'none'") {
+		t.Errorf("CSP missing expected directives: %q", csp)
+	}
+}

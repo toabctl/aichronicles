@@ -260,7 +260,45 @@ func (s *Server) renderFragment(w http.ResponseWriter, name string, data any) {
 // aichronicles-api daemon) can mount the web routes on their own
 // listener instead of going through Run. Side-effect free; the
 // returned handler stays valid for the Server's lifetime.
-func (s *Server) Handler() http.Handler { return s.mux }
+//
+// The mux is wrapped in secureHeaders middleware so every
+// response carries strict CSP / framing / referrer / sniff
+// defaults. Loopback is the trust boundary today, but the
+// README documents --bind 0.0.0.0 as an option; the moment that
+// happens these headers are the only thing standing between a
+// hostile coresident process and reading the corpus.
+func (s *Server) Handler() http.Handler { return secureHeaders(s.mux) }
+
+// secureHeaders applies a strict default Content-Security-Policy,
+// frame/clickjacking protection, MIME-sniff blocking, and a
+// minimal referrer policy. The CSP allows only self-origin
+// resources (script, style, font, img, connect, frame-ancestors
+// none). htmx + Pico CSS work fine under this policy because the
+// templates already serve the JS/CSS from /static/ on the same
+// origin. Inline event handlers (onclick="…") are not used; if
+// they're ever added the CSP will need a hash / nonce.
+//
+// arch_review_2026_05_13 LOW #19: previously zero security
+// headers; loopback-only was the only defense.
+func secureHeaders(next http.Handler) http.Handler {
+	const csp = "default-src 'self'; " +
+		"script-src 'self'; " +
+		"style-src 'self'; " +
+		"img-src 'self' data:; " +
+		"font-src 'self'; " +
+		"connect-src 'self'; " +
+		"frame-ancestors 'none'; " +
+		"base-uri 'self'; " +
+		"form-action 'self'"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", csp)
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
+}
 
 // Addr returns the address the server is configured to listen on.
 // Useful for tests that didn't supply a Listener and want to know
@@ -286,7 +324,7 @@ func (s *Server) Run(ctx context.Context) error {
 	defer stopIdle()
 
 	srv := &http.Server{
-		Handler: s.mux,
+		Handler: s.Handler(),
 		// Read/Write timeouts protect against slow-loris-style
 		// hangs even on a localhost service.
 		ReadHeaderTimeout: 5 * time.Second,
