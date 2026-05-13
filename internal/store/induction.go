@@ -36,7 +36,7 @@ type InductionCandidate struct {
 }
 
 // LoadInductionCandidates returns up to `limit` sessions that
-// satisfy all three predicates:
+// satisfy all four predicates:
 //
 //  1. Idle: ended_at_ms <= nowMs - idleThresholdMs (so we don't
 //     induce a session that's still actively receiving events).
@@ -49,6 +49,19 @@ type InductionCandidate struct {
 //     sweeper is then idempotent at the per-session level —
 //     once we've induced (or decided no_skill_found), we don't
 //     pay the LLM call again.
+//
+//  4. No pending envelopes: no ingest_pending row belongs to
+//     this session. The async ingest path (cmd/aichronicles-api +
+//     internal/api/ingest_worker) can leave already-accepted
+//     envelopes queued in ingest_pending after the trigger-
+//     maintained sessions.ended_at_ms aggregate has already
+//     advanced. Without this predicate, a session whose latest
+//     events are still pending would look idle to the sweeper
+//     and the LLM would summarise a truncated transcript. The
+//     source_agent / source_session_id pair is the natural join
+//     key (DeriveSessionID is a deterministic UUIDv5 of those
+//     two fields), so we extract them from the queued JSON
+//     envelope rather than denormalising into ingest_pending.
 //
 // Newest-ended first, so an interactive sweep surfaces the most
 // recently completed work before catching up on backlog.
@@ -93,6 +106,11 @@ func LoadInductionCandidates(ctx context.Context, db *sql.DB, nowMs, idleThresho
 		   AND NOT EXISTS (
 		     SELECT 1 FROM llm_outputs lo
 		      WHERE lo.session_id = s.id AND lo.kind = ?
+		   )
+		   AND NOT EXISTS (
+		     SELECT 1 FROM ingest_pending ip
+		      WHERE json_extract(ip.body, '$.source_agent') = s.source_agent
+		        AND json_extract(ip.body, '$.source_session_id') = s.source_session_id
 		   )
 		 ORDER BY s.ended_at_ms DESC
 		 LIMIT ?

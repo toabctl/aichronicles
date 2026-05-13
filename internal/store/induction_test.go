@@ -75,6 +75,54 @@ func TestLoadInductionCandidates_FiltersIdleSubstantialUnprocessed(t *testing.T)
 	}
 }
 
+func TestLoadInductionCandidates_ExcludesSessionsWithPendingEnvelopes(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	const baseTs = int64(1_700_000_000_000)
+	const idleMs = int64(30 * 60 * 1000)
+	const nowMs = baseTs + 2*60*60*1000
+
+	// Two sessions that would BOTH normally qualify (idle past
+	// threshold, ≥5 events, no induction row). The only
+	// distinguishing fact: candB has an envelope still sitting in
+	// ingest_pending, so the session's trigger-maintained
+	// ended_at_ms is stale and a sweep run now would summarise a
+	// truncated transcript.
+	const candA = "00000000-0000-0000-0000-0000000000ca"
+	seedSessionForInduction(t, s, candA, "/repo", baseTs, nowMs-60*60*1000, 20)
+	const candB = "00000000-0000-0000-0000-0000000000cb"
+	seedSessionForInduction(t, s, candB, "/repo", baseTs, nowMs-60*60*1000, 20)
+
+	// Stage a pending envelope for candB. Body is the canonical
+	// envelope JSON — the induction query json_extracts
+	// $.source_agent / $.source_session_id and joins against the
+	// sessions row's matching columns (seedSessionForInduction
+	// pins source_agent=claude-code, source_session_id="src-"+id).
+	body := `{"v":1,"event_id":"019e2000-0000-0000-0000-000000000001",` +
+		`"source_agent":"claude-code","source_session_id":"src-` + candB + `",` +
+		`"kind":"user_prompt","ts_source":"2026-05-13T10:00:00Z",` +
+		`"payload":{},"redaction":{"applied":true}}`
+	if _, err := s.DB().Exec(
+		`INSERT INTO ingest_pending(event_id, body, received_at_ms)
+		 VALUES (?, ?, ?)`,
+		"019e2000-0000-0000-0000-000000000001", body, nowMs,
+	); err != nil {
+		t.Fatalf("seed ingest_pending: %v", err)
+	}
+
+	got, err := LoadInductionCandidates(t.Context(), s.DB(), nowMs, idleMs, 5, 10)
+	if err != nil {
+		t.Fatalf("LoadInductionCandidates: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 candidate (candB filtered by pending envelope), got %d: %+v", len(got), got)
+	}
+	if got[0].ID != candA {
+		t.Errorf("got[0].ID = %q, want %q (candB should be excluded)", got[0].ID, candA)
+	}
+}
+
 func TestLoadInductionCandidates_AppliesDefaults(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
