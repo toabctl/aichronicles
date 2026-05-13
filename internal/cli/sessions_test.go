@@ -62,7 +62,7 @@ func seedStoreForSessions(t *testing.T) *store.Store {
 			if err != nil {
 				t.Fatalf("begin: %v", err)
 			}
-			if _, err := store.IngestEnvelope(t.Context(), tx, &e, raw, time.Now().UnixMilli()); err != nil {
+			if _, _, err := store.IngestEnvelope(t.Context(), tx, &e, raw, time.Now().UnixMilli()); err != nil {
 				_ = tx.Rollback()
 				t.Fatalf("ingest: %v", err)
 			}

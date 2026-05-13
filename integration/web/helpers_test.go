@@ -183,7 +183,7 @@ func (e *testEnv) ingestEvent(t *testing.T, kind, sourceSession, content string,
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	if _, err := store.IngestEnvelope(t.Context(), tx, env, raw, time.Now().UnixMilli()); err != nil {
+	if _, _, err := store.IngestEnvelope(t.Context(), tx, env, raw, time.Now().UnixMilli()); err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("ingest %s: %v", kind, err)
 	}

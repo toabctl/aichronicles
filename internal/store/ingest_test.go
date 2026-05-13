@@ -57,7 +57,7 @@ func TestIngestEnvelope_RejectsMissingRedaction(t *testing.T) {
 	env.Redaction = nil // simulate a caller that forgot to scrub
 
 	withTx(t, s, func(tx *sql.Tx) {
-		_, err := IngestEnvelope(t.Context(), tx, env, raw, 99)
+		_, _, err := IngestEnvelope(t.Context(), tx, env, raw, 99)
 		if !errors.Is(err, ErrRedactionRequired) {
 			t.Fatalf("expected ErrRedactionRequired, got %v", err)
 		}
@@ -77,7 +77,7 @@ func TestIngestEnvelope_RejectsAppliedFalse(t *testing.T) {
 	env.Redaction = &events.Redaction{Applied: false}
 
 	withTx(t, s, func(tx *sql.Tx) {
-		_, err := IngestEnvelope(t.Context(), tx, env, raw, 99)
+		_, _, err := IngestEnvelope(t.Context(), tx, env, raw, 99)
 		if !errors.Is(err, ErrRedactionRequired) {
 			t.Fatalf("expected ErrRedactionRequired, got %v", err)
 		}
@@ -96,7 +96,7 @@ func TestIngestEnvelope_SubagentFieldsRoundTrip(t *testing.T) {
 	_ = raw // ignored — we use the re-marshalled body so envelope_json matches
 
 	withTx(t, s, func(tx *sql.Tx) {
-		if _, err := IngestEnvelope(t.Context(), tx, env, rawWithSubagent, 1); err != nil {
+		if _, _, err := IngestEnvelope(t.Context(), tx, env, rawWithSubagent, 1); err != nil {
 			t.Fatalf("IngestEnvelope: %v", err)
 		}
 	})
@@ -122,7 +122,7 @@ func TestIngestEnvelope_TopLevelEventLeavesSubagentNull(t *testing.T) {
 	// Subagent stays nil — most events.
 
 	withTx(t, s, func(tx *sql.Tx) {
-		if _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
+		if _, _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
 			t.Fatalf("IngestEnvelope: %v", err)
 		}
 	})
@@ -188,7 +188,7 @@ func TestIngestEnvelope_ConcurrentAllocatesUniqueSeqs(t *testing.T) {
 				errs <- err
 				return
 			}
-			if _, err := IngestEnvelope(t.Context(), tx, envs[i], raws[i], int64(i)); err != nil {
+			if _, _, err := IngestEnvelope(t.Context(), tx, envs[i], raws[i], int64(i)); err != nil {
 				_ = tx.Rollback()
 				errs <- err
 				return
@@ -226,7 +226,7 @@ func TestIngestEnvelope_HappyPath(t *testing.T) {
 
 	var deduped bool
 	withTx(t, s, func(tx *sql.Tx) {
-		d, err := IngestEnvelope(t.Context(), tx, env, raw, 99)
+		_, d, err := IngestEnvelope(t.Context(), tx, env, raw, 99)
 		if err != nil {
 			t.Fatalf("IngestEnvelope: %v", err)
 		}
@@ -310,7 +310,7 @@ func TestIngestEnvelope_PersistsTransportColumn(t *testing.T) {
 	env, raw := newValidEnvelope(t)
 	env.Transport = "hook"
 	withTx(t, s, func(tx *sql.Tx) {
-		if _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
+		if _, _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
 			t.Fatalf("ingest: %v", err)
 		}
 	})
@@ -337,7 +337,7 @@ func TestIngestEnvelope_EmptyTransportPersistsAsEmpty(t *testing.T) {
 	}
 	_ = raw
 	withTx(t, s, func(tx *sql.Tx) {
-		if _, err := IngestEnvelope(t.Context(), tx, env, rawZero, 1); err != nil {
+		if _, _, err := IngestEnvelope(t.Context(), tx, env, rawZero, 1); err != nil {
 			t.Fatalf("ingest: %v", err)
 		}
 	})
@@ -364,7 +364,7 @@ func TestIngestEnvelope_PersistsProvenanceColumns(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	withTx(t, s, func(tx *sql.Tx) {
-		if _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
+		if _, _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
 			t.Fatalf("ingest: %v", err)
 		}
 	})
@@ -389,7 +389,7 @@ func TestIngestEnvelope_DuplicateIsDedupedWithoutTouching(t *testing.T) {
 	env, raw := newValidEnvelope(t)
 
 	withTx(t, s, func(tx *sql.Tx) {
-		if _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
+		if _, _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
 			t.Fatalf("first: %v", err)
 		}
 	})
@@ -398,7 +398,7 @@ func TestIngestEnvelope_DuplicateIsDedupedWithoutTouching(t *testing.T) {
 	_ = s.DB().QueryRow(`SELECT event_count FROM sessions`).Scan(&firstCount)
 
 	withTx(t, s, func(tx *sql.Tx) {
-		d, err := IngestEnvelope(t.Context(), tx, env, raw, 2)
+		_, d, err := IngestEnvelope(t.Context(), tx, env, raw, 2)
 		if err != nil {
 			t.Fatalf("second: %v", err)
 		}
@@ -431,7 +431,7 @@ func TestIngestEnvelope_MultipleEventsOneSessionAggregates(t *testing.T) {
 		env.TsSource = env.TsSource.Add(time.Duration(i) * time.Minute)
 		// keep same (SourceAgent, SourceSessionID) → same session
 		withTx(t, s, func(tx *sql.Tx) {
-			if _, err := IngestEnvelope(t.Context(), tx, env, raw, int64(1000+i)); err != nil {
+			if _, _, err := IngestEnvelope(t.Context(), tx, env, raw, int64(1000+i)); err != nil {
 				t.Fatalf("ingest %d: %v", i, err)
 			}
 		})
@@ -453,7 +453,7 @@ func TestIngestEnvelope_ToolFieldsPersist(t *testing.T) {
 	env.Tool = &events.Tool{Name: "Bash", CallID: "toolu_abc"}
 
 	withTx(t, s, func(tx *sql.Tx) {
-		if _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
+		if _, _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
 			t.Fatalf("ingest: %v", err)
 		}
 	})
@@ -474,7 +474,7 @@ func TestIngestEnvelope_NilReturnsError(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
 	withTx(t, s, func(tx *sql.Tx) {
-		_, err := IngestEnvelope(t.Context(), tx, nil, nil, 0)
+		_, _, err := IngestEnvelope(t.Context(), tx, nil, nil, 0)
 		if err == nil {
 			t.Error("expected error for nil envelope")
 		}
@@ -490,7 +490,7 @@ func TestIngestEnvelope_DifferentSessionsCoexist(t *testing.T) {
 		env.EventID = uuid.Must(uuid.NewV7()).String()
 		env.SourceSessionID = sessID
 		withTx(t, s, func(tx *sql.Tx) {
-			if _, err := IngestEnvelope(t.Context(), tx, env, raw, int64(i)); err != nil {
+			if _, _, err := IngestEnvelope(t.Context(), tx, env, raw, int64(i)); err != nil {
 				t.Fatalf("ingest %s: %v", sessID, err)
 			}
 		})
@@ -522,7 +522,7 @@ func TestIngestEnvelope_ExtractorsPopulateExtractions(t *testing.T) {
 	}
 
 	withTx(t, s, func(tx *sql.Tx) {
-		if _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
+		if _, _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
 			t.Fatalf("ingest: %v", err)
 		}
 	})
@@ -572,7 +572,7 @@ func TestIngestEnvelope_NoExtractionsForPlainEvents(t *testing.T) {
 	env, raw := newValidEnvelope(t)
 	env.ContentText = "just a message"
 	withTx(t, s, func(tx *sql.Tx) {
-		if _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
+		if _, _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
 			t.Fatalf("ingest: %v", err)
 		}
 	})
@@ -593,7 +593,7 @@ func TestIngestEnvelope_ExtractionsCascadeOnRawDelete(t *testing.T) {
 	env.Payload = map[string]any{"tool_input": map[string]any{"command": "ls"}}
 
 	withTx(t, s, func(tx *sql.Tx) {
-		if _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
+		if _, _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
 			t.Fatalf("ingest: %v", err)
 		}
 	})

@@ -104,7 +104,7 @@ func seedSessionWithSummary(t *testing.T, s *store.Store, sourceID, prompt strin
 		Redaction:       &events.Redaction{Applied: true},
 	}
 	tx, _ := s.DB().Begin()
-	if _, err := store.IngestEnvelope(t.Context(), tx, env, []byte(`{"v":1}`), env.TsSource.UnixMilli()); err != nil {
+	if _, _, err := store.IngestEnvelope(t.Context(), tx, env, []byte(`{"v":1}`), env.TsSource.UnixMilli()); err != nil {
 		t.Fatalf("ingest: %v", err)
 	}
 	sid := events.DeriveSessionID("claude-code", sourceID)

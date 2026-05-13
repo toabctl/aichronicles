@@ -28,9 +28,9 @@ var ErrRedactionRequired = errors.New("IngestEnvelope: envelope.redaction.applie
 // IngestEnvelopeWithExtractions with the Pipeline-computed
 // extractions so the dispatch policy lives in one place
 // (events.Pipeline) rather than being implicitly re-run here.
-func IngestEnvelope(ctx context.Context, tx *sql.Tx, env *events.Envelope, envelopeJSON []byte, tsServerMs int64) (deduped bool, err error) {
+func IngestEnvelope(ctx context.Context, tx *sql.Tx, env *events.Envelope, envelopeJSON []byte, tsServerMs int64) (ingestSeq int64, deduped bool, err error) {
 	if env == nil {
-		return false, errors.New("IngestEnvelope: nil envelope")
+		return 0, false, errors.New("IngestEnvelope: nil envelope")
 	}
 	return IngestEnvelopeWithExtractions(ctx, tx, env, envelopeJSON, tsServerMs,
 		events.DefaultExtractors().Run(env))
@@ -60,12 +60,12 @@ func IngestEnvelopeWithExtractions(
 	envelopeJSON []byte,
 	tsServerMs int64,
 	extractions []events.Extraction,
-) (deduped bool, err error) {
+) (ingestSeq int64, deduped bool, err error) {
 	if env == nil {
-		return false, errors.New("IngestEnvelopeWithExtractions: nil envelope")
+		return 0, false, errors.New("IngestEnvelopeWithExtractions: nil envelope")
 	}
 	if env.Redaction == nil || !env.Redaction.Applied {
-		return false, ErrRedactionRequired
+		return 0, false, ErrRedactionRequired
 	}
 
 	// Race-free ingest_seq allocation: claim the next value via
@@ -81,7 +81,7 @@ func IngestEnvelopeWithExtractions(
 		  WHERE name = 'ingest_seq'
 		  RETURNING next_value - 1`,
 	).Scan(&nextSeq); err != nil {
-		return false, fmt.Errorf("allocate ingest_seq: %w", err)
+		return 0, false, fmt.Errorf("allocate ingest_seq: %w", err)
 	}
 
 	// INSERT OR IGNORE on event_id collision (the dedup path —
@@ -99,17 +99,17 @@ func IngestEnvelopeWithExtractions(
 		env.TsSource.UnixMilli(), tsServerMs, string(envelopeJSON),
 	)
 	if err != nil {
-		return false, fmt.Errorf("insert raw_envelope: %w", err)
+		return 0, false, fmt.Errorf("insert raw_envelope: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return false, fmt.Errorf("raw insert rows affected: %w", err)
+		return 0, false, fmt.Errorf("raw insert rows affected: %w", err)
 	}
 	if n == 0 {
 		// Event_id collision — real duplicate from upstream retry.
 		// Distinct from the silent-loss path the previous
 		// implementation could fall into.
-		return true, nil
+		return 0, true, nil
 	}
 
 	sessionID := events.DeriveSessionID(env.SourceAgent, env.SourceSessionID)
@@ -119,7 +119,7 @@ func IngestEnvelopeWithExtractions(
 		 ON CONFLICT DO NOTHING`,
 		sessionID, env.SourceAgent, env.SourceSessionID,
 	); err != nil {
-		return false, fmt.Errorf("upsert session: %w", err)
+		return 0, false, fmt.Errorf("upsert session: %w", err)
 	}
 
 	var toolName, toolCallID sql.NullString
@@ -144,7 +144,7 @@ func IngestEnvelopeWithExtractions(
 		subagentID, subagentType, env.Transport,
 		env.SourceAgentVersion, env.Host,
 	); err != nil {
-		return false, fmt.Errorf("insert event: %w", err)
+		return 0, false, fmt.Errorf("insert event: %w", err)
 	}
 
 	// Extractions: URLs, file paths, shell commands. Best-effort and
@@ -164,11 +164,11 @@ func IngestEnvelopeWithExtractions(
 			`INSERT INTO extractions(event_id, session_id, kind, value, extra_json) VALUES (?, ?, ?, ?, ?)`,
 			env.EventID, sessionID, ex.Kind, ex.Value, extraJSON,
 		); err != nil {
-			return false, fmt.Errorf("insert extraction (%s=%q): %w", ex.Kind, ex.Value, err)
+			return 0, false, fmt.Errorf("insert extraction (%s=%q): %w", ex.Kind, ex.Value, err)
 		}
 	}
 
-	return false, nil
+	return nextSeq, false, nil
 }
 
 // ResolveSessionID returns the derived session_id a caller would get

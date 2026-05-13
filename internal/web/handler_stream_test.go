@@ -402,7 +402,7 @@ func TestStream_PerSessionFrameStatusEndedForSessionEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	if _, err := store.IngestEnvelope(t.Context(), tx, env, rawBytes, time.Now().UnixMilli()); err != nil {
+	if _, _, err := store.IngestEnvelope(t.Context(), tx, env, rawBytes, time.Now().UnixMilli()); err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("ingest session_end: %v", err)
 	}

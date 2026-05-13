@@ -388,11 +388,11 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	// Deduped reflects ingest_pending's UNIQUE(event_id): a
 	// retrying hook gets "yes I have this" without paying for
 	// the pipeline a second time.
-	writeJSON(w, http.StatusOK, events.Ack(events.Result{
+	writeJSON(w, http.StatusOK, events.Ack{
 		EventID:   env.EventID,
 		SessionID: events.DeriveSessionID(env.SourceAgent, env.SourceSessionID),
 		Deduped:   deduped,
-	}))
+	})
 }
 
 // writeProblem renders an RFC 7807 problem+json response.

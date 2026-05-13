@@ -54,14 +54,17 @@ func (s *Sink) Write(ctx context.Context, e events.Event) (events.Result, error)
 	if e.Envelope == nil {
 		return events.Result{}, errors.New("Sink.Write: nil envelope")
 	}
-	var deduped bool
+	var (
+		ingestSeq int64
+		deduped   bool
+	)
 	if err := WithTx(ctx, s.store.DB(), func(tx *sql.Tx) error {
 		tsMs := s.now().UnixMilli()
-		d, err := IngestEnvelopeWithExtractions(ctx, tx, e.Envelope, e.Raw, tsMs, e.Extractions)
+		seq, d, err := IngestEnvelopeWithExtractions(ctx, tx, e.Envelope, e.Raw, tsMs, e.Extractions)
 		if err != nil {
 			return err
 		}
-		deduped = d
+		ingestSeq, deduped = seq, d
 		return nil
 	}); err != nil {
 		return events.Result{}, err
@@ -74,6 +77,7 @@ func (s *Sink) Write(ctx context.Context, e events.Event) (events.Result, error)
 	return events.Result{
 		EventID:   e.Envelope.EventID,
 		SessionID: events.DeriveSessionID(e.Envelope.SourceAgent, e.Envelope.SourceSessionID),
+		IngestSeq: ingestSeq,
 		Deduped:   deduped,
 	}, nil
 }
@@ -243,7 +247,7 @@ func (b *BufferedSink) flushBatch(ctx context.Context, pending []pendingWrite) e
 	var imported, deduped int
 	if err := WithTx(ctx, b.store.DB(), func(tx *sql.Tx) error {
 		for _, p := range pending {
-			d, err := IngestEnvelopeWithExtractions(ctx, tx, p.event.Envelope, p.event.Raw, p.tsMs, p.event.Extractions)
+			_, d, err := IngestEnvelopeWithExtractions(ctx, tx, p.event.Envelope, p.event.Raw, p.tsMs, p.event.Extractions)
 			if err != nil {
 				return fmt.Errorf("ingest %s: %w", p.event.Envelope.EventID, err)
 			}
@@ -270,7 +274,7 @@ func (b *BufferedSink) flushRowByRow(ctx context.Context, pending []pendingWrite
 	for _, p := range pending {
 		var deduped bool
 		if err := WithTx(ctx, b.store.DB(), func(tx *sql.Tx) error {
-			d, err := IngestEnvelopeWithExtractions(ctx, tx, p.event.Envelope, p.event.Raw, p.tsMs, p.event.Extractions)
+			_, d, err := IngestEnvelopeWithExtractions(ctx, tx, p.event.Envelope, p.event.Raw, p.tsMs, p.event.Extractions)
 			if err != nil {
 				return err
 			}

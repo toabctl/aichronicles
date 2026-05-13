@@ -51,7 +51,7 @@ func TestMCPServe_EndToEnd(t *testing.T) {
 	}
 	raw, _ := json.Marshal(env)
 	tx, _ := s.DB().Begin()
-	if _, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli()); err != nil {
+	if _, _, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli()); err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("seed: %v", err)
 	}

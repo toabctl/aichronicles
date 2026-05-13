@@ -39,7 +39,7 @@ func ingestText(t *testing.T, s *Store, sourceSession, content string) string {
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	if _, err := IngestEnvelope(t.Context(), tx, env, raw, time.Now().UnixMilli()); err != nil {
+	if _, _, err := IngestEnvelope(t.Context(), tx, env, raw, time.Now().UnixMilli()); err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("IngestEnvelope: %v", err)
 	}
@@ -217,7 +217,7 @@ func ingestSubagentEvent(t *testing.T, s *Store, sourceSession, content, subID, 
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	if _, err := IngestEnvelope(t.Context(), tx, env, raw, time.Now().UnixMilli()); err != nil {
+	if _, _, err := IngestEnvelope(t.Context(), tx, env, raw, time.Now().UnixMilli()); err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("IngestEnvelope: %v", err)
 	}

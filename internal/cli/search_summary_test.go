@@ -38,7 +38,7 @@ func seedSearchableEvent(t *testing.T, s *store.Store, sessionKey, prompt string
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	if _, err := store.IngestEnvelope(t.Context(), tx, env, raw, env.TsSource.UnixMilli()); err != nil {
+	if _, _, err := store.IngestEnvelope(t.Context(), tx, env, raw, env.TsSource.UnixMilli()); err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("ingest: %v", err)
 	}

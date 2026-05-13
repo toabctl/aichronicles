@@ -69,7 +69,7 @@ func seedStore(t *testing.T) (*store.Store, []events.Envelope) {
 		if err != nil {
 			t.Fatalf("begin: %v", err)
 		}
-		if _, err := store.IngestEnvelope(t.Context(), tx, &e, raw, time.Now().UnixMilli()); err != nil {
+		if _, _, err := store.IngestEnvelope(t.Context(), tx, &e, raw, time.Now().UnixMilli()); err != nil {
 			_ = tx.Rollback()
 			t.Fatalf("ingest: %v", err)
 		}
@@ -184,7 +184,7 @@ func TestRunSearch_RespectsLimit(t *testing.T) {
 		events.ApplyRedaction(&env, redact.Default())
 		raw, _ := json.Marshal(env)
 		tx, _ := s.DB().Begin()
-		_, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli())
+		_, _, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli())
 		if err != nil {
 			_ = tx.Rollback()
 			t.Fatalf("ingest: %v", err)
@@ -295,7 +295,7 @@ func seedDuplicateTurn(t *testing.T, s *store.Store) (sessionID, hookEventID, im
 		if err != nil {
 			t.Fatalf("begin: %v", err)
 		}
-		if _, err := store.IngestEnvelope(t.Context(), tx, &e, raw, time.Now().UnixMilli()); err != nil {
+		if _, _, err := store.IngestEnvelope(t.Context(), tx, &e, raw, time.Now().UnixMilli()); err != nil {
 			_ = tx.Rollback()
 			t.Fatalf("ingest: %v", err)
 		}
@@ -398,7 +398,7 @@ func TestRunSearch_DedupeDoesNotCollapseDistinctContent(t *testing.T) {
 		events.ApplyRedaction(&env, redact.Default())
 		raw, _ := json.Marshal(env)
 		tx, _ := s.DB().Begin()
-		_, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli())
+		_, _, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli())
 		if err != nil {
 			_ = tx.Rollback()
 			t.Fatalf("ingest: %v", err)

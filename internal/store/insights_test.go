@@ -31,7 +31,7 @@ func seedInsightsEvents(t *testing.T, s *Store, sessionKey, toolName string, n i
 			Redaction:       &events.Redaction{Applied: true},
 		}
 		withTx(t, s, func(tx *sql.Tx) {
-			if _, err := IngestEnvelope(t.Context(), tx, env, []byte(`{"v":1}`), env.TsSource.UnixMilli()); err != nil {
+			if _, _, err := IngestEnvelope(t.Context(), tx, env, []byte(`{"v":1}`), env.TsSource.UnixMilli()); err != nil {
 				t.Fatalf("seed ingest: %v", err)
 			}
 		})
@@ -59,7 +59,7 @@ func seedSkillLoad(t *testing.T, s *Store, sessionKey, skillName string, ts time
 		Redaction: &events.Redaction{Applied: true},
 	}
 	withTx(t, s, func(tx *sql.Tx) {
-		if _, err := IngestEnvelope(t.Context(), tx, env, []byte(`{"v":1}`), env.TsSource.UnixMilli()); err != nil {
+		if _, _, err := IngestEnvelope(t.Context(), tx, env, []byte(`{"v":1}`), env.TsSource.UnixMilli()); err != nil {
 			t.Fatalf("seed skill_load: %v", err)
 		}
 	})

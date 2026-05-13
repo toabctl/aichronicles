@@ -31,7 +31,7 @@ func seedSessionAt(t *testing.T, s *Store, sessionKey string, ts time.Time) stri
 		Redaction:       &events.Redaction{Applied: true},
 	}
 	withTx(t, s, func(tx *sql.Tx) {
-		if _, err := IngestEnvelope(t.Context(), tx, env, []byte(`{"v":1}`), env.TsSource.UnixMilli()); err != nil {
+		if _, _, err := IngestEnvelope(t.Context(), tx, env, []byte(`{"v":1}`), env.TsSource.UnixMilli()); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 	})

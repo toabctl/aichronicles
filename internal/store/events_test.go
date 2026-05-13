@@ -32,7 +32,7 @@ func seedEvents(t *testing.T, s *Store, sessionKey string, n int, baseTs time.Ti
 		}
 		raw := []byte(`{"v":1}`) // body content does not matter for these tests
 		withTx(t, s, func(tx *sql.Tx) {
-			if _, err := IngestEnvelope(t.Context(), tx, env, raw, env.TsSource.UnixMilli()); err != nil {
+			if _, _, err := IngestEnvelope(t.Context(), tx, env, raw, env.TsSource.UnixMilli()); err != nil {
 				t.Fatalf("seed ingest: %v", err)
 			}
 		})
@@ -611,7 +611,7 @@ func TestLoadSessionStartCwd_AnchorsOnFirstNonNullCwd(t *testing.T) {
 		}
 		raw := []byte(`{"v":1}`)
 		withTx(t, s, func(tx *sql.Tx) {
-			if _, err := IngestEnvelope(t.Context(), tx, env, raw, env.TsSource.UnixMilli()); err != nil {
+			if _, _, err := IngestEnvelope(t.Context(), tx, env, raw, env.TsSource.UnixMilli()); err != nil {
 				t.Fatalf("ingest %d: %v", i, err)
 			}
 		})

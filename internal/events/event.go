@@ -26,9 +26,18 @@ type Event struct {
 // Result is what Sink.Write returns and Pipeline.Process returns.
 // Deduped=true means the Sink saw an existing row with this
 // EventID and chose idempotent no-op rather than INSERT.
+//
+// IngestSeq is the monotonic server-side sequence number the store
+// allocated for the row in raw_envelopes. It's the wire identity
+// for SSE clients: the StreamEvent the api broadcasts carries
+// this number, and a reconnecting subscriber's Last-Event-ID
+// resumes from it. Zero on the Deduped=true path (the original
+// insert had already broadcast its own seq, and the dup is
+// suppressed).
 type Result struct {
 	EventID   string
 	SessionID string
+	IngestSeq int64
 	Deduped   bool
 }
 

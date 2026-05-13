@@ -251,10 +251,14 @@ func (w *IngestWorker) processOne(ctx context.Context, row store.IngestPendingRo
 	// SSE publish only for newly-stored events. Re-processed
 	// duplicates were already broadcast on the original ingest,
 	// so re-broadcasting would double-render in every live feed.
+	// IngestSeq carries the row's monotonic server-side ID — the
+	// SSE handler renders it as `id: N`, and that's what a
+	// reconnecting subscriber's Last-Event-ID resumes from.
 	if !result.Deduped {
 		w.sseBus.Publish(wire.StreamEvent{
 			EventID:    result.EventID,
 			SessionID:  result.SessionID,
+			IngestSeq:  result.IngestSeq,
 			Kind:       env.Kind,
 			TsServerMs: time.Now().UnixMilli(),
 		})

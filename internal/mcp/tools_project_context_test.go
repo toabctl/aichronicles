@@ -36,7 +36,7 @@ func seedSessionInCwd(t *testing.T, st *store.Store, cwd, prompt, topic string, 
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	if _, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli()); err != nil {
+	if _, _, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli()); err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("ingest: %v", err)
 	}

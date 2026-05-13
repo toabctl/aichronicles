@@ -47,7 +47,7 @@ func ingestFileTouch(t *testing.T, s *Store, sourceSession, toolName, filePath, 
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	if _, err := IngestEnvelope(t.Context(), tx, env, raw, time.Now().UnixMilli()); err != nil {
+	if _, _, err := IngestEnvelope(t.Context(), tx, env, raw, time.Now().UnixMilli()); err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("IngestEnvelope: %v", err)
 	}
@@ -84,7 +84,7 @@ func ingestForSearch(t *testing.T, s *Store, sourceSession, kind, content, trans
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	if _, err := IngestEnvelope(t.Context(), tx, env, raw, time.Now().UnixMilli()); err != nil {
+	if _, _, err := IngestEnvelope(t.Context(), tx, env, raw, time.Now().UnixMilli()); err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("IngestEnvelope: %v", err)
 	}
@@ -779,7 +779,7 @@ func TestSearchEvents_ExtractionsFallbackDedupsPerEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	if _, err := IngestEnvelope(t.Context(), tx, env, raw, time.Now().UnixMilli()); err != nil {
+	if _, _, err := IngestEnvelope(t.Context(), tx, env, raw, time.Now().UnixMilli()); err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("IngestEnvelope: %v", err)
 	}
@@ -823,7 +823,7 @@ func ingestForAgent(t *testing.T, s *Store, sourceAgent, sourceSession, content 
 	}
 	raw, _ := json.Marshal(env)
 	tx, _ := s.DB().Begin()
-	if _, err := IngestEnvelope(t.Context(), tx, env, raw, time.Now().UnixMilli()); err != nil {
+	if _, _, err := IngestEnvelope(t.Context(), tx, env, raw, time.Now().UnixMilli()); err != nil {
 		t.Fatalf("ingest: %v", err)
 	}
 	_ = tx.Commit()
@@ -960,7 +960,7 @@ func TestSearchEvents_FilterWithFailures(t *testing.T) {
 	}
 	raw, _ := json.Marshal(failEnv)
 	tx, _ := s.DB().Begin()
-	if _, err := IngestEnvelope(t.Context(), tx, failEnv, raw, time.Now().UnixMilli()); err != nil {
+	if _, _, err := IngestEnvelope(t.Context(), tx, failEnv, raw, time.Now().UnixMilli()); err != nil {
 		t.Fatalf("ingest tool_failure: %v", err)
 	}
 	_ = tx.Commit()

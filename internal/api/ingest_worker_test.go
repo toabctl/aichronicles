@@ -169,6 +169,17 @@ func TestIngestWorker_DrainPublishesToSSEOnNonDeduped(t *testing.T) {
 		if ev.Kind != "user_prompt" {
 			t.Errorf("SSE kind: got %q, want %q", ev.Kind, "user_prompt")
 		}
+		// IngestSeq is what the SSE handler renders as `id: N`
+		// in the wire frame; a reconnecting subscriber resumes
+		// from this via Last-Event-ID. Before the fix in
+		// commit-this-lands, every frame carried 0, breaking
+		// resume. The first event in a fresh store gets seq=1
+		// because the seq table starts at 1 (migration 008's
+		// initial INSERT) and UPDATE...RETURNING returns the
+		// pre-increment value.
+		if ev.IngestSeq != 1 {
+			t.Errorf("SSE ingest_seq: got %d, want 1 (first event in fresh store)", ev.IngestSeq)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("worker did not publish to SSE bus")
 	}

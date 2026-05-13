@@ -32,7 +32,7 @@ func seedToolUseForAnalytics(t *testing.T, st *store.Store, sourceSession, toolN
 	}
 	raw, _ := json.Marshal(env)
 	tx, _ := st.DB().Begin()
-	if _, err := store.IngestEnvelope(t.Context(), tx, env, raw, ts.UnixMilli()); err != nil {
+	if _, _, err := store.IngestEnvelope(t.Context(), tx, env, raw, ts.UnixMilli()); err != nil {
 		t.Fatalf("ingest: %v", err)
 	}
 	_ = tx.Commit()
@@ -136,7 +136,7 @@ func TestGetSkillStaleness_ReportsCorrelations(t *testing.T) {
 	}
 	raw, _ := json.Marshal(skillLoad)
 	tx, _ := st.DB().Begin()
-	_, _ = store.IngestEnvelope(t.Context(), tx, skillLoad, raw, now.UnixMilli())
+	_, _, _ = store.IngestEnvelope(t.Context(), tx, skillLoad, raw, now.UnixMilli())
 	_ = tx.Commit()
 
 	failure := &events.Envelope{
@@ -154,7 +154,7 @@ func TestGetSkillStaleness_ReportsCorrelations(t *testing.T) {
 	}
 	rawF, _ := json.Marshal(failure)
 	tx2, _ := st.DB().Begin()
-	_, _ = store.IngestEnvelope(t.Context(), tx2, failure, rawF, now.Add(2*time.Minute).UnixMilli())
+	_, _, _ = store.IngestEnvelope(t.Context(), tx2, failure, rawF, now.Add(2*time.Minute).UnixMilli())
 	_ = tx2.Commit()
 
 	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)

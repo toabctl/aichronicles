@@ -56,7 +56,7 @@ func seedSessionFull(t *testing.T, st *store.Store, sourceAgent, sourceSession, 
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	if _, err := store.IngestEnvelope(t.Context(), tx, env, raw, time.Now().UnixMilli()); err != nil {
+	if _, _, err := store.IngestEnvelope(t.Context(), tx, env, raw, time.Now().UnixMilli()); err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("IngestEnvelope: %v", err)
 	}
@@ -490,7 +490,7 @@ func TestSessionsPage_StatusEndedWhenSessionEndEventPresent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	if _, err := store.IngestEnvelope(t.Context(), tx, seedEnv, rawBytes, time.Now().UnixMilli()); err != nil {
+	if _, _, err := store.IngestEnvelope(t.Context(), tx, seedEnv, rawBytes, time.Now().UnixMilli()); err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("ingest session_end: %v", err)
 	}
