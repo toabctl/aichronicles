@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,13 +14,17 @@ import (
 )
 
 // seedWeeklyDigest writes a synthetic reflect_weekly row to
-// llm_outputs. Returns the row id so caller assertions can target
-// "id N" links / fragments.
-func seedWeeklyDigest(t *testing.T, st *store.Store, env prompts.WeeklyDigestEnvelope, createdAtMs int64) int64 {
+// llm_outputs in the exact shape `aichronicles digest weekly`
+// produces: a bare prompts.ReflectionResult JSON in body
+// (envelope wrapping is computed at render time, not stored —
+// see internal/cli/digest.go). promptHashSalt disambiguates rows
+// for SaveLLMOutput's (kind, prompt_hash) dedup. Returns the row
+// id so caller assertions can target "id N" links / fragments.
+func seedWeeklyDigest(t *testing.T, st *store.Store, result prompts.ReflectionResult, promptHashSalt string, createdAtMs int64) int64 {
 	t.Helper()
-	body, err := json.Marshal(env)
+	body, err := json.Marshal(result)
 	if err != nil {
-		t.Fatalf("marshal envelope: %v", err)
+		t.Fatalf("marshal result: %v", err)
 	}
 	tx, err := st.DB().Begin()
 	if err != nil {
@@ -30,7 +35,7 @@ func seedWeeklyDigest(t *testing.T, st *store.Store, env prompts.WeeklyDigestEnv
 		SessionID:   sql.NullString{},
 		Kind:        store.LLMKindReflectWeekly,
 		Model:       "claude-sonnet-4-6",
-		PromptHash:  "h-" + env.PeriodStart, // unique-per-week stand-in
+		PromptHash:  "h-" + promptHashSalt,
 		Body:        string(body),
 		CreatedAtMs: createdAtMs,
 	})
@@ -71,40 +76,33 @@ func TestDigestsPage_RendersStoredCard(t *testing.T) {
 	st := openTempStore(t)
 
 	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
-	periodStart := time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC)
-	periodEnd := time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC)
 
-	id := seedWeeklyDigest(t, st, prompts.WeeklyDigestEnvelope{
-		PeriodStart: periodStart.Format(time.RFC3339),
-		PeriodEnd:   periodEnd.Format(time.RFC3339),
-		Result: &prompts.ReflectionResult{
-			TaskTypes: []prompts.ReflectionTaskType{{
-				Label:     "iterating on docgen output",
-				Frequency: 3,
-				Evidence: []prompts.ReflectionEvidence{
-					{SessionID: "11111111-2222-3333-4444-555555555555",
-						Quote: "Why is the schema page truncated?", WhatHappened: "schema docs missing"},
-				},
-			}},
-			Frictions: []prompts.ReflectionFriction{{
-				Label:     "stale autogen pages keep failing CI",
-				Frequency: 2,
-				Severity:  "medium",
-				Evidence: []prompts.ReflectionEvidence{
-					{SessionID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-						Quote: "make docs-check fails again", WhatHappened: "rebuild needed"},
-				},
-			}},
-			WorkflowChange: "Run make docs-check before pushing.",
-		},
-	}, now.UnixMilli())
+	id := seedWeeklyDigest(t, st, prompts.ReflectionResult{
+		TaskTypes: []prompts.ReflectionTaskType{{
+			Label:     "iterating on docgen output",
+			Frequency: 3,
+			Evidence: []prompts.ReflectionEvidence{
+				{SessionID: "11111111-2222-3333-4444-555555555555",
+					Quote: "Why is the schema page truncated?", WhatHappened: "schema docs missing"},
+			},
+		}},
+		Frictions: []prompts.ReflectionFriction{{
+			Label:     "stale autogen pages keep failing CI",
+			Frequency: 2,
+			Severity:  "medium",
+			Evidence: []prompts.ReflectionEvidence{
+				{SessionID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+					Quote: "make docs-check fails again", WhatHappened: "rebuild needed"},
+			},
+		}},
+		WorkflowChange: "Run make docs-check before pushing.",
+	}, "stored-card", now.UnixMilli())
 
 	base, stop := startTestServer(t, st)
 	defer stop()
 
 	_, body := fetch(t, base+"/digests")
 	for _, want := range []string{
-		"Apr 13 – Apr 20, 2026",               // formatted period
 		"Run make docs-check before pushing.", // workflow change
 		"iterating on docgen output",          // task type label
 		"stale autogen pages keep failing CI", // friction label
@@ -119,33 +117,30 @@ func TestDigestsPage_RendersStoredCard(t *testing.T) {
 			t.Errorf("digest card missing %q\n%s", want, body)
 		}
 	}
+	// Card title falls back to "digest #ID" — no period info is
+	// persisted on the row.
+	wantTitle := "digest #" + strconv.FormatInt(id, 10)
+	if !strings.Contains(body, wantTitle) {
+		t.Errorf("expected card title %q, got:\n%s", wantTitle, body)
+	}
 	// id link round-trips back to the same page with a fragment.
 	if !strings.Contains(body, `#digest-`) {
 		t.Errorf("expected per-card id anchor, got:\n%s", body)
 	}
-	_ = id
 }
 
 func TestDigestsPage_NewestFirst(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)
 
-	older := prompts.WeeklyDigestEnvelope{
-		PeriodStart: "2026-04-06T00:00:00Z",
-		PeriodEnd:   "2026-04-13T00:00:00Z",
-		Result: &prompts.ReflectionResult{
-			WorkflowChange: "OLDER digest workflow change marker.",
-		},
+	older := prompts.ReflectionResult{
+		WorkflowChange: "OLDER digest workflow change marker.",
 	}
-	newer := prompts.WeeklyDigestEnvelope{
-		PeriodStart: "2026-04-13T00:00:00Z",
-		PeriodEnd:   "2026-04-20T00:00:00Z",
-		Result: &prompts.ReflectionResult{
-			WorkflowChange: "NEWER digest workflow change marker.",
-		},
+	newer := prompts.ReflectionResult{
+		WorkflowChange: "NEWER digest workflow change marker.",
 	}
-	seedWeeklyDigest(t, st, older, time.Date(2026, 4, 14, 6, 0, 0, 0, time.UTC).UnixMilli())
-	seedWeeklyDigest(t, st, newer, time.Date(2026, 4, 21, 6, 0, 0, 0, time.UTC).UnixMilli())
+	seedWeeklyDigest(t, st, older, "older", time.Date(2026, 4, 14, 6, 0, 0, 0, time.UTC).UnixMilli())
+	seedWeeklyDigest(t, st, newer, "newer", time.Date(2026, 4, 21, 6, 0, 0, 0, time.UTC).UnixMilli())
 
 	base, stop := startTestServer(t, st)
 	defer stop()
@@ -165,9 +160,10 @@ func TestDigestsPage_RawBodyFallback(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)
 
-	// Hand-write a malformed body directly so the envelope unmarshal
-	// fails. The page must still render the card with the raw body
-	// in a collapsible details — never blank out the whole page.
+	// Hand-write a malformed body directly so the ReflectionResult
+	// unmarshal fails. The page must still render the card with the
+	// raw body in a collapsible details — never blank out the whole
+	// page.
 	tx, _ := st.DB().Begin()
 	_, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
 		Kind:        store.LLMKindReflectWeekly,
@@ -191,7 +187,7 @@ func TestDigestsPage_RawBodyFallback(t *testing.T) {
 	if status != http.StatusOK {
 		t.Errorf("page should still render; got %d", status)
 	}
-	if !strings.Contains(body, "unparseable envelope") {
+	if !strings.Contains(body, "unparseable body") {
 		t.Errorf("expected raw-body fallback, got:\n%s", body)
 	}
 	if !strings.Contains(body, "not json at all") {
@@ -202,18 +198,14 @@ func TestDigestsPage_RawBodyFallback(t *testing.T) {
 func TestDigestsPage_RespectsLimitParam(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)
-	// Vary PeriodStart per iteration so SaveLLMOutput's dedup
-	// (kind, prompt_hash) doesn't collapse the inserts to one row.
+	// Vary the prompt-hash salt per iteration so SaveLLMOutput's
+	// dedup (kind, prompt_hash) doesn't collapse the inserts to one
+	// row.
 	for i := range 5 {
-		start := time.Date(2026, 4, 1+i*7, 0, 0, 0, 0, time.UTC)
-		end := start.AddDate(0, 0, 7)
-		seedWeeklyDigest(t, st, prompts.WeeklyDigestEnvelope{
-			PeriodStart: start.Format(time.RFC3339),
-			PeriodEnd:   end.Format(time.RFC3339),
-			Result: &prompts.ReflectionResult{
-				WorkflowChange: "marker " + string(rune('a'+i)),
-			},
-		}, time.Date(2026, 4, 14, i, 0, 0, 0, time.UTC).UnixMilli())
+		seedWeeklyDigest(t, st, prompts.ReflectionResult{
+			WorkflowChange: "marker " + string(rune('a'+i)),
+		}, "limit-"+strconv.Itoa(i),
+			time.Date(2026, 4, 14, i, 0, 0, 0, time.UTC).UnixMilli())
 	}
 	base, stop := startTestServer(t, st)
 	defer stop()
@@ -227,25 +219,5 @@ func TestDigestsPage_RespectsLimitParam(t *testing.T) {
 	_, narrow := fetch(t, base+"/digests?limit=2")
 	if got := strings.Count(narrow, "marker "); got != 2 {
 		t.Errorf("limit=2 should show 2; got %d", got)
-	}
-}
-
-func TestFormatDigestPeriod(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name       string
-		start, end string
-		want       string
-	}{
-		{"same year", "2026-04-13T00:00:00Z", "2026-04-20T00:00:00Z", "Apr 13 – Apr 20, 2026"},
-		{"cross year", "2025-12-29T00:00:00Z", "2026-01-05T00:00:00Z", "2025-12-29 – 2026-01-05"},
-		{"unparseable falls through", "garbage", "alsogarbage", "garbage – alsogarbage"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := formatDigestPeriod(tc.start, tc.end); got != tc.want {
-				t.Errorf("got %q, want %q", got, tc.want)
-			}
-		})
 	}
 }

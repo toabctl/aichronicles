@@ -12,7 +12,7 @@
 {{range .Digests}}
 <article class="digest-card">
   <header>
-    <h2>{{if .Period}}{{.Period}}{{else}}digest #{{.ID}}{{end}}</h2>
+    <h2>digest #{{.ID}}</h2>
     <small class="digest-meta">
       generated {{.Generated}}
       <span title="{{.GeneratedAt}}">·</span>
@@ -22,11 +22,11 @@
   </header>
 
   {{if .RawBody}}
-  {{/* Envelope didn't parse — older shape or hand-edited row.
-       Surface the raw JSON so the user can see what's there
-       rather than a blank card. */}}
+  {{/* Body didn't parse as a ReflectionResult — older shape,
+       hand-edited row, or schema drift. Surface the raw JSON so
+       the user can see what's there rather than a blank card. */}}
   <details>
-    <summary class="muted">unparseable envelope — show raw body</summary>
+    <summary class="muted">unparseable body — show raw JSON</summary>
     <pre><code>{{.RawBody}}</code></pre>
   </details>
   {{else}}

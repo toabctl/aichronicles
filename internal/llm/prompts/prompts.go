@@ -140,17 +140,21 @@ type LinkAnnotation struct {
 	UsedFor string `json:"used_for"`
 }
 
-// WeeklyDigestEnvelope is what callers marshal into llm_outputs.body
-// for kind=reflect_weekly. The reflect result lands inside Result so
-// a reader can recover both the underlying analysis and the period
-// the digest covers without having to parse dates out of the prompt.
-// Stable JSON shape; the Period fields are RFC3339 strings so they
-// round-trip cleanly through JSON.
+// WeeklyDigestEnvelope is the render-time wrapper used by the
+// digest CLI to pair a ReflectionResult with the analysed week's
+// boundaries for human-facing output (text / JSON). It is NOT
+// what gets persisted: `aichronicles digest weekly` writes the
+// bare ReflectionResult into llm_outputs.body so cache hits
+// don't double-wrap (see internal/cli/digest.go). Period info
+// is reconstructed from the prompt-hash inputs at render time.
 //
-// Lives in this package (rather than internal/cli, where the digest
-// command does its work) so other layers — internal/web rendering
-// the /digests page, future MCP tools — can decode the persisted
-// body without dragging in the cli package and tripping import
+// Stable JSON shape; the Period fields are RFC3339 strings so
+// they round-trip cleanly through JSON.
+//
+// Lives in this package (rather than internal/cli, where the
+// digest command does its work) so other layers — future MCP
+// tools, downstream consumers — can decode the envelope shape
+// without dragging in the cli package and tripping import
 // cycles.
 type WeeklyDigestEnvelope struct {
 	PeriodStart string            `json:"period_start"`

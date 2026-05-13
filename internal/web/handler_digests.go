@@ -49,8 +49,16 @@ func (s *Server) digestsHandler(w http.ResponseWriter, r *http.Request) {
 
 // buildDigestCards lifts each llm_outputs row of kind=reflect_weekly
 // into a render-ready DigestCard. Body parses are best-effort: a
-// row with malformed JSON renders the raw body in a "raw" pane so
-// the page never collapses on one broken artifact.
+// row whose JSON doesn't decode into a ReflectionResult renders the
+// raw body in a collapsible pane so the page never collapses on
+// one broken artifact.
+//
+// The persisted body is the bare prompts.ReflectionResult — the
+// same shape `aichronicles digest weekly` writes (see
+// internal/cli/digest.go: the envelope wrapper is computed at
+// render time, not persisted, to avoid double-wrapping cache hits).
+// The CLI's decodeStoredEnvelope reads the same shape; this is
+// the matching web-side reader.
 func buildDigestCards(rows []store.LLMOutput, now time.Time) []DigestCard {
 	out := make([]DigestCard, 0, len(rows))
 	for _, row := range rows {
@@ -61,36 +69,29 @@ func buildDigestCards(rows []store.LLMOutput, now time.Time) []DigestCard {
 			GeneratedAt: time.UnixMilli(row.CreatedAtMs).UTC().Format("2006-01-02 15:04 UTC"),
 		}
 
-		var env prompts.WeeklyDigestEnvelope
-		if err := json.Unmarshal([]byte(row.Body), &env); err == nil && env.Result != nil {
-			card.Period = formatDigestPeriod(env.PeriodStart, env.PeriodEnd)
-			card.WorkflowChange = env.Result.WorkflowChange
-			card.TaskTypes = buildDigestTaskTypes(env.Result.TaskTypes)
-			card.Frictions = buildDigestFrictions(env.Result.Frictions)
+		var result prompts.ReflectionResult
+		parsed := json.Unmarshal([]byte(row.Body), &result) == nil
+		// A `null` body or `{}` parses cleanly but leaves the
+		// struct zero-valued — guard so an empty row doesn't
+		// silently render as a blank card. At least one of the
+		// three reflection fields must be populated for the parse
+		// to count.
+		populated := len(result.TaskTypes) > 0 ||
+			len(result.Frictions) > 0 ||
+			result.WorkflowChange != ""
+		if parsed && populated {
+			card.WorkflowChange = result.WorkflowChange
+			card.TaskTypes = buildDigestTaskTypes(result.TaskTypes)
+			card.Frictions = buildDigestFrictions(result.Frictions)
 		} else {
-			// Malformed envelope (older shape, hand-edited row, …):
-			// fall back to dumping the body as raw text so the user
-			// still sees something rather than a blank card.
+			// Malformed or empty body (older shape, hand-edited
+			// row, schema drift): fall back to dumping the raw
+			// text so the user can see what's there.
 			card.RawBody = row.Body
 		}
 		out = append(out, card)
 	}
 	return out
-}
-
-// formatDigestPeriod turns the RFC3339 period bounds in the
-// envelope into a "Apr 14 – Apr 21, 2026" range. Falls back to
-// the raw values when parsing fails — the card still renders.
-func formatDigestPeriod(startISO, endISO string) string {
-	start, sErr := time.Parse(time.RFC3339, startISO)
-	end, eErr := time.Parse(time.RFC3339, endISO)
-	if sErr != nil || eErr != nil {
-		return startISO + " – " + endISO
-	}
-	if start.Year() == end.Year() {
-		return start.Format("Jan 2") + " – " + end.Format("Jan 2, 2006")
-	}
-	return start.Format("2006-01-02") + " – " + end.Format("2006-01-02")
 }
 
 func buildDigestTaskTypes(in []prompts.ReflectionTaskType) []DigestTaskTypeRow {

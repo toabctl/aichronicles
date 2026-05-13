@@ -381,20 +381,23 @@ type DigestsPage struct {
 	Digests []DigestCard
 }
 
-// DigestCard is one rendered digest. Period / WorkflowChange /
-// TaskTypes / Frictions land when the persisted body parses;
-// RawBody holds the unparsed JSON when it doesn't, so a single
-// bad artifact doesn't break the whole page.
+// DigestCard is one rendered digest. WorkflowChange / TaskTypes /
+// Frictions land when the persisted body parses as a
+// ReflectionResult; RawBody holds the unparsed JSON when it
+// doesn't, so a single bad artifact doesn't break the whole page.
+// The covered week isn't persisted on the row (the writer keeps
+// the body as a bare ReflectionResult, by design — see
+// buildDigestCards) so the card title falls back to "digest #ID"
+// in the template; Generated / GeneratedAt give the timestamp.
 type DigestCard struct {
 	ID             int64
 	Model          string
 	Generated      string // relative ("3d ago")
 	GeneratedAt    string // absolute UTC
-	Period         string // "Apr 14 – Apr 21, 2026"
 	WorkflowChange string
 	TaskTypes      []DigestTaskTypeRow
 	Frictions      []DigestFrictionRow
-	RawBody        string // populated when the envelope failed to parse
+	RawBody        string // populated when the body failed to parse
 }
 
 // DigestTaskTypeRow / DigestFrictionRow / DigestEvidenceRow mirror
