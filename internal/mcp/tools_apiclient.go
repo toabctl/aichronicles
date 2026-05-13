@@ -100,14 +100,8 @@ func getUnresolvedForCwdAPIHandler(c *apiclient.Client) ToolHandler {
 			MaxSessions:        maxSessions,
 			MaxItemsPerSession: maxPerSession,
 		})
-		if err != nil {
-			// Daemon-unreachable is the dominant failure mode here;
-			// surface it cleanly so the agent knows to retry rather
-			// than think the user has nothing dangling.
-			if errors.Is(err, apiclient.ErrSocketUnavailable) {
-				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
-			}
-			return nil, &Error{Code: InternalError, Message: "get_unresolved_for_cwd: load: " + err.Error()}
+		if r, e := mapAPIError("get_unresolved_for_cwd: load:", err); r != nil || e != nil {
+			return r, e
 		}
 		if len(resp.Items) == 0 {
 			return TextResult(fmt.Sprintf("no unresolved items from prior sessions in %s", req.Cwd)), nil
@@ -165,11 +159,8 @@ func getFactsForSubjectAPIHandler(c *apiclient.Client) ToolHandler {
 			req.Limit = 50
 		}
 		resp, err := c.Facts(ctx, req.Subject, req.Limit)
-		if err != nil {
-			if errors.Is(err, apiclient.ErrSocketUnavailable) {
-				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
-			}
-			return nil, &Error{Code: InternalError, Message: "get_facts_for_subject: load: " + err.Error()}
+		if r, e := mapAPIError("get_facts_for_subject: load:", err); r != nil || e != nil {
+			return r, e
 		}
 		if len(resp.Facts) == 0 {
 			return TextResult(fmt.Sprintf(
@@ -226,11 +217,8 @@ func findFactSubjectsAPIHandler(c *apiclient.Client) ToolHandler {
 			req.Limit = 30
 		}
 		resp, err := c.FactSubjects(ctx, req.Contains, req.Limit)
-		if err != nil {
-			if errors.Is(err, apiclient.ErrSocketUnavailable) {
-				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
-			}
-			return nil, &Error{Code: InternalError, Message: "find_fact_subjects: load: " + err.Error()}
+		if r, e := mapAPIError("find_fact_subjects: load:", err); r != nil || e != nil {
+			return r, e
 		}
 		if len(resp.Subjects) == 0 {
 			return TextResult("(no fact subjects matched)"), nil
@@ -282,11 +270,8 @@ func getSkillStalenessAPIHandler(c *apiclient.Client) ToolHandler {
 			SinceMs:  sinceMs,
 			WindowMs: windowMs,
 		})
-		if err != nil {
-			if errors.Is(err, apiclient.ErrSocketUnavailable) {
-				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
-			}
-			return nil, &Error{Code: InternalError, Message: "get_skill_staleness: " + err.Error()}
+		if r, e := mapAPIError("get_skill_staleness", err); r != nil || e != nil {
+			return r, e
 		}
 		if len(resp.Skills) == 0 {
 			return TextResult(fmt.Sprintf("No stale-correlated skills in the last %d days.", days)), nil
@@ -347,11 +332,8 @@ func getInsightsAPIHandler(c *apiclient.Client) ToolHandler {
 			TopTools:  req.TopTools,
 			TopSkills: req.TopSkills,
 		})
-		if err != nil {
-			if errors.Is(err, apiclient.ErrSocketUnavailable) {
-				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
-			}
-			return nil, &Error{Code: InternalError, Message: "get_insights: " + err.Error()}
+		if r, e := mapAPIError("get_insights", err); r != nil || e != nil {
+			return r, e
 		}
 		return TextResult(formatInsightsAPI(&resp, days)), nil
 	}
@@ -476,11 +458,8 @@ func findEpisodesAPIHandler(c *apiclient.Client) ToolHandler {
 			SinceMs:       sinceMs,
 			Limit:         req.Limit,
 		})
-		if err != nil {
-			if errors.Is(err, apiclient.ErrSocketUnavailable) {
-				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
-			}
-			return nil, &Error{Code: InternalError, Message: "find_episodes: query: " + err.Error()}
+		if r, e := mapAPIError("find_episodes: query:", err); r != nil || e != nil {
+			return r, e
 		}
 		if len(resp.Episodes) == 0 {
 			return TextResult("(no episodes)"), nil
@@ -553,11 +532,8 @@ func listSubagentsAPIHandler(c *apiclient.Client) ToolHandler {
 		}
 
 		resp, err := c.SubagentSpans(ctx, sessionID, req.Limit)
-		if err != nil {
-			if errors.Is(err, apiclient.ErrSocketUnavailable) {
-				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
-			}
-			return nil, &Error{Code: InternalError, Message: "list_subagents: query: " + err.Error()}
+		if r, e := mapAPIError("list_subagents: query:", err); r != nil || e != nil {
+			return r, e
 		}
 		if len(resp.Spans) == 0 {
 			return TextResult("(no subagent threads)"), nil
@@ -715,11 +691,8 @@ func listSessionsAPIHandler(c *apiclient.Client) ToolHandler {
 			SinceMs: sinceMs,
 			Limit:   req.Limit,
 		})
-		if err != nil {
-			if errors.Is(err, apiclient.ErrSocketUnavailable) {
-				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
-			}
-			return nil, &Error{Code: InternalError, Message: "list_sessions: " + err.Error()}
+		if r, e := mapAPIError("list_sessions", err); r != nil || e != nil {
+			return r, e
 		}
 		if len(resp.Sessions) == 0 {
 			return TextResult("(no sessions)"), nil
@@ -803,11 +776,8 @@ func getSummaryAPIHandler(c *apiclient.Client) ToolHandler {
 		}
 
 		outs, err := c.SessionLLMOutputs(ctx, full, kind, 1)
-		if err != nil {
-			if errors.Is(err, apiclient.ErrSocketUnavailable) {
-				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
-			}
-			return nil, &Error{Code: InternalError, Message: "get_summary: " + err.Error()}
+		if r, e := mapAPIError("get_summary", err); r != nil || e != nil {
+			return r, e
 		}
 		if len(outs) == 0 {
 			return TextError("no %s output for session %s", kind, full), nil
@@ -859,11 +829,8 @@ func listWorkflowsAPIHandler(c *apiclient.Client) ToolHandler {
 		// Pull more than the cap because most induction rows
 		// have no workflow — filter post-fetch.
 		outs, err := c.LLMOutputsList(ctx, "induction", "", req.Limit*5)
-		if err != nil {
-			if errors.Is(err, apiclient.ErrSocketUnavailable) {
-				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
-			}
-			return nil, &Error{Code: InternalError, Message: "list_workflows: " + err.Error()}
+		if r, e := mapAPIError("list_workflows", err); r != nil || e != nil {
+			return r, e
 		}
 
 		needle := strings.ToLower(strings.TrimSpace(req.TaskShapeContains))

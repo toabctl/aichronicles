@@ -1,11 +1,31 @@
 package mcp
 
 import (
+	"errors"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/timefmt"
 )
+
+// mapAPIError is the canonical apiclient-error → MCP-result mapping
+// every tool runs after a c.X(...) call. Surfaces ErrSocketUnavailable
+// as a tool-level error so the agent learns "the daemon's down" (not
+// "the request failed for an unspecified reason"); falls back to a
+// protocol-level Error with a "<tool>: " prefix.
+//
+// Returns (nil, nil) on a nil error so callers can write
+// `if r, e := mapAPIError(...); r != nil || e != nil { return r, e }`.
+func mapAPIError(toolName string, err error) (*ToolResult, *Error) {
+	if err == nil {
+		return nil, nil
+	}
+	if errors.Is(err, apiclient.ErrSocketUnavailable) {
+		return TextError("aichronicles-api unreachable; is the daemon running?"), nil
+	}
+	return nil, &Error{Code: InternalError, Message: toolName + ": " + err.Error()}
+}
 
 // This file holds the formatting helpers shared across the MCP
 // tool registrars. The legacy RegisterAichroniclesTools entry
