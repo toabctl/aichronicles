@@ -365,6 +365,19 @@ integration/            //go:build integration tests
   `events.Envelope.Validate` in Go, but third-party agents reading
   the contract should target the YAML. The two are kept in lockstep.
 
+- **No LLM calls run on the web request path.** `internal/web`
+  imports `internal/llm/prompts` only for the JSON Result types
+  (`SummaryResult`, `ProposalResult`, `ReflectionResult`,
+  `InductionResult`) that parse cached llm_outputs bodies. The
+  `internal/llm` package itself — the Anthropic/OpenAI client
+  switchboard — is not imported anywhere under `internal/web`.
+  Every LLM call lives in a CLI subprocess (`reflect`, `propose`,
+  `induction`, `summaries`, `meta sweep`); the web only renders
+  the cached results those subcommands persist. This keeps the
+  web's request budget bounded to template render + apiclient
+  round-trip and side-steps the "slow API call holds the
+  connection" failure mode entirely.
+
 ### events vs ingest
 
 `pkg/ingest` no longer exists; everything that used to live there
