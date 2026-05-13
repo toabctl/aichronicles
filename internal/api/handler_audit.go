@@ -27,15 +27,12 @@ const auditSnippetRunes = 120
 // catch right now" check. Raw secret bytes never leave the server —
 // the snippet field always carries the marker form.
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-
 	sinceMs, ok := parseInt64Query(w, r, "since_ms")
 	if !ok {
 		return
 	}
-	limit := positiveOrZero(q.Get("limit"))
-	if limit < 0 {
-		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+	limit, ok := parseNonNegativeIntQuery(w, r, "limit", 0)
+	if !ok {
 		return
 	}
 

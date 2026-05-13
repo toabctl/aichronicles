@@ -153,14 +153,12 @@ func (s *Server) handleUnresolvedForCwd(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	maxSess := positiveOrZero(q.Get("max_sessions"))
-	if maxSess < 0 {
-		writeProblem(w, http.StatusBadRequest, "Invalid max_sessions", "")
+	maxSess, ok := parseNonNegativeIntQuery(w, r, "max_sessions", 0)
+	if !ok {
 		return
 	}
-	maxItems := positiveOrZero(q.Get("max_items_per_session"))
-	if maxItems < 0 {
-		writeProblem(w, http.StatusBadRequest, "Invalid max_items_per_session", "")
+	maxItems, ok := parseNonNegativeIntQuery(w, r, "max_items_per_session", 0)
+	if !ok {
 		return
 	}
 	rows, err := store.LoadUnresolvedForCwd(r.Context(), s.store.DB(), cwd, sinceMs, maxSess, maxItems)

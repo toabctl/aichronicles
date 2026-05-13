@@ -25,17 +25,15 @@ func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "Missing session id", "")
 		return
 	}
-	q := r.URL.Query()
-
 	var limit int
-	if q.Get("unbounded") == "true" {
+	if r.URL.Query().Get("unbounded") == "true" {
 		limit = store.LoadEventsForSessionUnbounded
 	} else {
-		limit = positiveOrZero(q.Get("limit"))
-		if limit < 0 {
-			writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+		n, ok := parseNonNegativeIntQuery(w, r, "limit", 0)
+		if !ok {
 			return
 		}
+		limit = n
 	}
 
 	rows, err := store.LoadEventsForSession(r.Context(), s.store.DB(), id, limit)

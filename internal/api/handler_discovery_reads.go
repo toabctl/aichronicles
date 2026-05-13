@@ -39,7 +39,6 @@ func (s *Server) handleSessionsMissingSummary(w http.ResponseWriter, r *http.Req
 // handleSessionsNeedingSegmentation serves
 // GET /v1/sessions/needing-segmentation?idle_cutoff_ms=&idle_ms=&min_events=&limit=.
 func (s *Server) handleSessionsNeedingSegmentation(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
 	idleCutoff, ok := parseInt64Query(w, r, "idle_cutoff_ms")
 	if !ok {
 		return
@@ -48,14 +47,12 @@ func (s *Server) handleSessionsNeedingSegmentation(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	minEvents := positiveOrZero(q.Get("min_events"))
-	if minEvents < 0 {
-		writeProblem(w, http.StatusBadRequest, "Invalid min_events", "")
+	minEvents, ok := parseNonNegativeIntQuery(w, r, "min_events", 0)
+	if !ok {
 		return
 	}
-	limit := positiveOrZero(q.Get("limit"))
-	if limit < 0 {
-		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+	limit, ok := parseNonNegativeIntQuery(w, r, "limit", 0)
+	if !ok {
 		return
 	}
 	ids, err := store.LoadSessionsNeedingSegmentation(r.Context(), s.store.DB(),
@@ -95,7 +92,6 @@ func (s *Server) handleSessionsForCompletion(w http.ResponseWriter, r *http.Requ
 
 // handleInductionCandidates serves GET /v1/induction/candidates.
 func (s *Server) handleInductionCandidates(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
 	nowMs, ok := parseInt64Query(w, r, "now_ms")
 	if !ok {
 		return
@@ -104,14 +100,12 @@ func (s *Server) handleInductionCandidates(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	minEvents := positiveOrZero(q.Get("min_events"))
-	if minEvents < 0 {
-		writeProblem(w, http.StatusBadRequest, "Invalid min_events", "")
+	minEvents, ok := parseNonNegativeIntQuery(w, r, "min_events", 0)
+	if !ok {
 		return
 	}
-	limit := positiveOrZero(q.Get("limit"))
-	if limit < 0 {
-		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+	limit, ok := parseNonNegativeIntQuery(w, r, "limit", 0)
+	if !ok {
 		return
 	}
 	rows, err := store.LoadInductionCandidates(r.Context(), s.store.DB(),
@@ -139,9 +133,8 @@ func (s *Server) handleFailureShapes(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	limit := positiveOrZero(r.URL.Query().Get("limit"))
-	if limit < 0 {
-		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+	limit, ok := parseNonNegativeIntQuery(w, r, "limit", 0)
+	if !ok {
 		return
 	}
 	rows, err := store.LoadFailureShapes(r.Context(), s.store.DB(), sinceMs, limit)
@@ -181,9 +174,8 @@ func (s *Server) handleSkillFailures(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	limit := positiveOrZero(q.Get("limit"))
-	if limit < 0 {
-		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+	limit, oklimit := parseNonNegativeIntQuery(w, r, "limit", 0)
+	if !oklimit {
 		return
 	}
 	rows, err := store.LoadSkillFailures(r.Context(), s.store.DB(), skill, sinceMs, windowMs, limit)
@@ -215,9 +207,8 @@ func (s *Server) handleSkillCandidatesEffectiveness(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	limit := positiveOrZero(r.URL.Query().Get("limit"))
-	if limit < 0 {
-		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+	limit, ok := parseNonNegativeIntQuery(w, r, "limit", 0)
+	if !ok {
 		return
 	}
 	rows, err := store.LoadSkillCandidateEffectiveness(r.Context(), s.store.DB(), sinceMs, windowMs, limit)
@@ -251,9 +242,8 @@ func (s *Server) handleSkillCandidatesPending(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	limit := positiveOrZero(r.URL.Query().Get("limit"))
-	if limit < 0 {
-		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+	limit, ok := parseNonNegativeIntQuery(w, r, "limit", 0)
+	if !ok {
 		return
 	}
 	rows, err := store.LoadPendingSkillCandidates(r.Context(), s.store.DB(), sinceMs, limit)

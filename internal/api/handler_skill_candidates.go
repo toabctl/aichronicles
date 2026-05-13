@@ -118,15 +118,13 @@ func (s *Server) handleSkillCandidatesDecision(w http.ResponseWriter, r *http.Re
 // callers most commonly need (the CLI's "find candidate to mark")
 // flow); empty name returns 400 to keep the endpoint focused.
 func (s *Server) handleSkillCandidatesList(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	name := q.Get("name")
+	name := r.URL.Query().Get("name")
 	if name == "" {
 		writeProblem(w, http.StatusBadRequest, "Missing name", "name query param is required")
 		return
 	}
-	limit := positiveOrZero(q.Get("limit"))
-	if limit < 0 {
-		writeProblem(w, http.StatusBadRequest, "Invalid limit", "")
+	limit, ok := parseNonNegativeIntQuery(w, r, "limit", 0)
+	if !ok {
 		return
 	}
 

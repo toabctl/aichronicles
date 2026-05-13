@@ -105,18 +105,24 @@ func parseSessionIDsQuery(raw string) []string {
 	return out
 }
 
-// positiveOrZero parses "" → 0, valid non-negative int → that
-// int, or -1 to signal "the caller should respond with 400".
-// Used by handlers that want a soft "0 = use default, -1 =
-// reject" handshake without forcing a writeProblem inside the
-// helper (the caller writes its own message naming the param).
-func positiveOrZero(v string) int {
+// parseNonNegativeIntQuery reads an optional non-negative int query
+// parameter where 0 is a meaningful value (typically "no minimum"
+// or "no upper bound"). Returns (def, true) when missing, (n, true)
+// when valid (≥ 0), or (0, false) after writing a 400 problem
+// response. Callers must return immediately when ok is false.
+//
+// Distinct from parsePositiveIntQuery (which rejects 0) because
+// "?limit=0" on the audit / discovery-read endpoints legitimately
+// means "no LIMIT clause" rather than an ambiguous request.
+func parseNonNegativeIntQuery(w http.ResponseWriter, r *http.Request, name string, def int) (int, bool) {
+	v := r.URL.Query().Get(name)
 	if v == "" {
-		return 0
+		return def, true
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil || n < 0 {
-		return -1
+		writeProblem(w, http.StatusBadRequest, "Invalid "+name, "")
+		return 0, false
 	}
-	return n
+	return n, true
 }
