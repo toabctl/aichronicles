@@ -151,7 +151,7 @@ func TestIngestAsync_QueueFullReturns503(t *testing.T) {
 	srv.ingestQueueMax = 2
 
 	// Two fills to capacity.
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		rr := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(rr,
 			httptest.NewRequest(http.MethodPost, "/v1/ingest", bytes.NewReader(validBody(t))))

@@ -19,7 +19,7 @@ import (
 func ingestN(t *testing.T, srv *testServer, n int) []string {
 	t.Helper()
 	ids := make([]string, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		env := validEnvelope(t)
 		ids = append(ids, env.EventID)
 		body := mustJSON(t, env)
@@ -95,7 +95,7 @@ func TestHandleEventsList_FiltersBySessionID(t *testing.T) {
 	srv := newTestServer(t)
 
 	// Session A: 2 events.
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		env := validEnvelope(t)
 		env.SourceSessionID = "sess-A"
 		req := httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(mustJSON(t, env)))
@@ -103,7 +103,7 @@ func TestHandleEventsList_FiltersBySessionID(t *testing.T) {
 		srv.Handler().ServeHTTP(rr, req)
 	}
 	// Session B: 3 events.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		env := validEnvelope(t)
 		env.SourceSessionID = "sess-B"
 		req := httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(mustJSON(t, env)))

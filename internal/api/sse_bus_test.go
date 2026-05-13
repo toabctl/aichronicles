@@ -71,7 +71,7 @@ func TestSSEBus_PublishFanOutToManySubscribers(t *testing.T) {
 	const n = 5
 	chs := make([]<-chan wire.StreamEvent, 0, n)
 	cancels := make([]func(), 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		ch, cancel, ok := b.subscribe()
 		if !ok {
 			t.Fatalf("subscribe %d rejected", i)
@@ -106,7 +106,7 @@ func TestSSEBus_CapAtMaxSubscribers(t *testing.T) {
 	defer b.Close()
 
 	cancels := make([]func(), 0, SSEMaxSubscribers)
-	for i := 0; i < SSEMaxSubscribers; i++ {
+	for i := range SSEMaxSubscribers {
 		_, cancel, ok := b.subscribe()
 		if !ok {
 			t.Fatalf("subscribe %d rejected before cap", i)
@@ -136,7 +136,7 @@ func TestSSEBus_SlowSubscriberDropped(t *testing.T) {
 	// Fill the buffer past capacity — once full, the next
 	// publish drops the subscriber. The test cannot guess the
 	// exact buffer size, so push enough events to overflow.
-	for i := 0; i < SSEBufferSize+10; i++ {
+	for i := range SSEBufferSize + 10 {
 		b.Publish(wire.StreamEvent{IngestSeq: int64(i)})
 	}
 
@@ -168,7 +168,7 @@ func TestSSEBus_SlowSubscriberDropEmitsWarnLog(t *testing.T) {
 	// couple of extra sends before reporting "would block" — Go's
 	// runtime schedules), so push enough that at least one drop
 	// is guaranteed.
-	for i := 0; i < SSEBufferSize*2; i++ {
+	for i := range SSEBufferSize * 2 {
 		b.Publish(wire.StreamEvent{IngestSeq: int64(i), Kind: "tool_use"})
 	}
 
@@ -262,7 +262,7 @@ func TestSSEBus_ConcurrentPublishersAndSubscribers(t *testing.T) {
 	received := make(chan int, subscribers*publishers*eventsPerPublisher)
 	cancels := make([]func(), 0, subscribers)
 
-	for i := 0; i < subscribers; i++ {
+	for i := range subscribers {
 		ch, cancel, ok := b.subscribe()
 		if !ok {
 			t.Fatalf("subscribe %d rejected", i)
@@ -279,7 +279,7 @@ func TestSSEBus_ConcurrentPublishersAndSubscribers(t *testing.T) {
 
 	for p := 0; p < publishers; p++ {
 		go func(p int) {
-			for i := 0; i < eventsPerPublisher; i++ {
+			for i := range eventsPerPublisher {
 				b.Publish(wire.StreamEvent{IngestSeq: int64(p*eventsPerPublisher + i)})
 			}
 		}(p)

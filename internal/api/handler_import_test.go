@@ -45,7 +45,7 @@ func TestHandleImport_HappyPath(t *testing.T) {
 	srv := newTestServer(t)
 
 	var body bytes.Buffer
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		body.Write(envelopeNDJSON(t, validEnvelope(t)))
 	}
 	rr := httptest.NewRecorder()
