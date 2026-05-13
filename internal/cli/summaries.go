@@ -14,6 +14,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/llm"
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -278,7 +279,7 @@ func runSummariesFill(
 		idx := i + 1
 		if format != FormatJSON {
 			_, _ = fmt.Fprintf(out, "[%d/%d] %s starting...\n",
-				idx, total, shortSessionID(row.ID))
+				idx, total, preview.ShortID(row.ID))
 			if flusher != nil {
 				_ = flusher.Flush()
 			}
@@ -334,7 +335,7 @@ func runSummariesFill(
 // of the line ("12345in/678out") so the user sees per-session cost
 // shape without having to query the store afterwards.
 func emitFillStatusLine(w io.Writer, s fillStatus, idx, total int) {
-	short := shortSessionID(s.SessionID)
+	short := preview.ShortID(s.SessionID)
 	prefix := fmt.Sprintf("[%d/%d]", idx, total)
 	switch s.Status {
 	case "summarized":
@@ -400,7 +401,7 @@ func writeMissingSummaries(w io.Writer, rows []wire.SessionDigest, format Output
 	_, _ = fmt.Fprintln(tw, "SESSION\tSTARTED\tENDED\tCWD\tFIRST_PROMPT")
 	for _, r := range rows {
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			shortSessionID(r.ID),
+			preview.ShortID(r.ID),
 			formatTsPtr(r.StartedAtMs),
 			formatTsPtr(r.EndedAtMs),
 			strPtrOrDash(r.Cwd),
@@ -645,7 +646,7 @@ func writeSummaries(w io.Writer, rows []wire.LLMOutput, format OutputFormat) err
 		topic := extractTopic(store.LLMOutputKind(r.Kind), r.Body)
 		sess := "(multi)"
 		if r.SessionID != nil && *r.SessionID != "" {
-			sess = shortSessionID(*r.SessionID)
+			sess = preview.ShortID(*r.SessionID)
 		}
 		when := formatTimeForUser(r.CreatedAtMs, time.Now())
 		if _, err := fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n",
@@ -654,16 +655,6 @@ func writeSummaries(w io.Writer, rows []wire.LLMOutput, format OutputFormat) err
 		}
 	}
 	return tw.Flush()
-}
-
-// shortSessionID returns the first 8 chars of a full UUID — matches
-// the preview `aichronicles sessions` prints, so column alignment
-// across commands stays consistent.
-func shortSessionID(id string) string {
-	if len(id) >= 8 {
-		return id[:8]
-	}
-	return id
 }
 
 // extractTopic picks a short, human-meaningful label out of a stored

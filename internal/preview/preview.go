@@ -77,6 +77,24 @@ func IsSubstantivePrompt(s string) bool {
 	return len([]rune(s)) >= SubstantiveMinRunes
 }
 
+// ShortIDLen is the prefix length used when displaying a session
+// UUID in a single table cell. 8 hex chars are enough to disambiguate
+// within a user's local store (collision probability ~10^-9 at 10k
+// sessions) while staying readable.
+const ShortIDLen = 8
+
+// ShortID returns the first ShortIDLen characters of id, or id
+// unchanged if shorter. Used as the leading column in every "list of
+// sessions" surface (CLI tables, MCP responses, web rows) so the
+// abbreviation is identical everywhere — accept the truncation in
+// one place rather than re-inlining the bounds check at each caller.
+func ShortID(id string) string {
+	if len(id) <= ShortIDLen {
+		return id
+	}
+	return id[:ShortIDLen]
+}
+
 // OneLine flattens whitespace (newlines, tabs, carriage returns)
 // into single spaces and truncates to MaxOneLineRunes. Used by
 // every snippet renderer so a single rendering bug doesn't get

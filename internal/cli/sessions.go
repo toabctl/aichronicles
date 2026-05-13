@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -149,10 +150,7 @@ func RunListSessions(ctx context.Context, c *apiclient.Client, opts SessionsOpti
 // downstream column -t / awk / cut behave. First prompt is truncated
 // and newlines flattened; missing values render as "-".
 func formatSessionRow(s wire.SessionDigest) string {
-	sess := s.ID
-	if len(sess) > 8 {
-		sess = sess[:8]
-	}
+	sess := preview.ShortID(s.ID)
 	return fmt.Sprintf(
 		"%s\t%s\t%s\t%d\t%s\t%s",
 		sess,

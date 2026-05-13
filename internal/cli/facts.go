@@ -16,6 +16,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -413,8 +414,8 @@ func renderFactsList(out io.Writer, rows []wire.LLMOutput, format OutputFormat) 
 			}
 		}
 		sessShort := "(none)"
-		if r.SessionID != nil && len(*r.SessionID) >= 8 {
-			sessShort = (*r.SessionID)[:8]
+		if r.SessionID != nil && *r.SessionID != "" {
+			sessShort = preview.ShortID(*r.SessionID)
 		}
 		when := time.UnixMilli(r.CreatedAtMs).UTC().Format("2006-01-02 15:04 UTC")
 		fmt.Fprintf(&b, "%-8s  %-19s  %s\n", sessShort, when, outcome)

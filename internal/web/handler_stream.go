@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -207,7 +208,7 @@ func writeSessionFrame(w http.ResponseWriter, e wire.Event, now time.Time) error
 // can break out of the markup. Kept inline (not a template) so the
 // SSE hot path doesn't pay template-lookup cost per event.
 func renderLiveEventFragment(e wire.Event) string {
-	short := shortID(e.SessionID)
+	short := preview.ShortID(e.SessionID)
 	cwd := "-"
 	if e.Cwd != nil && derefOr(e.Cwd, "") != "" {
 		cwd = derefOr(e.Cwd, "")

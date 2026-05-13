@@ -46,6 +46,24 @@ func TestIsSubstantivePrompt(t *testing.T) {
 	}
 }
 
+func TestShortID(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"abc", "abc"},
+		{"abcdefgh", "abcdefgh"},  // exactly ShortIDLen
+		{"abcdefghi", "abcdefgh"}, // one over
+		{"abcdef12-3456-7890", "abcdef12"},
+	}
+	for _, c := range cases {
+		if got := ShortID(c.in); got != c.want {
+			t.Errorf("ShortID(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestOneLine(t *testing.T) {
 	t.Parallel()
 	if got := OneLine(""); got != "" {

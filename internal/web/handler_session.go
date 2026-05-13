@@ -10,6 +10,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -201,7 +202,7 @@ func loadRelatedSessions(ctx context.Context, s *Server, id string) ([]RelatedSe
 			entries = append(entries, RelatedSessionEntry{
 				Direction: "out",
 				ID:        l.ToSessionID,
-				ShortID:   shortID(l.ToSessionID),
+				ShortID:   preview.ShortID(l.ToSessionID),
 				Topic:     topics[l.ToSessionID],
 				Rationale: l.Rationale,
 			})
@@ -210,7 +211,7 @@ func loadRelatedSessions(ctx context.Context, s *Server, id string) ([]RelatedSe
 			entries = append(entries, RelatedSessionEntry{
 				Direction: "in",
 				ID:        l.FromSessionID,
-				ShortID:   shortID(l.FromSessionID),
+				ShortID:   preview.ShortID(l.FromSessionID),
 				Topic:     topics[l.FromSessionID],
 				Rationale: l.Rationale,
 			})
@@ -298,9 +299,9 @@ func loadSessionHeader(ctx context.Context, s *Server, id string) (*SessionDetai
 	}
 
 	return &SessionDetail{
-		Title:           "session " + shortID(digest.ID),
+		Title:           "session " + preview.ShortID(digest.ID),
 		ID:              digest.ID,
-		ShortID:         shortID(digest.ID),
+		ShortID:         preview.ShortID(digest.ID),
 		Cwd:             orDashPtr(digest.Cwd),
 		StartedAt:       absoluteOrDashPtr(digest.StartedAtMs),
 		EndedAt:         endedOrActivePtr(digest.EndedAtMs),

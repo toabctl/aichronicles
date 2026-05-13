@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -79,7 +80,7 @@ func buildStaleRows(rows []wire.SkillStaleness) []StaleSkillRow {
 		for _, id := range r.Examples {
 			row.Examples = append(row.Examples, StaleExample{
 				SessionID: id,
-				ShortID:   shortID(id),
+				ShortID:   preview.ShortID(id),
 			})
 		}
 		out = append(out, row)

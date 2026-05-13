@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/timefmt"
 )
@@ -45,7 +46,7 @@ func (s *Server) workflowsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if r.SessionID != nil {
 			row.SessionID = *r.SessionID
-			row.SessionShort = shortID(*r.SessionID)
+			row.SessionShort = preview.ShortID(*r.SessionID)
 		}
 		for _, step := range ind.Workflow.Procedure {
 			row.Procedure = append(row.Procedure, step.Action)

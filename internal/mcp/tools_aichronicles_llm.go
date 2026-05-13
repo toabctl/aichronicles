@@ -11,6 +11,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -156,10 +157,7 @@ func searchWithSummaryHandler(c *apiclient.Client, newClient func() (llm.Client,
 		b.WriteString(strings.TrimRight(llmResp.Text, "\n"))
 		b.WriteString("\n\nGrounded in:\n")
 		for _, h := range hits {
-			id := h.SessionID
-			if len(id) > 8 {
-				id = id[:8]
-			}
+			id := preview.ShortID(h.SessionID)
 			fmt.Fprintf(&b, "  [%s] %s\n", id, h.Kind)
 		}
 		return TextResult(b.String()), nil

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -99,7 +100,7 @@ func buildInsightsPage(r wire.Insights, days int) InsightsPage {
 	for _, ts := range r.TopSessions {
 		row := InsightsSessionRow{
 			SessionID:  ts.SessionID,
-			ShortID:    shortID(ts.SessionID),
+			ShortID:    preview.ShortID(ts.SessionID),
 			EventCount: ts.EventCount,
 			Cwd:        orDashPtr(ts.Cwd),
 		}

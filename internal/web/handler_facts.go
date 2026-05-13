@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/timefmt"
 )
 
@@ -63,7 +64,7 @@ func (s *Server) factsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if f.EvidenceSessionID != nil {
 			row.SessionID = *f.EvidenceSessionID
-			row.SessionShort = shortID(*f.EvidenceSessionID)
+			row.SessionShort = preview.ShortID(*f.EvidenceSessionID)
 		}
 		page.Facts = append(page.Facts, row)
 	}

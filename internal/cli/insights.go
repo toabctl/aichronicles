@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -167,7 +168,7 @@ func renderInsightsText(out io.Writer, r *wire.Insights) error {
 			if ts.StartedAtMs != nil {
 				started = time.UnixMilli(*ts.StartedAtMs).UTC().Format("2006-01-02")
 			}
-			fmt.Fprintf(&b, "  %s  %5d events  %s\n", shortID(ts.SessionID), ts.EventCount, started)
+			fmt.Fprintf(&b, "  %s  %5d events  %s\n", preview.ShortID(ts.SessionID), ts.EventCount, started)
 			fmt.Fprintf(&b, "    cwd: %s\n", cwd)
 			if prompt != "" {
 				fmt.Fprintf(&b, "    %q\n", prompt)
@@ -177,14 +178,6 @@ func renderInsightsText(out io.Writer, r *wire.Insights) error {
 
 	_, err := io.WriteString(out, b.String())
 	return err
-}
-
-// shortID is the same 8-char prefix used elsewhere in the CLI.
-func shortID(id string) string {
-	if len(id) < 8 {
-		return id
-	}
-	return id[:8]
 }
 
 // maxToolNameWidth picks a column width for the tool-name column,

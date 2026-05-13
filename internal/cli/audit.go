@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -131,7 +132,7 @@ func runAudit(ctx context.Context, c *apiclient.Client, opts AuditOptions, out i
 	}
 	for _, f := range resp.Findings {
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			firstN(f.SessionID, 8),
+			preview.ShortID(f.SessionID),
 			formatTsPtr(f.TsSourceMs),
 			f.Kind,
 			strings.Join(f.Patterns, ","),
@@ -143,11 +144,4 @@ func runAudit(ctx context.Context, c *apiclient.Client, opts AuditOptions, out i
 	}
 	_, err = io.Copy(out, &buf)
 	return err
-}
-
-func firstN(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n]
 }

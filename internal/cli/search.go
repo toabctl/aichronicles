@@ -16,6 +16,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -296,10 +297,7 @@ func snippetWithTruncation(s string) (string, bool) {
 // prepares the cells.
 func formatHit(sessionID, kind, cwd string, tsSourceMs int64, content string) string {
 	ts := formatTimeForUser(tsSourceMs, time.Now())
-	sess := sessionID
-	if len(sess) > 8 {
-		sess = sess[:8]
-	}
+	sess := preview.ShortID(sessionID)
 	if cwd == "" {
 		cwd = "-"
 	}

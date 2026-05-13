@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/toabctl/aichronicles/internal/preview"
 )
 
 // UnresolvedItem is one entry from a prior session's
@@ -135,10 +137,7 @@ func LoadUnresolvedForCwd(
 			// tolerates this; same contract here.)
 			continue
 		}
-		short := id
-		if len(short) > 8 {
-			short = short[:8]
-		}
+		short := preview.ShortID(id)
 		count := 0
 		for _, item := range parsed.Unresolved {
 			item = strings.TrimSpace(item)

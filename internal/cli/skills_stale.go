@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -276,11 +277,7 @@ func renderSkillStaleness(out io.Writer, rows []wire.SkillStaleness, since, wind
 	for _, s := range rows {
 		shortIDs := make([]string, 0, len(s.Examples))
 		for _, id := range s.Examples {
-			if len(id) > 8 {
-				shortIDs = append(shortIDs, id[:8])
-			} else {
-				shortIDs = append(shortIDs, id)
-			}
+			shortIDs = append(shortIDs, preview.ShortID(id))
 		}
 		name := s.Name
 		if len(name) > 32 {

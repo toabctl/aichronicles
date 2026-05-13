@@ -10,6 +10,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -304,11 +305,7 @@ func getSkillStalenessAPIHandler(c *apiclient.Client) ToolHandler {
 			fmt.Fprintf(&b, "  %s  stale=%d/%d (%.0f%%)\n",
 				r.Name, r.StaleLoads, r.TotalLoads, r.Rate*100)
 			for _, ex := range r.Examples {
-				short := ex
-				if len(short) > 8 {
-					short = short[:8]
-				}
-				fmt.Fprintf(&b, "    example: %s\n", short)
+				fmt.Fprintf(&b, "    example: %s\n", preview.ShortID(ex))
 			}
 		}
 		return TextResult(b.String()), nil
@@ -411,10 +408,7 @@ func formatInsightsAPI(r *wire.Insights, days int) string {
 	if len(r.TopSessions) > 0 {
 		b.WriteString("Top sessions (by event count):\n")
 		for _, ts := range r.TopSessions {
-			short := ts.SessionID
-			if len(short) > 8 {
-				short = short[:8]
-			}
+			short := preview.ShortID(ts.SessionID)
 			cwd := "-"
 			if ts.Cwd != nil && *ts.Cwd != "" {
 				cwd = *ts.Cwd
@@ -512,10 +506,7 @@ func findEpisodesAPIHandler(c *apiclient.Client) ToolHandler {
 			if intent == "" {
 				intent = "-"
 			}
-			short := ep.SessionID
-			if len(short) > 8 {
-				short = short[:8]
-			}
+			short := preview.ShortID(ep.SessionID)
 			fmt.Fprintf(&b, "%s\t%d\t%s\t%s\t%s\t%s\n",
 				short, ep.Ordinal,
 				formatTS(ep.StartedAtMs),
@@ -584,10 +575,7 @@ func listSubagentsAPIHandler(c *apiclient.Client) ToolHandler {
 		}
 		var b strings.Builder
 		for _, sp := range resp.Spans {
-			short := sp.SessionID
-			if len(short) > 8 {
-				short = short[:8]
-			}
+			short := preview.ShortID(sp.SessionID)
 			subType := "-"
 			if sp.SubagentType != nil && *sp.SubagentType != "" {
 				subType = *sp.SubagentType
@@ -679,18 +667,15 @@ func searchEventsAPIHandler(c *apiclient.Client) ToolHandler {
 		}
 		var b strings.Builder
 		for _, h := range resp.Hits {
-			short := h.SessionID
-			if len(short) > 8 {
-				short = short[:8]
-			}
-			preview := ""
+			short := preview.ShortID(h.SessionID)
+			snippet := ""
 			if h.Snippet != nil && *h.Snippet != "" {
-				preview = *h.Snippet
+				snippet = *h.Snippet
 			} else if h.Content != nil {
-				preview = *h.Content
+				snippet = *h.Content
 			}
 			fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n",
-				short, formatTS(h.TsSourceMs), h.Kind, oneLineSnippet2(preview))
+				short, formatTS(h.TsSourceMs), h.Kind, oneLineSnippet2(snippet))
 		}
 		return TextResult(b.String()), nil
 	}
@@ -764,10 +749,7 @@ func listSessionsAPIHandler(c *apiclient.Client) ToolHandler {
 		}
 		var b strings.Builder
 		for _, ss := range resp.Sessions {
-			short := ss.ID
-			if len(short) > 8 {
-				short = short[:8]
-			}
+			short := preview.ShortID(ss.ID)
 			started := "-"
 			ended := "-"
 			if ss.StartedAtMs != nil && *ss.StartedAtMs > 0 {
@@ -943,8 +925,8 @@ func listWorkflowsAPIHandler(c *apiclient.Client) ToolHandler {
 		var b strings.Builder
 		for _, e := range keep {
 			sessShort := "(none)"
-			if e.row.SessionID != nil && len(*e.row.SessionID) >= 8 {
-				sessShort = (*e.row.SessionID)[:8]
+			if e.row.SessionID != nil && *e.row.SessionID != "" {
+				sessShort = preview.ShortID(*e.row.SessionID)
 			}
 			when := formatTS(e.row.CreatedAtMs)
 			if e.ind.Workflow == nil {

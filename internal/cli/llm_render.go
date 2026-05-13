@@ -10,6 +10,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/store"
 )
 
@@ -271,10 +272,7 @@ func writeReflectEvidence(b *strings.Builder, evidence []prompts.ReflectionEvide
 	}
 	b.WriteString("    evidence:\n")
 	for _, ev := range evidence {
-		short := ev.SessionID
-		if len(short) > 8 {
-			short = short[:8]
-		}
+		short := preview.ShortID(ev.SessionID)
 		fmt.Fprintf(b, "      %s: %q (%s)\n", short, ev.Quote, ev.WhatHappened)
 	}
 }
@@ -349,10 +347,7 @@ func writeEvidence(b *strings.Builder, evidence []prompts.ProposalEvidence) {
 	}
 	b.WriteString("    evidence:\n")
 	for _, ev := range evidence {
-		short := ev.SessionID
-		if len(short) > 8 {
-			short = short[:8]
-		}
+		short := preview.ShortID(ev.SessionID)
 		fmt.Fprintf(b, "      %s: %q (%s)\n", short, ev.Quote, ev.WhatHappened)
 	}
 }

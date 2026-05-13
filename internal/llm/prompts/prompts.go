@@ -34,6 +34,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/llm"
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/store"
 )
@@ -2261,10 +2262,7 @@ func BuildVerifyProposal(in VerifyProposalInputs) (Built, error) {
 	// critic can verify "is this real evidence or filler".
 	var evidence strings.Builder
 	for _, ev := range in.Skill.Evidence {
-		short := ev.SessionID
-		if len(short) > 8 {
-			short = short[:8]
-		}
+		short := preview.ShortID(ev.SessionID)
 		quote, qpats := redact.Outbound(ev.Quote)
 		pats.addAll(qpats)
 		ctxText, cpats := redact.Outbound(ev.WhatHappened)
@@ -2442,10 +2440,7 @@ func BuildEvolveSkill(in EvolveSkillInputs) (Built, error) {
 
 	var examples strings.Builder
 	for i, ex := range in.FailureExamples {
-		short := ex.SessionID
-		if len(short) > 8 {
-			short = short[:8]
-		}
+		short := preview.ShortID(ex.SessionID)
 		ctxClean, cnames := redact.Outbound(ex.ContextSnippet)
 		pats.addAll(cnames)
 		_, _ = fmt.Fprintf(&examples, "\n[%d] session %s, %s:\n%s\n",
@@ -2872,10 +2867,7 @@ func BuildSearchSummary(query string, hits []SearchHit, maxTokens int) (Built, e
 	var b strings.Builder
 	fmt.Fprintf(&b, "Query: %s\n\nHits (%d):\n", cleanQuery, len(hits))
 	for _, h := range hits {
-		shortSess := h.SessionID
-		if len(shortSess) > 8 {
-			shortSess = shortSess[:8]
-		}
+		shortSess := preview.ShortID(h.SessionID)
 		when := time.UnixMilli(h.TsSourceMs).UTC().Format(time.RFC3339)
 		cleanSnip, ns := redact.Outbound(h.Snippet)
 		pats.addAll(ns)
@@ -3244,10 +3236,7 @@ func renderFailureModes(shapes []FailureShapeDigest) string {
 		if r := []rune(clean); len(r) > maxTitleRunes {
 			clean = string(r[:maxTitleRunes]) + "…"
 		}
-		short := fs.SessionID
-		if len(short) > 8 {
-			short = short[:8]
-		}
+		short := preview.ShortID(fs.SessionID)
 		if fs.ToolFailureCount > 0 {
 			toolFailures = append(toolFailures, entry{short, clean, fs.ToolFailureCount})
 		}

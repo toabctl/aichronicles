@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/searchquery"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -136,7 +137,7 @@ func buildSearchHits(r *http.Request, s *Server, q, kind, since string, compact 
 	for _, h := range hits {
 		row := SearchHitRow{
 			SessionID: h.SessionID,
-			ShortID:   shortID(h.SessionID),
+			ShortID:   preview.ShortID(h.SessionID),
 			When:      relativeTime(h.TsSourceMs, now),
 			Kind:      h.Kind,
 			Snippet:   pickHitSnippet(h),

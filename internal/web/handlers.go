@@ -246,7 +246,7 @@ func loadSessionsForList(ctx context.Context, s *Server, limit int, f sessionLis
 	for _, d := range digests.Sessions {
 		out = append(out, SessionRow{
 			ID:           d.ID,
-			ShortID:      shortID(d.ID),
+			ShortID:      preview.ShortID(d.ID),
 			LastActivity: relativeTime(effectiveTsPtr(d.StartedAtMs, d.EndedAtMs), now),
 			EventCount:   d.EventCount,
 			Cwd:          orDashPtr(d.Cwd),
@@ -380,15 +380,6 @@ func parseSummaryForBadge(body string) (topic, tooltip string) {
 func parseSummaryTopic(body string) string {
 	t, _ := parseSummaryForBadge(body)
 	return t
-}
-
-// shortID returns the 8-char preview the CLI uses everywhere
-// session ids appear.
-func shortID(id string) string {
-	if len(id) >= 8 {
-		return id[:8]
-	}
-	return id
 }
 
 // relativeTime renders an epoch-millis timestamp as "2h ago" /

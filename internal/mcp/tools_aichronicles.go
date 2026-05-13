@@ -3,6 +3,7 @@ package mcp
 import (
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/timefmt"
 )
 
@@ -26,15 +27,10 @@ func relativeAgo(ms int64, now time.Time) string {
 	return timefmt.Relative(ms, now)
 }
 
-// first8 returns the first 8 chars of a session id, or the full id
-// when shorter. Used as the conventional short-id form across MCP
-// tool responses.
-func first8(s string) string {
-	if len(s) >= 8 {
-		return s[:8]
-	}
-	return s
-}
+// first8 returns the first 8 chars of a session id; thin alias over
+// preview.ShortID for callers in this package that want the short
+// id by its conventional MCP name.
+func first8(s string) string { return preview.ShortID(s) }
 
 // formatTS renders an epoch-millis as the canonical RFC3339 form
 // MCP responses use. Wraps internal/timefmt so MCP and the web

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -122,7 +123,7 @@ func buildDigestEvidence(in []prompts.ReflectionEvidence) []DigestEvidenceRow {
 	for _, e := range in {
 		out = append(out, DigestEvidenceRow{
 			SessionID:    e.SessionID,
-			ShortID:      shortID(e.SessionID),
+			ShortID:      preview.ShortID(e.SessionID),
 			Quote:        e.Quote,
 			WhatHappened: e.WhatHappened,
 		})
