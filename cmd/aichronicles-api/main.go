@@ -49,12 +49,20 @@ const defaultShutdownDrainTimeout = 10 * time.Second
 
 // workerShutdownGrace bounds how long the main goroutine waits
 // for the IngestWorker to finish its final drain after the
-// listener has stopped accepting. Sized just over the worker's
-// internal shutdownBudget (api.defaultWorkerShutdownBudget = 5s)
-// so a healthy worker finishes well within budget and a wedged
-// one is loudly bounded. Independent of drainCtx so a slow
-// listener-drain doesn't starve the worker of drain time.
-const workerShutdownGrace = 7 * time.Second
+// listener has stopped accepting. Sized comfortably above the
+// worker's internal shutdownBudget (api.defaultWorkerShutdownBudget
+// = 5s) PLUS the worst-case Pipeline.Process for a single row
+// (multi-MB envelope = redact + extractors + insert + FTS5
+// indexing can take a few seconds). 20s leaves the worker time
+// to finish a row that started just before ctx.Done and still
+// drain the rest of the backlog. Independent of drainCtx so a
+// slow listener-drain doesn't starve the worker.
+//
+// Bumped from 7s after arch_review_2026_05_13 MEDIUM #9 flagged
+// that a row in flight at cancellation time could chew most of
+// the 5s internal budget and leave near-zero for the rest of
+// the queue.
+const workerShutdownGrace = 20 * time.Second
 
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
