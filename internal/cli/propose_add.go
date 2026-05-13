@@ -351,7 +351,7 @@ func addSkillCandidate(
 	dec := wire.SkillCandidateDecisionRequest{
 		LLMOutputID:  outputID,
 		SkillName:    sk.Name,
-		Decision:     "add",
+		Decision:     wire.DecisionAdd,
 		DecisionAtMs: now,
 		AddPath:      skillMd,
 		BodySHA256:   bodyHashHex,

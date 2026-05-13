@@ -269,7 +269,7 @@ func mergeProposedSkill(
 	dec := wire.SkillCandidateDecisionRequest{
 		LLMOutputID:  outputID,
 		SkillName:    candidate.Name,
-		Decision:     "merge",
+		Decision:     wire.DecisionMerge,
 		DecisionAtMs: now,
 		AddPath:      skillMd,
 		MergedIntoID: mergedIntoID,

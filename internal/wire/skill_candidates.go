@@ -39,10 +39,36 @@ type RecordSkillCandidateResponse struct {
 	Inserted bool `json:"inserted"`
 }
 
+// SkillCandidateDecision names the maintenance action recorded on a
+// skill_candidates row. The same string values also exist as
+// store.MaintenanceAction constants — the two are kept in sync by a
+// cross-package test (store can't import wire and wire can't import
+// store without breaking the layering invariants, but the literal
+// values must agree because they cross the wire).
+type SkillCandidateDecision string
+
+const (
+	// DecisionPending is the default state of a freshly recorded
+	// candidate. No on-disk artefact has been created and no
+	// decision has been written.
+	DecisionPending SkillCandidateDecision = ""
+
+	// DecisionAdd materialises a new SKILL.md on disk at AddPath.
+	DecisionAdd SkillCandidateDecision = "add"
+
+	// DecisionMerge refines an existing skill; the LLM-merged
+	// result is written to the existing skill's path.
+	DecisionMerge SkillCandidateDecision = "merge"
+
+	// DecisionDiscard records that the candidate is not worth
+	// keeping; biases future propose runs away from re-suggesting.
+	DecisionDiscard SkillCandidateDecision = "discard"
+)
+
 // SkillCandidateDecisionRequest is the body for POST
 // /v1/skill-candidates/decision. Decision is one of
-// "add" | "merge" | "discard"; the optional fields are decision-
-// specific:
+// DecisionAdd | DecisionMerge | DecisionDiscard; the optional fields
+// are decision-specific:
 //
 //   - add:     AddPath required, BodySHA256 optional (SSGM provenance)
 //   - merge:   AddPath required (the on-disk SKILL.md the merge
@@ -50,13 +76,13 @@ type RecordSkillCandidateResponse struct {
 //     a hand-authored skill with no candidate row)
 //   - discard: no extra fields
 type SkillCandidateDecisionRequest struct {
-	LLMOutputID  int64  `json:"llm_output_id"`
-	SkillName    string `json:"skill_name"`
-	Decision     string `json:"decision"`
-	DecisionAtMs int64  `json:"decision_at_ms"`
-	AddPath      string `json:"add_path,omitempty"`
-	BodySHA256   string `json:"body_sha256,omitempty"`
-	MergedIntoID int64  `json:"merged_into_id,omitempty"`
+	LLMOutputID  int64                  `json:"llm_output_id"`
+	SkillName    string                 `json:"skill_name"`
+	Decision     SkillCandidateDecision `json:"decision"`
+	DecisionAtMs int64                  `json:"decision_at_ms"`
+	AddPath      string                 `json:"add_path,omitempty"`
+	BodySHA256   string                 `json:"body_sha256,omitempty"`
+	MergedIntoID int64                  `json:"merged_into_id,omitempty"`
 }
 
 // SkillCandidateDecisionResponse is the body for the decision

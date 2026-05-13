@@ -21,9 +21,9 @@ func (c *Client) RecordSkillCandidate(ctx context.Context, req wire.RecordSkillC
 }
 
 // SkillCandidateDecision posts to /v1/skill-candidates/decision.
-// Decision is one of "add" | "merge" | "discard"; ErrNotFound
-// surfaces when the (llm_output_id, skill_name) row was never
-// recorded (caller forgot to RecordSkillCandidate first).
+// Decision is one of wire.DecisionAdd | DecisionMerge | DecisionDiscard;
+// ErrNotFound surfaces when the (llm_output_id, skill_name) row was
+// never recorded (caller forgot to RecordSkillCandidate first).
 func (c *Client) SkillCandidateDecision(ctx context.Context, req wire.SkillCandidateDecisionRequest) error {
 	var out wire.SkillCandidateDecisionResponse
 	return c.do(ctx, http.MethodPost, "/v1/skill-candidates/decision", req, &out)

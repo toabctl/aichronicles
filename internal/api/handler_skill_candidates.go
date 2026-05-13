@@ -79,21 +79,21 @@ func (s *Server) handleSkillCandidatesDecision(w http.ResponseWriter, r *http.Re
 
 	var err error
 	switch req.Decision {
-	case "add":
+	case wire.DecisionAdd:
 		if req.AddPath == "" {
 			writeProblem(w, http.StatusBadRequest, "add_path is required for decision=add", "")
 			return
 		}
 		err = store.MarkSkillCandidateAddedWithProvenance(r.Context(), s.store.DB(),
 			req.LLMOutputID, req.SkillName, req.AddPath, req.DecisionAtMs, req.BodySHA256)
-	case "merge":
+	case wire.DecisionMerge:
 		if req.AddPath == "" {
 			writeProblem(w, http.StatusBadRequest, "add_path is required for decision=merge", "")
 			return
 		}
 		err = store.MarkSkillCandidateMerged(r.Context(), s.store.DB(),
 			req.LLMOutputID, req.SkillName, req.MergedIntoID, req.AddPath, req.DecisionAtMs)
-	case "discard":
+	case wire.DecisionDiscard:
 		err = store.MarkSkillCandidateDiscarded(r.Context(), s.store.DB(),
 			req.LLMOutputID, req.SkillName, req.DecisionAtMs)
 	default:

@@ -100,7 +100,7 @@ func discardProposedSkill(
 	dec := wire.SkillCandidateDecisionRequest{
 		LLMOutputID:  outputID,
 		SkillName:    candidate.Name,
-		Decision:     "discard",
+		Decision:     wire.DecisionDiscard,
 		DecisionAtMs: now,
 	}
 	if merr := c.SkillCandidateDecision(ctx, dec); merr != nil {
