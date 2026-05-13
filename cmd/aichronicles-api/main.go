@@ -1,15 +1,40 @@
 // aichronicles-api is the daemon: a Unix-socket HTTP server that
-// serves /v1/* read+write JSON and /v1/stream SSE. It is the single
-// SQLite-writing process. Run via systemd --user with socket
-// activation, or directly for development.
+// serves /v1/* read+write JSON and /v1/stream SSE. Run via systemd
+// --user with socket activation, or directly for development.
+//
+// Write-ownership contract — what touches SQLite from where:
+//
+//   - The daemon owns the INGEST PATH end-to-end: every write to
+//     raw_envelopes, events, ingest_pending, extractions, sessions,
+//     and session_outcomes goes through handleIngest → IngestWorker
+//     → events.Pipeline.Process inside this process. The hook
+//     subprocess and every import path are clients of /v1/ingest.
+//
+//   - Maintenance commands that REWRITE daemon-owned tables refuse
+//     to run while the daemon is up. Today that's
+//     `aichronicles backfill-extractions` (rewrites extractions);
+//     `aichronicles scrub` runs through the daemon's POST /v1/scrub
+//     instead of opening the store directly, so it inherits the
+//     write lock.
+//
+//   - LLM-CACHE tables (llm_outputs, skill_candidates,
+//     semantic_facts) have a documented second-writer flow: the
+//     CLI subcommands `propose`, `propose add/merge/discard`,
+//     `induction`, `summaries`, and `meta sweep` open the SQLite
+//     file directly and INSERT their results. This is intentional —
+//     funneling many-MB LLM outputs through the daemon's UDS one
+//     row at a time would waste bandwidth and fight the daemon's
+//     HTTP request budget, and UNIQUE constraints on the affected
+//     tables turn race-condition duplicates into ON CONFLICT
+//     idempotency rather than data corruption.
 //
 // The HTML web browser ships as a SEPARATE process (the
 // `aichronicles web` subcommand of the main `aichronicles` CLI,
 // installed as the aichronicles-web.{socket,service} systemd unit
 // pair). Splitting it out keeps an HTML-template panic or memory
 // leak from reaching the ingest worker — arch_review_2026_05_13
-// HIGH #4. The web process reads the same SQLite file via WAL
-// mode; the daemon retains exclusive write access.
+// HIGH #4. The web process reads via internal/apiclient against
+// this daemon; it does not open SQLite directly.
 package main
 
 import (

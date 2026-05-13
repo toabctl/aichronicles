@@ -15,8 +15,11 @@ Idempotent. With --only=<kind>, only rows matching that kind
 are deleted/replaced; other kinds are left untouched.
 Without --only, ALL extraction rows are rebuilt from scratch.
 
-Safe to run while the daemon is up — each batch is committed
-in its own transaction.
+Refuses to run while aichronicles-api is up: this command
+rewrites the daemon-owned extractions table and racing the
+IngestWorker would leave inconsistent rows. Stop the
+daemon first (systemctl --user stop aichronicles-api),
+run this, then restart.
 
 ```
 aichronicles backfill-extractions [flags]
@@ -25,9 +28,10 @@ aichronicles backfill-extractions [flags]
 ### Options
 
 ```
-      --db string     SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
-  -h, --help          help for backfill-extractions
-      --only string   only rebuild this extraction kind (e.g. skill_load); empty = all kinds
+      --db string       SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
+  -h, --help            help for backfill-extractions
+      --only string     only rebuild this extraction kind (e.g. skill_load); empty = all kinds
+      --socket string   aichronicles-api UDS path used to check whether the daemon is running (overrides $AICHRONICLES_API_SOCKET; XDG default)
 ```
 
 ### SEE ALSO

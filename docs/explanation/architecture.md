@@ -100,17 +100,49 @@ Why this shape:
   catch-up via `Persistent=true` are properties the
   in-process ticker couldn't give.
 
-### Read-migration: complete
+### Write-ownership contract
 
-Every non-test file under `internal/cli/` now reads and writes
-through `internal/apiclient`. "Every read goes through the api"
-is a hard invariant, enforced by `tools/depcheck`:
+The api daemon owns the INGEST PATH end-to-end: every write to
+`raw_envelopes`, `events`, `ingest_pending`, `extractions`,
+`sessions`, and `session_outcomes` goes through `handleIngest` →
+`IngestWorker` → `events.Pipeline.Process` inside the daemon
+process. The hook subprocess and every import path are clients of
+`/v1/ingest`.
+
+Two classes of CLI commands write directly to the SQLite file
+outside the daemon. Each class has a defined contract:
+
+**Class 1 — maintenance commands that rewrite daemon-owned
+tables** refuse to run while the daemon is up. They call
+`cli.RefuseIfDaemonRunning` before opening the store; if
+`/v1/healthz` answers, they error with a clear stop-instruction.
+Today that's `aichronicles backfill-extractions` (rewrites the
+extractions table). `aichronicles scrub` is in the same conceptual
+class but routes through `POST /v1/scrub` instead of opening the
+store, so it inherits the daemon's write lock.
+
+**Class 2 — LLM-cache writers** (`propose`, `propose add/merge/
+discard`, `induction`, `summaries`, `meta sweep`) open the store
+directly and INSERT into `llm_outputs` / `skill_candidates` /
+`semantic_facts` while the daemon runs. This is intentional:
+funneling many-MB LLM outputs through the UDS one row at a time
+would waste bandwidth and fight the daemon's HTTP request budget,
+and the affected tables carry UNIQUE constraints that turn
+race-condition duplicates into ON CONFLICT idempotency rather than
+data corruption.
+
+### Read-side: through apiclient
+
+Every non-test file under `internal/cli/`, `internal/mcp/`, and
+`internal/web/` reads through `internal/apiclient`. "Every read
+goes through the api" is a hard invariant, enforced by
+`tools/depcheck`:
 
 - An import-graph rule blocks `internal/apiclient` from importing
   `internal/store` (apiclient is wire-only).
-- A code-pattern rule scans non-test `.go` files under
-  `internal/cli/` for `store.(Load|Save|Insert|Update|Delete|Has|
-  Last|Query|Vacuum|Segment)\w*\(` calls and fails CI on a hit.
+- Code-pattern rules scan non-test `.go` files under each of the
+  three packages for `store.(Load|Save|Insert|Update|Delete|Has|
+  Last|Query|Vacuum|Segment)\w*\(` calls and fail CI on a hit.
   Test files are exempt because they exercise the store directly
   for fixture setup and state assertions; doc-comment lines are
   also skipped.
@@ -122,12 +154,6 @@ aichronicles-api UDS instead. `internal/cli` still imports
 `SkillKind`, `OutcomeLabel`, error sentinels) — those are
 package-level values, not CRUD calls, and the depcheck regex
 ignores them.
-
-Two write paths intentionally still touch the store directly:
-`RunScrub` (one-off destructive maintenance) and
-`RunBackfillExtractions` (bulk migration tool). They run as
-short-lived subcommands while the api is stopped, so the
-single-writer invariant holds by exclusion.
 
 ## Package map
 

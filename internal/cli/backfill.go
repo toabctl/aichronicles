@@ -24,8 +24,9 @@ const backfillBatchSize = 500
 
 func newBackfillExtractionsCmd() *cobra.Command {
 	var (
-		dbPath string
-		only   string
+		dbPath   string
+		sockPath string
+		only     string
 	)
 	cmd := &cobra.Command{
 		Use:   "backfill-extractions",
@@ -39,9 +40,15 @@ func newBackfillExtractionsCmd() *cobra.Command {
 			"Idempotent. With --only=<kind>, only rows matching that kind\n" +
 			"are deleted/replaced; other kinds are left untouched.\n" +
 			"Without --only, ALL extraction rows are rebuilt from scratch.\n\n" +
-			"Safe to run while the daemon is up — each batch is committed\n" +
-			"in its own transaction.",
+			"Refuses to run while aichronicles-api is up: this command\n" +
+			"rewrites the daemon-owned extractions table and racing the\n" +
+			"IngestWorker would leave inconsistent rows. Stop the\n" +
+			"daemon first (systemctl --user stop aichronicles-api),\n" +
+			"run this, then restart.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := RefuseIfDaemonRunning(cmd.Context(), sockPath); err != nil {
+				return err
+			}
 			s, err := openStore(dbPath)
 			if err != nil {
 				return err
@@ -61,6 +68,8 @@ func newBackfillExtractionsCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&dbPath, "db", "",
 		"SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
+	cmd.Flags().StringVar(&sockPath, "socket", "",
+		"aichronicles-api UDS path used to check whether the daemon is running (overrides $AICHRONICLES_API_SOCKET; XDG default)")
 	cmd.Flags().StringVar(&only, "only", "",
 		"only rebuild this extraction kind (e.g. skill_load); empty = all kinds")
 	return cmd
