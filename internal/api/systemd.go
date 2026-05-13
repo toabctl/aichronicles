@@ -77,6 +77,6 @@ func Serve(l net.Listener, handler http.Handler) func(context.Context) error {
 	srv := newHTTPServer(handler)
 	runServer(srv, l)
 	return func(ctx context.Context) error {
-		return gracefulShutdown(srv, ctx)
+		return gracefulShutdown(ctx, srv)
 	}
 }

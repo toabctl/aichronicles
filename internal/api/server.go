@@ -288,7 +288,7 @@ func ListenAndServe(sockPath string, handler http.Handler) (func(context.Context
 	runServer(srv, l)
 
 	shutdown := func(ctx context.Context) error {
-		err := gracefulShutdown(srv, ctx)
+		err := gracefulShutdown(ctx, srv)
 		_ = os.Remove(sockPath)
 		return err
 	}
@@ -298,7 +298,7 @@ func ListenAndServe(sockPath string, handler http.Handler) (func(context.Context
 // gracefulShutdown runs srv.Shutdown(ctx) when a non-nil ctx is
 // supplied and falls back to Close otherwise. Exposed as a helper
 // so both ListenAndServe and Serve share the drain semantics.
-func gracefulShutdown(srv *http.Server, ctx context.Context) error {
+func gracefulShutdown(ctx context.Context, srv *http.Server) error {
 	if ctx == nil {
 		return srv.Close()
 	}
