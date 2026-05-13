@@ -11,6 +11,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/godbus/dbus/v5"
@@ -161,11 +163,66 @@ func (t *OutageTracker) MarkNotified() error {
 	return f.Close()
 }
 
-// Clear removes the flag file. Missing file is not an error — a
-// clean state just means no outage was ever recorded.
-func (t *OutageTracker) Clear() error {
+// Clear removes the flag file AND the sibling drop-counter file
+// (see Increment). Returns the drop count that was recorded for
+// the just-ended outage so the caller can surface "N events lost
+// during outage" in a recovery message. Missing files are not an
+// error — a clean state means no outage was ever recorded; the
+// count is 0 in that case.
+func (t *OutageTracker) Clear() (int, error) {
+	count := t.readCount()
+	// Remove the counter sibling first so a crash between the two
+	// removes leaves the flag-file-as-source-of-truth in a
+	// consistent state. A leftover .count without its flag will
+	// be picked up by the next Increment cycle.
+	_ = os.Remove(t.countPath())
 	if err := os.Remove(t.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("remove outage flag: %w", err)
+		return count, fmt.Errorf("remove outage flag: %w", err)
 	}
-	return nil
+	return count, nil
+}
+
+// countPath returns the sibling file path that holds the running
+// drop counter. Kept as a discrete file so the existing
+// flag-file's mtime keeps its meaning (the renotify clock for
+// ShouldNotify); putting the count inside the flag would require
+// mtime-preserving writes and re-validating every existing test.
+func (t *OutageTracker) countPath() string { return t.path + ".count" }
+
+// readCount returns the current drop counter, or 0 when the
+// counter file is missing / malformed. Best-effort: a transient
+// read failure presents as "0 known losses", which is the
+// conservative recovery message.
+func (t *OutageTracker) readCount() int {
+	data, err := os.ReadFile(t.countPath())
+	if err != nil {
+		return 0
+	}
+	n, perr := strconv.Atoi(strings.TrimSpace(string(data)))
+	if perr != nil {
+		return 0
+	}
+	return n
+}
+
+// Increment bumps the drop counter by one and returns the new
+// value. Called by the hook on every transport-level failure so
+// the eventual recovery message can quote a real number rather
+// than "some events". Independent of MarkNotified / ShouldNotify:
+// the counter increments on every drop, while notifications
+// debounce on the renotify TTL.
+//
+// Best-effort: a write failure surfaces as an error, but the
+// hook's caller treats it as non-fatal — losing the count is
+// strictly worse than losing the event, and we've already lost
+// the event.
+func (t *OutageTracker) Increment() (int, error) {
+	if err := os.MkdirAll(filepath.Dir(t.path), 0o700); err != nil {
+		return 0, fmt.Errorf("ensure outage dir: %w", err)
+	}
+	count := t.readCount() + 1
+	if err := os.WriteFile(t.countPath(), []byte(strconv.Itoa(count)+"\n"), 0o600); err != nil {
+		return count, fmt.Errorf("write outage counter: %w", err)
+	}
+	return count, nil
 }

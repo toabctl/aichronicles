@@ -21,8 +21,25 @@ import (
 
 // defaultHookTimeout caps the api round-trip so a wedged daemon
 // can never block a Claude hook for long when [limits].ingest_timeout
-// isn't set. 250ms is the CLAUDE.md hook-latency cap.
-const defaultHookTimeout = 250 * time.Millisecond
+// isn't set.
+//
+// History: this was 250ms, sized for a sub-millisecond UDS POST +
+// a tiny SQLite insert. The daemon's synchronous pipeline grew
+// (redact → re-marshal → 6 AFTER-INSERT triggers including two
+// FTS5 inserts) without the budget being revisited, so multi-MB
+// tool_result envelopes started missing the deadline structurally
+// — every large hook would silently lose its event. 2s is the
+// stopgap: enough headroom that a 5-10 MB envelope makes it
+// through on a healthy system, while still bounding the worst-
+// case hook stall in front of the user.
+//
+// The proper fix is two-phase ingest (the daemon writes raw bytes
+// in a tiny tx and returns 200 immediately, then a worker drains
+// the queue out-of-band); see internal/api/ingest_worker.go.
+// Once that ships and is enabled by default, this can drop back
+// toward 100-200ms. Until then, operators can still override per
+// machine via [limits].ingest_timeout.
+const defaultHookTimeout = 2 * time.Second
 
 // defaultHookAgent is the agent slug hook uses when invoked
 // without --agent. Claude Code is the historical default and the
@@ -127,7 +144,18 @@ func RunHook(stdin io.Reader, stderr io.Writer, socketFlag, agentSlug string) er
 
 	c := apiclient.NewClient(sockPath)
 	if _, err := c.Ingest(ctx, env); err != nil {
-		log.Error("post to aichronicles-api", "socket", sockPath, "err", err)
+		// "event_dropped" is the explicit, greppable key — the
+		// previous "post to aichronicles-api" wording buried the
+		// fact that the user has just lost an event. Per-line
+		// fields (kind, source_session_id) make `journalctl
+		// --user-unit=… | grep event_dropped` directly useful for
+		// "what did I miss?" forensics.
+		log.Error("event_dropped",
+			"kind", env.Kind,
+			"source_agent", env.SourceAgent,
+			"source_session_id", env.SourceSessionID,
+			"socket", sockPath,
+			"err", err)
 		// Daemon-outage signal: any transport-level failure
 		// (socket missing, connection refused, timeout, EOF
 		// mid-response) flips the outage flag. HTTP-status
@@ -137,16 +165,37 @@ func RunHook(stdin io.Reader, stderr io.Writer, socketFlag, agentSlug string) er
 		// false positives on validation drift.
 		var httpErr *apiclient.HTTPError
 		if !errors.As(err, &httpErr) {
-			maybeNotifyOutage(log, cfg, tracker, err)
+			// Bump the drop counter BEFORE deciding whether to
+			// notify — the desktop body line includes the running
+			// count so even a debounced banner reflects current
+			// damage. Errors here are best-effort: a counter
+			// hiccup is strictly less bad than the event we
+			// already lost.
+			dropCount := 0
+			if tracker != nil {
+				n, ierr := tracker.Increment()
+				if ierr != nil {
+					log.Warn("increment outage counter", "err", ierr)
+				}
+				dropCount = n
+			}
+			maybeNotifyOutage(log, cfg, tracker, err, dropCount)
 		}
 		return nil
 	}
 
 	// Post succeeded — drop any lingering outage flag so the next
-	// failure gets its own notification.
+	// failure gets its own notification. If the just-ended outage
+	// had recorded any drops, surface a one-shot recovery banner
+	// so the user learns about the loss even if they dismissed the
+	// outage toast.
 	if tracker != nil {
-		if err := tracker.Clear(); err != nil {
+		lostCount, err := tracker.Clear()
+		if err != nil {
 			log.Warn("clear outage flag", "err", err)
+		}
+		if lostCount > 0 {
+			maybeNotifyRecovery(log, cfg, lostCount)
 		}
 	}
 	return nil
@@ -184,21 +233,38 @@ func outageTracker(log *slog.Logger) *notify.OutageTracker {
 	return notify.NewOutageTracker(path)
 }
 
-// maybeNotifyOutage sends one desktop notification per outage when the
-// user has opted in. Swallows all errors — no notification must ever
-// fail a hook.
-func maybeNotifyOutage(log *slog.Logger, cfg *config.Config, tracker *notify.OutageTracker, cause error) {
+// maybeNotifyOutage sends one desktop notification per outage when
+// the user has opted in. The body line embeds dropCount so the
+// user sees the loss scale at a glance, even on the renotify
+// banner an hour into a long outage. Swallows all errors — no
+// notification must ever fail a hook.
+func maybeNotifyOutage(log *slog.Logger, cfg *config.Config, tracker *notify.OutageTracker, cause error, dropCount int) {
 	if !cfg.Notifications.DaemonUnreachable || tracker == nil || !tracker.ShouldNotify() {
 		return
 	}
-	if err := notify.New(true).Send(
-		"aichronicles: daemon unreachable",
-		"hooks are losing events: "+cause.Error(),
-	); err != nil {
+	body := fmt.Sprintf("hooks are losing events (%d dropped so far): %s",
+		dropCount, cause.Error())
+	if err := notify.New(true).Send("aichronicles: daemon unreachable", body); err != nil {
 		log.Warn("notify failed", "err", err)
 		return
 	}
 	if err := tracker.MarkNotified(); err != nil {
 		log.Warn("mark outage notified", "err", err)
+	}
+}
+
+// maybeNotifyRecovery fires a one-shot desktop banner when an
+// outage ends with non-zero recorded drops. The first successful
+// POST after an outage calls Clear, which returns the accumulated
+// count; that's the trigger. Without this banner, a user who
+// dismissed the outage toast would have no follow-up signal about
+// how much they actually lost.
+func maybeNotifyRecovery(log *slog.Logger, cfg *config.Config, lostCount int) {
+	if !cfg.Notifications.DaemonUnreachable {
+		return
+	}
+	body := fmt.Sprintf("%d event(s) were lost during the outage", lostCount)
+	if err := notify.New(true).Send("aichronicles: daemon recovered", body); err != nil {
+		log.Warn("recovery notify failed", "err", err)
 	}
 }

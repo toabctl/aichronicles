@@ -56,7 +56,7 @@ func TestOutageTracker_ClearReopensWindow(t *testing.T) {
 	if err := tr.MarkNotified(); err != nil {
 		t.Fatalf("MarkNotified: %v", err)
 	}
-	if err := tr.Clear(); err != nil {
+	if _, err := tr.Clear(); err != nil {
 		t.Fatalf("Clear: %v", err)
 	}
 	if !tr.ShouldNotify() {
@@ -67,9 +67,78 @@ func TestOutageTracker_ClearReopensWindow(t *testing.T) {
 func TestOutageTracker_ClearOnAbsentIsNoError(t *testing.T) {
 	t.Parallel()
 	tr := NewOutageTracker(filepath.Join(t.TempDir(), "outage.flag"))
-	// Never marked; clearing should still succeed.
-	if err := tr.Clear(); err != nil {
+	// Never marked; clearing should still succeed and return 0.
+	count, err := tr.Clear()
+	if err != nil {
 		t.Errorf("Clear on absent file errored: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Clear on absent file: got count %d, want 0", count)
+	}
+}
+
+func TestOutageTracker_IncrementBumpsCount(t *testing.T) {
+	t.Parallel()
+	tr := NewOutageTracker(filepath.Join(t.TempDir(), "outage.flag"))
+	for i, want := range []int{1, 2, 3} {
+		got, err := tr.Increment()
+		if err != nil {
+			t.Fatalf("Increment %d: %v", i, err)
+		}
+		if got != want {
+			t.Errorf("Increment %d: got %d, want %d", i, got, want)
+		}
+	}
+}
+
+func TestOutageTracker_ClearReturnsAccumulatedCount(t *testing.T) {
+	t.Parallel()
+	tr := NewOutageTracker(filepath.Join(t.TempDir(), "outage.flag"))
+	for range 7 {
+		if _, err := tr.Increment(); err != nil {
+			t.Fatalf("Increment: %v", err)
+		}
+	}
+	count, err := tr.Clear()
+	if err != nil {
+		t.Fatalf("Clear: %v", err)
+	}
+	if count != 7 {
+		t.Errorf("Clear count: got %d, want 7", count)
+	}
+	// After Clear, a fresh Increment must start over from 1 — Clear
+	// is the outage boundary, not a soft reset.
+	next, err := tr.Increment()
+	if err != nil {
+		t.Fatalf("Increment after Clear: %v", err)
+	}
+	if next != 1 {
+		t.Errorf("post-Clear Increment: got %d, want 1", next)
+	}
+}
+
+func TestOutageTracker_IncrementDoesNotResetRenotify(t *testing.T) {
+	t.Parallel()
+	flag := filepath.Join(t.TempDir(), "outage.flag")
+	tr := NewOutageTrackerWithRenotify(flag, 1*time.Hour)
+
+	// Notify once so the renotify clock is set, then age it.
+	if err := tr.MarkNotified(); err != nil {
+		t.Fatalf("MarkNotified: %v", err)
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(flag, old, old); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+	// Increment during the outage must not touch the flag file's
+	// mtime — the renotify TTL belongs to MarkNotified, not to the
+	// counter. Otherwise an outage that drops 100 events / second
+	// would forever push the next notification out by milliseconds.
+	if _, err := tr.Increment(); err != nil {
+		t.Fatalf("Increment: %v", err)
+	}
+	if !tr.ShouldNotify() {
+		t.Error("Increment must not refresh the renotify clock")
 	}
 }
 

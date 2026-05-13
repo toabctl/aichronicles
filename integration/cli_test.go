@@ -248,8 +248,8 @@ func TestCLI_IngestUnreachableDaemon_LogsAndContinues(t *testing.T) {
 	if !strings.Contains(stderr.String(), "aichronicles hook") {
 		t.Errorf("expected stderr to mention hook error, got %q", stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "post to aichronicles-api") {
-		t.Errorf("expected stderr to name the failure mode (post to aichronicles-api), got %q", stderr.String())
+	if !strings.Contains(stderr.String(), "event_dropped") {
+		t.Errorf("expected stderr to log the dropped event (msg=event_dropped), got %q", stderr.String())
 	}
 }
 
@@ -383,12 +383,12 @@ func TestCLI_IngestHangingDaemon_FlipsOutageFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunHook must not surface the timeout to the hook, got: %v", err)
 	}
-	// defaultIngestTimeout is 250ms; allow generous slack for slow CI.
+	// defaultHookTimeout is 2s; allow generous slack for slow CI.
 	if elapsed > 5*time.Second {
 		t.Errorf("RunHook blocked for %v on a hanging daemon; the timeout did not trip", elapsed)
 	}
-	if !strings.Contains(stderr.String(), "post to aichronicles-api") {
-		t.Errorf("expected stderr to log the failed POST, got %q", stderr.String())
+	if !strings.Contains(stderr.String(), "event_dropped") {
+		t.Errorf("expected stderr to log the dropped event, got %q", stderr.String())
 	}
 
 	// The crucial assertion: a hanging-daemon failure must trip the
