@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/toabctl/aichronicles/internal/events"
+	"github.com/toabctl/aichronicles/internal/nullable"
 )
 
 // InitialSkillVersion is the version stamp every newly-recorded
@@ -185,10 +186,13 @@ type SkillCandidate struct {
 	LLMOutputID  int64
 	SkillName    string
 	ProposedAtMs int64
-	DecisionAtMs sql.NullInt64
-	AddPath      sql.NullString
+	// DecisionAtMs / AddPath / MergedIntoID are nil until a
+	// maintenance action (add / merge / discard) is recorded —
+	// see arch_review_2026_05_13 MEDIUM #10.
+	DecisionAtMs *int64
+	AddPath      *string
 	Decision     MaintenanceAction
-	MergedIntoID sql.NullInt64
+	MergedIntoID *int64
 	Triggers     []string
 	Tags         []string
 	Examples     []SkillExample
@@ -198,9 +202,9 @@ type SkillCandidate struct {
 	// SSGM (Lam et al., 2026 — arXiv:2603.11768) governance, an
 	// integrity hash on the on-disk artefact lets a later sweep
 	// distinguish "what aichronicles wrote" from "what was edited
-	// after the fact." Empty / NULL when the candidate was never
-	// added or was added before migration 023.
-	AddBodySHA256 sql.NullString
+	// after the fact." Nil when the candidate was never added or
+	// was added before migration 023.
+	AddBodySHA256 *string
 
 	// Kind is the contrastive-induction label: pattern (success-
 	// driven, "do X") or pitfall (failure-driven, "avoid X").
@@ -540,19 +544,27 @@ func MarkSkillCandidateDiscarded(ctx context.Context, db *sql.DB, llmOutputID in
 func scanSkillCandidate(rows *sql.Rows) (SkillCandidate, error) {
 	var r SkillCandidate
 	var (
-		decision    string
-		triggersStr sql.NullString
-		tagsStr     sql.NullString
-		examplesStr sql.NullString
-		versionStr  sql.NullString
-		kindStr     string
+		decision      string
+		triggersStr   sql.NullString
+		tagsStr       sql.NullString
+		examplesStr   sql.NullString
+		versionStr    sql.NullString
+		kindStr       string
+		decisionAtMs  sql.NullInt64
+		addPath       sql.NullString
+		mergedIntoID  sql.NullInt64
+		addBodySHA256 sql.NullString
 	)
 	if err := rows.Scan(&r.ID, &r.LLMOutputID, &r.SkillName, &r.ProposedAtMs,
-		&r.DecisionAtMs, &r.AddPath, &decision, &r.MergedIntoID,
+		&decisionAtMs, &addPath, &decision, &mergedIntoID,
 		&triggersStr, &tagsStr, &examplesStr, &versionStr,
-		&r.AddBodySHA256, &kindStr); err != nil {
+		&addBodySHA256, &kindStr); err != nil {
 		return SkillCandidate{}, fmt.Errorf("scan: %w", err)
 	}
+	r.DecisionAtMs = nullable.Int64Ptr(decisionAtMs)
+	r.AddPath = nullable.StringPtr(addPath)
+	r.MergedIntoID = nullable.Int64Ptr(mergedIntoID)
+	r.AddBodySHA256 = nullable.StringPtr(addBodySHA256)
 	r.Decision = MaintenanceAction(decision)
 	if kindStr == "" {
 		kindStr = string(SkillKindPattern)
@@ -756,7 +768,8 @@ type SkillCandidateEffectiveness struct {
 	AddPath          string
 	LoadsAfterAdd    int
 	FailedLoadsAfter int
-	LastLoadedMs     sql.NullInt64
+	// LastLoadedMs is nil when the skill has never been loaded.
+	LastLoadedMs *int64
 }
 
 // LoadSkillCandidateEffectiveness returns one row per added
@@ -815,12 +828,16 @@ SELECT sc.id, sc.llm_output_id, sc.skill_name, sc.proposed_at_ms,
 	defer func() { _ = rows.Close() }()
 	var out []SkillCandidateEffectiveness
 	for rows.Next() {
-		var e SkillCandidateEffectiveness
+		var (
+			e            SkillCandidateEffectiveness
+			lastLoadedMs sql.NullInt64
+		)
 		if err := rows.Scan(&e.CandidateID, &e.LLMOutputID, &e.SkillName, &e.ProposedAtMs,
 			&e.AddedAtMs, &e.AddPath,
-			&e.LoadsAfterAdd, &e.FailedLoadsAfter, &e.LastLoadedMs); err != nil {
+			&e.LoadsAfterAdd, &e.FailedLoadsAfter, &lastLoadedMs); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
+		e.LastLoadedMs = nullable.Int64Ptr(lastLoadedMs)
 		out = append(out, e)
 	}
 	return out, rows.Err()

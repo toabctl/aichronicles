@@ -39,11 +39,11 @@ func TestProposeDiscard_RecordsLifecycle(t *testing.T) {
 	if r.Decision != store.MaintenanceDiscard {
 		t.Errorf("decision: got %q want %q", r.Decision, store.MaintenanceDiscard)
 	}
-	if !r.DecisionAtMs.Valid {
+	if r.DecisionAtMs == nil {
 		t.Errorf("decision_at_ms not set after discard")
 	}
-	if r.AddPath.Valid {
-		t.Errorf("add_path should be empty on discard, got %q", r.AddPath.String)
+	if r.AddPath != nil {
+		t.Errorf("add_path should be empty on discard, got %q", derefStr(r.AddPath))
 	}
 	if !strings.Contains(out.String(), "discarded build-test") {
 		t.Errorf("output missing discarded message: %s", out.String())

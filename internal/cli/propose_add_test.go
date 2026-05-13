@@ -205,10 +205,10 @@ func TestProposeAdd_RecordsLifecycle(t *testing.T) {
 	if r.Decision != store.MaintenanceAdd {
 		t.Errorf("decision: got %q want %q", r.Decision, store.MaintenanceAdd)
 	}
-	if !r.DecisionAtMs.Valid {
+	if r.DecisionAtMs == nil {
 		t.Errorf("decision_at_ms not set after add")
 	}
-	if !r.AddPath.Valid || !strings.HasSuffix(r.AddPath.String, "/build-test/SKILL.md") {
+	if r.AddPath == nil || !strings.HasSuffix(derefStr(r.AddPath), "/build-test/SKILL.md") {
 		t.Errorf("add_path: got %v", r.AddPath)
 	}
 
@@ -499,11 +499,11 @@ func TestProposeAdd_StampsProvenanceHash(t *testing.T) {
 		t.Fatalf("rows: got %d want 1", len(rows))
 	}
 	got := rows[0].AddBodySHA256
-	if !got.Valid {
+	if got == nil {
 		t.Fatal("add_body_sha256 must be populated after add")
 	}
-	if len(got.String) != 64 {
-		t.Errorf("add_body_sha256 length: got %d want 64", len(got.String))
+	if len(*got) != 64 {
+		t.Errorf("add_body_sha256 length: got %d want 64", len(*got))
 	}
 
 	// The SKILL.md must end with the provenance footer that
@@ -513,7 +513,7 @@ func TestProposeAdd_StampsProvenanceHash(t *testing.T) {
 		t.Fatalf("read SKILL.md: %v", err)
 	}
 	bodyStr := string(body)
-	wantFingerprint := "sha256:" + got.String[:12]
+	wantFingerprint := "sha256:" + (*got)[:12]
 	if !strings.Contains(bodyStr, wantFingerprint) {
 		t.Errorf("SKILL.md missing provenance fingerprint %q\n--- tail ---\n%s",
 			wantFingerprint, bodyStr[max(0, len(bodyStr)-300):])
@@ -525,9 +525,9 @@ func TestProposeAdd_StampsProvenanceHash(t *testing.T) {
 	// The footer must appear AFTER the body so the body's hash is
 	// reproducible: stripping the trailing comment line should
 	// recover the input that was hashed.
-	prefix := strings.TrimSuffix(bodyStr, skillProvenanceFooter(got.String))
+	prefix := strings.TrimSuffix(bodyStr, skillProvenanceFooter(*got))
 	prefixHash := sha256.Sum256([]byte(prefix))
-	if hex.EncodeToString(prefixHash[:]) != got.String {
+	if hex.EncodeToString(prefixHash[:]) != *got {
 		t.Errorf("recomputed body hash does not match stored hash; " +
 			"the provenance line breaks reversibility")
 	}

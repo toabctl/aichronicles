@@ -312,8 +312,8 @@ func TestMergeProposedSkill_RefusesSelfMerge(t *testing.T) {
 	if rows[0].Decision != store.MaintenanceAdd {
 		t.Errorf("decision drifted: got %q, want %q", rows[0].Decision, store.MaintenanceAdd)
 	}
-	if rows[0].MergedIntoID.Valid {
-		t.Errorf("merged_into_id should be NULL after refusal, got %d", rows[0].MergedIntoID.Int64)
+	if rows[0].MergedIntoID != nil {
+		t.Errorf("merged_into_id should be NULL after refusal, got %d", derefInt64(rows[0].MergedIntoID))
 	}
 }
 

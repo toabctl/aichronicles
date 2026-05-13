@@ -88,10 +88,10 @@ func TestMarkSkillCandidateAdded_UpdatesRow(t *testing.T) {
 	if r.Decision != MaintenanceAdd {
 		t.Errorf("decision: got %q want %q", r.Decision, MaintenanceAdd)
 	}
-	if !r.DecisionAtMs.Valid || r.DecisionAtMs.Int64 != 1_700_000_500_000 {
+	if r.DecisionAtMs == nil || derefInt64(r.DecisionAtMs) != 1_700_000_500_000 {
 		t.Errorf("decision_at_ms: got %v", r.DecisionAtMs)
 	}
-	if !r.AddPath.Valid || r.AddPath.String != "/home/u/.claude/skills/deploy-staging/SKILL.md" {
+	if r.AddPath == nil || derefStr(r.AddPath) != "/home/u/.claude/skills/deploy-staging/SKILL.md" {
 		t.Errorf("add_path: got %v", r.AddPath)
 	}
 }
@@ -152,10 +152,10 @@ func TestMarkSkillCandidateMerged_UpdatesRow(t *testing.T) {
 	if merged.Decision != MaintenanceMerge {
 		t.Errorf("decision: got %q want %q", merged.Decision, MaintenanceMerge)
 	}
-	if !merged.MergedIntoID.Valid || merged.MergedIntoID.Int64 != existingID {
+	if merged.MergedIntoID == nil || derefInt64(merged.MergedIntoID) != existingID {
 		t.Errorf("merged_into_id: got %v want %d", merged.MergedIntoID, existingID)
 	}
-	if !merged.AddPath.Valid || merged.AddPath.String != "/home/u/.claude/skills/deploy-staging/SKILL.md" {
+	if merged.AddPath == nil || derefStr(merged.AddPath) != "/home/u/.claude/skills/deploy-staging/SKILL.md" {
 		t.Errorf("add_path duplication failed: got %v", merged.AddPath)
 	}
 }
@@ -208,10 +208,10 @@ func TestMarkSkillCandidateMerged_HandAuthored(t *testing.T) {
 	if r.Decision != MaintenanceMerge {
 		t.Errorf("decision: got %q, want %q", r.Decision, MaintenanceMerge)
 	}
-	if r.MergedIntoID.Valid {
-		t.Errorf("merged_into_id should be NULL for hand-authored, got %d", r.MergedIntoID.Int64)
+	if r.MergedIntoID != nil {
+		t.Errorf("merged_into_id should be NULL for hand-authored, got %d", derefInt64(r.MergedIntoID))
 	}
-	if !r.AddPath.Valid || r.AddPath.String == "" {
+	if r.AddPath == nil || derefStr(r.AddPath) == "" {
 		t.Errorf("add_path should still be recorded: got %v", r.AddPath)
 	}
 }
@@ -238,11 +238,11 @@ func TestMarkSkillCandidateDiscarded_UpdatesRow(t *testing.T) {
 	if r.Decision != MaintenanceDiscard {
 		t.Errorf("decision: got %q want %q", r.Decision, MaintenanceDiscard)
 	}
-	if !r.DecisionAtMs.Valid {
+	if r.DecisionAtMs == nil {
 		t.Errorf("decision_at_ms not set")
 	}
-	if r.AddPath.Valid {
-		t.Errorf("add_path should be empty on discard, got %q", r.AddPath.String)
+	if r.AddPath != nil {
+		t.Errorf("add_path should be empty on discard, got %q", derefStr(r.AddPath))
 	}
 }
 
@@ -405,7 +405,7 @@ func TestLoadSkillCandidateEffectiveness_CountsLoadsAndFailures(t *testing.T) {
 	if e.FailedLoadsAfter != 1 {
 		t.Errorf("failed: got %d want 1 (only the in-window failure counts)", e.FailedLoadsAfter)
 	}
-	if !e.LastLoadedMs.Valid {
+	if e.LastLoadedMs == nil {
 		t.Errorf("last_loaded_ms not populated")
 	}
 }
@@ -657,7 +657,7 @@ func TestLoadAddedSkillCandidate(t *testing.T) {
 		if got.Decision != MaintenanceAdd {
 			t.Errorf("decision: got %q want %q", got.Decision, MaintenanceAdd)
 		}
-		if !got.AddPath.Valid || got.AddPath.String != "/p/SKILL.md" {
+		if got.AddPath == nil || derefStr(got.AddPath) != "/p/SKILL.md" {
 			t.Errorf("add_path: got %v", got.AddPath)
 		}
 	})
@@ -813,17 +813,17 @@ func TestSkillCandidate_LifecycleTransitionsClearStaleFields(t *testing.T) {
 			if r.Decision != tc.final.decision {
 				t.Errorf("decision: got %q, want %q", r.Decision, tc.final.decision)
 			}
-			if r.AddPath.Valid != tc.final.addPathValid {
+			if r.AddPath != nil != tc.final.addPathValid {
 				t.Errorf("add_path.Valid: got %v (=%q), want %v",
-					r.AddPath.Valid, r.AddPath.String, tc.final.addPathValid)
+					r.AddPath != nil, derefStr(r.AddPath), tc.final.addPathValid)
 			}
-			if r.AddBodySHA256.Valid != tc.final.bodyHashValid {
+			if r.AddBodySHA256 != nil != tc.final.bodyHashValid {
 				t.Errorf("add_body_sha256.Valid: got %v (=%q), want %v",
-					r.AddBodySHA256.Valid, r.AddBodySHA256.String, tc.final.bodyHashValid)
+					r.AddBodySHA256 != nil, derefStr(r.AddBodySHA256), tc.final.bodyHashValid)
 			}
-			if r.MergedIntoID.Valid != tc.final.mergedIntoValid {
+			if r.MergedIntoID != nil != tc.final.mergedIntoValid {
 				t.Errorf("merged_into_id.Valid: got %v (=%d), want %v",
-					r.MergedIntoID.Valid, r.MergedIntoID.Int64, tc.final.mergedIntoValid)
+					r.MergedIntoID != nil, derefInt64(r.MergedIntoID), tc.final.mergedIntoValid)
 			}
 		})
 	}
@@ -923,10 +923,10 @@ func TestUpdateSkillCandidateAddBodyHash(t *testing.T) {
 	if err != nil || got == nil {
 		t.Fatalf("reload: %v / %v", got, err)
 	}
-	if !got.AddPath.Valid || got.AddPath.String != "/p/new.md" {
+	if got.AddPath == nil || derefStr(got.AddPath) != "/p/new.md" {
 		t.Errorf("add_path: got %v, want /p/new.md", got.AddPath)
 	}
-	if !got.AddBodySHA256.Valid || got.AddBodySHA256.String != newHash {
+	if got.AddBodySHA256 == nil || derefStr(got.AddBodySHA256) != newHash {
 		t.Errorf("add_body_sha256: got %v, want %s", got.AddBodySHA256, newHash)
 	}
 
@@ -1129,7 +1129,7 @@ func TestSkillCandidates_NoSupersededByIdColumn(t *testing.T) {
 		t.Fatalf("rows: got %d want 2", len(candidates))
 	}
 	merged := candidates[0]
-	if !merged.MergedIntoID.Valid || merged.MergedIntoID.Int64 != target.ID {
+	if merged.MergedIntoID == nil || derefInt64(merged.MergedIntoID) != target.ID {
 		t.Errorf("merged_into_id self-FK broken: got %v want %d", merged.MergedIntoID, target.ID)
 	}
 }

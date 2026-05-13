@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -244,7 +243,7 @@ func (s *Server) handleSkillCandidatesEffectiveness(w http.ResponseWriter, r *ht
 			AddPath:          row.AddPath,
 			LoadsAfterAdd:    row.LoadsAfterAdd,
 			FailedLoadsAfter: row.FailedLoadsAfter,
-			LastLoadedMs:     nullable.Int64Ptr(row.LastLoadedMs),
+			LastLoadedMs:     row.LastLoadedMs,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

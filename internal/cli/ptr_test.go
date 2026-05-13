@@ -6,3 +6,16 @@ package cli
 // internal/web (Go test packages can't share types across
 // packages, so each test package keeps its own copy).
 func ptrTo[T any](v T) *T { return &v }
+
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+func derefInt64(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}

@@ -17,3 +17,12 @@ func derefStr(s *string) string {
 	}
 	return *s
 }
+
+// derefInt64 returns *p or 0 if p is nil. Test-only convenience
+// matching derefStr above.
+func derefInt64(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
