@@ -60,6 +60,20 @@ type Pipeline struct {
 // validation, extraction, and Sink.Write call. Errors propagate
 // directly to the caller (no per-event suppression — the daemon
 // returns 5xx).
+//
+// Perf note (arch_review_2026_05_14 #7, deferred): Process is
+// strictly serial today. Redaction + extraction + Sink.Write run
+// sequentially per envelope and the IngestWorker calls this one
+// row at a time. A multi-MB envelope can consume seconds of
+// per-row latency — which is why workerShutdownGrace had to be
+// raised to 20s and why the shutdown drain has a fresh budget
+// separate from the listener drain. The remediation is bounded
+// parallel extraction (extractors are independent and pure;
+// redaction reuses the Scanner; Sink.Write is the only ordering
+// point and FTS5's serialized writer is the lower bound). Out of
+// scope for the arch-review pass; needs its own perf-focused
+// branch with benchmarks and FTS5 contention measurement before
+// changing the shape.
 func (p *Pipeline) Process(ctx context.Context, e Event) (Result, error) {
 	if e.Envelope == nil {
 		return Result{}, errors.New("Pipeline.Process: nil envelope")
