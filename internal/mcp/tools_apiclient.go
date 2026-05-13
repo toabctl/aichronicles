@@ -664,22 +664,10 @@ func searchEventsAPIHandler(c *apiclient.Client) ToolHandler {
 				snippet = *h.Content
 			}
 			fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n",
-				short, formatTS(h.TsSourceMs), h.Kind, oneLineSnippet2(snippet))
+				short, formatTS(h.TsSourceMs), h.Kind, preview.OneLine(snippet))
 		}
 		return TextResult(b.String()), nil
 	}
-}
-
-// oneLineSnippet2 mirrors oneLineSnippet but takes a plain
-// string (api hits already projected the nullable). Kept local
-// to the api handlers so internal/store types don't leak in.
-func oneLineSnippet2(s string) string {
-	const maxRunes = 200
-	cleaned := strings.Join(strings.Fields(s), " ")
-	if len(cleaned) > maxRunes {
-		cleaned = cleaned[:maxRunes] + "…"
-	}
-	return cleaned
 }
 
 // --- list_sessions ---
@@ -756,7 +744,7 @@ func listSessionsAPIHandler(c *apiclient.Client) ToolHandler {
 				fp = *ss.FirstPrompt
 			}
 			fmt.Fprintf(&b, "%s\t%s\t%s\t%d\t%s\t%s\n",
-				short, started, ended, ss.EventCount, cwd, oneLineSnippet2(fp))
+				short, started, ended, ss.EventCount, cwd, preview.OneLine(fp))
 		}
 		return TextResult(b.String()), nil
 	}
@@ -1063,7 +1051,7 @@ func renderRecentSessionsForCwdAPI(ctx context.Context, c *apiclient.Client, b *
 		if s.LatestSummary != nil && *s.LatestSummary != "" {
 			title = *s.LatestSummary
 		} else if s.FirstPrompt != nil && *s.FirstPrompt != "" {
-			title = oneLineSnippet2(*s.FirstPrompt)
+			title = preview.OneLine(*s.FirstPrompt)
 		}
 		ended := "-"
 		if s.EndedAtMs != nil {
