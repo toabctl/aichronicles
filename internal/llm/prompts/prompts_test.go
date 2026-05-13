@@ -1,7 +1,6 @@
 package prompts
 
 import (
-	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -1716,7 +1715,7 @@ func TestRenderOutcomeCue_FailureAppendsErrorCountAndTerminator(t *testing.T) {
 				GitUndoCount:      1,
 				PromptRepeatCount: 0,
 				ErrorCount:        2,
-				LastEventKind:     sql.NullString{String: events.KindToolFailure, Valid: true},
+				LastEventKind:     ptrTo(events.KindToolFailure),
 			},
 			wantContains: []string{
 				"Outcome: failure_likely (4 tool_failures, 1 git_undos, 0 prompt_repeats, 2 errors), ended on " + events.KindToolFailure + "\n",
@@ -1730,7 +1729,7 @@ func TestRenderOutcomeCue_FailureAppendsErrorCountAndTerminator(t *testing.T) {
 				GitUndoCount:      0,
 				PromptRepeatCount: 2,
 				ErrorCount:        0,
-				LastEventKind:     sql.NullString{String: events.KindAssistantMessage, Valid: true},
+				LastEventKind:     ptrTo(events.KindAssistantMessage),
 			},
 			wantContains: []string{
 				"Outcome: mixed (1 tool_failures, 0 git_undos, 2 prompt_repeats)\n",
@@ -1742,7 +1741,7 @@ func TestRenderOutcomeCue_FailureAppendsErrorCountAndTerminator(t *testing.T) {
 			outcome: store.SessionOutcome{
 				Outcome:          store.OutcomeFailureLikely,
 				ToolFailureCount: 3,
-				LastEventKind:    sql.NullString{String: events.KindError, Valid: true},
+				LastEventKind:    ptrTo(events.KindError),
 			},
 			wantContains: []string{"ended on " + events.KindError + "\n"},
 		},

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -260,9 +259,7 @@ func sessionOutcomeFromWire(o wire.SessionOutcome) *store.SessionOutcome {
 		PromptRepeatCount: o.PromptRepeatCount,
 		Outcome:           store.OutcomeLabel(o.Outcome),
 	}
-	if o.LastEventKind != nil {
-		out.LastEventKind = sql.NullString{String: *o.LastEventKind, Valid: true}
-	}
+	out.LastEventKind = o.LastEventKind
 	return out
 }
 

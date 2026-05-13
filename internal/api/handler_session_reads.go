@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"github.com/toabctl/aichronicles/internal/events"
-	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -149,7 +148,7 @@ func (s *Server) handleSessionOutcome(w http.ResponseWriter, r *http.Request) {
 		GitUndoCount:      row.GitUndoCount,
 		PromptRepeatCount: row.PromptRepeatCount,
 		Outcome:           string(row.Outcome),
-		LastEventKind:     nullable.StringPtr(row.LastEventKind),
+		LastEventKind:     row.LastEventKind,
 	})
 }
 

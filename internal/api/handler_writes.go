@@ -1,7 +1,6 @@
 package api
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -175,9 +174,7 @@ func (s *Server) handleSessionOutcomeSave(w http.ResponseWriter, r *http.Request
 		PromptRepeatCount: req.PromptRepeatCount,
 		Outcome:           store.OutcomeLabel(req.Outcome),
 	}
-	if req.LastEventKind != nil {
-		o.LastEventKind = sql.NullString{String: *req.LastEventKind, Valid: true}
-	}
+	o.LastEventKind = req.LastEventKind
 	if err := store.SaveSessionOutcome(r.Context(), s.store.DB(), o); err != nil {
 		// Distinguish "missing session" (FK violation surfaces as
 		// the readable "session does not exist" error from the

@@ -163,9 +163,9 @@ func (s *Server) handleFailureShapes(w http.ResponseWriter, r *http.Request) {
 			ToolFailureCount:  row.ToolFailureCount,
 			GitUndoCount:      row.GitUndoCount,
 			PromptRepeatCount: row.PromptRepeatCount,
-			EndedAtMs:         nullable.Int64Ptr(row.EndedAtMs),
-			Cwd:               nullable.StringPtr(row.Cwd),
-			LastEventKind:     nullable.StringPtr(row.LastEventKind),
+			EndedAtMs:         row.EndedAtMs,
+			Cwd:               row.Cwd,
+			LastEventKind:     row.LastEventKind,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

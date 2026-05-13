@@ -3424,10 +3424,10 @@ func renderOutcomeCue(o *store.SessionOutcome) string {
 			parts = append(parts, fmt.Sprintf("%d errors", o.ErrorCount))
 		}
 		line := fmt.Sprintf("Outcome: %s (%s)", o.Outcome, strings.Join(parts, ", "))
-		if o.LastEventKind.Valid &&
-			(o.LastEventKind.String == events.KindToolFailure ||
-				o.LastEventKind.String == events.KindError) {
-			line += ", ended on " + o.LastEventKind.String
+		if o.LastEventKind != nil &&
+			(*o.LastEventKind == events.KindToolFailure ||
+				*o.LastEventKind == events.KindError) {
+			line += ", ended on " + *o.LastEventKind
 		}
 		return line + "\n"
 	default:

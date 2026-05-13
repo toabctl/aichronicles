@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/events"
+	"github.com/toabctl/aichronicles/internal/nullable"
 )
 
 // OutcomeLabel is the coarse derived verdict for a session. The
@@ -58,8 +59,10 @@ type SessionOutcome struct {
 	CompactCount      int
 	GitUndoCount      int
 	PromptRepeatCount int
-	LastEventKind     sql.NullString
-	Outcome           OutcomeLabel
+	// LastEventKind is nil for sessions without an event we
+	// can pin a label on (vanishingly rare in practice).
+	LastEventKind *string
+	Outcome       OutcomeLabel
 }
 
 // gitUndoRE matches a single shell command (no chain operators)
@@ -142,13 +145,15 @@ FROM events WHERE session_id = ?`
 
 	// Last event kind: the chronologically last event for this
 	// session. Tie-break on rowid like the start_cwd trigger does.
+	var lastEventKind sql.NullString
 	if err := db.QueryRowContext(ctx,
 		`SELECT kind FROM events WHERE session_id = ?
 		 ORDER BY ts_source_ms DESC, rowid DESC LIMIT 1`,
 		sessionID,
-	).Scan(&out.LastEventKind); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	).Scan(&lastEventKind); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return SessionOutcome{}, fmt.Errorf("last event kind: %w", err)
 	}
+	out.LastEventKind = nullable.StringPtr(lastEventKind)
 
 	// Git-undo count: scan shell_command extractions for this
 	// session; match each first-of-chain command against gitUndoRE.
@@ -263,20 +268,24 @@ func LoadSessionOutcome(ctx context.Context, db *sql.DB, sessionID string) (*Ses
 		        last_event_kind, outcome
 		   FROM session_outcomes WHERE session_id = ?`,
 		sessionID)
-	var o SessionOutcome
-	var label string
+	var (
+		o             SessionOutcome
+		label         string
+		lastEventKind sql.NullString
+	)
 	switch err := row.Scan(
 		&o.SessionID, &o.ComputedAtMs,
 		&o.UserPromptCount, &o.ToolUseCount, &o.ToolFailureCount,
 		&o.ErrorCount, &o.CompactCount,
 		&o.GitUndoCount, &o.PromptRepeatCount,
-		&o.LastEventKind, &label,
+		&lastEventKind, &label,
 	); {
 	case errors.Is(err, sql.ErrNoRows):
 		return nil, nil
 	case err != nil:
 		return nil, fmt.Errorf("scan session_outcomes: %w", err)
 	}
+	o.LastEventKind = nullable.StringPtr(lastEventKind)
 	o.Outcome = OutcomeLabel(label)
 	return &o, nil
 }
@@ -294,13 +303,13 @@ func LoadSessionOutcome(ctx context.Context, db *sql.DB, sessionID string) (*Ses
 // label for the dominant failure mode (so the LLM can group them).
 type FailureShape struct {
 	SessionID         string
-	EndedAtMs         sql.NullInt64
-	Cwd               sql.NullString
+	EndedAtMs         *int64
+	Cwd               *string
 	Title             string
 	ToolFailureCount  int
 	GitUndoCount      int
 	PromptRepeatCount int
-	LastEventKind     sql.NullString
+	LastEventKind     *string
 }
 
 // LoadFailureShapes returns sessions whose computed outcome is
@@ -345,14 +354,22 @@ SELECT s.id,
 	defer func() { _ = rows.Close() }()
 	var out []FailureShape
 	for rows.Next() {
-		var f FailureShape
+		var (
+			f             FailureShape
+			endedAtMs     sql.NullInt64
+			cwd           sql.NullString
+			lastEventKind sql.NullString
+		)
 		if err := rows.Scan(
-			&f.SessionID, &f.EndedAtMs, &f.Cwd, &f.Title,
+			&f.SessionID, &endedAtMs, &cwd, &f.Title,
 			&f.ToolFailureCount, &f.GitUndoCount, &f.PromptRepeatCount,
-			&f.LastEventKind,
+			&lastEventKind,
 		); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
+		f.EndedAtMs = nullable.Int64Ptr(endedAtMs)
+		f.Cwd = nullable.StringPtr(cwd)
+		f.LastEventKind = nullable.StringPtr(lastEventKind)
 		out = append(out, f)
 	}
 	return out, rows.Err()
@@ -388,17 +405,21 @@ func LoadSessionOutcomes(ctx context.Context, db *sql.DB, sessionIDs []string) (
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		var o SessionOutcome
-		var label string
+		var (
+			o             SessionOutcome
+			label         string
+			lastEventKind sql.NullString
+		)
 		if err := rows.Scan(
 			&o.SessionID, &o.ComputedAtMs,
 			&o.UserPromptCount, &o.ToolUseCount, &o.ToolFailureCount,
 			&o.ErrorCount, &o.CompactCount,
 			&o.GitUndoCount, &o.PromptRepeatCount,
-			&o.LastEventKind, &label,
+			&lastEventKind, &label,
 		); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
+		o.LastEventKind = nullable.StringPtr(lastEventKind)
 		o.Outcome = OutcomeLabel(label)
 		out[o.SessionID] = o
 	}
@@ -544,9 +565,9 @@ func toolFailureFloor(toolUseCount, toolFailureCount int) int {
 // Order matters: failure first (strongest claim), then success
 // (clean activity), then unknown (no real activity), else mixed.
 func deriveOutcomeLabel(o SessionOutcome) OutcomeLabel {
-	endedOnFailure := o.LastEventKind.Valid &&
-		(o.LastEventKind.String == events.KindToolFailure ||
-			o.LastEventKind.String == events.KindError)
+	endedOnFailure := o.LastEventKind != nil &&
+		(*o.LastEventKind == events.KindToolFailure ||
+			*o.LastEventKind == events.KindError)
 
 	failFloor := toolFailureFloor(o.ToolUseCount, o.ToolFailureCount)
 

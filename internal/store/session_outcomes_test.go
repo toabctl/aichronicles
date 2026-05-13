@@ -103,8 +103,8 @@ func TestComputeSessionOutcome_SuccessLikely(t *testing.T) {
 	if o.UserPromptCount != 1 || o.ToolUseCount != 1 || o.ToolFailureCount != 0 {
 		t.Errorf("counts wrong: %+v", o)
 	}
-	if o.LastEventKind.Valid && o.LastEventKind.String != events.KindAssistantMessage {
-		t.Errorf("last_event_kind: got %q want %q", o.LastEventKind.String, events.KindAssistantMessage)
+	if o.LastEventKind != nil && derefStr(o.LastEventKind) != events.KindAssistantMessage {
+		t.Errorf("last_event_kind: got %q want %q", derefStr(o.LastEventKind), events.KindAssistantMessage)
 	}
 }
 
@@ -290,7 +290,7 @@ func TestComputeSessionOutcome_FailureLikelyByEndedOnFailure(t *testing.T) {
 	if o.Outcome != OutcomeFailureLikely {
 		t.Errorf("outcome: got %q want %q (counts=%+v)", o.Outcome, OutcomeFailureLikely, o)
 	}
-	if !o.LastEventKind.Valid || o.LastEventKind.String != events.KindToolFailure {
+	if o.LastEventKind == nil || derefStr(o.LastEventKind) != events.KindToolFailure {
 		t.Errorf("last_event_kind: got %v want %q", o.LastEventKind, events.KindToolFailure)
 	}
 }
