@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/events"
@@ -84,6 +85,14 @@ type Server struct {
 	sseBus           *sseBus
 	worker           *IngestWorker
 	ingestQueueMax   int
+	// pendingDepth is the in-memory count of rows in ingest_pending.
+	// Handler increments after a successful enqueue; worker
+	// decrements after MarkPendingProcessed; backpressure reads
+	// this instead of doing a SELECT COUNT(*) on every POST.
+	// CAS-based reservation in handleIngest enforces the cap
+	// without the TOCTOU race the previous CountPending-then-INSERT
+	// pattern had.
+	pendingDepth atomic.Int64
 }
 
 // NewServer returns a Server backed by s. log nil falls back to a
@@ -109,15 +118,30 @@ func NewServer(s *store.Store, log *slog.Logger) *Server {
 		Logger:     log,
 	}
 	bus := newSSEBus(log.With("component", "sse_bus"))
-	return &Server{
+	srv := &Server{
 		store:            s,
 		slog:             log,
 		maxEnvelopeBytes: DefaultMaxEnvelopeBytes,
 		pipeline:         pipeline,
 		sseBus:           bus,
-		worker:           NewIngestWorker(s, pipeline, bus, log.With("component", "ingest_worker")),
 		ingestQueueMax:   DefaultIngestQueueMax,
 	}
+	srv.worker = NewIngestWorker(s, pipeline, bus, log.With("component", "ingest_worker"), &srv.pendingDepth)
+	// Seed pendingDepth from any rows the previous daemon
+	// instance left in ingest_pending. Best-effort: a failure
+	// here logs and leaves the counter at 0, which only matters
+	// if there actually IS a leftover backlog AND the operator
+	// is pushing enough load to hit the cap before the worker
+	// drains it. We accept the brief over-acceptance window in
+	// that pathological case; the alternative would be returning
+	// an error from NewServer, which the daemon main can't
+	// usefully recover from.
+	if n, err := store.CountPending(context.Background(), s.DB()); err != nil {
+		log.Warn("seed pendingDepth from store", "err", err)
+	} else {
+		srv.pendingDepth.Store(int64(n))
+	}
+	return srv
 }
 
 // Close terminates server-owned background subscribers (currently
@@ -345,25 +369,30 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	// + FTS indexing + SSE publish all happen there, off the
 	// hook's critical path.
 	//
-	// Backpressure: when CountPending exceeds s.ingestQueueMax we
-	// return 503 instead of accepting an envelope the worker
-	// can't drain. The hook treats 503 (transport-like error from
-	// its perspective) as a drop and trips the outage path so the
-	// operator sees the load explicitly rather than a silent
-	// buildup.
-	pending, err := store.CountPending(r.Context(), s.store.DB())
-	if err != nil {
-		s.slog.Error("ingest: count pending", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
-		return
-	}
-	if pending >= s.ingestQueueMax {
-		s.slog.Warn("ingest: queue full — rejecting",
-			"pending", pending, "max", s.ingestQueueMax)
-		writeProblem(w, http.StatusServiceUnavailable,
-			"Ingest queue is full",
-			fmt.Sprintf("pending=%d max=%d", pending, s.ingestQueueMax))
-		return
+	// Backpressure: pendingDepth is a CAS-protected counter that
+	// reflects the row count in ingest_pending (handler increments
+	// on enqueue; worker decrements on MarkPendingProcessed; seeded
+	// at NewServer from CountPending). The CAS loop reserves a slot
+	// BEFORE the insert so two concurrent handlers can't both see
+	// "depth=cap-1" and overshoot — the loser of the CAS sees the
+	// new depth and either retries (if room appeared) or 503s.
+	// The hook treats 503 (transport-like from its perspective) as
+	// a drop and trips the outage path so the operator sees the
+	// load explicitly rather than a silent buildup.
+	maxDepth := int64(s.ingestQueueMax)
+	for {
+		cur := s.pendingDepth.Load()
+		if cur >= maxDepth {
+			s.slog.Warn("ingest: queue full — rejecting",
+				"pending", cur, "max", maxDepth)
+			writeProblem(w, http.StatusServiceUnavailable,
+				"Ingest queue is full",
+				fmt.Sprintf("pending=%d max=%d", cur, maxDepth))
+			return
+		}
+		if s.pendingDepth.CompareAndSwap(cur, cur+1) {
+			break
+		}
 	}
 
 	var deduped bool
@@ -372,9 +401,17 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		_, deduped, err = store.EnqueuePending(r.Context(), tx, env.EventID, body, time.Now().UnixMilli())
 		return err
 	}); err != nil {
+		// Reservation didn't translate into a real row; release it.
+		s.pendingDepth.Add(-1)
 		s.slog.Error("ingest: enqueue", "event_id", env.EventID, "err", err)
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
+	}
+	// Dedup at phase 1: no new row was inserted (UNIQUE collision on
+	// event_id), but we already reserved a slot. Release it so the
+	// counter still reflects the actual row count in the table.
+	if deduped {
+		s.pendingDepth.Add(-1)
 	}
 
 	// Nudge the worker so it drains immediately rather than

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/events"
@@ -70,6 +71,12 @@ type IngestWorker struct {
 	maxAttempts    int
 	shutdownBudget time.Duration
 
+	// pendingDepth points at the Server's in-memory queue-depth
+	// counter. The worker decrements it after MarkPendingProcessed
+	// commits so handler-side backpressure stays accurate without
+	// the per-POST CountPending(*) scan.
+	pendingDepth *atomic.Int64
+
 	// wake is a 1-slot buffered channel. Handlers send a non-
 	// blocking signal here after each enqueue; the worker's
 	// select coalesces multiple wakes into one drain pass.
@@ -82,9 +89,12 @@ type IngestWorker struct {
 
 // NewIngestWorker builds a worker bound to the given store, pipeline
 // (typically the same Pipeline the Server uses for sync ingest in
-// the pre-async path), and SSE bus. A nil log falls back to a
-// discard handler so callers don't need a per-site guard.
-func NewIngestWorker(s *store.Store, pipeline events.Pipeline, bus *sseBus, log *slog.Logger) *IngestWorker {
+// the pre-async path), and SSE bus. pendingDepth is the Server's
+// queue-depth counter the worker decrements after each successful
+// drain; a nil pointer is tolerated for tests that don't care
+// about the counter. A nil log falls back to a discard handler so
+// callers don't need a per-site guard.
+func NewIngestWorker(s *store.Store, pipeline events.Pipeline, bus *sseBus, log *slog.Logger, pendingDepth *atomic.Int64) *IngestWorker {
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
@@ -97,6 +107,7 @@ func NewIngestWorker(s *store.Store, pipeline events.Pipeline, bus *sseBus, log 
 		pollInterval:   defaultWorkerPollInterval,
 		maxAttempts:    defaultWorkerMaxAttempts,
 		shutdownBudget: defaultWorkerShutdownBudget,
+		pendingDepth:   pendingDepth,
 		wake:           make(chan struct{}, 1),
 		done:           make(chan struct{}),
 	}
@@ -247,6 +258,14 @@ func (w *IngestWorker) processOne(ctx context.Context, row store.IngestPendingRo
 		w.log.Warn("ingest worker: delete pending row after success",
 			"id", row.ID, "event_id", row.EventID, "err", err)
 		return
+	}
+	// Decrement the in-memory queue-depth counter so handler-side
+	// backpressure stays accurate. Done AFTER the DELETE commits,
+	// not before, so a crash between the two leaves the counter
+	// agreeing with the table (over-counted by one, healed on next
+	// daemon start's NewServer seed via CountPending).
+	if w.pendingDepth != nil {
+		w.pendingDepth.Add(-1)
 	}
 	// SSE publish only for newly-stored events. Re-processed
 	// duplicates were already broadcast on the original ingest,

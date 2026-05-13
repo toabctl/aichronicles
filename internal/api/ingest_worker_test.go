@@ -36,7 +36,7 @@ func newTestWorker(t *testing.T) (*IngestWorker, *store.Store, *sseBus) {
 		Extractors: events.DefaultExtractors(),
 		Redactor:   events.NewScannerRedactor(redact.Default()),
 	}
-	return NewIngestWorker(s, pipeline, bus, nil), s, bus
+	return NewIngestWorker(s, pipeline, bus, nil, nil), s, bus
 }
 
 // validEnvelopeBytes returns a redacted-flag-true envelope JSON
