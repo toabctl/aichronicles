@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 	"time"
 )
@@ -27,7 +26,7 @@ func TestSaveSemanticFact_Roundtrip(t *testing.T) {
 		Predicate:         "uses_language_version",
 		Object:            "Go 1.26",
 		Confidence:        0.95,
-		EvidenceQuote:     sql.NullString{String: "go.mod requires 1.26", Valid: true},
+		EvidenceQuote:     ptrTo("go.mod requires 1.26"),
 		AssertedAtMs:      1_700_000_000_000,
 	}
 	id, err := SaveSemanticFact(ctx, s.DB(), fact)
@@ -175,8 +174,8 @@ func TestSaveSemanticFact_EvidenceCascadesOnSessionDelete(t *testing.T) {
 		Predicate:         "runs_tests_via",
 		Object:            "go test ./...",
 		Confidence:        1.0,
-		EvidenceSessionID: sql.NullString{String: sessID, Valid: true},
-		EvidenceQuote:     sql.NullString{String: "ran go test ./... cleanly", Valid: true},
+		EvidenceSessionID: ptrTo(sessID),
+		EvidenceQuote:     ptrTo("ran go test ./... cleanly"),
 		AssertedAtMs:      1_700_000_000_000,
 	}); err != nil {
 		t.Fatalf("save: %v", err)
@@ -195,8 +194,8 @@ func TestSaveSemanticFact_EvidenceCascadesOnSessionDelete(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("fact must survive session deletion: got %d rows", len(got))
 	}
-	if got[0].EvidenceSessionID.Valid {
-		t.Errorf("evidence_session_id must NULL on cascade: got %v", got[0].EvidenceSessionID)
+	if got[0].EvidenceSessionID != nil {
+		t.Errorf("evidence_session_id must NULL on cascade: got %v", *got[0].EvidenceSessionID)
 	}
 }
 

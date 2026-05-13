@@ -64,12 +64,12 @@ func (s *Server) factsHandler(w http.ResponseWriter, r *http.Request) {
 			Confidence:  int(f.Confidence * 100),
 			AssertedAgo: timefmt.Relative(f.AssertedAtMs, now),
 		}
-		if f.EvidenceQuote.Valid {
-			row.Quote = f.EvidenceQuote.String
+		if f.EvidenceQuote != nil {
+			row.Quote = *f.EvidenceQuote
 		}
-		if f.EvidenceSessionID.Valid {
-			row.SessionID = f.EvidenceSessionID.String
-			row.SessionShort = shortID(f.EvidenceSessionID.String)
+		if f.EvidenceSessionID != nil {
+			row.SessionID = *f.EvidenceSessionID
+			row.SessionShort = shortID(*f.EvidenceSessionID)
 		}
 		page.Facts = append(page.Facts, row)
 	}

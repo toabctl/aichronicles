@@ -148,12 +148,8 @@ func (s *Server) handleFactsSave(w http.ResponseWriter, r *http.Request) {
 		Confidence:        req.Confidence,
 		AssertedAtMs:      req.AssertedAtMs,
 	}
-	if req.EvidenceSessionID != nil {
-		f.EvidenceSessionID = sql.NullString{String: *req.EvidenceSessionID, Valid: true}
-	}
-	if req.EvidenceQuote != nil {
-		f.EvidenceQuote = sql.NullString{String: *req.EvidenceQuote, Valid: true}
-	}
+	f.EvidenceSessionID = req.EvidenceSessionID
+	f.EvidenceQuote = req.EvidenceQuote
 	id, err := store.SaveSemanticFact(r.Context(), s.store.DB(), f)
 	if err != nil {
 		s.slog.Error("SaveSemanticFact", "err", err)

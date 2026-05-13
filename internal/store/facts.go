@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/toabctl/aichronicles/internal/nullable"
 )
 
 // SemanticFact is one row of the semantic_facts table — a typed
@@ -28,8 +30,14 @@ type SemanticFact struct {
 	Predicate         string
 	Object            string
 	Confidence        float64
-	EvidenceSessionID sql.NullString
-	EvidenceQuote     sql.NullString
+	// EvidenceSessionID / EvidenceQuote are optional — a fact may
+	// be derived without a verbatim quote (e.g. a project-level
+	// fact summarised across many sessions). Pointer types mean
+	// callers branch on `if x != nil` instead of unwrapping
+	// sql.NullString, and JSON marshals them as null rather than
+	// `{"String":"","Valid":false}`.
+	EvidenceSessionID *string
+	EvidenceQuote     *string
 	AssertedAtMs      int64
 }
 
@@ -208,16 +216,27 @@ func FactSubjectsLike(ctx context.Context, db *sql.DB, needle string, limit int)
 // scanSemanticFacts iterates rows from a SELECT * shaped query and
 // produces the slice. Shared between LoadFactsForSubject and
 // LoadRecentFacts so the column order stays in lockstep.
+//
+// EvidenceSessionID / EvidenceQuote are scanned into sql.NullString
+// (the driver shape) then lifted to *string via nullable.StringPtr
+// before crossing the store boundary. The intermediate sql.Null*
+// values are purely Scan-time scaffolding.
 func scanSemanticFacts(rows *sql.Rows) ([]SemanticFact, error) {
 	var out []SemanticFact
 	for rows.Next() {
-		var f SemanticFact
+		var (
+			f        SemanticFact
+			evSessID sql.NullString
+			evQuote  sql.NullString
+		)
 		if err := rows.Scan(
 			&f.ID, &f.SourceLLMOutputID, &f.Subject, &f.Predicate, &f.Object,
-			&f.Confidence, &f.EvidenceSessionID, &f.EvidenceQuote, &f.AssertedAtMs,
+			&f.Confidence, &evSessID, &evQuote, &f.AssertedAtMs,
 		); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
+		f.EvidenceSessionID = nullable.StringPtr(evSessID)
+		f.EvidenceQuote = nullable.StringPtr(evQuote)
 		out = append(out, f)
 	}
 	return out, rows.Err()

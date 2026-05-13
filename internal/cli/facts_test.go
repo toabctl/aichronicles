@@ -93,7 +93,7 @@ func TestRunFactsForSession_PersistsFactsIntoSemanticFacts(t *testing.T) {
 			t.Errorf("fact %s/%s/%s source_llm_output_id=%d, want %d",
 				fact.Subject, fact.Predicate, fact.Object, fact.SourceLLMOutputID, id)
 		}
-		if !fact.EvidenceSessionID.Valid || fact.EvidenceSessionID.String != sessID {
+		if fact.EvidenceSessionID == nil || *fact.EvidenceSessionID != sessID {
 			t.Errorf("evidence_session_id: got %v want %s", fact.EvidenceSessionID, sessID)
 		}
 	}

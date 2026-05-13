@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"database/sql"
 	"net/http"
 	"strings"
 	"testing"
@@ -101,8 +100,8 @@ func TestFactsPage_DetailRendersFactsTable(t *testing.T) {
 		Predicate:         "uses_language_version",
 		Object:            "Go 1.26",
 		Confidence:        0.95,
-		EvidenceSessionID: sql.NullString{String: sessID, Valid: true},
-		EvidenceQuote:     sql.NullString{String: "go.mod requires 1.26", Valid: true},
+		EvidenceSessionID: ptrTo(sessID),
+		EvidenceQuote:     ptrTo("go.mod requires 1.26"),
 		AssertedAtMs:      time.Now().UnixMilli(),
 	}); err != nil {
 		t.Fatalf("save: %v", err)
