@@ -25,6 +25,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -34,6 +35,8 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/google/uuid"
 
+	"github.com/toabctl/aichronicles/internal/api"
+	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/web"
@@ -94,7 +97,14 @@ func startEnv(t *testing.T) *testEnv {
 		t.Fatalf("listen: %v", err)
 	}
 
-	srv := web.NewServer(st, web.Config{Listener: ln, ShutdownTimeout: 2 * time.Second},
+	// Stand up an in-process api.Server fronting the test store so
+	// the web (which now reads through apiclient) has a real wire
+	// path to dial. Mirrors the unit-test fixture in
+	// internal/web/server_test.go.
+	apiHTTP := httptest.NewServer(api.NewServer(st, nil).Handler())
+	apiC := apiclient.NewClientForTesting(apiHTTP.Client(), apiHTTP.URL)
+
+	srv := web.NewServer(apiC, web.Config{Listener: ln, ShutdownTimeout: 2 * time.Second},
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	runCtx, cancel := context.WithCancel(context.Background())
@@ -121,6 +131,7 @@ func startEnv(t *testing.T) *testEnv {
 		case <-time.After(5 * time.Second):
 			t.Errorf("server did not shut down within 5s after cancel")
 		}
+		apiHTTP.Close()
 		_ = st.Close()
 	}
 	t.Cleanup(env.stop)
