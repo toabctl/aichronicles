@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/toabctl/aichronicles/internal/nullable"
 )
 
 // DefaultInductionIdle is the canonical "session has ended" idle
@@ -28,10 +30,13 @@ const DefaultInductionIdle = 30 * time.Minute
 // by the WHERE clause (sessions.ended_at_ms IS NOT NULL +
 // event_count >= minEvents > 0).
 type InductionCandidate struct {
-	ID          string
-	StartedAtMs sql.NullInt64
-	EndedAtMs   sql.NullInt64
-	Cwd         sql.NullString
+	ID string
+	// StartedAtMs / EndedAtMs / Cwd are optional. Pointer types
+	// mean callers branch on `if x != nil` instead of unwrapping
+	// sql.Null*; see arch_review_2026_05_13 MEDIUM #10.
+	StartedAtMs *int64
+	EndedAtMs   *int64
+	Cwd         *string
 	EventCount  int
 }
 
@@ -123,10 +128,18 @@ func LoadInductionCandidates(ctx context.Context, db *sql.DB, nowMs, idleThresho
 
 	var out []InductionCandidate
 	for rows.Next() {
-		var c InductionCandidate
-		if err := rows.Scan(&c.ID, &c.StartedAtMs, &c.EndedAtMs, &c.Cwd, &c.EventCount); err != nil {
+		var (
+			c           InductionCandidate
+			startedAtMs sql.NullInt64
+			endedAtMs   sql.NullInt64
+			cwd         sql.NullString
+		)
+		if err := rows.Scan(&c.ID, &startedAtMs, &endedAtMs, &cwd, &c.EventCount); err != nil {
 			return nil, fmt.Errorf("scan induction candidate: %w", err)
 		}
+		c.StartedAtMs = nullable.Int64Ptr(startedAtMs)
+		c.EndedAtMs = nullable.Int64Ptr(endedAtMs)
+		c.Cwd = nullable.StringPtr(cwd)
 		out = append(out, c)
 	}
 	return out, rows.Err()

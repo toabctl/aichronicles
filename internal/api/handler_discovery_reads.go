@@ -130,9 +130,9 @@ func (s *Server) handleInductionCandidates(w http.ResponseWriter, r *http.Reques
 		out.Candidates = append(out.Candidates, wire.InductionCandidate{
 			ID:          row.ID,
 			EventCount:  row.EventCount,
-			StartedAtMs: nullable.Int64Ptr(row.StartedAtMs),
-			EndedAtMs:   nullable.Int64Ptr(row.EndedAtMs),
-			Cwd:         nullable.StringPtr(row.Cwd),
+			StartedAtMs: row.StartedAtMs,
+			EndedAtMs:   row.EndedAtMs,
+			Cwd:         row.Cwd,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
