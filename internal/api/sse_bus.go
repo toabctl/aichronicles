@@ -116,18 +116,24 @@ func (b *sseBus) subscribe() (<-chan wire.StreamEvent, func(), bool) {
 // operator looking at a "lost event" in the live feed can trace
 // it back to a specific disconnected subscriber (the same id is
 // emitted by the SSE handler on its subscribe / disconnect log
-// lines). Logging inside the b.mu critical section is intentional:
-// drops are rare (only a genuinely slow consumer overruns 64
-// buffered events), and a single slog.Warn call doesn't measurably
-// extend the writer's lock hold.
+// lines). The log call happens AFTER releasing b.mu so a slow
+// slog handler (journal writer, network sink) doesn't extend the
+// writer's lock hold for every other publisher. Drops are rare,
+// but the I/O cost of slog is unbounded.
 //
 // No-op after Close.
 func (b *sseBus) Publish(ev wire.StreamEvent) {
 	if b.closed.Load() {
 		return
 	}
+	// dropped collects the sub_ids removed in this Publish so we
+	// can log them after releasing b.mu. Pre-allocate one slot —
+	// the common case is zero drops; the rare case is one.
+	type dropRec struct{ id uint64 }
+	var dropped []dropRec
+	remaining := 0
+
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	for s := range b.subs {
 		select {
 		case s.ch <- ev:
@@ -136,12 +142,18 @@ func (b *sseBus) Publish(ev wire.StreamEvent) {
 			s.overflow.Store(true)
 			delete(b.subs, s)
 			close(s.ch)
-			b.log.Warn("sse: subscriber dropped (slow consumer)",
-				"sub_id", s.id,
-				"event_kind", ev.Kind,
-				"remaining", len(b.subs),
-				"buffer_size", SSEBufferSize)
+			dropped = append(dropped, dropRec{id: s.id})
 		}
+	}
+	remaining = len(b.subs)
+	b.mu.Unlock()
+
+	for _, d := range dropped {
+		b.log.Warn("sse: subscriber dropped (slow consumer)",
+			"sub_id", d.id,
+			"event_kind", ev.Kind,
+			"remaining", remaining,
+			"buffer_size", SSEBufferSize)
 	}
 }
 
