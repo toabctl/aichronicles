@@ -18,11 +18,20 @@ import (
 
 // pointStoreEnv arranges for the completion func's
 // paths.ResolveStorePath("") to land on a fresh per-test store
-// by setting AICHRONICLES_DB. t.Setenv restores on cleanup.
+// by setting AICHRONICLES_DB AND points the apiclient at a
+// non-existent UDS via AICHRONICLES_API_SOCKET. Without the
+// socket override the completion command dials the running
+// daemon's production socket (the default location), making
+// the test depend on whether `aichronicles-api.service` is
+// active — empty-store assertions fail under a real daemon
+// even with AICHRONICLES_DB set. t.Setenv restores both on
+// cleanup.
 func pointStoreEnv(t *testing.T) string {
 	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "store.db")
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "store.db")
 	t.Setenv("AICHRONICLES_DB", dbPath)
+	t.Setenv("AICHRONICLES_API_SOCKET", filepath.Join(dir, "nope.sock"))
 	return dbPath
 }
 
