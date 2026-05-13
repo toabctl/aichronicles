@@ -98,15 +98,22 @@ var callRules = []callRule{
 		// they spin up an in-process apiclient against an httptest
 		// server backed by a temp *store.Store — same-process,
 		// share-handle is fine.
-		//
-		// internal/web is INTENTIONALLY NOT subject to this rule:
-		// it mounts inside the api daemon, shares the same process
-		// and store handle, and reading through a UDS hop to its
-		// own process would be theatre.
 		Dir: "internal/mcp",
 		Forbidden: regexp.MustCompile(
 			`\bstore\.(Load|Save|Insert|Update|Delete|Has|Last|Query|Vacuum|Segment)\w*\(`),
 		Reason: "internal/mcp must read/write through apiclient (cross-process); test files exempt",
+	},
+	{
+		// internal/web is a separate process (aichronicles-web.service),
+		// same blast-radius reasoning as MCP. Web reads through
+		// internal/apiclient against the api daemon's UDS. Tests
+		// exercise the wire path through an httptest.Server fronting
+		// a temp *store.Store; non-test files must not reach for the
+		// store directly.
+		Dir: "internal/web",
+		Forbidden: regexp.MustCompile(
+			`\bstore\.(Load|Save|Insert|Update|Delete|Has|Last|Query|Vacuum|Segment)\w*\(`),
+		Reason: "internal/web must read/write through apiclient (cross-process); test files exempt",
 	},
 }
 
