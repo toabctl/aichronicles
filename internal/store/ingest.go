@@ -48,9 +48,11 @@ func IngestEnvelope(ctx context.Context, tx *sql.Tx, env *events.Envelope, envel
 // or a daemon shutdown can abort a long write cleanly.
 //
 // Returns deduped=true when raw_envelopes already had this event_id
-// and no rows were written. Returns (false, err) on any SQL error.
-// Returns (false, ErrRedactionRequired) if env.Redaction.Applied is
-// not explicitly true.
+// and no rows were written; ingestSeq is still the value burned from
+// the seq counter for this call (gaps in raw_envelopes.ingest_seq
+// are expected and harmless — see comments inside). Returns
+// (false, err) on any SQL error. Returns (false, ErrRedactionRequired)
+// if env.Redaction.Applied is not explicitly true.
 // Cascading trigger work (sessions.event_count, events_fts) is handled
 // by the schema's AFTER INSERT triggers.
 func IngestEnvelopeWithExtractions(
@@ -108,8 +110,11 @@ func IngestEnvelopeWithExtractions(
 	if n == 0 {
 		// Event_id collision — real duplicate from upstream retry.
 		// Distinct from the silent-loss path the previous
-		// implementation could fall into.
-		return 0, true, nil
+		// implementation could fall into. Return the burned
+		// nextSeq so callers can still order/log the rejected
+		// envelope; the previously-stored row keeps its own
+		// (earlier) ingest_seq.
+		return nextSeq, true, nil
 	}
 
 	sessionID := events.DeriveSessionID(env.SourceAgent, env.SourceSessionID)

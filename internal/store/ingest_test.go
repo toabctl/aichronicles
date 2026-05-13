@@ -388,22 +388,35 @@ func TestIngestEnvelope_DuplicateIsDedupedWithoutTouching(t *testing.T) {
 	s := openTemp(t)
 	env, raw := newValidEnvelope(t)
 
+	var firstSeq int64
 	withTx(t, s, func(tx *sql.Tx) {
-		if _, _, err := IngestEnvelope(t.Context(), tx, env, raw, 1); err != nil {
+		seq, _, err := IngestEnvelope(t.Context(), tx, env, raw, 1)
+		if err != nil {
 			t.Fatalf("first: %v", err)
 		}
+		firstSeq = seq
 	})
 
 	var firstCount int
 	_ = s.DB().QueryRow(`SELECT event_count FROM sessions`).Scan(&firstCount)
 
 	withTx(t, s, func(tx *sql.Tx) {
-		_, d, err := IngestEnvelope(t.Context(), tx, env, raw, 2)
+		seq, d, err := IngestEnvelope(t.Context(), tx, env, raw, 2)
 		if err != nil {
 			t.Fatalf("second: %v", err)
 		}
 		if !d {
 			t.Error("second insert should report deduped")
+		}
+		// The dedup path burns a seq value from the seq table
+		// (the UPDATE...RETURNING runs unconditionally). The
+		// returned seq must reflect that allocation, not zero —
+		// callers log/order by it.
+		if seq == 0 {
+			t.Error("deduped insert returned seq=0; want the burned allocation")
+		}
+		if seq <= firstSeq {
+			t.Errorf("deduped seq=%d should exceed firstSeq=%d", seq, firstSeq)
 		}
 	})
 
