@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -85,9 +84,7 @@ func runInsights(ctx context.Context, c *apiclient.Client, opts runInsightsOpts)
 // JSON gets the raw struct; text gets a hand-tuned digest layout.
 func renderInsights(out io.Writer, r *wire.Insights, format OutputFormat) error {
 	if format == FormatJSON {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(r)
+		return emitJSON(out, r)
 	}
 	return renderInsightsText(out, r)
 }

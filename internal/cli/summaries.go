@@ -365,10 +365,7 @@ func formatTokenSuffix(in, out int64) string {
 // indented JSON. Separate function so the deferred emitter in
 // runSummariesFill can call it without a closure.
 func writeJSONFillResults(w io.Writer, results []fillStatus) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	enc.SetEscapeHTML(false)
-	return enc.Encode(results)
+	return emitJSON(w, results)
 }
 
 // latestSummaryRow returns the most recent kind=summary llm_outputs
@@ -437,10 +434,7 @@ func writeMissingSummariesJSON(w io.Writer, rows []wire.SessionDigest) error {
 		}
 		dst = append(dst, o)
 	}
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	enc.SetEscapeHTML(false)
-	return enc.Encode(dst)
+	return emitJSON(w, dst)
 }
 
 func newSummariesListCmd() *cobra.Command {

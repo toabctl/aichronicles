@@ -716,9 +716,7 @@ func renderInductionList(out io.Writer, rows []wire.LLMOutput, format OutputForm
 	if format == FormatJSON {
 		// Round-trip the raw rows so a JSON consumer gets the full
 		// body and can branch on the skill/workflow fields themselves.
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(rows)
+		return emitJSON(out, rows)
 	}
 	if len(rows) == 0 {
 		_, _ = fmt.Fprintf(out, "no induction runs recorded yet — try `aichronicles induction sweep`\n")

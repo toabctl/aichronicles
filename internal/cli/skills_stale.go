@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -118,9 +117,7 @@ func runSkillsImpact(ctx context.Context, c *apiclient.Client, opts runSkillsImp
 // user looking at both side-by-side has consistent muscle memory.
 func renderSkillImpact(out io.Writer, rows []wire.SkillImpact, since, window time.Duration, format OutputFormat) error {
 	if format == FormatJSON {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(map[string]any{
+		return emitJSON(out, map[string]any{
 			"since":  since.String(),
 			"window": window.String(),
 			"skills": rows,
@@ -245,9 +242,7 @@ func runSkillsStale(ctx context.Context, c *apiclient.Client, opts runSkillsStal
 // rather than an empty table.
 func renderSkillStaleness(out io.Writer, rows []wire.SkillStaleness, since, window time.Duration, format OutputFormat) error {
 	if format == FormatJSON {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(map[string]any{
+		return emitJSON(out, map[string]any{
 			"since":  since.String(),
 			"window": window.String(),
 			"skills": rows,

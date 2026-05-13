@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -135,9 +134,7 @@ func runUnresolved(ctx context.Context, c *apiclient.Client, opts runUnresolvedO
 // signal rather than a confusing empty injection.
 func renderUnresolved(out io.Writer, cwd string, items []wire.UnresolvedItem, format OutputFormat) error {
 	if format == FormatJSON {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(map[string]any{
+		return emitJSON(out, map[string]any{
 			"cwd":   cwd,
 			"items": items,
 		})

@@ -389,9 +389,7 @@ func renderFactsResult(out io.Writer, sessionID string, r *prompts.FactsResult, 
 // shape since `facts list` goes through the api now.
 func renderFactsList(out io.Writer, rows []wire.LLMOutput, format OutputFormat) error {
 	if format == FormatJSON {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(rows)
+		return emitJSON(out, rows)
 	}
 	if len(rows) == 0 {
 		_, _ = fmt.Fprintf(out, "no facts inductions recorded yet — try `aichronicles facts induce --session <id>`\n")
@@ -427,9 +425,7 @@ func renderFactsList(out io.Writer, rows []wire.LLMOutput, format OutputFormat) 
 // "what do I know about /work/foo" cleanly.
 func renderFactsForSubject(out io.Writer, subject string, facts []wire.SemanticFact, format OutputFormat) error {
 	if format == FormatJSON {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(facts)
+		return emitJSON(out, facts)
 	}
 	if len(facts) == 0 {
 		_, _ = fmt.Fprintf(out, "no facts known for subject %q yet — try `aichronicles facts induce --session <id>` on a session in this project\n", subject)
