@@ -207,3 +207,22 @@ type DBPageInfoResponse struct {
 	PageSize  int64 `json:"page_size"`
 	Bytes     int64 `json:"bytes"`
 }
+
+// IngestStatsResponse is the body for GET /v1/admin/stats. A
+// snapshot of the ingest_pending queue: depth, age of the oldest
+// row, and the worst row's attempt count. Lets an operator answer
+// "is the worker keeping up?" with a single curl rather than
+// journal-grepping for "ingest worker: row failed".
+type IngestStatsResponse struct {
+	// Pending is the current row count in ingest_pending.
+	Pending int `json:"pending"`
+	// Capacity is the configured backlog cap; once Pending hits
+	// this the daemon returns 503 to new ingest POSTs.
+	Capacity int `json:"capacity"`
+	// OldestAgeMs is milliseconds since the oldest pending row's
+	// received_at_ms. Zero when the queue is empty.
+	OldestAgeMs int64 `json:"oldest_age_ms"`
+	// MaxAttempts is the largest attempt_count across all pending
+	// rows. Non-zero means at least one row has failed before.
+	MaxAttempts int `json:"max_attempts"`
+}

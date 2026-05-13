@@ -227,6 +227,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/skills/failures", s.handleSkillFailures)
 	mux.HandleFunc("POST /v1/admin/vacuum", s.handleVacuum)
 	mux.HandleFunc("GET /v1/admin/db-info", s.handleDBInfo)
+	mux.HandleFunc("GET /v1/admin/stats", s.handleIngestStats)
 	mux.HandleFunc("GET /v1/summaries", s.handleSummariesGet)
 	mux.HandleFunc("GET /v1/llm-outputs", s.handleLLMOutputGet)
 	mux.HandleFunc("GET /v1/unresolved", s.handleUnresolvedForCwd)

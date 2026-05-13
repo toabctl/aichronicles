@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/store"
@@ -410,4 +411,31 @@ func (s *Server) handleDBInfo(w http.ResponseWriter, r *http.Request) {
 		PageSize:  info.PageSize,
 		Bytes:     info.Bytes(),
 	})
+}
+
+// handleIngestStats serves GET /v1/admin/stats — a snapshot of
+// the ingest queue's health (depth, oldest-row age, worst attempt
+// count) so an operator can curl one URL instead of journal-
+// grepping for worker progress. arch_review_2026_05_13 LOW #20.
+func (s *Server) handleIngestStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := store.QueryIngestPendingStats(r.Context(), s.store.DB())
+	if err != nil {
+		s.slog.Error("QueryIngestPendingStats", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	resp := wire.IngestStatsResponse{
+		Pending:     stats.Count,
+		Capacity:    s.ingestQueueMax,
+		MaxAttempts: stats.MaxAttempts,
+	}
+	if stats.OldestReceivedAtMs > 0 {
+		resp.OldestAgeMs = time.Now().UnixMilli() - stats.OldestReceivedAtMs
+		if resp.OldestAgeMs < 0 {
+			// Clock skew / time-pinned test — clamp at 0 so
+			// the response is never visibly nonsensical.
+			resp.OldestAgeMs = 0
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

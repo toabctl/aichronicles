@@ -208,6 +208,47 @@ func MarkPendingFailed(ctx context.Context, db *sql.DB, id int64, tsServerMs int
 	return nil
 }
 
+// IngestPendingStats is what the admin stats handler returns:
+// a snapshot of the queue's depth, the oldest row's age, and
+// the worst row's attempt count. Cheap-to-compute aggregate so
+// an operator can curl /v1/admin/stats instead of grepping the
+// journal for "is the worker keeping up?".
+type IngestPendingStats struct {
+	// Count is the current row count in ingest_pending.
+	Count int
+	// OldestReceivedAtMs is the received_at_ms of the oldest
+	// row. Zero when Count == 0.
+	OldestReceivedAtMs int64
+	// MaxAttempts is the largest attempt_count across all
+	// pending rows — non-zero indicates rows that have failed
+	// at least once and are retrying.
+	MaxAttempts int
+}
+
+// QueryIngestPendingStats returns the snapshot defined by
+// IngestPendingStats. One SQL round-trip; the aggregate query is
+// cheap on a small staging table (microseconds at typical
+// backlog sizes).
+func QueryIngestPendingStats(ctx context.Context, db *sql.DB) (IngestPendingStats, error) {
+	var (
+		stats  IngestPendingStats
+		oldest sql.NullInt64
+		maxAt  sql.NullInt64
+	)
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*), MIN(received_at_ms), MAX(attempt_count) FROM ingest_pending`,
+	).Scan(&stats.Count, &oldest, &maxAt); err != nil {
+		return stats, fmt.Errorf("query ingest_pending stats: %w", err)
+	}
+	if oldest.Valid {
+		stats.OldestReceivedAtMs = oldest.Int64
+	}
+	if maxAt.Valid {
+		stats.MaxAttempts = int(maxAt.Int64)
+	}
+	return stats, nil
+}
+
 // CountPending returns the current backlog size. Drives the
 // daemon's backpressure decision: when CountPending exceeds the
 // configured cap, handleIngest returns 503 to the hook (which
