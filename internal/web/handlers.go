@@ -523,6 +523,16 @@ func orDash(s sql.NullString) string {
 	return nullable.OrDash(s)
 }
 
+// orDashPtr is the *string equivalent of orDash, used by store
+// types that have moved off sql.NullString. Same display
+// contract: nil OR empty → "-".
+func orDashPtr(s *string) string {
+	if s == nil || *s == "" {
+		return "-"
+	}
+	return *s
+}
+
 // truncatePreview flattens whitespace and rune-caps a prompt
 // preview for use in a single table cell. Wraps internal/preview
 // so the cap matches MCP's oneLineSnippet and the CLI snippet

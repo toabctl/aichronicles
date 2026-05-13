@@ -101,11 +101,11 @@ func buildInsightsPage(r *store.InsightsReport, days int) InsightsPage {
 			SessionID:  ts.SessionID,
 			ShortID:    shortID(ts.SessionID),
 			EventCount: ts.EventCount,
-			Cwd:        orDash(ts.Cwd),
+			Cwd:        orDashPtr(ts.Cwd),
 		}
 		row.FirstPrompt = truncatePreview(sql.NullString{String: ts.FirstPrompt, Valid: ts.FirstPrompt != ""})
-		if ts.StartedAtMs.Valid {
-			row.Started = time.UnixMilli(ts.StartedAtMs.Int64).UTC().Format("2006-01-02")
+		if ts.StartedAtMs != nil {
+			row.Started = time.UnixMilli(*ts.StartedAtMs).UTC().Format("2006-01-02")
 		} else {
 			row.Started = "-"
 		}

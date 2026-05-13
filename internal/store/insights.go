@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/events"
+	"github.com/toabctl/aichronicles/internal/nullable"
 )
 
 // InsightsReport is the full output of LoadInsights — the data the
@@ -77,12 +78,15 @@ type HourBucket struct {
 // EndedAtMs, Cwd, and FirstPrompt so the renderer can show a
 // short, recognisable line per session.
 type TopSession struct {
-	SessionID   string         `json:"session_id"`
-	EventCount  int            `json:"event_count"`
-	StartedAtMs sql.NullInt64  `json:"started_at_ms"`
-	EndedAtMs   sql.NullInt64  `json:"ended_at_ms"`
-	Cwd         sql.NullString `json:"cwd"`
-	FirstPrompt string         `json:"first_prompt"`
+	SessionID  string `json:"session_id"`
+	EventCount int    `json:"event_count"`
+	// Optional timestamps + cwd — see arch_review_2026_05_13
+	// MEDIUM #10. Pointers so callers branch on `if x != nil`
+	// and JSON marshals as null instead of {"Int64":0,"Valid":false}.
+	StartedAtMs *int64  `json:"started_at_ms"`
+	EndedAtMs   *int64  `json:"ended_at_ms"`
+	Cwd         *string `json:"cwd"`
+	FirstPrompt string  `json:"first_prompt"`
 }
 
 // InsightsLimits caps how many rows each "top" table holds before
@@ -313,10 +317,18 @@ func loadTopSessions(ctx context.Context, db *sql.DB, sinceMs int64, limit int) 
 	defer func() { _ = rows.Close() }()
 	var out []TopSession
 	for rows.Next() {
-		var t TopSession
-		if err := rows.Scan(&t.SessionID, &t.EventCount, &t.StartedAtMs, &t.EndedAtMs, &t.Cwd, &t.FirstPrompt); err != nil {
+		var (
+			t           TopSession
+			startedAtMs sql.NullInt64
+			endedAtMs   sql.NullInt64
+			cwd         sql.NullString
+		)
+		if err := rows.Scan(&t.SessionID, &t.EventCount, &startedAtMs, &endedAtMs, &cwd, &t.FirstPrompt); err != nil {
 			return nil, err
 		}
+		t.StartedAtMs = nullable.Int64Ptr(startedAtMs)
+		t.EndedAtMs = nullable.Int64Ptr(endedAtMs)
+		t.Cwd = nullable.StringPtr(cwd)
 		out = append(out, t)
 	}
 	return out, rows.Err()

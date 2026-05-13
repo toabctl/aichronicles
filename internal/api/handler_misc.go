@@ -300,9 +300,9 @@ func insightsToWire(r *store.InsightsReport) wire.Insights {
 		out.TopSessions = append(out.TopSessions, wire.TopSession{
 			SessionID:   ts.SessionID,
 			EventCount:  ts.EventCount,
-			StartedAtMs: nullable.Int64Ptr(ts.StartedAtMs),
-			EndedAtMs:   nullable.Int64Ptr(ts.EndedAtMs),
-			Cwd:         nullable.StringPtr(ts.Cwd),
+			StartedAtMs: ts.StartedAtMs,
+			EndedAtMs:   ts.EndedAtMs,
+			Cwd:         ts.Cwd,
 			FirstPrompt: ts.FirstPrompt,
 		})
 	}
