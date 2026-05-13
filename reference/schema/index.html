@@ -708,6 +708,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#027_ingest_pendingsql" class="md-nav__link">
+    <span class="md-ellipsis">
+      027_ingest_pending.sql
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1110,6 +1119,15 @@
   <a href="#026_episodes_cwd_ended_indexsql" class="md-nav__link">
     <span class="md-ellipsis">
       026_episodes_cwd_ended_index.sql
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#027_ingest_pendingsql" class="md-nav__link">
+    <span class="md-ellipsis">
+      027_ingest_pending.sql
     </span>
   </a>
   
@@ -2437,6 +2455,46 @@
 </span><span id="__span-25-24"><a id="__codelineno-25-24" name="__codelineno-25-24" href="#__codelineno-25-24"></a><span class="w">    </span><span class="k">WHERE</span><span class="w"> </span><span class="n">cwd</span><span class="w"> </span><span class="k">IS</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">;</span>
 </span><span id="__span-25-25"><a id="__codelineno-25-25" name="__codelineno-25-25" href="#__codelineno-25-25"></a>
 </span><span id="__span-25-26"><a id="__codelineno-25-26" name="__codelineno-25-26" href="#__codelineno-25-26"></a><span class="k">UPDATE</span><span class="w"> </span><span class="n">meta</span><span class="w"> </span><span class="k">SET</span><span class="w"> </span><span class="n">value</span><span class="o">=</span><span class="s1">&#39;26&#39;</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="k">key</span><span class="o">=</span><span class="s1">&#39;schema_version&#39;</span><span class="p">;</span>
+</span></code></pre></div>
+<h2 id="027_ingest_pendingsql"><code>027_ingest_pending.sql</code><a class="headerlink" href="#027_ingest_pendingsql" title="Permanent link">&para;</a></h2>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="c1">-- Two-phase ingest staging table.</span>
+</span><span id="__span-26-2"><a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="c1">--</span>
+</span><span id="__span-26-3"><a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="c1">-- Phase 1 (request goroutine, fast): handleIngest validates the envelope</span>
+</span><span id="__span-26-4"><a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="c1">-- shape, INSERTs into this table in a tiny tx, returns 200. No</span>
+</span><span id="__span-26-5"><a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a><span class="c1">-- redaction, no extractors, no FTS work — the hook returns in tens of</span>
+</span><span id="__span-26-6"><a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a><span class="c1">-- ms regardless of envelope size.</span>
+</span><span id="__span-26-7"><a id="__codelineno-26-7" name="__codelineno-26-7" href="#__codelineno-26-7"></a><span class="c1">--</span>
+</span><span id="__span-26-8"><a id="__codelineno-26-8" name="__codelineno-26-8" href="#__codelineno-26-8"></a><span class="c1">-- Phase 2 (worker goroutine, slow): the IngestWorker drains pending rows</span>
+</span><span id="__span-26-9"><a id="__codelineno-26-9" name="__codelineno-26-9" href="#__codelineno-26-9"></a><span class="c1">-- in FIFO order, runs the full events.Pipeline.Process (redact +</span>
+</span><span id="__span-26-10"><a id="__codelineno-26-10" name="__codelineno-26-10" href="#__codelineno-26-10"></a><span class="c1">-- extract + sink.Write into events/raw_envelopes/extractions), then</span>
+</span><span id="__span-26-11"><a id="__codelineno-26-11" name="__codelineno-26-11" href="#__codelineno-26-11"></a><span class="c1">-- DELETEs the row in the same transaction that commits the event. On</span>
+</span><span id="__span-26-12"><a id="__codelineno-26-12" name="__codelineno-26-12" href="#__codelineno-26-12"></a><span class="c1">-- failure the row stays and attempt_count is bumped; persistent</span>
+</span><span id="__span-26-13"><a id="__codelineno-26-13" name="__codelineno-26-13" href="#__codelineno-26-13"></a><span class="c1">-- failures are surfaced via slog.Error.</span>
+</span><span id="__span-26-14"><a id="__codelineno-26-14" name="__codelineno-26-14" href="#__codelineno-26-14"></a><span class="c1">--</span>
+</span><span id="__span-26-15"><a id="__codelineno-26-15" name="__codelineno-26-15" href="#__codelineno-26-15"></a><span class="c1">-- Crash safety: a row only leaves this table inside the same tx that</span>
+</span><span id="__span-26-16"><a id="__codelineno-26-16" name="__codelineno-26-16" href="#__codelineno-26-16"></a><span class="c1">-- commits its derived rows downstream, so a daemon crash anywhere</span>
+</span><span id="__span-26-17"><a id="__codelineno-26-17" name="__codelineno-26-17" href="#__codelineno-26-17"></a><span class="c1">-- before that commit leaves the row for replay on next startup. The</span>
+</span><span id="__span-26-18"><a id="__codelineno-26-18" name="__codelineno-26-18" href="#__codelineno-26-18"></a><span class="c1">-- worker runs an initial drain pass before the listener opens.</span>
+</span><span id="__span-26-19"><a id="__codelineno-26-19" name="__codelineno-26-19" href="#__codelineno-26-19"></a><span class="c1">--</span>
+</span><span id="__span-26-20"><a id="__codelineno-26-20" name="__codelineno-26-20" href="#__codelineno-26-20"></a><span class="c1">-- Dedup: event_id is UNIQUE so a hook that retries a previously</span>
+</span><span id="__span-26-21"><a id="__codelineno-26-21" name="__codelineno-26-21" href="#__codelineno-26-21"></a><span class="c1">-- accepted (but unprocessed) event gets a &quot;deduped&quot; response without</span>
+</span><span id="__span-26-22"><a id="__codelineno-26-22" name="__codelineno-26-22" href="#__codelineno-26-22"></a><span class="c1">-- the daemon doing any extra work.</span>
+</span><span id="__span-26-23"><a id="__codelineno-26-23" name="__codelineno-26-23" href="#__codelineno-26-23"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">ingest_pending</span><span class="w"> </span><span class="p">(</span>
+</span><span id="__span-26-24"><a id="__codelineno-26-24" name="__codelineno-26-24" href="#__codelineno-26-24"></a><span class="w">    </span><span class="n">id</span><span class="w">                  </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="n">AUTOINCREMENT</span><span class="p">,</span>
+</span><span id="__span-26-25"><a id="__codelineno-26-25" name="__codelineno-26-25" href="#__codelineno-26-25"></a><span class="w">    </span><span class="n">event_id</span><span class="w">            </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">UNIQUE</span><span class="p">,</span><span class="w">   </span><span class="c1">-- envelope.event_id; dedup at phase-1</span>
+</span><span id="__span-26-26"><a id="__codelineno-26-26" name="__codelineno-26-26" href="#__codelineno-26-26"></a><span class="w">    </span><span class="n">body</span><span class="w">                </span><span class="nb">BLOB</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span><span class="w">           </span><span class="c1">-- raw POST body bytes, pre-redaction</span>
+</span><span id="__span-26-27"><a id="__codelineno-26-27" name="__codelineno-26-27" href="#__codelineno-26-27"></a><span class="w">    </span><span class="n">received_at_ms</span><span class="w">      </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span><span class="w">        </span><span class="c1">-- daemon receipt timestamp</span>
+</span><span id="__span-26-28"><a id="__codelineno-26-28" name="__codelineno-26-28" href="#__codelineno-26-28"></a><span class="w">    </span><span class="n">attempt_count</span><span class="w">       </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+</span><span id="__span-26-29"><a id="__codelineno-26-29" name="__codelineno-26-29" href="#__codelineno-26-29"></a><span class="w">    </span><span class="n">last_attempt_at_ms</span><span class="w">  </span><span class="nb">INTEGER</span><span class="p">,</span><span class="w">                 </span><span class="c1">-- NULL until the worker has tried once</span>
+</span><span id="__span-26-30"><a id="__codelineno-26-30" name="__codelineno-26-30" href="#__codelineno-26-30"></a><span class="w">    </span><span class="n">last_error</span><span class="w">          </span><span class="nb">TEXT</span><span class="w">                     </span><span class="c1">-- short stringified error from the last failed attempt</span>
+</span><span id="__span-26-31"><a id="__codelineno-26-31" name="__codelineno-26-31" href="#__codelineno-26-31"></a><span class="p">);</span>
+</span><span id="__span-26-32"><a id="__codelineno-26-32" name="__codelineno-26-32" href="#__codelineno-26-32"></a>
+</span><span id="__span-26-33"><a id="__codelineno-26-33" name="__codelineno-26-33" href="#__codelineno-26-33"></a><span class="c1">-- FIFO drain order: oldest received_at_ms first. Index covers both</span>
+</span><span id="__span-26-34"><a id="__codelineno-26-34" name="__codelineno-26-34" href="#__codelineno-26-34"></a><span class="c1">-- the worker&#39;s batch SELECT and the &quot;how far behind are we?&quot; admin</span>
+</span><span id="__span-26-35"><a id="__codelineno-26-35" name="__codelineno-26-35" href="#__codelineno-26-35"></a><span class="c1">-- queries.</span>
+</span><span id="__span-26-36"><a id="__codelineno-26-36" name="__codelineno-26-36" href="#__codelineno-26-36"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_ingest_pending_received</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">ingest_pending</span><span class="p">(</span><span class="n">received_at_ms</span><span class="p">);</span>
+</span><span id="__span-26-37"><a id="__codelineno-26-37" name="__codelineno-26-37" href="#__codelineno-26-37"></a>
+</span><span id="__span-26-38"><a id="__codelineno-26-38" name="__codelineno-26-38" href="#__codelineno-26-38"></a><span class="k">UPDATE</span><span class="w"> </span><span class="n">meta</span><span class="w"> </span><span class="k">SET</span><span class="w"> </span><span class="n">value</span><span class="o">=</span><span class="s1">&#39;27&#39;</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="k">key</span><span class="o">=</span><span class="s1">&#39;schema_version&#39;</span><span class="p">;</span>
 </span></code></pre></div>
 
 

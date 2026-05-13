@@ -671,9 +671,11 @@
 <h3 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h3>
 <p>Starts a small HTTP server on localhost that lists captured
 sessions, surfaces cached LLM summaries, and exposes the same
-FTS5 search the CLI uses. Reads the SQLite store directly in
-read-only mode — does not go through the daemon's UDS, does
-not write.</p>
+FTS5 search the CLI uses. Reads pass through the aichronicles-api
+daemon's UDS via internal/apiclient — the daemon stays the only
+process that opens the SQLite file. Runs as its own service
+(aichronicles-web.service) so a wedged template or runaway view
+query can't tear down the ingest worker.</p>
 <p>Default bind is 127.0.0.1; pass --bind to change. Binding to
 a non-loopback address surfaces a startup warning. The server
 has no authentication; the localhost-only boundary is the
@@ -688,10 +690,10 @@ it on the next request.</p>
 </span></code></pre></div>
 <h3 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h3>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>      --bind string             address to listen on (loopback by default; set to 0.0.0.0 for LAN access; ignored under systemd socket activation) (default &quot;127.0.0.1&quot;)
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>      --db string               SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>  -h, --help                    help for web
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>      --idle-timeout duration   shut down after this long with zero open connections (0 = no auto-shutdown when launched directly; defaults to 5m under systemd socket activation)
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>      --port int                port to listen on (ignored under systemd socket activation) (default 7878)
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  -h, --help                    help for web
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>      --idle-timeout duration   shut down after this long with zero open connections (0 = no auto-shutdown when launched directly; defaults to 5m under systemd socket activation)
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>      --port int                port to listen on (ignored under systemd socket activation) (default 7878)
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>      --socket string           aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET; defaults to $XDG_RUNTIME_DIR/aichronicles/api.sock)
 </span></code></pre></div>
 <h3 id="see-also">SEE ALSO<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h3>
 <ul>
