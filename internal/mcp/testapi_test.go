@@ -32,7 +32,6 @@ func newAPITestClient(t *testing.T, st *store.Store) *apiclient.Client {
 func registerAllTools(t *testing.T, s *Server, st *store.Store) {
 	t.Helper()
 	c := newAPITestClient(t, st)
-	RegisterAichroniclesTools(s, st)
 	RegisterAichroniclesAnalyticsTools(s, c)
 	RegisterAichroniclesAPITools(s, c)
 }

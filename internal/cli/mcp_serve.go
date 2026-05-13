@@ -9,6 +9,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/mcp"
+	"github.com/toabctl/aichronicles/internal/paths"
 )
 
 // mcpServerName is what the MCP `initialize` handshake reports back
@@ -45,21 +46,22 @@ func newMCPServeCmd() *cobra.Command {
 			"window surfaces them. Stdin close (client disconnect) ends the\n" +
 			"process cleanly.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, resolved, err := openStoreResolved(dbPath)
+			// Resolve the store path for the startup log; we
+			// don't actually open the store here. After the
+			// MCP migration off RegisterAichroniclesTools, every
+			// MCP tool reads through apiclient against the
+			// aichronicles-api daemon's UDS — the daemon is the
+			// only process that opens the SQLite file. This
+			// matches the "out-of-process readers go through the
+			// wire" policy codified in tools/depcheck.
+			resolved, err := paths.ResolveStorePath(dbPath)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
 
 			log := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(),
 				&slog.HandlerOptions{Level: slog.LevelInfo})).With("cmd", "aichronicles mcp-serve")
 
-			// MCP migration: tools that have moved off direct
-			// *store.Store access read through the apiclient
-			// against aichronicles-api over its UDS. Construct
-			// the client unconditionally so the catalog is
-			// complete; it costs nothing when no migrated tool
-			// is actually called.
 			apiC, err := openAPIClient("")
 			if err != nil {
 				return err
@@ -69,7 +71,6 @@ func newMCPServeCmd() *cobra.Command {
 				Name:    mcpServerName,
 				Version: mcpServerVersion,
 			}, log)
-			mcp.RegisterAichroniclesTools(srv, s)
 			mcp.RegisterAichroniclesAnalyticsTools(srv, apiC)
 			mcp.RegisterAichroniclesAPITools(srv, apiC)
 

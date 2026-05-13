@@ -3,18 +3,16 @@ package mcp
 import (
 	"time"
 
-	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/timefmt"
 )
 
-// RegisterAichroniclesTools is preserved for callers that have not
-// migrated to the apiclient registrar set. After Phase B, every
-// tool that used to live here has moved to RegisterAichroniclesAPITools
-// (in tools_apiclient.go). This function is now a no-op kept only
-// so existing wiring code (cli/mcp_serve.go, integration tests)
-// keeps compiling — it can be removed once the call sites are
-// audited and dropped.
-func RegisterAichroniclesTools(_ *Server, _ *store.Store) {}
+// This file holds the formatting helpers shared across the MCP
+// tool registrars. The legacy RegisterAichroniclesTools entry
+// point (a *store.Store-receiving no-op kept transiently while
+// the apiclient migration landed) was removed in this commit; all
+// MCP tools now read through internal/apiclient against the
+// aichronicles-api daemon, matching the "out-of-process readers
+// go through the wire" policy codified in tools/depcheck.
 
 // relativeAgo formats epoch-millis as a short relative time. Wraps
 // internal/timefmt so MCP, web, and CLI agree on the thresholds and

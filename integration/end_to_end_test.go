@@ -126,7 +126,6 @@ func TestE2E_IngestSummarizeFetchViaMCP(t *testing.T) {
 	apiC := apiclient.NewClientForTesting(apiSrv.Client(), apiSrv.URL)
 
 	mcpSrv := mcp.New(mcp.ServerInfo{Name: "e2e", Version: "0.0.1"}, nil)
-	mcp.RegisterAichroniclesTools(mcpSrv, s)
 	mcp.RegisterAichroniclesAnalyticsTools(mcpSrv, apiC)
 	mcp.RegisterAichroniclesAPITools(mcpSrv, apiC)
 

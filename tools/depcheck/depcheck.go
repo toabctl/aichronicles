@@ -90,6 +90,24 @@ var callRules = []callRule{
 			`\bstore\.(Load|Save|Insert|Update|Delete|Has|Last|Query|Vacuum|Segment)\w*\(`),
 		Reason: "internal/cli must read/write through apiclient, not store directly (test files exempt)",
 	},
+	{
+		// MCP runs in a SEPARATE process from aichronicles-api
+		// (it's stdio-attached to the host editor, not embedded in
+		// the daemon). Per the read-access policy: cross-process
+		// surfaces go through the wire. Tests are exempt because
+		// they spin up an in-process apiclient against an httptest
+		// server backed by a temp *store.Store — same-process,
+		// share-handle is fine.
+		//
+		// internal/web is INTENTIONALLY NOT subject to this rule:
+		// it mounts inside the api daemon, shares the same process
+		// and store handle, and reading through a UDS hop to its
+		// own process would be theatre.
+		Dir: "internal/mcp",
+		Forbidden: regexp.MustCompile(
+			`\bstore\.(Load|Save|Insert|Update|Delete|Has|Last|Query|Vacuum|Segment)\w*\(`),
+		Reason: "internal/mcp must read/write through apiclient (cross-process); test files exempt",
+	},
 }
 
 func main() {
