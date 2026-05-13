@@ -21,24 +21,24 @@ var ErrDaemonRunning = errors.New("aichronicles-api daemon is running — stop i
 // in single-digit ms.
 const refuseIfDaemonRunningTimeout = 2 * time.Second
 
-// RefuseIfDaemonRunning returns ErrDaemonRunning when the api
-// daemon's UDS is reachable AND the daemon responds 200 to a
-// /v1/healthz probe. Used by maintenance subcommands that touch
+// RefuseIfDaemonRunning returns ErrDaemonRunning whenever the api
+// daemon's UDS is reachable, regardless of whether /v1/healthz is
+// currently happy. Used by maintenance subcommands that touch
 // ingest-path-owned tables (raw_envelopes, events, extractions)
 // to prevent races with the daemon's IngestWorker.
 //
-// Returns nil in three "safe to proceed" cases:
+// Returns nil in two "safe to proceed" cases:
 //
 //   - The socket file is absent (ErrSocketUnavailable): the daemon
 //     was never started or has been cleanly shut down.
 //   - The socket dial fails (no listener): same case, transient
 //     between systemd cycles.
-//   - The healthz probe returns a non-2xx: the daemon is up but
-//     unhealthy; the operator is presumably already aware.
 //
-// Returns ErrDaemonRunning only when the daemon answers cleanly —
-// in that case the caller MUST surface the error to the user and
-// abort.
+// Returns ErrDaemonRunning in all other cases — including a
+// daemon reachable on the socket but answering non-2xx on
+// /v1/healthz. An unhealthy daemon process may still be holding
+// write locks, so a maintenance command racing it can corrupt the
+// store; the caller MUST surface the error to the user and abort.
 //
 // sockFlag follows the same precedence as openAPIClient: explicit
 // flag → $AICHRONICLES_API_SOCKET → XDG default.
