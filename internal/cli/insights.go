@@ -59,8 +59,7 @@ func newInsightsCmd() *cobra.Command {
 	}
 	addFlexDurationFlag(cmd, &since, "since", defaultInsightsWindow,
 		"only consider sessions/events within this window (e.g. 24h, 7d, 30d)")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }

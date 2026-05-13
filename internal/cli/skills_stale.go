@@ -88,8 +88,7 @@ func newSkillsImpactCmd() *cobra.Command {
 		"only consider skill loads within this window (e.g. 24h, 7d, 30d)")
 	addFlexDurationFlag(cmd, &window, "window", defaultSkillStaleWindow,
 		"how long after a skill load to look for a tool_failure (e.g. 5m, 10m, 30m)")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
@@ -217,8 +216,7 @@ func newSkillsStaleCmd() *cobra.Command {
 		"only consider skill loads within this window (e.g. 24h, 7d, 30d)")
 	addFlexDurationFlag(cmd, &window, "window", defaultSkillStaleWindow,
 		"how long after a skill load to look for a tool_failure (e.g. 5m, 10m, 30m)")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }

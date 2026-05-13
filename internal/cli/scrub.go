@@ -63,8 +63,7 @@ func newScrubCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm irreversible writes (required to mutate the DB)")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	return cmd
 }
 

@@ -61,8 +61,7 @@ func newSessionsCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 30, "max sessions to return")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "filter by cwd (exact match)")
 	addFlexDurationFlag(cmd, &since, "since", 0, "only sessions whose ended_at is within this duration (e.g. 24h, 7d)")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }

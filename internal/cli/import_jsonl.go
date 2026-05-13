@@ -47,8 +47,7 @@ func newImportJSONLCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	return cmd
 }
 

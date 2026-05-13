@@ -124,8 +124,7 @@ func newProposeAddCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&dbPath, "db", "",
 		"SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	cmd.Flags().StringVar(&skillName, "skill", "",
 		"name of a skill from the proposal to materialise")
 	cmd.Flags().Int64Var(&outputID, "output-id", 0,
@@ -163,8 +162,7 @@ func newProposeListCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	cmd.Flags().Int64Var(&outputID, "output-id", 0,
 		"specific llm_outputs row id (default: latest propose row)")
 	return cmd

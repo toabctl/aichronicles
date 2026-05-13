@@ -85,7 +85,6 @@ func newMetaSweepCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&dbPath, "db", "",
 		"SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	return cmd
 }

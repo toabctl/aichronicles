@@ -151,8 +151,7 @@ func newInductionSweepCmd() *cobra.Command {
 		"skip phase 3 (semantic-facts induction); saves one LLM call per candidate")
 	cmd.Flags().BoolVar(&skipEpisodes, "skip-episodes", false,
 		"skip phase 0 (episode segmentation); episode-keyed retrieval will have no rows for new candidates")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	return cmd
 }
 
@@ -245,8 +244,7 @@ func newInductionListCmd() *cobra.Command {
 			return renderInductionList(cmd.OutOrStdout(), rows, format)
 		},
 	}
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	cmd.Flags().IntVar(&limit, "limit", 50, "max rows to render, newest first")
 	addFormatFlag(cmd, &formatIn)
 	return cmd

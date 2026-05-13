@@ -106,8 +106,7 @@ func newSkillsEvolveCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&force, "force", false,
 		"bypass the cache and re-call the LLM even if a revision was already drafted")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	return cmd
 }
 

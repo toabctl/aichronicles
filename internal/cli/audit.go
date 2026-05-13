@@ -55,8 +55,7 @@ func newAuditCmd() *cobra.Command {
 	}
 	cmd.Flags().IntVar(&limit, "limit", 0, "max events to scan, newest first (0 = scan all)")
 	addFlexDurationFlag(cmd, &since, "since", 0, "only scan events with ts_source newer than this duration (e.g. 24h, 7d)")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }

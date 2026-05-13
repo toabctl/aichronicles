@@ -124,8 +124,7 @@ func newProposeCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&challenge, "challenge", false,
 		"forward-looking mode: propose what to tackle NEXT (Voyager-style curriculum)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)
 	cmd.AddCommand(newProposeAddCmd())
 	cmd.AddCommand(newProposeMergeCmd())

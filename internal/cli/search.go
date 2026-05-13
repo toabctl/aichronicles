@@ -117,8 +117,7 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sessionID, "session", "", "filter by session id or unique prefix")
 	registerSessionFlagCompletion(cmd)
 	addFlexDurationFlag(cmd, &since, "since", 0, "only events within this duration (e.g. 24h, 7d)")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	cmd.Flags().BoolVar(&noDedup, "no-dedup", false, "show every row even when the same turn was captured from multiple sources (hook + import)")
 	cmd.Flags().BoolVar(&summarize, "summarize", false, "synthesise an LLM-written answer from the top hits instead of printing rows (requires "+llm.APIKeyEnv+")")
 	cmd.Flags().IntVar(&topN, "top", 5, "with --summarize: max hits fed to the LLM as grounding context")

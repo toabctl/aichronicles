@@ -88,8 +88,7 @@ func newUnresolvedCmd() *cobra.Command {
 		"cap on the number of prior sessions to draw from")
 	cmd.Flags().IntVar(&maxItems, "max-items", defaultUnresolvedMaxItems,
 		"cap on the number of unresolved items per session")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }

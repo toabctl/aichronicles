@@ -66,8 +66,7 @@ func newPruneCmd() *cobra.Command {
 		"actually delete; without --yes the command runs as dry-run")
 	cmd.Flags().BoolVar(&includeLLMOuts, "include-llm-outputs", false,
 		"also delete llm_outputs rows older than the cutoff (summaries, reflections)")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	return cmd
 }
 
@@ -149,8 +148,7 @@ func newVacuumCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "actually vacuum; without --yes the command prints current size and exits")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	return cmd
 }
 

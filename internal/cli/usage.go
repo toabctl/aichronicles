@@ -72,8 +72,7 @@ func newUsageCmd() *cobra.Command {
 	}
 	addFlexDurationFlag(cmd, &since, "since", defaultUsageWindow,
 		"only consider llm_outputs within this window (e.g. 7d, 30d, 24h)")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	cmd.Flags().StringVar(&pricesPath, "prices", "",
 		"path to prices.toml (default: $XDG_CONFIG_HOME/aichronicles/prices.toml)")
 	addFormatFlag(cmd, &formatIn)

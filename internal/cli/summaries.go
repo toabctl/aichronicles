@@ -106,8 +106,7 @@ func newSummariesMissingCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 200, "max sessions to list")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "filter by exact cwd")
 	cmd.Flags().StringVar(&agent, "agent", "", "filter by source_agent (claude-code | codex)")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
@@ -199,8 +198,7 @@ func newSummariesFillCmd() *cobra.Command {
 	cmd.Flags().StringVar(&agent, "agent", "", "filter by source_agent (claude-code | codex)")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
@@ -503,8 +501,7 @@ func newSummariesListCmd() *cobra.Command {
 	registerSessionFlagCompletion(cmd)
 	cmd.Flags().StringVar(&typeIn, "type", "", "filter by output type (summary | reflect | propose)")
 	cmd.Flags().IntVar(&limit, "limit", 0, "max rows to list (default 50)")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
@@ -546,8 +543,7 @@ func newSummariesShowCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&typeIn, "type", "summary", "output type (summary | reflect | propose)")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }

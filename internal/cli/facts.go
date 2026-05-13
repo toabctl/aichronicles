@@ -104,8 +104,7 @@ func newFactsInduceCmd() *cobra.Command {
 	cmd.Flags().StringVar(&session, "session", "", "session id (full or unique prefix) to induce facts from")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model id (default: provider's default)")
 	cmd.Flags().BoolVar(&force, "force", false, "bypass the cache and re-call the LLM")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)
 	return cmd
 }
@@ -135,8 +134,7 @@ func newFactsListCmd() *cobra.Command {
 			return renderFactsList(cmd.OutOrStdout(), rows, format)
 		},
 	}
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	cmd.Flags().IntVar(&limit, "limit", 50, "max rows to render, newest first")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
@@ -176,8 +174,7 @@ func newFactsShowCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&subject, "subject", "", "subject (cwd path or other anchor) to load facts for")
-	cmd.Flags().StringVar(&sockFlag, "socket", "",
-		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)")
+	addSocketFlag(cmd, &sockFlag)
 	cmd.Flags().IntVar(&limit, "limit", 100, "max facts to return")
 	addFormatFlag(cmd, &formatIn)
 	return cmd
