@@ -181,6 +181,39 @@ FROM events WHERE session_id = ?`
 // computed and outcome=unknown."
 var ErrSessionNotFound = errors.New("session not found")
 
+// sessionOutcomeColumns is the canonical column list for SELECTs that
+// feed scanSessionOutcome. Keep this string and the scan helper in
+// lockstep — any column added here must also be appended to the Scan
+// call (and to the INSERT/UPDATE in SaveSessionOutcome).
+const sessionOutcomeColumns = `session_id, computed_at_ms,
+	user_prompt_count, tool_use_count, tool_failure_count,
+	error_count, compact_count,
+	git_undo_count, prompt_repeat_count,
+	last_event_kind, outcome`
+
+// scanSessionOutcome scans one row in sessionOutcomeColumns order
+// (works against *sql.Row and *sql.Rows via the rowScanner interface
+// defined alongside scanLLMOutput).
+func scanSessionOutcome(r rowScanner) (SessionOutcome, error) {
+	var (
+		o             SessionOutcome
+		label         string
+		lastEventKind sql.NullString
+	)
+	if err := r.Scan(
+		&o.SessionID, &o.ComputedAtMs,
+		&o.UserPromptCount, &o.ToolUseCount, &o.ToolFailureCount,
+		&o.ErrorCount, &o.CompactCount,
+		&o.GitUndoCount, &o.PromptRepeatCount,
+		&lastEventKind, &label,
+	); err != nil {
+		return SessionOutcome{}, err
+	}
+	o.LastEventKind = nullable.StringPtr(lastEventKind)
+	o.Outcome = OutcomeLabel(label)
+	return o, nil
+}
+
 // SaveSessionOutcome upserts the row into session_outcomes. The PK
 // is session_id, so re-saving overwrites — the caller calling
 // ComputeSessionOutcome again is the recompute path.
@@ -261,32 +294,15 @@ func EnsureSessionOutcome(ctx context.Context, db *sql.DB, sessionID string) (*S
 // this is a pure read, no derivation.
 func LoadSessionOutcome(ctx context.Context, db *sql.DB, sessionID string) (*SessionOutcome, error) {
 	row := db.QueryRowContext(ctx,
-		`SELECT session_id, computed_at_ms,
-		        user_prompt_count, tool_use_count, tool_failure_count,
-		        error_count, compact_count,
-		        git_undo_count, prompt_repeat_count,
-		        last_event_kind, outcome
-		   FROM session_outcomes WHERE session_id = ?`,
+		`SELECT `+sessionOutcomeColumns+` FROM session_outcomes WHERE session_id = ?`,
 		sessionID)
-	var (
-		o             SessionOutcome
-		label         string
-		lastEventKind sql.NullString
-	)
-	switch err := row.Scan(
-		&o.SessionID, &o.ComputedAtMs,
-		&o.UserPromptCount, &o.ToolUseCount, &o.ToolFailureCount,
-		&o.ErrorCount, &o.CompactCount,
-		&o.GitUndoCount, &o.PromptRepeatCount,
-		&lastEventKind, &label,
-	); {
+	o, err := scanSessionOutcome(row)
+	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return nil, nil
 	case err != nil:
 		return nil, fmt.Errorf("scan session_outcomes: %w", err)
 	}
-	o.LastEventKind = nullable.StringPtr(lastEventKind)
-	o.Outcome = OutcomeLabel(label)
 	return &o, nil
 }
 
@@ -392,11 +408,7 @@ func LoadSessionOutcomes(ctx context.Context, db *sql.DB, sessionIDs []string) (
 	for i, id := range sessionIDs {
 		args[i] = id
 	}
-	q := `SELECT session_id, computed_at_ms,
-	             user_prompt_count, tool_use_count, tool_failure_count,
-	             error_count, compact_count,
-	             git_undo_count, prompt_repeat_count,
-	             last_event_kind, outcome
+	q := `SELECT ` + sessionOutcomeColumns + `
 	        FROM session_outcomes
 	       WHERE session_id IN (` + placeholders + `)`
 	rows, err := db.QueryContext(ctx, q, args...)
@@ -405,22 +417,10 @@ func LoadSessionOutcomes(ctx context.Context, db *sql.DB, sessionIDs []string) (
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		var (
-			o             SessionOutcome
-			label         string
-			lastEventKind sql.NullString
-		)
-		if err := rows.Scan(
-			&o.SessionID, &o.ComputedAtMs,
-			&o.UserPromptCount, &o.ToolUseCount, &o.ToolFailureCount,
-			&o.ErrorCount, &o.CompactCount,
-			&o.GitUndoCount, &o.PromptRepeatCount,
-			&lastEventKind, &label,
-		); err != nil {
+		o, err := scanSessionOutcome(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
-		o.LastEventKind = nullable.StringPtr(lastEventKind)
-		o.Outcome = OutcomeLabel(label)
 		out[o.SessionID] = o
 	}
 	return out, rows.Err()
