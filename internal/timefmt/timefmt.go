@@ -82,6 +82,24 @@ func AbsoluteOrDash(n sql.NullInt64) string {
 	return Absolute(n.Int64)
 }
 
+// SinceMsFromDays converts a "?days=N" parameter into the SinceMs
+// the wire endpoints expect. Centralises the defaulting + clamping
+// that MCP tools and web handlers each re-implemented: zero or
+// negative days falls back to defaultDays, values above maxDays are
+// clamped down (or left unbounded when maxDays <= 0).
+//
+// Returns the absolute SinceMs (now - duration) plus the effective
+// day count the caller can echo back to the user.
+func SinceMsFromDays(days, defaultDays, maxDays int, now time.Time) (sinceMs int64, effectiveDays int) {
+	if days <= 0 {
+		days = defaultDays
+	}
+	if maxDays > 0 && days > maxDays {
+		days = maxDays
+	}
+	return now.Add(-time.Duration(days) * 24 * time.Hour).UnixMilli(), days
+}
+
 // AbsoluteRFC3339OrDash is AbsoluteRFC3339 + the NullInt64 fallback.
 // Mirrors AbsoluteOrDash: a zero Int64 is treated as missing (a NULL
 // column can surface as Valid=true, Int64=0 in some scan paths, and

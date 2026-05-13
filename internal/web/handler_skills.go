@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/preview"
+	"github.com/toabctl/aichronicles/internal/timefmt"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -28,13 +29,8 @@ const skillsDefaultDays = 30
 //     from `aichronicles skills stale`). These are the skills
 //     most worth a `skill_manage edit` pass.
 func (s *Server) skillsHandler(w http.ResponseWriter, r *http.Request) {
-	days := skillsDefaultDays
-	if v := r.URL.Query().Get("days"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 365 {
-			days = n
-		}
-	}
-	sinceMs := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
+	rawDays, _ := strconv.Atoi(r.URL.Query().Get("days"))
+	sinceMs, days := timefmt.SinceMsFromDays(rawDays, skillsDefaultDays, 365, time.Now())
 
 	installedResp, err := s.api.InstalledSkills(r.Context(), sinceMs)
 	if err != nil {

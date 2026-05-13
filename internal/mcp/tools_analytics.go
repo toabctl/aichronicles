@@ -10,6 +10,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/skills"
+	"github.com/toabctl/aichronicles/internal/timefmt"
 )
 
 // RegisterAichroniclesAnalyticsTools wires up the LLM-free analytics
@@ -53,11 +54,7 @@ func listSkillsHandler(c *apiclient.Client) ToolHandler {
 				return nil, &Error{Code: InvalidParams, Message: "list_skills: bad args: " + err.Error()}
 			}
 		}
-		days := req.SinceDays
-		if days <= 0 || days > 365 {
-			days = 30
-		}
-		sinceMs := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
+		sinceMs, days := timefmt.SinceMsFromDays(req.SinceDays, 30, 365, time.Now())
 
 		// Filesystem-side: SKILL.md inventory. cwd-scoped — global
 		// SKILL.md plus the named project's .claude/skills/ when

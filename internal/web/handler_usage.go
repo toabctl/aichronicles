@@ -9,6 +9,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/paths"
 	"github.com/toabctl/aichronicles/internal/pricing"
+	"github.com/toabctl/aichronicles/internal/timefmt"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -57,14 +58,9 @@ type UsageTotalsRow struct {
 // LLM call. The COST column appears only when a row's model has a
 // matching entry in $XDG_CONFIG_HOME/aichronicles/prices.toml.
 func (s *Server) usageHandler(w http.ResponseWriter, r *http.Request) {
-	days := usageDefaultDays
-	if v := r.URL.Query().Get("days"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 365 {
-			days = n
-		}
-	}
+	rawDays, _ := strconv.Atoi(r.URL.Query().Get("days"))
 	now := time.Now()
-	sinceMs := now.Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
+	sinceMs, days := timefmt.SinceMsFromDays(rawDays, usageDefaultDays, 365, now)
 
 	resp, err := s.api.Usage(r.Context(), wire.UsageRequest{SinceMs: sinceMs})
 	if err != nil {

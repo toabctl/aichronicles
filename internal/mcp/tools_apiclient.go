@@ -12,6 +12,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/skills"
+	"github.com/toabctl/aichronicles/internal/timefmt"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -83,10 +84,6 @@ func getUnresolvedForCwdAPIHandler(c *apiclient.Client) ToolHandler {
 		if strings.TrimSpace(req.Cwd) == "" {
 			return TextError("get_unresolved_for_cwd: cwd is required"), nil
 		}
-		days := req.SinceDays
-		if days <= 0 {
-			days = 30
-		}
 		maxSessions := req.MaxSessions
 		if maxSessions <= 0 {
 			maxSessions = 5
@@ -95,7 +92,7 @@ func getUnresolvedForCwdAPIHandler(c *apiclient.Client) ToolHandler {
 		if maxPerSession <= 0 {
 			maxPerSession = 5
 		}
-		sinceMs := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
+		sinceMs, _ := timefmt.SinceMsFromDays(req.SinceDays, 30, 0, time.Now())
 
 		resp, err := c.Unresolved(ctx, apiclient.UnresolvedRequest{
 			Cwd:                req.Cwd,
@@ -275,15 +272,11 @@ func getSkillStalenessAPIHandler(c *apiclient.Client) ToolHandler {
 				return nil, &Error{Code: InvalidParams, Message: "get_skill_staleness: bad args: " + err.Error()}
 			}
 		}
-		days := req.SinceDays
-		if days <= 0 || days > 365 {
-			days = 14
-		}
 		windowMs := int64(req.WindowMinutes) * 60 * 1000
 		if windowMs <= 0 {
 			windowMs = 10 * 60 * 1000
 		}
-		sinceMs := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
+		sinceMs, days := timefmt.SinceMsFromDays(req.SinceDays, 14, 365, time.Now())
 
 		resp, err := c.SkillStaleness(ctx, wire.SkillStalenessRequest{
 			SinceMs:  sinceMs,
@@ -347,11 +340,7 @@ func getInsightsAPIHandler(c *apiclient.Client) ToolHandler {
 				return nil, &Error{Code: InvalidParams, Message: "get_insights: bad args: " + err.Error()}
 			}
 		}
-		days := req.SinceDays
-		if days <= 0 || days > 365 {
-			days = 30
-		}
-		sinceMs := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
+		sinceMs, days := timefmt.SinceMsFromDays(req.SinceDays, 30, 365, time.Now())
 
 		resp, err := c.Insights(ctx, apiclient.InsightsRequest{
 			SinceMs:   sinceMs,
@@ -462,7 +451,7 @@ func findEpisodesAPIHandler(c *apiclient.Client) ToolHandler {
 		}
 		var sinceMs int64
 		if req.SinceDays > 0 {
-			sinceMs = time.Now().Add(-time.Duration(req.SinceDays) * 24 * time.Hour).UnixMilli()
+			sinceMs, _ = timefmt.SinceMsFromDays(req.SinceDays, 0, 0, time.Now())
 		}
 
 		// Accept short prefixes for session_id like list_sessions
@@ -993,13 +982,11 @@ func getProjectContextAPIHandler(c *apiclient.Client) ToolHandler {
 		if strings.TrimSpace(req.Cwd) == "" {
 			return TextError("get_project_context: cwd is required"), nil
 		}
-		if req.SinceDays <= 0 {
-			req.SinceDays = 30
-		}
 		if req.MaxPerSection <= 0 || req.MaxPerSection > 20 {
 			req.MaxPerSection = 5
 		}
-		sinceMs := time.Now().Add(-time.Duration(req.SinceDays) * 24 * time.Hour).UnixMilli()
+		var sinceMs int64
+		sinceMs, req.SinceDays = timefmt.SinceMsFromDays(req.SinceDays, 30, 0, time.Now())
 
 		var b strings.Builder
 		fmt.Fprintf(&b, "# Project context: %s\n", req.Cwd)

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/skills"
+	"github.com/toabctl/aichronicles/internal/timefmt"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -21,13 +22,8 @@ const projectsDefaultDays = 30
 // go.mod ancestor — sessions inside the same repo collapse into
 // one row instead of producing N rows per subdirectory.
 func (s *Server) projectsHandler(w http.ResponseWriter, r *http.Request) {
-	days := projectsDefaultDays
-	if v := r.URL.Query().Get("days"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 365 {
-			days = n
-		}
-	}
-	sinceMs := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
+	rawDays, _ := strconv.Atoi(r.URL.Query().Get("days"))
+	sinceMs, days := timefmt.SinceMsFromDays(rawDays, projectsDefaultDays, 365, time.Now())
 
 	resp, err := s.api.ProjectAggregates(r.Context(), sinceMs)
 	if err != nil {

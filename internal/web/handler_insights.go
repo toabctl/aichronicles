@@ -7,6 +7,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/preview"
+	"github.com/toabctl/aichronicles/internal/timefmt"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -18,13 +19,8 @@ const insightsDefaultDays = 30
 // top-tools / top-skills / activity-by-hour / top-sessions data
 // the CLI prints, as HTML. Pure SQL aggregation; no LLM call.
 func (s *Server) insightsHandler(w http.ResponseWriter, r *http.Request) {
-	days := insightsDefaultDays
-	if v := r.URL.Query().Get("days"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 365 {
-			days = n
-		}
-	}
-	sinceMs := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
+	rawDays, _ := strconv.Atoi(r.URL.Query().Get("days"))
+	sinceMs, days := timefmt.SinceMsFromDays(rawDays, insightsDefaultDays, 365, time.Now())
 
 	report, err := s.api.Insights(r.Context(), apiclient.InsightsRequest{SinceMs: sinceMs})
 	if err != nil {

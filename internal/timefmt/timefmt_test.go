@@ -68,6 +68,36 @@ func TestAbsoluteOrDash(t *testing.T) {
 	}
 }
 
+func TestSinceMsFromDays(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
+	day := int64(24 * 60 * 60 * 1000)
+	cases := []struct {
+		name       string
+		days       int
+		defDays    int
+		maxDays    int
+		wantOffset int64 // ms before now
+		wantDays   int
+	}{
+		{"explicit positive", 7, 30, 365, 7 * day, 7},
+		{"zero falls back to default", 0, 30, 365, 30 * day, 30},
+		{"negative falls back to default", -1, 30, 365, 30 * day, 30},
+		{"clamped to max", 9999, 30, 365, 365 * day, 365},
+		{"max=0 is unbounded", 1000, 30, 0, 1000 * day, 1000},
+	}
+	for _, c := range cases {
+		gotMs, gotDays := SinceMsFromDays(c.days, c.defDays, c.maxDays, now)
+		wantMs := now.UnixMilli() - c.wantOffset
+		if gotMs != wantMs {
+			t.Errorf("%s: ms=%d, want %d (delta=%d)", c.name, gotMs, wantMs, gotMs-wantMs)
+		}
+		if gotDays != c.wantDays {
+			t.Errorf("%s: days=%d, want %d", c.name, gotDays, c.wantDays)
+		}
+	}
+}
+
 func TestAbsoluteRFC3339OrDash(t *testing.T) {
 	t.Parallel()
 	if got := AbsoluteRFC3339OrDash(sql.NullInt64{Valid: false}); got != "-" {
