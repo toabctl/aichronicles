@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -23,12 +22,8 @@ import (
 // a secret into a tool result can't smuggle it past the cache
 // layer.
 func (s *Server) handleLLMOutputSave(w http.ResponseWriter, r *http.Request) {
-	defer func() { _ = r.Body.Close() }()
 	var req wire.SaveLLMOutputRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		writeProblem(w, http.StatusBadRequest, "Malformed body", err.Error())
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	// Pre-validate the fields the store would otherwise reject
@@ -81,12 +76,8 @@ func (s *Server) handleLLMOutputSave(w http.ResponseWriter, r *http.Request) {
 // episode for the named session atomically (DELETE-then-INSERT
 // inside one tx in the store).
 func (s *Server) handleEpisodesSave(w http.ResponseWriter, r *http.Request) {
-	defer func() { _ = r.Body.Close() }()
 	var req wire.SaveEpisodesRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		writeProblem(w, http.StatusBadRequest, "Malformed body", err.Error())
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.SessionID == "" {
@@ -107,12 +98,8 @@ func (s *Server) handleEpisodesSave(w http.ResponseWriter, r *http.Request) {
 
 // handleFactsSave serves POST /v1/facts.
 func (s *Server) handleFactsSave(w http.ResponseWriter, r *http.Request) {
-	defer func() { _ = r.Body.Close() }()
 	var req wire.SaveSemanticFactRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		writeProblem(w, http.StatusBadRequest, "Malformed body", err.Error())
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	// Pre-validate so storage failures don't get mis-labelled as
@@ -150,12 +137,8 @@ func (s *Server) handleFactsSave(w http.ResponseWriter, r *http.Request) {
 
 // handleSessionOutcomeSave serves POST /v1/session-outcomes.
 func (s *Server) handleSessionOutcomeSave(w http.ResponseWriter, r *http.Request) {
-	defer func() { _ = r.Body.Close() }()
 	var req wire.SaveSessionOutcomeRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		writeProblem(w, http.StatusBadRequest, "Malformed body", err.Error())
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	o := store.SessionOutcome{
@@ -188,12 +171,8 @@ func (s *Server) handleSessionOutcomeSave(w http.ResponseWriter, r *http.Request
 // handleSessionLinksSave serves POST /v1/session-links. Replaces
 // every outgoing link from the named session atomically.
 func (s *Server) handleSessionLinksSave(w http.ResponseWriter, r *http.Request) {
-	defer func() { _ = r.Body.Close() }()
 	var req wire.SaveSessionLinksRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		writeProblem(w, http.StatusBadRequest, "Malformed body", err.Error())
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.FromSessionID == "" {

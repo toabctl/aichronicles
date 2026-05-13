@@ -329,8 +329,7 @@ func (s *Server) handleSkillCandidateUpdate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var req wire.UpdateSkillCandidateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeProblem(w, http.StatusBadRequest, "Invalid body", err.Error())
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.AddPath != "" || req.BodySHA256 != "" {

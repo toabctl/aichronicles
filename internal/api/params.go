@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -103,6 +104,27 @@ func parseSessionIDsQuery(raw string) []string {
 		return nil
 	}
 	return out
+}
+
+// decodeJSONBody is the canonical JSON-decode prologue every POST
+// handler runs: close r.Body when we return, reject unknown fields
+// (so a typo'd payload doesn't silently drop content), and emit a
+// 400 "Malformed body" with the decoder's error as detail on
+// failure. Returns true on success; the caller must return on a
+// false result.
+//
+// Strict-mode is the default for new endpoints to keep the wire
+// contract enforceable; legacy permissive sites have been migrated
+// to match.
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) bool {
+	defer func() { _ = r.Body.Close() }()
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		writeProblem(w, http.StatusBadRequest, "Malformed body", err.Error())
+		return false
+	}
+	return true
 }
 
 // parseNonNegativeIntQuery reads an optional non-negative int query

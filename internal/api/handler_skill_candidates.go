@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -16,8 +15,7 @@ import (
 // store.RecordSkillCandidateWithMetadata.
 func (s *Server) handleSkillCandidatesRecord(w http.ResponseWriter, r *http.Request) {
 	var req wire.RecordSkillCandidateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeProblem(w, http.StatusBadRequest, "Invalid body", err.Error())
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.LLMOutputID <= 0 {
@@ -59,8 +57,7 @@ func (s *Server) handleSkillCandidatesRecord(w http.ResponseWriter, r *http.Requ
 // the CLI can offer a "did you forget to record?" hint.
 func (s *Server) handleSkillCandidatesDecision(w http.ResponseWriter, r *http.Request) {
 	var req wire.SkillCandidateDecisionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeProblem(w, http.StatusBadRequest, "Invalid body", err.Error())
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.LLMOutputID <= 0 {
