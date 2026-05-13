@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"sync/atomic"
@@ -169,9 +170,12 @@ func (w *IngestWorker) Run(ctx context.Context) error {
 	}
 }
 
-// drain processes one FIFO batch of pending rows. One row at a
-// time per Pipeline.Process call — see the IngestWorker doc
-// comment for the failure-isolation rationale.
+// drain processes one FIFO batch of pending rows. The batch
+// commits in a single transaction (one fsync amortised over up
+// to batchSize rows) via processBatch; on any error the worker
+// falls back to row-by-row processOne so a single broken envelope
+// can't poison a batch of good ones — same two-phase semantics
+// as store.BufferedSink uses for imports.
 //
 // drain does NOT loop internally over multiple batches: that would
 // spin forever on a head-of-line failing row (PendingBatch's
@@ -193,11 +197,8 @@ func (w *IngestWorker) drain(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	for _, row := range rows {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		w.processOne(ctx, row)
+	if len(rows) > 0 {
+		w.processBatch(ctx, rows)
 	}
 	after, err := store.CountPending(ctx, w.store.DB())
 	if err != nil {
@@ -214,6 +215,133 @@ func (w *IngestWorker) drain(ctx context.Context) error {
 		w.Wake()
 	}
 	return nil
+}
+
+// preparedEvent holds the CPU-side work a pending row needs
+// before the DB tx opens: parsed envelope, redacted bytes, and
+// the extraction set. Kept as a struct so the batch path can do
+// all the redaction + extractor work outside the lock and then
+// commit N rows in one fsync.
+type preparedEvent struct {
+	row      store.IngestPendingRow
+	env      events.Envelope
+	raw      []byte // post-redaction marshalled bytes
+	extracts []events.Extraction
+}
+
+// processBatch tries to commit up to batchSize pending rows in one
+// transaction (one fsync) and falls back to row-by-row processOne
+// on any tx-level error. Mirrors store.BufferedSink's two-phase
+// fast-path-then-row-by-row contract; per-row CPU work (parse,
+// validate, redact, extract) happens before the lock so a single
+// row's failure doesn't poison the batch.
+//
+// Failure isolation:
+//  1. Parse/validate/marshal errors are recorded on the row and
+//     the row is excluded from the batch. The batch proceeds with
+//     the rest.
+//  2. A SQL error inside the batch tx triggers a rollback and a
+//     row-by-row fallback through processOne. processOne uses
+//     Pipeline.Process which opens its own tx, so each row gets
+//     its own success/failure verdict in the fallback path.
+//
+// The amortised cost: one disk fsync covers up to batchSize rows
+// during a healthy burst; throughput grows roughly linearly with
+// batch size until the queue empties. The fallback path costs the
+// same as the pre-batching single-row drain.
+func (w *IngestWorker) processBatch(ctx context.Context, rows []store.IngestPendingRow) {
+	// Phase 1: CPU-only prep. Skip rows that fail validation /
+	// marshalling — they record their own failure and don't ride
+	// in the batch tx.
+	prepared := make([]preparedEvent, 0, len(rows))
+	for _, row := range rows {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		var env events.Envelope
+		if err := json.Unmarshal(row.Body, &env); err != nil {
+			w.recordFailure(ctx, row, "unmarshal: "+err.Error())
+			continue
+		}
+		if err := env.Validate(); err != nil {
+			w.recordFailure(ctx, row, "validate: "+err.Error())
+			continue
+		}
+		w.pipeline.Redactor.Apply(&env)
+		marshaled, err := json.Marshal(&env)
+		if err != nil {
+			w.recordFailure(ctx, row, "marshal: "+err.Error())
+			continue
+		}
+		extracts := w.pipeline.Extractors.Run(&env)
+		prepared = append(prepared, preparedEvent{
+			row: row, env: env, raw: marshaled, extracts: extracts,
+		})
+	}
+	if len(prepared) == 0 {
+		return
+	}
+
+	// Phase 2: one tx for the whole batch. Each row commits its
+	// downstream rows AND its dequeue in the same tx, so a crash
+	// anywhere inside this WithTx leaves every row of the batch
+	// untouched in ingest_pending — replay is the worker's next
+	// drain pass.
+	type batchResult struct {
+		ingestSeq int64
+		deduped   bool
+		prep      *preparedEvent
+	}
+	results := make([]batchResult, 0, len(prepared))
+	batchErr := store.WithTx(ctx, w.store.DB(), func(tx *sql.Tx) error {
+		results = results[:0]
+		tsMs := time.Now().UnixMilli()
+		for i := range prepared {
+			p := &prepared[i]
+			seq, dedup, err := store.IngestEnvelopeWithExtractions(ctx, tx, &p.env, p.raw, tsMs, p.extracts)
+			if err != nil {
+				return fmt.Errorf("ingest %s: %w", p.env.EventID, err)
+			}
+			if err := store.MarkPendingProcessed(ctx, tx, p.row.ID); err != nil {
+				return fmt.Errorf("mark processed %d: %w", p.row.ID, err)
+			}
+			results = append(results, batchResult{ingestSeq: seq, deduped: dedup, prep: p})
+		}
+		return nil
+	})
+	if batchErr != nil {
+		w.log.Warn("ingest worker: batch failed, falling back to row-by-row",
+			"rows", len(prepared), "err", batchErr)
+		for i := range prepared {
+			if err := ctx.Err(); err != nil {
+				return
+			}
+			w.processOne(ctx, prepared[i].row)
+		}
+		return
+	}
+
+	// Phase 3: post-commit bookkeeping for each row that landed.
+	// Counter decrement + SSE publish; same as processOne does
+	// per row, just amortised here. The fan-out is deliberately
+	// after the commit so a partial-commit scenario can't have
+	// already-published SSE frames for rows that ended up rolled
+	// back.
+	now := time.Now().UnixMilli()
+	for _, r := range results {
+		if w.pendingDepth != nil {
+			w.pendingDepth.Add(-1)
+		}
+		if !r.deduped {
+			w.sseBus.Publish(wire.StreamEvent{
+				EventID:    r.prep.env.EventID,
+				SessionID:  events.DeriveSessionID(r.prep.env.SourceAgent, r.prep.env.SourceSessionID),
+				IngestSeq:  r.ingestSeq,
+				Kind:       r.prep.env.Kind,
+				TsServerMs: now,
+			})
+		}
+	}
 }
 
 // processOne runs one pending row through the pipeline. Crash

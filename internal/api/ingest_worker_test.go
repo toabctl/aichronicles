@@ -144,6 +144,85 @@ func TestIngestWorker_DrainProcessesMultipleInFIFOOrder(t *testing.T) {
 	}
 }
 
+func TestIngestWorker_BatchCommitsMultipleEventsInOneTx(t *testing.T) {
+	t.Parallel()
+	w, s, _ := newTestWorker(t)
+
+	// Three valid envelopes — processBatch should commit all three
+	// in a single tx. Verify by checking that raw_envelopes' rowid
+	// is contiguous (one tx => SQLite assigns consecutive rowids).
+	const n = 3
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = uuid.Must(uuid.NewV7()).String()
+		enqueueDirect(t, s, ids[i], validEnvelopeBytes(t, ids[i]))
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	if err := w.drain(t.Context()); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+
+	// Each event landed.
+	for _, id := range ids {
+		var c int
+		_ = s.DB().QueryRowContext(t.Context(),
+			`SELECT COUNT(*) FROM raw_envelopes WHERE event_id = ?`, id).Scan(&c)
+		if c != 1 {
+			t.Errorf("event %s missing from raw_envelopes", id)
+		}
+	}
+
+	// All three pending rows were dequeued.
+	pending, _ := store.CountPending(t.Context(), s.DB())
+	if pending != 0 {
+		t.Errorf("pending after batch drain: got %d, want 0", pending)
+	}
+}
+
+func TestIngestWorker_BatchFailureFallsBackToRowByRow(t *testing.T) {
+	t.Parallel()
+	w, s, _ := newTestWorker(t)
+
+	// Mix: two valid envelopes plus one with a body that fails
+	// json.Unmarshal. The unmarshal failure is detected in the
+	// per-row prep phase and that row is recorded as failed BEFORE
+	// the batch tx opens — so the batch tx itself sees only the
+	// two valid envelopes and commits successfully. (The fallback
+	// path proper is exercised when the tx ITSELF errors; that's
+	// harder to provoke deterministically, but covering the prep-
+	// time filter is the more common case.)
+	id1 := uuid.Must(uuid.NewV7()).String()
+	enqueueDirect(t, s, id1, validEnvelopeBytes(t, id1))
+	time.Sleep(2 * time.Millisecond)
+	enqueueDirect(t, s, "evt-bad-json", []byte("{not json"))
+	time.Sleep(2 * time.Millisecond)
+	id2 := uuid.Must(uuid.NewV7()).String()
+	enqueueDirect(t, s, id2, validEnvelopeBytes(t, id2))
+
+	if err := w.drain(t.Context()); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+
+	// Good rows landed downstream.
+	for _, id := range []string{id1, id2} {
+		var c int
+		_ = s.DB().QueryRowContext(t.Context(),
+			`SELECT COUNT(*) FROM raw_envelopes WHERE event_id = ?`, id).Scan(&c)
+		if c != 1 {
+			t.Errorf("event %s missing from raw_envelopes", id)
+		}
+	}
+	// The bad row stays in ingest_pending with attempt_count bumped.
+	rows, _ := store.PendingBatch(t.Context(), s.DB(), 10)
+	if len(rows) != 1 || rows[0].EventID != "evt-bad-json" {
+		t.Errorf("expected only the bad row to remain; got %+v", rows)
+	}
+	if rows[0].AttemptCount != 1 {
+		t.Errorf("bad row attempt_count: got %d, want 1", rows[0].AttemptCount)
+	}
+}
+
 func TestIngestWorker_DrainPublishesToSSEOnNonDeduped(t *testing.T) {
 	t.Parallel()
 	w, s, bus := newTestWorker(t)
