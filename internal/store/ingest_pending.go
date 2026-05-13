@@ -113,11 +113,27 @@ func PendingBatch(ctx context.Context, db *sql.DB, limit int) ([]IngestPendingRo
 	return out, nil
 }
 
-// MarkPendingProcessed deletes the row inside tx. The worker calls
-// this in the SAME transaction that commits the derived rows
-// (raw_envelopes / events / extractions), so a crash anywhere
-// before that commit leaves the pending row in place for replay.
-// Atomic "process + dequeue" is the headline guarantee here.
+// MarkPendingProcessed deletes the row inside tx.
+//
+// CONSISTENCY MODEL: at-least-once, not exactly-once. In the
+// current worker (internal/api/ingest_worker.go), Pipeline.Process
+// commits the derived rows (raw_envelopes / events / extractions)
+// in ITS OWN transaction, then MarkPendingProcessed runs in a
+// SEPARATE tx to dequeue. A crash between those two commits
+// leaves the row in ingest_pending; the next worker run re-invokes
+// Pipeline.Process, which sees the existing raw_envelopes row via
+// its UNIQUE(event_id) constraint and returns Result.Deduped=true.
+// The dedup'd second pass falls through to MarkPendingProcessed
+// again and finally drains the row. SSE is suppressed on the
+// dedup pass (worker checks result.Deduped) so consumers don't
+// double-render.
+//
+// Earlier doc strings here claimed "same transaction"; that was
+// aspirational, not implemented (arch_review_2026_05_13 MEDIUM
+// #6). True same-tx semantics would require Pipeline.Process to
+// take an explicit tx argument; left as an architectural
+// follow-up since the at-least-once + raw_envelopes dedup path
+// already gives the durability invariant the worker relies on.
 //
 // id is what PendingBatch returned, not event_id — using the
 // primary key keeps the DELETE single-row even if a future schema
