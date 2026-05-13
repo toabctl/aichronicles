@@ -1,5 +1,5 @@
 [Unit]
-Description=aichronicles unified daemon (read+write+SSE+web)
+Description=aichronicles JSON/SSE daemon (SQLite write-owner)
 Requires=aichronicles-api.socket
 After=aichronicles-api.socket
 StartLimitIntervalSec=300

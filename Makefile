@@ -3,8 +3,9 @@
 # Targets are intentionally short — when a step grows beyond two
 # commands, promote it to a Go program under tools/.
 
-# Where binaries land. ~/.local/bin matches the path the systemd unit
-# expects (assets/aichronicles-api.service ExecStart=%h/.local/bin/...).
+# Where binaries land. ~/.local/bin matches the path both systemd
+# units expect (assets/aichronicles-api.service and
+# aichronicles-web.service both reference %h/.local/bin/...).
 PREFIX ?= $(HOME)/.local
 BINDIR := $(PREFIX)/bin
 
@@ -24,11 +25,11 @@ LDFLAGS ?= -X 'github.com/toabctl/aichronicles/internal/cli.Version=$(GIT_DESCRI
 # rebuild + restart in one keystroke.
 .DEFAULT_GOAL := all
 
-.PHONY: all build install clean docs docs-cli docs-schema docs-detectors docs-check depcheck
+.PHONY: all build install clean test test-integration vet docs docs-cli docs-schema docs-detectors docs-check depcheck
 
-# Build then install. Restart of the systemd --user service is part
-# of `install`, so `make` end-to-end gets the running daemon onto the
-# new binary.
+# Build then install. The install step bounces both systemd --user
+# services (aichronicles-api + aichronicles-web), so `make`
+# end-to-end gets every running unit onto the new binary.
 all: build install
 
 # Compile both binaries into ./bin. Cleans only what it produces, so
@@ -67,6 +68,23 @@ install: build
 # Remove only what build/install produces locally.
 clean:
 	rm -rf ./bin
+
+# Run the unit + handler test suite. Mirrors what pre-commit's
+# `go test -cover` hook runs, but without the coverage chrome —
+# faster for interactive use.
+test:
+	go test ./... -count=1
+
+# Run integration tests (anything under //go:build integration).
+# Kept separate so `make test` stays fast; CI runs both.
+test-integration:
+	go test -tags=integration ./integration/... -count=1
+
+# go vet across the whole tree. Pre-commit already runs this, but
+# the alias is useful when iterating on a single change before
+# you stage it.
+vet:
+	go vet ./...
 
 
 # Regenerate every auto-generated reference page. Run after editing
