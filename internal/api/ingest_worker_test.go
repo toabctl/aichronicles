@@ -374,8 +374,8 @@ func TestIngestWorker_FailureEscalatesToErrorAtMaxAttempts(t *testing.T) {
 	w.maxAttempts = 2 // make the escalation observable in two drains
 
 	// Capture log records so we can assert the level escalation.
-	cap := &captureHandler{}
-	w.log = slog.New(cap)
+	rec := &captureHandler{}
+	w.log = slog.New(rec)
 
 	enqueueDirect(t, s, "evt-bad", []byte("{nope"))
 
@@ -389,7 +389,7 @@ func TestIngestWorker_FailureEscalatesToErrorAtMaxAttempts(t *testing.T) {
 	}
 
 	var sawWarn, sawError bool
-	for _, r := range cap.snapshot() {
+	for _, r := range rec.snapshot() {
 		if r.Message != "ingest worker: row failed" {
 			continue
 		}

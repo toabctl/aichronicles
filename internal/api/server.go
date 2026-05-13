@@ -312,16 +312,16 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = r.Body.Close() }()
 
-	cap := int64(s.maxEnvelopeBytes)
-	if cap <= 0 {
-		cap = DefaultMaxEnvelopeBytes
+	maxBytes := int64(s.maxEnvelopeBytes)
+	if maxBytes <= 0 {
+		maxBytes = DefaultMaxEnvelopeBytes
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, cap+1))
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBytes+1))
 	if err != nil {
 		writeProblem(w, http.StatusBadRequest, "Read request body failed", err.Error())
 		return
 	}
-	if int64(len(body)) > cap {
+	if int64(len(body)) > maxBytes {
 		writeProblem(w, http.StatusRequestEntityTooLarge, "Envelope too large", "")
 		return
 	}

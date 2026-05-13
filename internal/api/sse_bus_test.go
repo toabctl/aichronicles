@@ -156,8 +156,8 @@ func TestSSEBus_SlowSubscriberDropped(t *testing.T) {
 
 func TestSSEBus_SlowSubscriberDropEmitsWarnLog(t *testing.T) {
 	t.Parallel()
-	cap := &captureHandler{}
-	b := newSSEBus(slog.New(cap))
+	rec := &captureHandler{}
+	b := newSSEBus(slog.New(rec))
 	defer b.Close()
 
 	_, cancel, _ := b.subscribe()
@@ -173,7 +173,7 @@ func TestSSEBus_SlowSubscriberDropEmitsWarnLog(t *testing.T) {
 	}
 
 	var dropRec *slog.Record
-	for _, r := range cap.snapshot() {
+	for _, r := range rec.snapshot() {
 		if r.Message == "sse: subscriber dropped (slow consumer)" {
 			rec := r
 			dropRec = &rec
