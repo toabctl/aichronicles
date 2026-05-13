@@ -7,6 +7,31 @@ import (
 	"fmt"
 )
 
+// Sentinel errors the pending queue returns. Exported so callers
+// can errors.Is them without string matching (which CLAUDE.md §3
+// forbids). Each one is rare under normal operation; a caller
+// treating "row not found" as benign (e.g. a future janitor that
+// prunes the queue out-of-band) can ignore ErrPendingRowMissing
+// without coupling to the formatted error message.
+var (
+	// ErrPendingEmptyEventID is returned by EnqueuePending when
+	// the envelope's EventID field is the empty string. Production
+	// envelopes have a UUIDv7 here; empty indicates a translator
+	// bug or a manual call site that didn't validate.
+	ErrPendingEmptyEventID = errors.New("empty event_id")
+
+	// ErrPendingEmptyBody is returned by EnqueuePending when the
+	// raw POST body is zero bytes. The handler caps body reads
+	// before calling, so empty body indicates a programming error.
+	ErrPendingEmptyBody = errors.New("empty body")
+
+	// ErrPendingRowMissing is returned by MarkPendingProcessed
+	// when the targeted row id is no longer in ingest_pending.
+	// Single-worker production never sees this; a future second
+	// worker or a manual cleanup query could.
+	ErrPendingRowMissing = errors.New("pending row not found")
+)
+
 // IngestPendingRow is one row of the ingest_pending staging table:
 // a raw envelope POST body waiting for the worker to redact + extract
 // + commit downstream. Mirrors the schema in migration 027 verbatim;
@@ -35,10 +60,10 @@ type IngestPendingRow struct {
 // order and the index that backs it.
 func EnqueuePending(ctx context.Context, tx *sql.Tx, eventID string, body []byte, tsServerMs int64) (int64, bool, error) {
 	if eventID == "" {
-		return 0, false, errors.New("EnqueuePending: empty event_id")
+		return 0, false, ErrPendingEmptyEventID
 	}
 	if len(body) == 0 {
-		return 0, false, errors.New("EnqueuePending: empty body")
+		return 0, false, ErrPendingEmptyBody
 	}
 
 	// Insert-or-ignore on the UNIQUE(event_id) constraint. INSERT
@@ -50,16 +75,16 @@ func EnqueuePending(ctx context.Context, tx *sql.Tx, eventID string, body []byte
 		VALUES (?, ?, ?)
 	`, eventID, body, tsServerMs)
 	if err != nil {
-		return 0, false, fmt.Errorf("EnqueuePending: insert: %w", err)
+		return 0, false, fmt.Errorf("enqueue pending: insert: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return 0, false, fmt.Errorf("EnqueuePending: rowsaffected: %w", err)
+		return 0, false, fmt.Errorf("enqueue pending: rows affected: %w", err)
 	}
 	if n == 1 {
 		id, err := res.LastInsertId()
 		if err != nil {
-			return 0, false, fmt.Errorf("EnqueuePending: lastinsertid: %w", err)
+			return 0, false, fmt.Errorf("enqueue pending: last insert id: %w", err)
 		}
 		return id, false, nil
 	}
@@ -70,7 +95,7 @@ func EnqueuePending(ctx context.Context, tx *sql.Tx, eventID string, body []byte
 	if err := tx.QueryRowContext(ctx,
 		`SELECT id FROM ingest_pending WHERE event_id = ?`, eventID,
 	).Scan(&existing); err != nil {
-		return 0, false, fmt.Errorf("EnqueuePending: lookup existing: %w", err)
+		return 0, false, fmt.Errorf("enqueue pending: lookup existing: %w", err)
 	}
 	return existing, true, nil
 }
@@ -95,7 +120,7 @@ func PendingBatch(ctx context.Context, db *sql.DB, limit int) ([]IngestPendingRo
 		 LIMIT ?
 	`, limit)
 	if err != nil {
-		return nil, fmt.Errorf("PendingBatch: query: %w", err)
+		return nil, fmt.Errorf("pending batch: query: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -103,12 +128,12 @@ func PendingBatch(ctx context.Context, db *sql.DB, limit int) ([]IngestPendingRo
 	for rows.Next() {
 		var r IngestPendingRow
 		if err := rows.Scan(&r.ID, &r.EventID, &r.Body, &r.ReceivedAtMs, &r.AttemptCount); err != nil {
-			return nil, fmt.Errorf("PendingBatch: scan: %w", err)
+			return nil, fmt.Errorf("pending batch: scan: %w", err)
 		}
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("PendingBatch: rows: %w", err)
+		return nil, fmt.Errorf("pending batch: rows: %w", err)
 	}
 	return out, nil
 }
@@ -141,18 +166,18 @@ func PendingBatch(ctx context.Context, db *sql.DB, limit int) ([]IngestPendingRo
 func MarkPendingProcessed(ctx context.Context, tx *sql.Tx, id int64) error {
 	res, err := tx.ExecContext(ctx, `DELETE FROM ingest_pending WHERE id = ?`, id)
 	if err != nil {
-		return fmt.Errorf("MarkPendingProcessed: delete: %w", err)
+		return fmt.Errorf("mark pending processed: delete: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("MarkPendingProcessed: rowsaffected: %w", err)
+		return fmt.Errorf("mark pending processed: rows affected: %w", err)
 	}
 	if n != 1 {
 		// Zero rows affected means the row was already deleted
 		// (race with a concurrent worker, or a manual cleanup).
 		// Not an error per se, but surface it so a misbehaving
 		// pair of workers shows up in tests.
-		return fmt.Errorf("MarkPendingProcessed: row %d not found", id)
+		return fmt.Errorf("%w: id=%d", ErrPendingRowMissing, id)
 	}
 	return nil
 }
@@ -178,7 +203,7 @@ func MarkPendingFailed(ctx context.Context, db *sql.DB, id int64, tsServerMs int
 		 WHERE id = ?
 	`, tsServerMs, errMsg, id)
 	if err != nil {
-		return fmt.Errorf("MarkPendingFailed: update: %w", err)
+		return fmt.Errorf("mark pending failed: update: %w", err)
 	}
 	return nil
 }
@@ -194,7 +219,7 @@ func MarkPendingFailed(ctx context.Context, db *sql.DB, id int64, tsServerMs int
 func CountPending(ctx context.Context, db *sql.DB) (int, error) {
 	var n int
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ingest_pending`).Scan(&n); err != nil {
-		return 0, fmt.Errorf("CountPending: scan: %w", err)
+		return 0, fmt.Errorf("count pending: scan: %w", err)
 	}
 	return n, nil
 }

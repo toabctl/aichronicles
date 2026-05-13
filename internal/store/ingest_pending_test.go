@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"database/sql"
+	"errors"
 	"testing"
 )
 
@@ -73,22 +74,24 @@ func TestEnqueuePending_SecondInsertSameEventIDDedups(t *testing.T) {
 func TestEnqueuePending_RejectsEmptyEventID(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
-	if err := WithTx(t.Context(), s.DB(), func(tx *sql.Tx) error {
+	err := WithTx(t.Context(), s.DB(), func(tx *sql.Tx) error {
 		_, _, err := EnqueuePending(t.Context(), tx, "", []byte("body"), 1)
 		return err
-	}); err == nil {
-		t.Error("empty event_id should error")
+	})
+	if !errors.Is(err, ErrPendingEmptyEventID) {
+		t.Errorf("empty event_id: got %v, want ErrPendingEmptyEventID", err)
 	}
 }
 
 func TestEnqueuePending_RejectsEmptyBody(t *testing.T) {
 	t.Parallel()
 	s := openTestStore(t)
-	if err := WithTx(t.Context(), s.DB(), func(tx *sql.Tx) error {
+	err := WithTx(t.Context(), s.DB(), func(tx *sql.Tx) error {
 		_, _, err := EnqueuePending(t.Context(), tx, "evt", nil, 1)
 		return err
-	}); err == nil {
-		t.Error("empty body should error")
+	})
+	if !errors.Is(err, ErrPendingEmptyBody) {
+		t.Errorf("empty body: got %v, want ErrPendingEmptyBody", err)
 	}
 }
 
@@ -172,8 +175,8 @@ func TestMarkPendingProcessed_MissingRowErrors(t *testing.T) {
 	err := WithTx(t.Context(), s.DB(), func(tx *sql.Tx) error {
 		return MarkPendingProcessed(t.Context(), tx, 999)
 	})
-	if err == nil {
-		t.Error("processing a non-existent row should error so a double-process is loud")
+	if !errors.Is(err, ErrPendingRowMissing) {
+		t.Errorf("missing row: got %v, want ErrPendingRowMissing", err)
 	}
 }
 
