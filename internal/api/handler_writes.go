@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -214,7 +215,7 @@ func (s *Server) handleSessionLinksSave(w http.ResponseWriter, r *http.Request) 
 	for i, l := range req.Links {
 		if l.ToSessionID == "" {
 			writeProblem(w, http.StatusBadRequest, "Invalid link",
-				"link[%d].to_session_id is empty")
+				fmt.Sprintf("link[%d].to_session_id is empty", i))
 			return
 		}
 		if l.ToSessionID == req.FromSessionID {

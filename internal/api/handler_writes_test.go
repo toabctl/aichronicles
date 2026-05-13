@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/toabctl/aichronicles/internal/events"
@@ -98,6 +99,31 @@ func TestHandleSessionLinksSave_RejectsBadKind(t *testing.T) {
 		httptest.NewRequest(http.MethodPost, "/v1/session-links", bytesReader(body)))
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status=%d, want 400 for invalid link kind", rr.Code)
+	}
+}
+
+// TestHandleSessionLinksSave_EmptyToSessionIDIncludesIndex pins the
+// formatted-index detail in the 400 problem response. The earlier
+// implementation passed the format string through verbatim, so the
+// client got the literal "link[%d].to_session_id is empty".
+func TestHandleSessionLinksSave_EmptyToSessionIDIncludesIndex(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	body := mustJSON(t, wire.SaveSessionLinksRequest{
+		FromSessionID: "from-1",
+		Links: []wire.SessionLink{
+			{ToSessionID: "ok-1", Kind: "builds_on"},
+			{ToSessionID: "", Kind: "builds_on"},
+		},
+	})
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr,
+		httptest.NewRequest(http.MethodPost, "/v1/session-links", bytesReader(body)))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "link[1].to_session_id is empty") {
+		t.Errorf("body=%q, want index-interpolated detail", rr.Body.String())
 	}
 }
 
