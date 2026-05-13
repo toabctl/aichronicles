@@ -7,21 +7,19 @@ import (
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
-const defaultFactsLimit = 50
-
 // handleFactsSubjects serves GET /v1/facts/subjects?contains=...
 //
 // Two modes:
 //   - contains=needle: substring match (case-insensitive) — for
 //     autocomplete. Backed by store.FactSubjectsLike, capped at
-//     limit (default defaultFactsLimit, 50).
+//     limit (default wire.DefaultPageLimit, 50).
 //   - no contains:     full distinct list — for the web's facts
 //     index page. Backed by store.LoadDistinctFactSubjects, capped
 //     at a larger default (200) since the consumer renders the
 //     whole index, not a typeahead dropdown.
 func (s *Server) handleFactsSubjects(w http.ResponseWriter, r *http.Request) {
 	contains := r.URL.Query().Get("contains")
-	limit, ok := parseLimitQuery(w, r, defaultFactsLimit)
+	limit, ok := parseLimitQuery(w, r, wire.DefaultPageLimit)
 	if !ok {
 		return
 	}
@@ -48,7 +46,7 @@ func (s *Server) handleFactsSubjects(w http.ResponseWriter, r *http.Request) {
 // GET /v1/facts (latter returns recent facts across all subjects).
 func (s *Server) handleFactsList(w http.ResponseWriter, r *http.Request) {
 	subject := r.URL.Query().Get("subject")
-	limit, ok := parseLimitQuery(w, r, defaultFactsLimit)
+	limit, ok := parseLimitQuery(w, r, wire.DefaultPageLimit)
 	if !ok {
 		return
 	}

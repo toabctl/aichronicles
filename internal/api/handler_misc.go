@@ -20,7 +20,7 @@ func (s *Server) handleSessionLLMOutputs(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	kind := r.URL.Query().Get("kind")
-	limit, ok := parseLimitQuery(w, r, 50)
+	limit, ok := parseLimitQuery(w, r, wire.DefaultPageLimit)
 	if !ok {
 		return
 	}
@@ -52,7 +52,7 @@ func (s *Server) handleLLMOutputsList(w http.ResponseWriter, r *http.Request) {
 		Kind:      store.LLMOutputKind(q.Get("kind")),
 		SessionID: q.Get("session_id"),
 	}
-	limit, ok := parseLimitQuery(w, r, 50)
+	limit, ok := parseLimitQuery(w, r, wire.DefaultPageLimit)
 	if !ok {
 		return
 	}
@@ -206,7 +206,7 @@ func (s *Server) handleProjectsAggregates(w http.ResponseWriter, r *http.Request
 // Empty session_id returns spans across the whole store.
 func (s *Server) handleSubagentSpans(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.URL.Query().Get("session_id")
-	limit, ok := parseLimitQuery(w, r, 50)
+	limit, ok := parseLimitQuery(w, r, wire.DefaultPageLimit)
 	if !ok {
 		return
 	}
