@@ -16,7 +16,7 @@ import (
 // ingestN posts n distinct envelopes through the server and returns
 // the event_ids in ingest order. Used to seed events for the list-
 // endpoint tests.
-func ingestN(t *testing.T, srv *Server, n int) []string {
+func ingestN(t *testing.T, srv *testServer, n int) []string {
 	t.Helper()
 	ids := make([]string, 0, n)
 	for i := 0; i < n; i++ {

@@ -29,6 +29,51 @@ func isolateEnv(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(tmp, "runtime"))
 }
 
+// startAPIDaemon spins up an api.Server on sock with its ingest
+// worker running in the background. Returns a wait func that
+// blocks until ingest_pending is empty (or a 2s deadline).
+// Cleanup (server shutdown + worker stop) is registered via
+// t.Cleanup so callers don't need to defer anything themselves.
+//
+// Used by integration tests that exercise the full hook → UDS →
+// worker → SQLite path. The wait func is the test's barrier
+// between RunHook (which only enqueues) and the assertion against
+// downstream tables.
+func startAPIDaemon(t *testing.T, s *store.Store, sock string) func() {
+	t.Helper()
+	srv := api.NewServer(s, nil)
+
+	workerCtx, cancelWorker := context.WithCancel(context.Background())
+	go func() { _ = srv.Worker().Run(workerCtx) }()
+
+	shutdown, err := api.ListenAndServe(sock, srv.Handler())
+	if err != nil {
+		cancelWorker()
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = shutdown(context.Background())
+		cancelWorker()
+		<-srv.Worker().Done()
+	})
+
+	return func() {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			n, err := store.CountPending(t.Context(), s.DB())
+			if err != nil {
+				t.Fatalf("CountPending: %v", err)
+			}
+			if n == 0 {
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+		t.Fatal("worker did not drain ingest_pending within 2s")
+	}
+}
+
 func TestCLI_IngestRoundTrip(t *testing.T) {
 	isolateEnv(t)
 	dir := t.TempDir()
@@ -40,12 +85,7 @@ func TestCLI_IngestRoundTrip(t *testing.T) {
 	}
 	defer func() { _ = s.Close() }()
 
-	srv := api.NewServer(s, nil)
-	shutdown, err := api.ListenAndServe(sock, srv.Handler())
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	defer func() { _ = shutdown(context.Background()) }()
+	waitDrain := startAPIDaemon(t, s, sock)
 
 	hook := []byte(`{
 		"session_id": "e2e-1",
@@ -61,6 +101,7 @@ func TestCLI_IngestRoundTrip(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("unexpected stderr: %q", stderr.String())
 	}
+	waitDrain()
 
 	// The event should now be in the store.
 	wantSessionID := events.DeriveSessionID("claude-code", "e2e-1")
@@ -102,12 +143,7 @@ func TestCLI_IngestRedactsSecretsEndToEnd(t *testing.T) {
 	}
 	defer func() { _ = s.Close() }()
 
-	srv := api.NewServer(s, nil)
-	shutdown, err := api.ListenAndServe(sock, srv.Handler())
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	defer func() { _ = shutdown(context.Background()) }()
+	waitDrain := startAPIDaemon(t, s, sock)
 
 	// User accidentally pasted an Anthropic API key into a prompt.
 	secret := "sk-ant-" + strings.Repeat("a", 40)
@@ -122,6 +158,7 @@ func TestCLI_IngestRedactsSecretsEndToEnd(t *testing.T) {
 	if err := cli.RunHook(bytes.NewReader(hook), &stderr, sock, ""); err != nil {
 		t.Fatalf("RunIngest: %v", err)
 	}
+	waitDrain()
 
 	wantSessionID := events.DeriveSessionID("claude-code", "e2e-secret")
 	var content string
@@ -168,12 +205,7 @@ func TestCLI_IngestRespectsDenyPaths(t *testing.T) {
 	}
 	defer func() { _ = s.Close() }()
 
-	srv := api.NewServer(s, nil)
-	shutdown, err := api.ListenAndServe(sock, srv.Handler())
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	defer func() { _ = shutdown(context.Background()) }()
+	waitDrain := startAPIDaemon(t, s, sock)
 
 	// Write a config that denies /work/nda.
 	cfgDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "aichronicles")
@@ -219,6 +251,7 @@ func TestCLI_IngestRespectsDenyPaths(t *testing.T) {
 	if err := cli.RunHook(bytes.NewReader(hookOK), &stderr, sock, ""); err != nil {
 		t.Fatalf("RunHook allowed: %v", err)
 	}
+	waitDrain()
 	_ = s.DB().QueryRow(`SELECT COUNT(*) FROM raw_envelopes`).Scan(&n)
 	if n != 1 {
 		t.Fatalf("allowed envelope should land: got %d rows", n)
@@ -305,12 +338,7 @@ func TestCLI_IngestRecoveryClearsOutageFlag(t *testing.T) {
 		t.Fatalf("store.Open: %v", err)
 	}
 	defer func() { _ = s.Close() }()
-	srv := api.NewServer(s, nil)
-	shutdown, err := api.ListenAndServe(sock, srv.Handler())
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	defer func() { _ = shutdown(context.Background()) }()
+	startAPIDaemon(t, s, sock)
 
 	if err := cli.RunHook(bytes.NewReader(hook), &bytes.Buffer{}, sock, ""); err != nil {
 		t.Fatalf("second RunIngest: %v", err)

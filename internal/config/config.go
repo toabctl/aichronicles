@@ -200,6 +200,21 @@ type Limits struct {
 	// internally; more connections mostly means more waiting).
 	// Bump only if profiling shows pool contention.
 	SQLiteMaxOpenConns int `toml:"sqlite_max_open_conns"`
+
+	// IngestQueueMax caps how many rows can sit in ingest_pending
+	// at once before the daemon returns 503 to new POSTs. Zero
+	// uses the built-in default (10000 — generous for a personal-
+	// use deployment; a sustained backlog this large signals the
+	// worker is hopelessly behind and the daemon should push back
+	// rather than continue to accept). The 503 surfaces to the
+	// hook as a transport error and trips the outage path, so the
+	// operator sees the load rather than a silent buildup.
+	//
+	// (Two-phase async ingest is always on — see
+	// internal/api/handler_writes.go. The async_ingest flag that
+	// once gated it was dropped once the worker proved itself
+	// locally.)
+	IngestQueueMax int `toml:"ingest_queue_max"`
 }
 
 // Duration is a time.Duration that round-trips through TOML's

@@ -13,7 +13,7 @@ import (
 
 func TestClient_Sessions_HappyPath(t *testing.T) {
 	t.Parallel()
-	c, _ := newRealServerClient(t)
+	c, st := newRealServerClient(t)
 
 	// Seed two distinct sessions.
 	for _, sid := range []string{"sess-A", "sess-B"} {
@@ -24,6 +24,11 @@ func TestClient_Sessions_HappyPath(t *testing.T) {
 			t.Fatalf("seed Ingest: %v", err)
 		}
 	}
+	// Sessions read from the downstream sessions table, which is
+	// populated by the worker's AFTER INSERT trigger on events.
+	// Wait for the worker to commit both staged rows before
+	// asserting the list.
+	waitForIngestDrain(t, st)
 
 	out, err := c.Sessions(context.Background(), wire.SessionListRequest{})
 	if err != nil {
@@ -45,12 +50,13 @@ func TestClient_Session_NotFoundIsErrNotFound(t *testing.T) {
 
 func TestClient_Session_FoundReturnsDigest(t *testing.T) {
 	t.Parallel()
-	c, _ := newRealServerClient(t)
+	c, st := newRealServerClient(t)
 	env := validEnvelope(t)
 	env.SourceSessionID = "sess-rt"
 	if _, err := c.Ingest(context.Background(), env); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+	waitForIngestDrain(t, st)
 	id := events.DeriveSessionID("claude-code", "sess-rt")
 	got, err := c.Session(context.Background(), id)
 	if err != nil {

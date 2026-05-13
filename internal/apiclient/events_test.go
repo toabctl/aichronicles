@@ -13,7 +13,7 @@ import (
 
 func TestClient_Events_HappyPath(t *testing.T) {
 	t.Parallel()
-	c, _ := newRealServerClient(t)
+	c, st := newRealServerClient(t)
 
 	// Seed: 3 ingests so the server has something to list.
 	for i := 0; i < 3; i++ {
@@ -21,6 +21,7 @@ func TestClient_Events_HappyPath(t *testing.T) {
 			t.Fatalf("seed Ingest %d: %v", i, err)
 		}
 	}
+	waitForIngestDrain(t, st)
 
 	out, err := c.Events(context.Background(), wire.EventListRequest{})
 	if err != nil {

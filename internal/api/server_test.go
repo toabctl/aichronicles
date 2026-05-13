@@ -20,16 +20,25 @@ import (
 	"github.com/toabctl/aichronicles/internal/store"
 )
 
-// newTestServer returns a Server backed by a fresh temp SQLite store.
-// The store closes automatically when the test ends.
-func newTestServer(t *testing.T) *Server {
+// newTestServer returns a testServer (a *Server wrapped to make
+// POST /v1/ingest synchronous — see testhelpers_test.go) backed by
+// a fresh temp SQLite store. The store closes automatically when
+// the test ends.
+//
+// The return type is *testServer rather than *Server so the test's
+// next assertion can read the redacted+extracted downstream state
+// immediately after the POST. Tests that genuinely want the async
+// semantics (queue-full backpressure, pending-row staging, dedup
+// at phase 1) construct NewServer directly — see
+// handler_writes_async_test.go.
+func newTestServer(t *testing.T) *testServer {
 	t.Helper()
 	s, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	return NewServer(s, nil)
+	return &testServer{Server: NewServer(s, nil)}
 }
 
 func validEnvelope(t *testing.T) events.Envelope {
@@ -84,19 +93,26 @@ func TestIngest_Accepts_ValidEnvelope(t *testing.T) {
 	}
 }
 
-func TestIngest_DuplicateReturnsDedupedAck(t *testing.T) {
+func TestIngest_DuplicateRetainsSingleRawEnvelope(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)
 	body := validBody(t)
 
-	// First write: accepted, Deduped=false.
+	// First POST: enqueued and (via newTestServer's wrapper)
+	// drained synchronously, so raw_envelopes already has the
+	// row by the time the second POST starts.
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr,
 		httptest.NewRequest(http.MethodPost, "/v1/ingest", bytes.NewReader(body)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("first: status %d", rr.Code)
 	}
-	// Second write with identical body (same event_id): deduped.
+	// Second POST with identical body. Both return 200; the
+	// ack.Deduped flag now reflects ingest_pending dedup only
+	// (catches a retry while the original is still pending).
+	// Permanent dedup is enforced at the worker level via
+	// raw_envelopes' UNIQUE(event_id) — what callers observe is
+	// that raw_envelopes still has exactly one row.
 	rr = httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr,
 		httptest.NewRequest(http.MethodPost, "/v1/ingest", bytes.NewReader(body)))
@@ -104,9 +120,8 @@ func TestIngest_DuplicateReturnsDedupedAck(t *testing.T) {
 		t.Fatalf("second: status %d, body=%s", rr.Code, rr.Body.String())
 	}
 	var ack events.Ack
-	_ = json.Unmarshal(rr.Body.Bytes(), &ack)
-	if !ack.Deduped {
-		t.Errorf("expected Deduped=true on replay, got %+v", ack)
+	if err := json.Unmarshal(rr.Body.Bytes(), &ack); err != nil {
+		t.Fatalf("decode ack: %v", err)
 	}
 
 	var rawCount int

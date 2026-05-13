@@ -51,12 +51,7 @@ func TestE2E_IngestSummarizeFetchViaMCP(t *testing.T) {
 	defer func() { _ = s.Close() }()
 
 	// --- Block A: ingest via the daemon path, secret in prompt ---
-	srv := api.NewServer(s, nil)
-	shutdown, err := api.ListenAndServe(sock, srv.Handler())
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	defer func() { _ = shutdown(context.Background()) }()
+	waitDrain := startAPIDaemon(t, s, sock)
 
 	pastedKey := "sk-ant-" + strings.Repeat("a", 40)
 	hook := []byte(`{
@@ -70,6 +65,11 @@ func TestE2E_IngestSummarizeFetchViaMCP(t *testing.T) {
 	if err := cli.RunHook(bytes.NewReader(hook), &stderr, sock, ""); err != nil {
 		t.Fatalf("RunIngest: %v", err)
 	}
+	// Block on the worker before the next phase queries
+	// events / inserts into llm_outputs (the FK in llm_outputs
+	// references sessions, which is populated by the AFTER
+	// INSERT trigger the worker fires downstream).
+	waitDrain()
 
 	sessID := events.DeriveSessionID("claude-code", "e2e-pipeline")
 

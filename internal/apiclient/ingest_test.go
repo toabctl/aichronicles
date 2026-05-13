@@ -33,6 +33,12 @@ func validEnvelope(t *testing.T) events.Envelope {
 // over httptest (TCP, but the server's wire shape is identical).
 // Returns a Client wired to it. Verifies the Ingest method end-
 // to-end against the real handler instead of a stub.
+//
+// The api.Server runs two-phase ingest: the handler enqueues to
+// ingest_pending and returns 200 immediately, while a background
+// worker drains the table into raw_envelopes / events. Tests
+// that assert downstream state must waitForIngestDrain after
+// each Ingest call.
 func newRealServerClient(t *testing.T) (*Client, *store.Store) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
@@ -41,10 +47,37 @@ func newRealServerClient(t *testing.T) (*Client, *store.Store) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	srv := httptest.NewServer(api.NewServer(st, nil).Handler())
+	apiSrv := api.NewServer(st, nil)
+	// Start the ingest worker so the staging table actually
+	// drains. Bound to a ctx the test cleans up; the worker
+	// exits on cancel via its internal shutdown drain.
+	workerCtx, cancelWorker := context.WithCancel(context.Background())
+	t.Cleanup(cancelWorker)
+	go func() { _ = apiSrv.Worker().Run(workerCtx) }()
+
+	srv := httptest.NewServer(apiSrv.Handler())
 	t.Cleanup(srv.Close)
 
 	return newClientForTests(srv.Client(), srv.URL), st
+}
+
+// waitForIngestDrain blocks until the worker has emptied
+// ingest_pending or the test's hard deadline expires. Polls
+// once every 2ms — fine for tests, never used in production.
+func waitForIngestDrain(t *testing.T, st *store.Store) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		n, err := store.CountPending(t.Context(), st.DB())
+		if err != nil {
+			t.Fatalf("CountPending: %v", err)
+		}
+		if n == 0 {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatal("worker did not drain ingest_pending within 2s")
 }
 
 func TestClient_Ingest_HappyPath(t *testing.T) {
@@ -63,6 +96,9 @@ func TestClient_Ingest_HappyPath(t *testing.T) {
 		t.Errorf("first ingest must not be Deduped")
 	}
 
+	// Wait for the worker to commit the staged row downstream.
+	waitForIngestDrain(t, st)
+
 	var n int
 	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n); err != nil {
 		t.Fatalf("query events: %v", err)
@@ -72,20 +108,37 @@ func TestClient_Ingest_HappyPath(t *testing.T) {
 	}
 }
 
-func TestClient_Ingest_DuplicateReturnsDeduped(t *testing.T) {
+func TestClient_Ingest_DuplicateRetainsSingleRawEnvelope(t *testing.T) {
 	t.Parallel()
-	c, _ := newRealServerClient(t)
+	c, st := newRealServerClient(t)
 	env := validEnvelope(t)
 
 	if _, err := c.Ingest(context.Background(), env); err != nil {
 		t.Fatalf("first Ingest: %v", err)
 	}
-	ack, err := c.Ingest(context.Background(), env)
-	if err != nil {
+	// Let the worker commit the first envelope downstream
+	// before the second POST — otherwise the second POST
+	// races the worker and the ack's Deduped flag could go
+	// either way depending on timing. Production hooks don't
+	// see this because they don't immediately retry the same
+	// event_id at sub-millisecond intervals; tests need the
+	// explicit barrier.
+	waitForIngestDrain(t, st)
+
+	if _, err := c.Ingest(context.Background(), env); err != nil {
 		t.Fatalf("second Ingest: %v", err)
 	}
-	if !ack.Deduped {
-		t.Errorf("second Ingest must be Deduped, got %+v", ack)
+	waitForIngestDrain(t, st)
+
+	// The permanent dedup signal lives in raw_envelopes
+	// (UNIQUE(event_id)): regardless of how either ack's
+	// Deduped flag resolved, the row count stays at one.
+	var n int
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM raw_envelopes`).Scan(&n); err != nil {
+		t.Fatalf("query raw_envelopes: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("raw_envelopes: got %d, want 1", n)
 	}
 }
 

@@ -14,6 +14,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -53,17 +54,36 @@ const (
 	httpIdleTimeout       = 120 * time.Second
 )
 
+// DefaultIngestQueueMax is the rows-pending cap consulted when
+// async ingest is enabled and the operator hasn't set
+// [limits].ingest_queue_max. 10000 is generous for a personal-use
+// deployment; if the queue sits at this depth steadily, the worker
+// is hopelessly behind and 503-ing the next POST is more useful
+// than silently buffering more.
+const DefaultIngestQueueMax = 10000
+
 // Server is the HTTP-facing surface of aichronicles-api. Owns the
 // store handle, an events.Pipeline configured for server-side
-// redaction, and an in-process SSE bus that fan-outs every
-// accepted ingest to live /v1/stream subscribers. Per-feature
-// handlers live in handler_*.go and are methods on *Server.
+// redaction, an in-process SSE bus that fan-outs every accepted
+// ingest to live /v1/stream subscribers, and an IngestWorker that
+// drains the ingest_pending staging table. Per-feature handlers
+// live in handler_*.go and are methods on *Server.
+//
+// Two-phase ingest is unconditional: handleIngest enqueues the
+// raw POST body in a tiny tx and returns 200 immediately; the
+// worker drains pending rows on a background goroutine. The
+// daemon (cmd/aichronicles-api) is responsible for spawning
+// Worker().Run(ctx) so the worker's lifecycle is tied to the
+// daemon's signal/context machinery and the shutdown order is
+// correct (drain listener → cancel worker → wait for worker).
 type Server struct {
 	store            *store.Store
 	slog             *slog.Logger
 	maxEnvelopeBytes int
 	pipeline         events.Pipeline
 	sseBus           *sseBus
+	worker           *IngestWorker
+	ingestQueueMax   int
 }
 
 // NewServer returns a Server backed by s. log nil falls back to a
@@ -71,21 +91,32 @@ type Server struct {
 // redact.Default() so the server is the single point of redaction
 // enforcement; misconfiguration (nil scanner) would surface at
 // first ingest as a 500 from the Pipeline's nil-Redactor guard.
+//
+// The IngestWorker is constructed but NOT started — the daemon
+// main spawns Worker().Run(ctx) so the goroutine lifecycle is
+// owned by the signal context and the shutdown order can be
+// controlled. Tests can either start the worker themselves or
+// call Worker().drain(ctx) explicitly after each POST for a
+// deterministic single-step.
 func NewServer(s *store.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
+	pipeline := events.Pipeline{
+		Sink:       store.NewSink(s),
+		Extractors: events.DefaultExtractors(),
+		Redactor:   events.NewScannerRedactor(redact.Default()),
+		Logger:     log,
+	}
+	bus := newSSEBus(log.With("component", "sse_bus"))
 	return &Server{
 		store:            s,
 		slog:             log,
 		maxEnvelopeBytes: DefaultMaxEnvelopeBytes,
-		pipeline: events.Pipeline{
-			Sink:       store.NewSink(s),
-			Extractors: events.DefaultExtractors(),
-			Redactor:   events.NewScannerRedactor(redact.Default()),
-			Logger:     log,
-		},
-		sseBus: newSSEBus(),
+		pipeline:         pipeline,
+		sseBus:           bus,
+		worker:           NewIngestWorker(s, pipeline, bus, log.With("component", "ingest_worker")),
+		ingestQueueMax:   DefaultIngestQueueMax,
 	}
 }
 
@@ -107,6 +138,25 @@ func (s *Server) WithMaxEnvelopeBytes(n int) *Server {
 	}
 	return s
 }
+
+// WithIngestQueueMax overrides the ingest_pending backlog cap.
+// Non-positive values keep the built-in default (10000). Designed
+// for the daemon main to pipe cfg.Limits.IngestQueueMax through
+// without mutating exported fields. Returns the receiver for
+// chaining alongside WithMaxEnvelopeBytes.
+func (s *Server) WithIngestQueueMax(n int) *Server {
+	if n > 0 {
+		s.ingestQueueMax = n
+	}
+	return s
+}
+
+// Worker returns the IngestWorker NewServer constructed. The
+// daemon main calls Worker().Run(ctx) in a goroutine so the
+// worker's lifecycle is tied to the signal context's; tests can
+// drive Worker().drain() directly for a deterministic step.
+// Never nil.
+func (s *Server) Worker() *IngestWorker { return s.worker }
 
 // Handler returns the HTTP multiplexer with every /v1 route mounted.
 func (s *Server) Handler() http.Handler {
@@ -288,31 +338,61 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pipeline.Process redacts (server-side, always — single point
-	// of enforcement), runs the extractor registry, and writes
-	// through the SQLite Sink in one transaction. Errors here are
-	// programmer- or storage-side; clients can't influence them.
-	result, err := s.pipeline.Process(r.Context(), events.Event{Envelope: &env, Raw: body})
+	// Two-phase ingest: write the raw POST body into the
+	// ingest_pending staging table in a tiny tx, return 200
+	// immediately. The IngestWorker drains pending rows on a
+	// background goroutine — redact + extract + downstream insert
+	// + FTS indexing + SSE publish all happen there, off the
+	// hook's critical path.
+	//
+	// Backpressure: when CountPending exceeds s.ingestQueueMax we
+	// return 503 instead of accepting an envelope the worker
+	// can't drain. The hook treats 503 (transport-like error from
+	// its perspective) as a drop and trips the outage path so the
+	// operator sees the load explicitly rather than a silent
+	// buildup.
+	pending, err := store.CountPending(r.Context(), s.store.DB())
 	if err != nil {
-		s.slog.Error("pipeline process", "event_id", env.EventID, "err", err)
+		s.slog.Error("ingest: count pending", "err", err)
+		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		return
+	}
+	if pending >= s.ingestQueueMax {
+		s.slog.Warn("ingest: queue full — rejecting",
+			"pending", pending, "max", s.ingestQueueMax)
+		writeProblem(w, http.StatusServiceUnavailable,
+			"Ingest queue is full",
+			fmt.Sprintf("pending=%d max=%d", pending, s.ingestQueueMax))
+		return
+	}
+
+	var deduped bool
+	if err := store.WithTx(r.Context(), s.store.DB(), func(tx *sql.Tx) error {
+		var err error
+		_, deduped, err = store.EnqueuePending(r.Context(), tx, env.EventID, body, time.Now().UnixMilli())
+		return err
+	}); err != nil {
+		s.slog.Error("ingest: enqueue", "event_id", env.EventID, "err", err)
 		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 		return
 	}
 
-	// Publish to live SSE subscribers AFTER the write committed.
-	// Dedup'd ingests don't fire — Result.Deduped means no new
-	// row was written, so there's nothing live consumers haven't
-	// already seen.
-	if !result.Deduped {
-		s.sseBus.Publish(wire.StreamEvent{
-			EventID:    result.EventID,
-			SessionID:  result.SessionID,
-			Kind:       env.Kind,
-			TsServerMs: time.Now().UnixMilli(),
-		})
-	}
+	// Nudge the worker so it drains immediately rather than
+	// waiting for the next heartbeat tick. Non-blocking: if a
+	// wake is already queued this call is a no-op.
+	s.worker.Wake()
 
-	writeJSON(w, http.StatusOK, events.Ack(result))
+	// Ack carries the in-flight envelope's identity (same
+	// event_id, derived session id) so the hook's success path
+	// is identical to what the sync pipeline used to return.
+	// Deduped reflects ingest_pending's UNIQUE(event_id): a
+	// retrying hook gets "yes I have this" without paying for
+	// the pipeline a second time.
+	writeJSON(w, http.StatusOK, events.Ack(events.Result{
+		EventID:   env.EventID,
+		SessionID: events.DeriveSessionID(env.SourceAgent, env.SourceSessionID),
+		Deduped:   deduped,
+	}))
 }
 
 // writeProblem renders an RFC 7807 problem+json response.

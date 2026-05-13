@@ -1,6 +1,8 @@
 package api
 
 import (
+	"io"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 
@@ -38,19 +40,41 @@ type sseBus struct {
 	mu     sync.Mutex
 	subs   map[*sseSubscriber]struct{}
 	closed atomic.Bool
+	// nextID stamps each new subscriber with a monotonic id so
+	// drop logs (and any future per-subscriber metrics) can refer
+	// to a specific connection without exposing the *sseSubscriber
+	// pointer. Wraps after 2^64 publishes, which is never.
+	nextID atomic.Uint64
+	// log emits operational events — subscriber drops on slow-
+	// consumer overflow are the headline use case. Always non-nil
+	// after newSSEBus (nil input falls back to a discard handler)
+	// so callers don't need a per-site guard.
+	log *slog.Logger
 }
 
 // sseSubscriber is one connected SSE consumer's slot on the bus.
 // ch is bounded; if a publish would block, the subscriber is
-// dropped.
+// dropped. id is the bus-assigned monotonic identifier, surfaced
+// in slog drop records so an operator can correlate the disconnect
+// with the matching subscribe log line on the handler side.
 type sseSubscriber struct {
+	id       uint64
 	ch       chan wire.StreamEvent
 	overflow atomic.Bool
 }
 
-// newSSEBus builds an empty bus.
-func newSSEBus() *sseBus {
-	return &sseBus{subs: make(map[*sseSubscriber]struct{})}
+// newSSEBus builds an empty bus. A nil log is replaced with a
+// discard handler so Publish never needs a nil-check; callers that
+// want drops to actually surface (production wiring, tests
+// capturing records) must pass a real logger.
+func newSSEBus(log *slog.Logger) *sseBus {
+	if log == nil {
+		log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	return &sseBus{
+		subs: make(map[*sseSubscriber]struct{}),
+		log:  log,
+	}
 }
 
 // subscribe registers a new subscriber and returns its channel
@@ -65,7 +89,10 @@ func (b *sseBus) subscribe() (<-chan wire.StreamEvent, func(), bool) {
 	if len(b.subs) >= SSEMaxSubscribers {
 		return nil, nil, false
 	}
-	s := &sseSubscriber{ch: make(chan wire.StreamEvent, SSEBufferSize)}
+	s := &sseSubscriber{
+		id: b.nextID.Add(1),
+		ch: make(chan wire.StreamEvent, SSEBufferSize),
+	}
 	b.subs[s] = struct{}{}
 	cancel := func() {
 		b.mu.Lock()
@@ -84,6 +111,16 @@ func (b *sseBus) subscribe() (<-chan wire.StreamEvent, func(), bool) {
 // prevents one slow client from backing up the publisher's
 // goroutine.
 //
+// Drops emit a slog.Warn record with the event kind that pushed
+// the subscriber over and the post-drop subscriber count, so an
+// operator looking at a "lost event" in the live feed can trace
+// it back to a specific disconnected subscriber (the same id is
+// emitted by the SSE handler on its subscribe / disconnect log
+// lines). Logging inside the b.mu critical section is intentional:
+// drops are rare (only a genuinely slow consumer overruns 64
+// buffered events), and a single slog.Warn call doesn't measurably
+// extend the writer's lock hold.
+//
 // No-op after Close.
 func (b *sseBus) Publish(ev wire.StreamEvent) {
 	if b.closed.Load() {
@@ -99,6 +136,11 @@ func (b *sseBus) Publish(ev wire.StreamEvent) {
 			s.overflow.Store(true)
 			delete(b.subs, s)
 			close(s.ch)
+			b.log.Warn("sse: subscriber dropped (slow consumer)",
+				"sub_id", s.id,
+				"event_kind", ev.Kind,
+				"remaining", len(b.subs),
+				"buffer_size", SSEBufferSize)
 		}
 	}
 }

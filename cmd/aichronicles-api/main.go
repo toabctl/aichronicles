@@ -46,6 +46,15 @@ const (
 // config file.
 const defaultShutdownDrainTimeout = 10 * time.Second
 
+// workerShutdownGrace bounds how long the main goroutine waits
+// for the IngestWorker to finish its final drain after the
+// listener has stopped accepting. Sized just over the worker's
+// internal shutdownBudget (api.defaultWorkerShutdownBudget = 5s)
+// so a healthy worker finishes well within budget and a wedged
+// one is loudly bounded. Independent of drainCtx so a slow
+// listener-drain doesn't starve the worker of drain time.
+const workerShutdownGrace = 7 * time.Second
+
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
 		slog.New(slog.NewTextHandler(os.Stderr, nil)).Error("aichronicles-api failed", "err", err)
@@ -114,7 +123,9 @@ func run(sockFlag, dbFlag, webBind string, webPort int, webDisabled bool) error 
 	defer func() { _ = st.Close() }()
 	st.SetMaxOpenConns(cfg.Limits.SQLiteMaxOpenConns)
 
-	srv := api.NewServer(st, logger).WithMaxEnvelopeBytes(cfg.Limits.MaxEnvelopeBytes)
+	srv := api.NewServer(st, logger).
+		WithMaxEnvelopeBytes(cfg.Limits.MaxEnvelopeBytes).
+		WithIngestQueueMax(cfg.Limits.IngestQueueMax)
 	defer srv.Close()
 
 	var shutdown func(context.Context) error
@@ -177,6 +188,16 @@ func run(sockFlag, dbFlag, webBind string, webPort int, webDisabled bool) error 
 		logger.Warn("start watchdog", "err", err)
 	}
 
+	// IngestWorker lifecycle is deliberately NOT bound to sigCtx:
+	// the worker must outlive the listener so any envelope an
+	// in-flight POST enqueues during the listener's drain pass
+	// still makes it through redact + write. cancelWorker fires
+	// AFTER the listener drain below; we then wait on Done()
+	// before returning so the worker's shutdown drain finishes.
+	workerCtx, cancelWorker := context.WithCancel(context.Background())
+	defer cancelWorker()
+	go func() { _ = srv.Worker().Run(workerCtx) }()
+
 	<-sigCtx.Done()
 	drainTimeout := cfg.Limits.ShutdownDrainTimeout.Or(defaultShutdownDrainTimeout)
 	logger.Info("aichronicles-api shutting down", "drain_timeout", drainTimeout)
@@ -199,7 +220,45 @@ func run(sockFlag, dbFlag, webBind string, webPort int, webDisabled bool) error 
 			logger.Warn("web shutdown", "err", err)
 		}
 	}
-	return shutdown(drainCtx)
+	if err := shutdown(drainCtx); err != nil {
+		logger.Warn("api shutdown", "err", err)
+	}
+	// Listener has drained; any envelopes accepted at the wire are
+	// now committed to ingest_pending. Cancel the worker so its
+	// shutdown drain finishes the redact+write side, and wait for
+	// the goroutine to actually exit before returning so the
+	// process doesn't tear down underneath an active transaction.
+	//
+	// The worker wait uses a FRESH budget (workerShutdownGrace),
+	// not the already-spent drainCtx. drainCtx may have been
+	// entirely consumed by a slow listener drain — without a
+	// separate budget the worker would get zero time to flush
+	// pending rows. The grace value is sized just over the
+	// worker's internal shutdownBudget so a healthy worker
+	// finishes cleanly and a wedged one is bounded.
+	cancelWorker()
+	workerGraceCtx, cancelGrace := context.WithTimeout(context.Background(), workerShutdownGrace)
+	defer cancelGrace()
+	select {
+	case <-srv.Worker().Done():
+	case <-workerGraceCtx.Done():
+		logger.Warn("ingest worker did not drain within grace period",
+			"grace", workerShutdownGrace)
+	}
+
+	// Audit log: how many rows are still in ingest_pending at
+	// exit? Anything > 0 here means an envelope landed during
+	// the listener-drain window but wasn't processed before the
+	// worker's budget expired (or its parent shutdown got cut
+	// short). Those rows persist in SQLite and will be picked up
+	// by the worker's initial drain on the next daemon start —
+	// no event loss, just delayed processing. Surfacing the
+	// count makes that visible to the operator.
+	if pending, err := store.CountPending(context.Background(), st.DB()); err == nil && pending > 0 {
+		logger.Warn("ingest_pending leftover at shutdown — will resume on next start",
+			"rows", pending)
+	}
+	return nil
 }
 
 // startWebListener binds a TCP listener for the HTML web UI and

@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -8,9 +10,38 @@ import (
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
+// captureHandler is a slog.Handler that appends every emitted
+// record to a slice under a mutex. Used by tests to assert that
+// the bus produced an expected log line without relying on stderr
+// scraping or the test process's global default handler.
+type captureHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *captureHandler) Enabled(_ context.Context, _ slog.Level) bool { return true }
+func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r.Clone())
+	return nil
+}
+func (h *captureHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
+func (h *captureHandler) WithGroup(_ string) slog.Handler      { return h }
+
+// snapshot returns a copy of the captured records so callers can
+// iterate without holding the handler's lock.
+func (h *captureHandler) snapshot() []slog.Record {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]slog.Record, len(h.records))
+	copy(out, h.records)
+	return out
+}
+
 func TestSSEBus_PublishToOneSubscriber(t *testing.T) {
 	t.Parallel()
-	b := newSSEBus()
+	b := newSSEBus(nil)
 	defer b.Close()
 
 	ch, cancel, ok := b.subscribe()
@@ -34,7 +65,7 @@ func TestSSEBus_PublishToOneSubscriber(t *testing.T) {
 
 func TestSSEBus_PublishFanOutToManySubscribers(t *testing.T) {
 	t.Parallel()
-	b := newSSEBus()
+	b := newSSEBus(nil)
 	defer b.Close()
 
 	const n = 5
@@ -71,7 +102,7 @@ func TestSSEBus_PublishFanOutToManySubscribers(t *testing.T) {
 
 func TestSSEBus_CapAtMaxSubscribers(t *testing.T) {
 	t.Parallel()
-	b := newSSEBus()
+	b := newSSEBus(nil)
 	defer b.Close()
 
 	cancels := make([]func(), 0, SSEMaxSubscribers)
@@ -96,7 +127,7 @@ func TestSSEBus_CapAtMaxSubscribers(t *testing.T) {
 
 func TestSSEBus_SlowSubscriberDropped(t *testing.T) {
 	t.Parallel()
-	b := newSSEBus()
+	b := newSSEBus(nil)
 	defer b.Close()
 
 	ch, cancel, _ := b.subscribe()
@@ -123,9 +154,67 @@ func TestSSEBus_SlowSubscriberDropped(t *testing.T) {
 	}
 }
 
+func TestSSEBus_SlowSubscriberDropEmitsWarnLog(t *testing.T) {
+	t.Parallel()
+	cap := &captureHandler{}
+	b := newSSEBus(slog.New(cap))
+	defer b.Close()
+
+	_, cancel, _ := b.subscribe()
+	defer cancel()
+
+	// Overflow the buffer. The exact event that pushes the
+	// subscriber over the edge varies (the channel may absorb a
+	// couple of extra sends before reporting "would block" — Go's
+	// runtime schedules), so push enough that at least one drop
+	// is guaranteed.
+	for i := 0; i < SSEBufferSize*2; i++ {
+		b.Publish(wire.StreamEvent{IngestSeq: int64(i), Kind: "tool_use"})
+	}
+
+	var dropRec *slog.Record
+	for _, r := range cap.snapshot() {
+		if r.Message == "sse: subscriber dropped (slow consumer)" {
+			rec := r
+			dropRec = &rec
+			break
+		}
+	}
+	if dropRec == nil {
+		t.Fatal("expected drop warn log, got none")
+	}
+	if dropRec.Level != slog.LevelWarn {
+		t.Errorf("expected Warn level, got %v", dropRec.Level)
+	}
+
+	// Required attributes for the log line to be operationally
+	// useful (operator filtering on sub_id, knowing which event
+	// kind pushed the consumer over the edge).
+	want := map[string]bool{
+		"sub_id":      false,
+		"event_kind":  false,
+		"remaining":   false,
+		"buffer_size": false,
+	}
+	dropRec.Attrs(func(a slog.Attr) bool {
+		if _, ok := want[a.Key]; ok {
+			want[a.Key] = true
+		}
+		if a.Key == "event_kind" && a.Value.String() != "tool_use" {
+			t.Errorf("event_kind: got %q, want %q", a.Value.String(), "tool_use")
+		}
+		return true
+	})
+	for k, seen := range want {
+		if !seen {
+			t.Errorf("drop log missing attr %q", k)
+		}
+	}
+}
+
 func TestSSEBus_CloseDisconnectsSubscribers(t *testing.T) {
 	t.Parallel()
-	b := newSSEBus()
+	b := newSSEBus(nil)
 	ch1, _, _ := b.subscribe()
 	ch2, _, _ := b.subscribe()
 
@@ -145,14 +234,14 @@ func TestSSEBus_CloseDisconnectsSubscribers(t *testing.T) {
 
 func TestSSEBus_CloseIsIdempotent(t *testing.T) {
 	t.Parallel()
-	b := newSSEBus()
+	b := newSSEBus(nil)
 	b.Close()
 	b.Close() // must not panic
 }
 
 func TestSSEBus_PublishAfterCloseIsNoOp(t *testing.T) {
 	t.Parallel()
-	b := newSSEBus()
+	b := newSSEBus(nil)
 	b.Close()
 	// Must not panic; no observable side effects.
 	b.Publish(wire.StreamEvent{EventID: "post-close"})
@@ -162,7 +251,7 @@ func TestSSEBus_ConcurrentPublishersAndSubscribers(t *testing.T) {
 	t.Parallel()
 	// Sanity: many publishers fanning out to many subscribers
 	// must not deadlock or lose ordering for fast consumers.
-	b := newSSEBus()
+	b := newSSEBus(nil)
 	defer b.Close()
 
 	const subscribers = 8
