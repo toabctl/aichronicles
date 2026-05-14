@@ -1944,7 +1944,7 @@ Hard rules:
 
 3. Use the documented predicate vocabulary when applicable. If your fact doesn't fit a documented predicate, use a kebab-case-with-underscores name following the same shape; flag the choice via what_happened so the maintainer can decide whether to add it to the canonical list.
 
-4. Subject is the session's cwd (the path where the work happened) for project-level facts. If the session has no cwd, omit the fact rather than guess — facts without an anchor don't retrieve.
+4. Subject is the session's cwd (the path where the work happened) for project-level facts. When the session has a cwd, the canonical subject value to use is given verbatim in the "SUBJECT VALUE TO USE" stanza at the head of the user message — copy it exactly, do NOT paraphrase, normalise, or strip trailing slashes. If the session has no cwd (no stanza is rendered), omit the fact rather than guess — facts without an anchor don't retrieve.
 
 5. Confidence in [0, 1]: 1.0 when the session text directly asserts the fact ("we use Go 1.26"); 0.7-0.9 when the fact is observed indirectly (a go.mod line shown in tool output); below 0.7 the fact is too speculative — drop it.
 
@@ -1982,8 +1982,13 @@ const factsToolSchema = `{
   }
 }`
 
+// factsTemplate has two %s slots: the canonical-subject stanza
+// (empty string when the session has no cwd) and the rendered
+// session digest. The stanza is the anti-fabrication grounding for
+// rule 4 — without it the model had to guess which line in the
+// digest was the subject value to copy.
 const factsTemplate = `One session. Extract any typed project-level facts it reveals.
-
+%s
 Session follows.
 
 ---
@@ -2001,7 +2006,20 @@ func BuildFacts(in FactsFromSessionInputs) (Built, error) {
 	}
 	pats := patternSet{}
 	body := renderDigests([]SessionDigest{in.Digest}, pats)
-	userMsg := fmt.Sprintf(factsTemplate, body)
+	// Anti-fabrication grounding for rule 4: when the session has a
+	// cwd, surface the canonical subject value at the top of the
+	// user message so the model copies it verbatim. cli/facts.go
+	// drops any fact whose Subject != sessionCwd; without this
+	// stanza the model had to infer the value from the "Cwd:" line
+	// inside the digest and frequently normalised trailing slashes
+	// or paraphrased the path, producing a silent zero-persist run.
+	subjectStanza := ""
+	if in.Digest.Cwd != "" {
+		clean, names := redact.Outbound(in.Digest.Cwd)
+		pats.addAll(names)
+		subjectStanza = "\nSUBJECT VALUE TO USE (copy verbatim into the `subject` field of every fact): " + clean + "\n"
+	}
+	userMsg := fmt.Sprintf(factsTemplate, subjectStanza, body)
 	req := llm.Request{
 		System:    factsSystem,
 		Messages:  []llm.Message{{Role: llm.RoleUser, Content: userMsg}},

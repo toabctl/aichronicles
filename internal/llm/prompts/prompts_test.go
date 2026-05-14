@@ -747,6 +747,55 @@ func TestBuildFacts_RendersSessionAndAdvocatesPredicateVocabulary(t *testing.T) 
 	}
 }
 
+// TestBuildFacts_AnchorsCanonicalCwdAsSubject pins the
+// anti-fabrication grounding fix for the facts prompt: when the
+// session has a cwd, BuildFacts must render a "SUBJECT VALUE TO
+// USE" stanza at the head of the user message carrying the cwd
+// verbatim. cli/facts.go drops any fact whose Subject != sessionCwd,
+// and pre-fix the model had to infer the value from the "Cwd:" line
+// inside the digest — frequently normalising trailing slashes or
+// paraphrasing, producing silent zero-persist runs.
+func TestBuildFacts_AnchorsCanonicalCwdAsSubject(t *testing.T) {
+	t.Parallel()
+	digest := SessionDigest{
+		ID:      "sess-cwd-1",
+		Cwd:     "/home/tom/devel/aichronicles",
+		Summary: "go test ./... passes",
+	}
+	built, err := BuildFacts(FactsFromSessionInputs{Digest: digest})
+	if err != nil {
+		t.Fatalf("BuildFacts: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	if !strings.Contains(body, "SUBJECT VALUE TO USE") {
+		t.Errorf("subject stanza missing from prompt: %s", body)
+	}
+	if !strings.Contains(body, "/home/tom/devel/aichronicles") {
+		t.Errorf("canonical cwd not in subject stanza: %s", body)
+	}
+}
+
+// TestBuildFacts_OmitsSubjectStanzaWhenCwdMissing pins the
+// counterpart: a session with no cwd MUST NOT render a stanza —
+// the system prompt's rule 4 tells the model to omit facts in
+// that case rather than guess, and a placeholder stanza would
+// invite fabrication.
+func TestBuildFacts_OmitsSubjectStanzaWhenCwdMissing(t *testing.T) {
+	t.Parallel()
+	digest := SessionDigest{
+		ID:      "sess-cwd-0",
+		Summary: "generic q&a, no project context",
+	}
+	built, err := BuildFacts(FactsFromSessionInputs{Digest: digest})
+	if err != nil {
+		t.Fatalf("BuildFacts: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	if strings.Contains(body, "SUBJECT VALUE TO USE") {
+		t.Errorf("subject stanza should be absent when cwd is empty: %s", body)
+	}
+}
+
 func TestBuildFacts_HashStableAcrossCalls(t *testing.T) {
 	t.Parallel()
 	digest := SessionDigest{ID: "stable", Summary: "x"}
