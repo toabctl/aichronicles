@@ -20,6 +20,15 @@ import (
 
 const sourceAgent = "gemini-cli"
 
+// MaxFileBytes is a sanity bound on a single gemini session JSON
+// file. Real sessions cap out well below this — but the file is
+// loaded whole via os.ReadFile, so without a cap a multi-GB file
+// (legitimate or corrupted) OOMs the importer. Files above this
+// are logged + counted as Invalid and skipped rather than aborting
+// the walk. Mirrors claude.MaxLineBytes in spirit; the per-line vs
+// per-file shape difference reflects each agent's wire format.
+const MaxFileBytes = 128 << 20
+
 // toolEventNamespace is the UUIDv5 namespace we hash
 // (parent-message-id, tool-call-id, suffix) under to synthesize
 // event_ids for tool_use / tool_result events split out of an
@@ -43,6 +52,12 @@ type TranscriptSource struct {
 	Logger *slog.Logger
 	CwdMap map[string]string
 	Now    func() time.Time
+
+	// maxFileBytes is the per-file upper bound enforced before
+	// os.ReadFile is called. Zero means use the package const
+	// MaxFileBytes. Exposed only so tests can shrink the bound;
+	// production callers leave it zero.
+	maxFileBytes int64
 
 	Stats TranscriptStats
 }
@@ -93,6 +108,20 @@ func (s *TranscriptSource) iterateFile(
 ) bool {
 	s.Stats.FilesRead++
 	cwd := cwdForPath(path, cwdMap)
+	max := s.maxFileBytes
+	if max <= 0 {
+		max = MaxFileBytes
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return yield(events.Event{}, fmt.Errorf("stat %s: %w", path, err))
+	}
+	if info.Size() > max {
+		s.Stats.Invalid++
+		logger.Warn("session file too large",
+			"path", path, "bytes", info.Size(), "cap", max)
+		return true
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return yield(events.Event{}, fmt.Errorf("read %s: %w", path, err))

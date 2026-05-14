@@ -84,6 +84,42 @@ func TestTranscriptSource_EmitsUnredactedEnvelopes(t *testing.T) {
 	}
 }
 
+// TestTranscriptSource_OversizeFileIsSkippedNotBuffered verifies a
+// session file above the per-source bound is counted as Invalid and
+// never read. Without the size guard, os.ReadFile would buffer the
+// entire file before json.Unmarshal saw it — a multi-GB session
+// (legitimate or corrupted) OOMs the importer.
+func TestTranscriptSource_OversizeFileIsSkippedNotBuffered(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	bigPath := filepath.Join(dir, "big.json")
+	// 4 KiB > max=1024 below; we never actually read the bytes.
+	body := make([]byte, 4096)
+	for i := range body {
+		body[i] = 'x'
+	}
+	if err := os.WriteFile(bigPath, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	goodPath := filepath.Join(dir, "good.json")
+	if err := os.WriteFile(goodPath, []byte(userMessageFixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	src := &TranscriptSource{Root: dir, CwdMap: map[string]string{}, maxFileBytes: 1024}
+	got := collect(t, src)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d events, want 1 (oversize file skipped, good file kept)", len(got))
+	}
+	if src.Stats.Invalid != 1 {
+		t.Errorf("Invalid: got %d, want 1", src.Stats.Invalid)
+	}
+	if src.Stats.FilesRead != 2 {
+		t.Errorf("FilesRead: got %d, want 2 (both files are visited; one is rejected pre-read)", src.Stats.FilesRead)
+	}
+}
+
 func TestTranscriptSource_UserMessage(t *testing.T) {
 	t.Parallel()
 	path := writeJSON(t, userMessageFixture)
