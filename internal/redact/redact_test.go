@@ -250,6 +250,15 @@ var positiveCases = []struct {
 	{"google API key",
 		"config: AIzaSyA-abcdefghijklmnopqrstuvwxyz12345",
 		"google_api_key"},
+	{"gcp oauth access token",
+		"access_token=ya29.a0AfH6SMC" + strings.Repeat("x", 80),
+		"gcp_oauth_access_token"},
+	{"gcp oauth refresh token",
+		`"refresh_token": "1//0gabcdefghijklmnopqrstuvwxyz0123456789ABCDEF_-zzzz"`,
+		"gcp_oauth_refresh_token"},
+	{"gcp oauth client secret",
+		"GOOGLE_CLIENT_SECRET=GOCSPX-abcdefghijklmnopqrstuvwxyz12",
+		"gcp_oauth_client_secret"},
 	{"github classic PAT",
 		"token: ghp_0123456789abcdefghijklmnopqrstuvwxyz",
 		"github_pat_classic"},
@@ -354,6 +363,10 @@ var negativeCases = []string{
 	// PEM public key (certificate), not private
 	"-----BEGIN CERTIFICATE-----\ncontents\n-----END CERTIFICATE-----",
 	"-----BEGIN PUBLIC KEY-----\nabc\n-----END PUBLIC KEY-----",
+	// Prose mentioning Google OAuth shapes
+	"GOCSPX- is the prefix for OAuth client secrets",
+	"refresh tokens start with 1//0 but plain mention is fine",
+	"ya29. is the Google OAuth access-token prefix",
 }
 
 func TestDefault_NegativeCases(t *testing.T) {
@@ -426,6 +439,27 @@ func TestDefault_AnthropicBeatsOpenAIOnAntKey(t *testing.T) {
 	}
 	if findings[0].Pattern != "anthropic_api_key" {
 		t.Errorf("expected anthropic_api_key to win, got %s", findings[0].Pattern)
+	}
+}
+
+// TestDefault_GCPServiceAccountJSONPrivateKeyRedacted pins the
+// JSON-escaped PEM case: a Google service-account credential file
+// embeds its RSA private key as a single JSON string with `\n`
+// escapes rather than real newlines. The pem_private_key detector
+// must catch this form because [\s\S]*? matches across literal
+// `\n` (two bytes) just as it does across actual newlines. If a
+// future tightening of the PEM regex breaks this, every SA JSON
+// pasted into a transcript would leak its inner key.
+func TestDefault_GCPServiceAccountJSONPrivateKeyRedacted(t *testing.T) {
+	t.Parallel()
+	body := strings.Repeat("MIIE", 20)
+	in := `{"type":"service_account","private_key":"-----BEGIN PRIVATE KEY-----\n` + body + `\n-----END PRIVATE KEY-----\n","client_email":"svc@p.iam.gserviceaccount.com"}`
+	red, patterns := Replace(in, Default().Scan(in))
+	if !contains(patterns, "pem_private_key") {
+		t.Fatalf("pem_private_key did not fire on SA JSON; patterns=%v", patterns)
+	}
+	if strings.Contains(red, body) {
+		t.Errorf("private-key body leaked through redaction:\n%s", red)
 	}
 }
 
@@ -583,6 +617,9 @@ func TestDefault_AllPrefiltersAreCorrect(t *testing.T) {
 		{"anthropic_api_key", "key sk-ant-api03-" + strings.Repeat("a", 40)},
 		{"openai_api_key", "key sk-" + strings.Repeat("a", 40)},
 		{"google_api_key", "AIza" + strings.Repeat("a", 35)},
+		{"gcp_oauth_access_token", "ya29." + strings.Repeat("a", 80)},
+		{"gcp_oauth_refresh_token", "1//0" + strings.Repeat("a", 60)},
+		{"gcp_oauth_client_secret", "GOCSPX-" + strings.Repeat("a", 28)},
 		{"github_pat_fine_grained", "github_pat_" + strings.Repeat("a", 82)},
 		{"github_pat_classic", "ghp_" + strings.Repeat("a", 36)},
 		{"github_pat_classic_o", "gho_" + strings.Repeat("a", 36)},

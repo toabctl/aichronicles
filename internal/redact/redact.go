@@ -253,6 +253,23 @@ func builtinDetectors() []Scanner {
 			WithPrefilter("sk-"),
 		NewDetector("google_api_key", `\bAIza[0-9A-Za-z_-]{35}\b`).
 			WithPrefilter("AIza"),
+		// Google OAuth access token. Format documented in
+		// google.golang.org/api/oauth2/v2 and the Identity Platform
+		// spec: `ya29.` prefix then a long opaque body. Real tokens
+		// are 100+ chars but the prefix is the load-bearing literal.
+		NewDetector("gcp_oauth_access_token", `\bya29\.[A-Za-z0-9._-]{20,}`).
+			WithPrefilter("ya29."),
+		// Google OAuth refresh token. Stored in
+		// ~/.config/gcloud/application_default_credentials.json under
+		// "refresh_token". `1//0` prefix is the documented format for
+		// Google's OAuth refresh tokens; bodies are ~60 base64url chars.
+		NewDetector("gcp_oauth_refresh_token", `\b1//0[A-Za-z0-9_-]{40,}`).
+			WithPrefilter("1//0"),
+		// Google OAuth 2.0 client secret. Distinctive `GOCSPX-`
+		// prefix introduced in 2022; bodies are 28 chars of
+		// [A-Za-z0-9_-]. Used by OAuth desktop / web clients.
+		NewDetector("gcp_oauth_client_secret", `\bGOCSPX-[A-Za-z0-9_-]{20,}\b`).
+			WithPrefilter("GOCSPX-"),
 		NewDetector("github_pat_fine_grained", `\bgithub_pat_[A-Za-z0-9_]{82}\b`).
 			WithPrefilter("github_pat_"),
 		// gh[pousr]_ has no single literal prefix, but the union of

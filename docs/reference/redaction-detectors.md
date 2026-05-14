@@ -9,16 +9,19 @@ Detectors are listed in registration order. On overlap, the first match wins —
 | 1 | `anthropic_api_key` | `\bsk-ant-[A-Za-z0-9_-]{20,}\b` |
 | 2 | `openai_api_key` | `\bsk-(?:proj-)?[A-Za-z0-9_-]{40,}\b` |
 | 3 | `google_api_key` | `\bAIza[0-9A-Za-z_-]{35}\b` |
-| 4 | `github_pat_fine_grained` | `\bgithub_pat_[A-Za-z0-9_]{82}\b` |
-| 5 | `github_pat_classic` | `\bgh[pousr]_[A-Za-z0-9]{36}\b` |
-| 6 | `aws_access_key` | `\bAKIA[0-9A-Z]{16}\b` |
-| 7 | `npm_token` | `\bnpm_[A-Za-z0-9]{36}\b` |
-| 8 | `slack_token` | `\bxox[abprs]-[0-9]{10,}-[0-9a-zA-Z-]{24,}\b` |
-| 9 | `stripe_key` | `\b(?:sk\|pk\|rk)_(?:live\|test)_[A-Za-z0-9]{24,}\b` |
-| 10 | `twilio_sid` | `\b(?:AC\|SK)[a-f0-9]{32}\b` |
-| 11 | `pem_private_key` | `-----BEGIN (?:RSA \|EC \|OPENSSH \|PGP \|DSA \|ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----` |
-| 12 | `jwt` | `\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b` |
-| 13 | `bearer_token` | `(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{20,}\b` |
-| 14 | `db_connection_string` | `(?i)\b(?:postgres(?:ql)?\|mysql\|mongodb(?:\+srv)?\|redis(?:s)?\|amqp)://[^:@\s]+:[^@\s]+@[^\s]+` |
-| 15 | `basic_auth_url` | `\bhttps?://[^:@\s/]+:[^@\s/]+@[^\s]+` |
-| 16 | `aws_secret_key_assignment` | `(?i)\baws_?secret(?:_access)?_?key\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}["']?` |
+| 4 | `gcp_oauth_access_token` | `\bya29\.[A-Za-z0-9._-]{20,}` |
+| 5 | `gcp_oauth_refresh_token` | `\b1//0[A-Za-z0-9_-]{40,}` |
+| 6 | `gcp_oauth_client_secret` | `\bGOCSPX-[A-Za-z0-9_-]{20,}\b` |
+| 7 | `github_pat_fine_grained` | `\bgithub_pat_[A-Za-z0-9_]{82}\b` |
+| 8 | `github_pat_classic` | `\bgh[pousr]_[A-Za-z0-9]{36}\b` |
+| 9 | `aws_access_key` | `\bAKIA[0-9A-Z]{16}\b` |
+| 10 | `npm_token` | `\bnpm_[A-Za-z0-9]{36}\b` |
+| 11 | `slack_token` | `\bxox[abprs]-[0-9]{10,}-[0-9a-zA-Z-]{24,}\b` |
+| 12 | `stripe_key` | `\b(?:sk\|pk\|rk)_(?:live\|test)_[A-Za-z0-9]{24,}\b` |
+| 13 | `twilio_sid` | `\b(?:AC\|SK)[a-f0-9]{32}\b` |
+| 14 | `pem_private_key` | `-----BEGIN (?:RSA \|EC \|OPENSSH \|PGP \|DSA \|ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----` |
+| 15 | `jwt` | `\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b` |
+| 16 | `bearer_token` | `(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{20,}\b` |
+| 17 | `db_connection_string` | `(?i)\b(?:postgres(?:ql)?\|mysql\|mongodb(?:\+srv)?\|redis(?:s)?\|amqp)://[^:@\s]+:[^@\s]+@[^\s]+` |
+| 18 | `basic_auth_url` | `\bhttps?://[^:@\s/]+:[^@\s/]+@[^\s]+` |
+| 19 | `aws_secret_key_assignment` | `(?i)\baws_?secret(?:_access)?_?key\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}["']?` |
