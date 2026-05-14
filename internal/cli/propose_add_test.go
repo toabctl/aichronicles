@@ -142,6 +142,37 @@ func sampleProposal() *prompts.ProposalResult {
 	}
 }
 
+// TestRefuseExistingUnlessForce_DetectsDanglingSymlink pins the
+// foot-gun fix: a dangling symlink at the target path used to slip
+// past the guard because os.Stat (which follows links) returned
+// ErrNotExist on the missing target. The subsequent os.WriteFile
+// would then follow the link and create the file at the link's
+// target — anywhere the writer could reach. Lstat sees the link
+// itself and refuses.
+func TestRefuseExistingUnlessForce_DetectsDanglingSymlink(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	link := filepath.Join(dir, "SKILL.md")
+	missing := filepath.Join(dir, "does-not-exist")
+
+	if err := os.Symlink(missing, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	err := refuseExistingUnlessForce(link, false)
+	if err == nil {
+		t.Fatalf("dangling symlink should refuse: got nil")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("error should mention 'already exists': %v", err)
+	}
+
+	// --force still wins.
+	if err := refuseExistingUnlessForce(link, true); err != nil {
+		t.Errorf("--force should bypass: %v", err)
+	}
+}
+
 func TestProposeAdd_SkillWritesScaffoldAndScripts(t *testing.T) {
 	t.Parallel()
 	s := openTempCLIStore(t)

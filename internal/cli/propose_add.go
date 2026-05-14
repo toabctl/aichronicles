@@ -811,11 +811,25 @@ func resolveSkillsDir(override string) string {
 	return ""
 }
 
+// refuseExistingUnlessForce rejects writes that would clobber an
+// existing entry at path, unless --force is passed. Uses os.Lstat
+// rather than os.Stat so a *dangling* symlink at the path also
+// counts as existing — otherwise a symlink whose target doesn't
+// exist returns ErrNotExist from Stat, the check clears, and the
+// subsequent os.WriteFile follows the link and writes at the
+// target's path (potentially outside the skills directory). That
+// is the documented foot-gun this guard exists to close.
+//
+// A residual TOCTOU window remains between this Lstat and the
+// downstream os.WriteFile: if the path appears in between, --force
+// is implicitly granted. The blast radius is bounded because the
+// caller has already validated the kebab-case skill name and the
+// parent directory is created with 0o755 just above the write.
 func refuseExistingUnlessForce(path string, force bool) error {
 	if force {
 		return nil
 	}
-	if _, err := os.Stat(path); err == nil {
+	if _, err := os.Lstat(path); err == nil {
 		return fmt.Errorf("%s already exists (pass --force to overwrite)", path)
 	}
 	return nil
