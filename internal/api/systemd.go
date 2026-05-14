@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -73,9 +74,9 @@ func ListenFromSystemd() (net.Listener, error) {
 // can bound graceful drain: in-flight requests run until they
 // finish or the context fires, whichever comes first. A nil ctx
 // skips drain and hard-closes immediately.
-func Serve(l net.Listener, handler http.Handler) func(context.Context) error {
+func Serve(l net.Listener, handler http.Handler, log *slog.Logger) func(context.Context) error {
 	srv := newHTTPServer(handler)
-	runServer(srv, l)
+	runServer(srv, l, log)
 	return func(ctx context.Context) error {
 		return gracefulShutdown(ctx, srv)
 	}

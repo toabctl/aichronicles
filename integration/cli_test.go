@@ -5,6 +5,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -47,7 +48,7 @@ func startAPIDaemon(t *testing.T, s *store.Store, sock string) func() {
 	workerCtx, cancelWorker := context.WithCancel(context.Background())
 	go func() { _ = srv.Worker().Run(workerCtx) }()
 
-	shutdown, err := api.ListenAndServe(sock, srv.Handler())
+	shutdown, err := api.ListenAndServe(sock, srv.Handler(), slog.New(slog.DiscardHandler))
 	if err != nil {
 		cancelWorker()
 		t.Fatalf("listen: %v", err)

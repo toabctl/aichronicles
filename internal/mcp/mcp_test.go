@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -47,7 +48,7 @@ func runOne(t *testing.T, s *Server, req string) map[string]any {
 
 func TestServer_Initialize_NegotiatesProtocol(t *testing.T) {
 	t.Parallel()
-	s := New(ServerInfo{Name: "test", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "test", Version: "0.1"}, slog.New(slog.DiscardHandler))
 
 	req := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"claude-desktop","version":"0.5"}}}`
 	resp := runOne(t, s, req)
@@ -77,7 +78,7 @@ func TestServer_Initialize_NegotiatesProtocol(t *testing.T) {
 
 func TestServer_Initialized_NotificationHasNoResponse(t *testing.T) {
 	t.Parallel()
-	s := New(ServerInfo{Name: "test", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "test", Version: "0.1"}, slog.New(slog.DiscardHandler))
 
 	// Notifications have no id — per JSON-RPC rules, no response.
 	resp := runOne(t, s, `{"jsonrpc":"2.0","method":"initialized"}`)
@@ -91,7 +92,7 @@ func TestServer_Initialized_NotificationHasNoResponse(t *testing.T) {
 
 func TestServer_Ping_ReturnsEmptyObject(t *testing.T) {
 	t.Parallel()
-	s := New(ServerInfo{Name: "test", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "test", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	resp := runOne(t, s, `{"jsonrpc":"2.0","id":"p1","method":"ping"}`)
 	if resp["error"] != nil {
 		t.Fatalf("unexpected error: %v", resp["error"])
@@ -103,7 +104,7 @@ func TestServer_Ping_ReturnsEmptyObject(t *testing.T) {
 
 func TestServer_UnknownMethod_ReturnsMethodNotFound(t *testing.T) {
 	t.Parallel()
-	s := New(ServerInfo{Name: "test", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "test", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	resp := runOne(t, s, `{"jsonrpc":"2.0","id":7,"method":"does_not_exist"}`)
 	errObj := resp["error"].(map[string]any)
 	code := int(errObj["code"].(float64))
@@ -114,7 +115,7 @@ func TestServer_UnknownMethod_ReturnsMethodNotFound(t *testing.T) {
 
 func TestServer_MalformedJSON_ReturnsParseError(t *testing.T) {
 	t.Parallel()
-	s := New(ServerInfo{Name: "test", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "test", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	resp := runOne(t, s, `{"jsonrpc":"2.0","id":1,`) // truncated
 	errObj := resp["error"].(map[string]any)
 	code := int(errObj["code"].(float64))
@@ -129,7 +130,7 @@ func TestServer_MalformedJSON_ReturnsParseError(t *testing.T) {
 
 func TestServer_WrongJSONRPCVersion_Rejected(t *testing.T) {
 	t.Parallel()
-	s := New(ServerInfo{Name: "test", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "test", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	resp := runOne(t, s, `{"jsonrpc":"1.0","id":1,"method":"ping"}`)
 	errObj := resp["error"].(map[string]any)
 	code := int(errObj["code"].(float64))
@@ -140,7 +141,7 @@ func TestServer_WrongJSONRPCVersion_Rejected(t *testing.T) {
 
 func TestServer_EmptyLinesIgnored(t *testing.T) {
 	t.Parallel()
-	s := New(ServerInfo{Name: "test", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "test", Version: "0.1"}, slog.New(slog.DiscardHandler))
 
 	in, inW := io.Pipe()
 	out := &bytes.Buffer{}
@@ -163,7 +164,7 @@ func TestServer_EmptyLinesIgnored(t *testing.T) {
 
 func TestServer_MultipleRequestsSequentially(t *testing.T) {
 	t.Parallel()
-	s := New(ServerInfo{Name: "test", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "test", Version: "0.1"}, slog.New(slog.DiscardHandler))
 
 	in, inW := io.Pipe()
 	out := &bytes.Buffer{}

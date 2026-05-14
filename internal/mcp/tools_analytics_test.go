@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -41,7 +42,7 @@ func seedToolUseForAnalytics(t *testing.T, st *store.Store, sourceSession, toolN
 func TestRegisterAnalyticsTools_RegistersAll(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, srv, st)
 
 	for _, want := range []string{"get_insights", "list_skills", "get_skill_staleness"} {
@@ -59,7 +60,7 @@ func TestGetInsights_RendersOverviewAndTopTools(t *testing.T) {
 	seedToolUseForAnalytics(t, st, "ses-x", "Bash", now.Add(time.Minute))
 	seedToolUseForAnalytics(t, st, "ses-x", "Read", now.Add(2*time.Minute))
 
-	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, srv, st)
 	res := callTool(t, srv, "get_insights", `{"since_days": 30}`)
 	if res == nil || len(res.Content) == 0 {
@@ -83,7 +84,7 @@ func TestGetInsights_RendersOverviewAndTopTools(t *testing.T) {
 func TestGetInsights_EmptyWindowSaysSo(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, srv, st)
 	res := callTool(t, srv, "get_insights", `{"since_days": 1}`)
 	body := res.Content[0].Text
@@ -99,7 +100,7 @@ func TestGetInsights_EmptyWindowSaysSo(t *testing.T) {
 func TestListSkills_SectionsAreLabeled(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, srv, st)
 	res := callTool(t, srv, "list_skills", `{"since_days": 30}`)
 	body := res.Content[0].Text
@@ -157,7 +158,7 @@ func TestGetSkillStaleness_ReportsCorrelations(t *testing.T) {
 	_, _, _ = store.IngestEnvelope(t.Context(), tx2, failure, rawF, now.Add(2*time.Minute).UnixMilli())
 	_ = tx2.Commit()
 
-	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, srv, st)
 	res := callTool(t, srv, "get_skill_staleness", `{"since_days": 14}`)
 	body := res.Content[0].Text
@@ -172,7 +173,7 @@ func TestGetSkillStaleness_ReportsCorrelations(t *testing.T) {
 func TestGetSkillStaleness_NoCorrelationsMessage(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, srv, st)
 	res := callTool(t, srv, "get_skill_staleness", `{"since_days": 14}`)
 	if !strings.Contains(res.Content[0].Text, "No stale-correlated skills") {

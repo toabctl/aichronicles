@@ -159,11 +159,11 @@ func run(sockFlag, dbFlag string) error {
 	}
 	var startMsg string
 	if activationListener != nil {
-		shutdown = api.Serve(activationListener, srv.Handler())
+		shutdown = api.Serve(activationListener, srv.Handler(), logger)
 		startMsg = "socket-activated by systemd"
 		logger.Info("aichronicles-api started (socket-activated by systemd)", "db", resolvedDB)
 	} else {
-		shutdown, err = api.ListenAndServe(resolvedSock, srv.Handler())
+		shutdown, err = api.ListenAndServe(resolvedSock, srv.Handler(), logger)
 		if err != nil {
 			return err
 		}

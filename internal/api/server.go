@@ -266,16 +266,21 @@ func newHTTPServer(handler http.Handler) *http.Server {
 }
 
 // runServer drives srv.Serve in a goroutine, logging non-shutdown
-// errors via slog.Default. http.ErrServerClosed is the expected
-// return from a graceful Shutdown / Close and is silenced; anything
-// else (a listener-level failure, an unexpected I/O error) is
-// surfaced so an operator can act on it instead of staring at a
-// silent socket.
-func runServer(srv *http.Server, l net.Listener) {
+// errors via the caller's logger. http.ErrServerClosed is the
+// expected return from a graceful Shutdown / Close and is silenced;
+// anything else (a listener-level failure, an unexpected I/O
+// error) is surfaced so an operator can act on it instead of
+// staring at a silent socket.
+//
+// log must be non-nil — pass slog.Default() from a test if you
+// don't have a project logger handy; the visible call-site
+// argument keeps the dependency explicit instead of buried in a
+// package-internal fallback.
+func runServer(srv *http.Server, l net.Listener, log *slog.Logger) {
 	go func() {
 		err := srv.Serve(l)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Default().Error("api http server exited unexpectedly", "err", err)
+			log.Error("api http server exited unexpectedly", "err", err)
 		}
 	}()
 }
@@ -288,7 +293,7 @@ func runServer(srv *http.Server, l net.Listener) {
 // bound graceful drain: in-flight requests run until they finish or
 // the context fires, whichever comes first. A nil ctx is treated as
 // "no drain" and is equivalent to a hard close.
-func ListenAndServe(sockPath string, handler http.Handler) (func(context.Context) error, error) {
+func ListenAndServe(sockPath string, handler http.Handler, log *slog.Logger) (func(context.Context) error, error) {
 	if err := os.MkdirAll(filepath.Dir(sockPath), 0o700); err != nil {
 		return nil, fmt.Errorf("ensure socket dir: %w", err)
 	}
@@ -316,7 +321,7 @@ func ListenAndServe(sockPath string, handler http.Handler) (func(context.Context
 	}
 
 	srv := newHTTPServer(handler)
-	runServer(srv, l)
+	runServer(srv, l, log)
 
 	shutdown := func(ctx context.Context) error {
 		err := gracefulShutdown(ctx, srv)

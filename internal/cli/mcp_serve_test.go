@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -64,7 +65,7 @@ func TestMCPServe_EndToEnd(t *testing.T) {
 	defer apiSrv.Close()
 	apiC := apiclient.NewClientForTesting(apiSrv.Client(), apiSrv.URL)
 
-	srv := mcp.New(mcp.ServerInfo{Name: mcpServerName, Version: mcpServerVersion}, nil)
+	srv := mcp.New(mcp.ServerInfo{Name: mcpServerName, Version: mcpServerVersion}, slog.New(slog.DiscardHandler))
 	mcp.RegisterAichroniclesAnalyticsTools(srv, apiC)
 	mcp.RegisterAichroniclesAPITools(srv, apiC)
 

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -30,7 +31,7 @@ func (f *fakeLLMClient) Complete(_ context.Context, _ llm.Request) (*llm.Respons
 func TestRegisterAichroniclesLLMTools_RegistersSearchWithSummary(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	RegisterAichroniclesLLMTools(srv, newAPITestClient(t, st),
 		func() (llm.Client, error) { return &fakeLLMClient{}, nil })
 
@@ -46,7 +47,7 @@ func TestSearchWithSummary_NoHits(t *testing.T) {
 	st := openSeededStore(t)
 
 	client := &fakeLLMClient{reply: "should not be reached"}
-	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	RegisterAichroniclesLLMTools(srv, newAPITestClient(t, st), func() (llm.Client, error) { return client, nil })
 
 	res := callTool(t, srv, "search_with_summary", `{"query":"nothingmatchesatallzzz"}`)
@@ -65,7 +66,7 @@ func TestSearchWithSummary_GroundsAndCites(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	client := &fakeLLMClient{reply: "Bufio works for jsonl, see [session=abc12345]."}
-	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	RegisterAichroniclesLLMTools(srv, newAPITestClient(t, st), func() (llm.Client, error) { return client, nil })
 
 	res := callTool(t, srv, "search_with_summary", `{"query":"jsonl"}`)
@@ -90,7 +91,7 @@ func TestSearchWithSummary_GroundsAndCites(t *testing.T) {
 func TestSearchWithSummary_LLMErrorBubblesAsTextResult(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	RegisterAichroniclesLLMTools(srv, newAPITestClient(t, st),
 		func() (llm.Client, error) { return nil, errors.New("no api key") })
 
@@ -109,7 +110,7 @@ func TestSearchWithSummary_TopNCappedAtMax(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
 	client := &fakeLLMClient{reply: "ok"}
-	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	RegisterAichroniclesLLMTools(srv, newAPITestClient(t, st), func() (llm.Client, error) { return client, nil })
 
 	res := callTool(t, srv, "search_with_summary", `{"query":"jsonl","top_n":999}`)

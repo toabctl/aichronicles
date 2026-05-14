@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -83,7 +84,7 @@ func callTool(t *testing.T, s *Server, name string, args string) *ToolResult {
 func TestRegisterAichroniclesTools_InstallsAllFive(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	for _, want := range []string{
@@ -211,7 +212,7 @@ func TestGetFactsForSubject_RendersFacts(t *testing.T) {
 		}
 	}
 
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "get_facts_for_subject", `{"subject":"/work/aichronicles"}`)
@@ -235,7 +236,7 @@ func TestGetFactsForSubject_RendersFacts(t *testing.T) {
 func TestGetFactsForSubject_EmptyResultIsHelpful(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "get_facts_for_subject", `{"subject":"/no-such-project"}`)
@@ -248,7 +249,7 @@ func TestGetFactsForSubject_EmptyResultIsHelpful(t *testing.T) {
 func TestGetFactsForSubject_RejectsEmptySubject(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "get_facts_for_subject", `{"subject":"  "}`)
@@ -278,7 +279,7 @@ func TestFindFactSubjects_CaseInsensitiveSubstring(t *testing.T) {
 		}
 	}
 
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "find_fact_subjects", `{"contains":"aichronicles"}`)
@@ -294,7 +295,7 @@ func TestFindFactSubjects_CaseInsensitiveSubstring(t *testing.T) {
 func TestFindFactSubjects_RejectsEmptyNeedle(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "find_fact_subjects", `{"contains":"  "}`)
@@ -306,7 +307,7 @@ func TestFindFactSubjects_RejectsEmptyNeedle(t *testing.T) {
 func TestFindFactSubjects_NoMatchesIsHelpful(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "find_fact_subjects", `{"contains":"absolutely-nothing"}`)
@@ -323,7 +324,7 @@ func TestListWorkflows_ReturnsFoundWorkflowsWithProcedure(t *testing.T) {
 	seedWorkflowOutput(t, st, "00000000-0000-0000-0000-0000000000bb",
 		"investigate a failing CI run", "extracted from session", true)
 
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "list_workflows", `{}`)
@@ -353,7 +354,7 @@ func TestListWorkflows_FiltersByTaskShapeContains(t *testing.T) {
 	seedWorkflowOutput(t, st, "00000000-0000-0000-0000-0000000000dd",
 		"investigate a failing CI run", "x", true)
 
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "list_workflows", `{"task_shape_contains":"deploy"}`)
@@ -374,7 +375,7 @@ func TestListWorkflows_DefaultsExcludeNotFound(t *testing.T) {
 	seedWorkflowOutput(t, st, "00000000-0000-0000-0000-0000000000ff",
 		"deploy something", "extracted", true)
 
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	// Default omits found=false rows.
@@ -398,7 +399,7 @@ func TestListWorkflows_DefaultsExcludeNotFound(t *testing.T) {
 func TestListWorkflows_EmptyResultIsHelpful(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "list_workflows", `{}`)
@@ -411,7 +412,7 @@ func TestListWorkflows_EmptyResultIsHelpful(t *testing.T) {
 func TestSearchEvents_FindsMatchingRow(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "search_events", `{"query":"jsonl"}`)
@@ -427,7 +428,7 @@ func TestSearchEvents_FindsMatchingRow(t *testing.T) {
 func TestSearchEvents_MissingQueryReturnsUserFacingError(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "search_events", `{}`)
@@ -442,7 +443,7 @@ func TestSearchEvents_MissingQueryReturnsUserFacingError(t *testing.T) {
 func TestSearchEvents_PrefixMatchFromBareToken(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "search_events", `{"query":"json"}`)
@@ -461,7 +462,7 @@ func TestSearchEvents_PrefixMatchFromBareToken(t *testing.T) {
 func TestSearchEvents_PunctuationDoesNotError(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	for _, q := range []string{
@@ -485,7 +486,7 @@ func TestSearchEvents_PunctuationDoesNotError(t *testing.T) {
 func TestSearchEvents_UnclosedQuoteIsUserError(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "search_events", `{"query":"find \"this without close"}`)
@@ -500,7 +501,7 @@ func TestSearchEvents_UnclosedQuoteIsUserError(t *testing.T) {
 func TestListSessions_ReturnsSessionRows(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "list_sessions", `{}`)
@@ -516,7 +517,7 @@ func TestListSessions_ReturnsSessionRows(t *testing.T) {
 func TestListSessions_CwdFilterNarrows(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "list_sessions", `{"cwd":"/work/sess-foo"}`)
@@ -532,7 +533,7 @@ func TestListSessions_CwdFilterNarrows(t *testing.T) {
 func TestGetSummary_ReturnsStoredBody(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	sessID := events.DeriveSessionID("claude-code", "sess-foo")
@@ -564,7 +565,7 @@ func TestGetSummary_ReturnsStoredBody(t *testing.T) {
 func TestGetSummary_MissingSessionIDIsUserError(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "get_summary", `{}`)
@@ -576,7 +577,7 @@ func TestGetSummary_MissingSessionIDIsUserError(t *testing.T) {
 func TestGetSummary_NoOutputIsUserError(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	// A real session that exists but has no stored LLM output yet —
@@ -594,7 +595,7 @@ func TestGetSummary_NoOutputIsUserError(t *testing.T) {
 func TestGetSummary_UnknownSessionIsUserError(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	// A syntactically valid session id that doesn't exist in the
@@ -613,7 +614,7 @@ func TestGetSummary_UnknownSessionIsUserError(t *testing.T) {
 func TestGetSummary_AcceptsPrefix(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	// Stash a summary for sess-foo so the happy-path resolves.
@@ -684,7 +685,7 @@ func TestToolsCall_PassesIngestRedactedContentThrough(t *testing.T) {
 	}
 	_ = tx.Commit()
 
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	// Exercise via the JSON-RPC dispatcher — search_events would
@@ -726,7 +727,7 @@ func TestToolsCall_PassesIngestRedactedContentThrough(t *testing.T) {
 // test (and someone reviews why).
 func TestToolsCall_PassesUnredactedContentThrough(t *testing.T) {
 	t.Parallel()
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	s.RegisterTool(Tool{
 		Name:        "leaky",
 		Description: "returns a secret on purpose",
@@ -798,7 +799,7 @@ func seedSubagentEvents(t *testing.T) (*store.Store, string) {
 func TestListSubagents_AggregatesSpan(t *testing.T) {
 	t.Parallel()
 	st, subID := seedSubagentEvents(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "list_subagents", `{}`)
@@ -822,7 +823,7 @@ func TestListSubagents_AggregatesSpan(t *testing.T) {
 func TestListSubagents_EmptyStore(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "list_subagents", `{}`)
@@ -845,7 +846,7 @@ func TestListSubagents_EmptyStore(t *testing.T) {
 func TestSearchEvents_UnknownSubagentIDReturnsNoHits(t *testing.T) {
 	t.Parallel()
 	st, _ := seedSubagentEvents(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "search_events",
@@ -861,7 +862,7 @@ func TestSearchEvents_UnknownSubagentIDReturnsNoHits(t *testing.T) {
 func TestSearchEvents_SubagentIDFilterNarrows(t *testing.T) {
 	t.Parallel()
 	st, subID := seedSubagentEvents(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	// Without filter: matches the main-agent and the two
@@ -889,7 +890,7 @@ func TestSearchEvents_SubagentIDFilterNarrows(t *testing.T) {
 func TestGetUnresolvedForCwd_RequiresCwd(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "get_unresolved_for_cwd", `{}`)
@@ -901,7 +902,7 @@ func TestGetUnresolvedForCwd_RequiresCwd(t *testing.T) {
 func TestGetUnresolvedForCwd_EmptyCwdReturnsFriendlyMessage(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "get_unresolved_for_cwd", `{"cwd":"/no/such/dir"}`)
@@ -916,7 +917,7 @@ func TestGetUnresolvedForCwd_EmptyCwdReturnsFriendlyMessage(t *testing.T) {
 func TestGetUnresolvedForCwd_ReturnsItems(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	// The seeded "sess-foo" has cwd /work/sess-foo. Plant a
@@ -1002,7 +1003,7 @@ func TestFindEpisodesTool_FiltersAndRendersRows(t *testing.T) {
 	seedEpisodeForTool(t, st, sessA, 1, now-3600_000, now-3000_000, "/repo/x", "fix the failing build")
 	seedEpisodeForTool(t, st, sessB, 1, now-1800_000, now-1200_000, "/repo/y", "explore the new module")
 
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	// Bare call returns both rows, newest first.
@@ -1053,7 +1054,7 @@ func TestFindEpisodesTool_AcceptsSessionIDPrefix(t *testing.T) {
 	now := time.Now().UnixMilli()
 	seedEpisodeForTool(t, st, sessID, 1, now-3600_000, now-3000_000, "/repo/x", "prefix-resolved hit")
 
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	// Pass the 8-char prefix the tool itself emits.
@@ -1069,7 +1070,7 @@ func TestFindEpisodesTool_AcceptsSessionIDPrefix(t *testing.T) {
 func TestFindEpisodesTool_NoEpisodesReturnsClearMessage(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "find_episodes", `{}`)
@@ -1084,7 +1085,7 @@ func TestFindEpisodesTool_NoEpisodesReturnsClearMessage(t *testing.T) {
 func TestFindEpisodesTool_BadArgsReturnsProtocolError(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	tool := s.tools["find_episodes"]
@@ -1100,7 +1101,7 @@ func TestFindEpisodesTool_BadArgsReturnsProtocolError(t *testing.T) {
 func TestToolsList_IncludesInputSchema(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	in, inW := io.Pipe()

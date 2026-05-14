@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -56,7 +57,7 @@ func startTestServer(t *testing.T, st *store.Store) (baseURL string, stop func()
 		t.Fatalf("listen: %v", err)
 	}
 	cfg := Config{Listener: ln, ShutdownTimeout: time.Second}
-	s := NewServer(newTestAPIClient(t, st), cfg, nil)
+	s := NewServer(newTestAPIClient(t, st), cfg, slog.New(slog.DiscardHandler))
 
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
@@ -145,7 +146,7 @@ func TestRun_GracefulShutdownOnContextCancel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	s := NewServer(newTestAPIClient(t, st), Config{Listener: ln, ShutdownTimeout: time.Second}, nil)
+	s := NewServer(newTestAPIClient(t, st), Config{Listener: ln, ShutdownTimeout: time.Second}, slog.New(slog.DiscardHandler))
 
 	ctx, cancel := context.WithCancel(t.Context())
 	runErr := make(chan error, 1)
@@ -191,7 +192,7 @@ func TestIsPublicBind(t *testing.T) {
 func TestNewServer_DefaultsApplied(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)
-	s := NewServer(newTestAPIClient(t, st), Config{}, nil)
+	s := NewServer(newTestAPIClient(t, st), Config{}, slog.New(slog.DiscardHandler))
 	if s.cfg.Bind != DefaultBind {
 		t.Errorf("Bind: got %q, want %q", s.cfg.Bind, DefaultBind)
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -364,7 +365,7 @@ func TestListenAndServe_ShutdownDrainsInflightRequest(t *testing.T) {
 		srvInstance.Handler().ServeHTTP(w, r)
 	})
 
-	shutdown, err := ListenAndServe(sock, gated)
+	shutdown, err := ListenAndServe(sock, gated, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("ListenAndServe: %v", err)
 	}
@@ -483,7 +484,7 @@ func TestListenAndServe_SocketIs0600(t *testing.T) {
 	dir := t.TempDir()
 	sock := filepath.Join(dir, "sock")
 
-	shutdown, err := ListenAndServe(sock, http.NotFoundHandler())
+	shutdown, err := ListenAndServe(sock, http.NotFoundHandler(), slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("ListenAndServe: %v", err)
 	}

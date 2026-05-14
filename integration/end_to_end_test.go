@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -125,7 +126,7 @@ func TestE2E_IngestSummarizeFetchViaMCP(t *testing.T) {
 	defer apiSrv.Close()
 	apiC := apiclient.NewClientForTesting(apiSrv.Client(), apiSrv.URL)
 
-	mcpSrv := mcp.New(mcp.ServerInfo{Name: "e2e", Version: "0.0.1"}, nil)
+	mcpSrv := mcp.New(mcp.ServerInfo{Name: "e2e", Version: "0.0.1"}, slog.New(slog.DiscardHandler))
 	mcp.RegisterAichroniclesAnalyticsTools(mcpSrv, apiC)
 	mcp.RegisterAichroniclesAPITools(mcpSrv, apiC)
 

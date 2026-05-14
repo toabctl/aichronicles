@@ -106,9 +106,15 @@ type Server struct {
 
 // NewServer wires the routes against api. The caller retains
 // ownership of api. log is used for startup, shutdown, and
-// per-request access lines; pass slog.Default() if you don't have
-// a project logger handy.
+// per-request access lines; it must be non-nil — pass
+// slog.New(slog.DiscardHandler) from a test that doesn't care
+// about log output. Keeping the dependency explicit avoids the
+// silent-slog.Default() fallback that masked a logger-not-wired
+// bug in commit 89a3deb.
 func NewServer(api *apiclient.Client, cfg Config, log *slog.Logger) *Server {
+	if log == nil {
+		panic("web.NewServer: log must be non-nil")
+	}
 	if cfg.Bind == "" {
 		cfg.Bind = DefaultBind
 	}
@@ -117,9 +123,6 @@ func NewServer(api *apiclient.Client, cfg Config, log *slog.Logger) *Server {
 	}
 	if cfg.ShutdownTimeout == 0 {
 		cfg.ShutdownTimeout = 5 * time.Second
-	}
-	if log == nil {
-		log = slog.Default()
 	}
 	s := &Server{
 		api:       api,

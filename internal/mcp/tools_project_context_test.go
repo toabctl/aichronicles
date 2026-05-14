@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -69,7 +70,7 @@ func seedSessionInCwd(t *testing.T, st *store.Store, cwd, prompt, topic string, 
 func TestGetProjectContext_RequiresCwd(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t)
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "get_project_context", `{"cwd":"  "}`)
@@ -81,7 +82,7 @@ func TestGetProjectContext_RequiresCwd(t *testing.T) {
 func TestGetProjectContext_EmptyProjectShowsAllSectionsWithEmptyStateMessages(t *testing.T) {
 	t.Parallel()
 	st := openSeededStore(t) // uses cwds /work/sess-foo, /work/sess-bar
-	s := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, s, st)
 
 	res := callTool(t, s, "get_project_context", `{"cwd":"/no-such-project"}`)
@@ -195,7 +196,7 @@ func TestGetProjectContext_PopulatedProjectRendersEverySection(t *testing.T) {
 		t.Fatalf("seed induction-with-workflow: %v", err)
 	}
 
-	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, srv, st)
 
 	res := callTool(t, srv, "get_project_context", `{"cwd":"/work/myproj","since_days":30}`)
@@ -240,7 +241,7 @@ func TestGetProjectContext_RespectsMaxPerSection(t *testing.T) {
 			now.Add(-time.Duration(i)*time.Minute))
 	}
 
-	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, srv, st)
 
 	// max_per_section=3 should cap recent sessions at 3.
@@ -298,7 +299,7 @@ func TestGetProjectContext_FiltersWorkflowsToFoundOnly(t *testing.T) {
 		}
 	}
 
-	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, nil)
+	srv := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	registerAllTools(t, srv, st)
 	res := callTool(t, srv, "get_project_context", `{"cwd":"/some/cwd"}`)
 	out := res.Content[0].Text

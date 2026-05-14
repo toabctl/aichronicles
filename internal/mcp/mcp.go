@@ -77,11 +77,13 @@ type Server struct {
 type methodHandler func(ctx context.Context, params json.RawMessage) (any, *Error)
 
 // New builds a Server with the MCP built-in methods installed but no
-// tools registered yet. Log may be nil; default stderr logger is
-// wired up inline.
+// tools registered yet. log must be non-nil — pass
+// slog.New(slog.DiscardHandler) from a test that doesn't care about
+// log output. Explicit logger injection avoids the silent-default
+// fallback that masked a logger-not-wired bug in commit 89a3deb.
 func New(info ServerInfo, log *slog.Logger) *Server {
 	if log == nil {
-		log = slog.Default()
+		panic("mcp.New: log must be non-nil")
 	}
 	s := &Server{
 		Info:     info,

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -16,7 +17,7 @@ import (
 // a "wrong handler ran" mystery at request time.
 func TestRegisterTool_PanicsOnDuplicate(t *testing.T) {
 	t.Parallel()
-	s := New(ServerInfo{Name: "test", Version: "0.1"}, nil)
+	s := New(ServerInfo{Name: "test", Version: "0.1"}, slog.New(slog.DiscardHandler))
 	noopHandler := func(_ context.Context, _ json.RawMessage) (*ToolResult, *Error) {
 		return TextResult(""), nil
 	}
