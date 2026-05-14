@@ -9,65 +9,29 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/redact"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
-// LLMOutputKind is the discriminator for llm_outputs.kind. Application
-// code is the only place that enforces the vocabulary; the DB column
-// is free text so new kinds (Block D+ features) don't need a migration.
-type LLMOutputKind string
+// LLMOutputKind and the LLMKind* constants are protocol-level
+// vocabulary and live in internal/wire. These aliases keep the
+// 126+ existing `store.LLMKindX` call sites working without forcing
+// a one-shot rename; new code should reach for `wire.LLMKindX`
+// directly. arch_review_2026_05_13 LOW: lift the type constants
+// out of store so non-writer consumers (web handlers, CLI list
+// commands) stop pulling internal/store just to read a string.
+type LLMOutputKind = wire.LLMOutputKind
 
 const (
-	LLMKindSummary       LLMOutputKind = "summary"
-	LLMKindReflect       LLMOutputKind = "reflect"
-	LLMKindPropose       LLMOutputKind = "propose"
-	LLMKindReflectWeekly LLMOutputKind = "reflect_weekly"
-	// LLMKindProposeVerify is the cached output of the critic LLM
-	// pass that `propose add` runs before writing a SKILL.md
-	// (Voyager-style verification gate). One row per (proposal-id,
-	// skill-name) pair so re-running apply on the same skill is
-	// free.
-	LLMKindProposeVerify LLMOutputKind = "propose_verify"
-	// LLMKindSkillRevision is the cached output of `aichronicles
-	// skills evolve` — a revision of an existing SKILL.md
-	// grounded in the failure events the staleness detector
-	// flagged. One row per (skill-name, current-skill-md-hash)
-	// so re-running on the same SKILL contents is free; a hand-
-	// edit to the SKILL.md invalidates the cache automatically.
-	LLMKindSkillRevision LLMOutputKind = "skill_revision"
-	// LLMKindInduction is the cached output of online induction
-	// — single-session propose triggered the moment a session
-	// idles out. One row per (session_id, prompt-hash) so
-	// re-running on the same session contents hits the cache.
-	// Distinguished from LLMKindPropose so the CLI listing can
-	// segregate "skills surfaced from one session by the auto
-	// trigger" from "skills surfaced from a multi-session window
-	// by the user".
-	LLMKindInduction LLMOutputKind = "induction"
-	// LLMKindChallenge is the cached output of `propose
-	// --challenge`: forward-looking next-problem suggestions
-	// derived from the same digest list propose uses, plus open
-	// threads from prior sessions. Voyager's automatic-curriculum
-	// analog. Separate from LLMKindPropose so the CLI listing
-	// distinguishes "skills surfaced from past patterns" from
-	// "challenges I should tackle next".
-	LLMKindChallenge LLMOutputKind = "challenge"
-	// LLMKindFacts is the cached output of single-session SEMANTIC
-	// fact induction. The LLM extracts typed (subject, predicate,
-	// object) triples from the session — project-level facts like
-	// "uses Go 1.26", "runs tests via go test ./..." — and the
-	// caller persists them into the semantic_facts table for typed
-	// retrieval. The llm_outputs row holds the raw LLM reply for
-	// caching + auditability; the truth lives in semantic_facts.
-	LLMKindFacts LLMOutputKind = "facts"
-	// LLMKindSkillMerge is the cached output of `aichronicles
-	// propose merge` — the AutoSkill (Yang et al., 2026) maintenance
-	// action 'merge' that combines an existing SKILL.md with a
-	// freshly-extracted candidate. One row per (output-id, skill-name)
-	// pair so re-running merge on the same proposal is free. Distinct
-	// from LLMKindSkillRevision: revision tightens an existing skill
-	// against its observed failures; merge folds a new candidate into
-	// an existing skill that's working but could be enriched.
-	LLMKindSkillMerge LLMOutputKind = "skill_merge"
+	LLMKindSummary       = wire.LLMKindSummary
+	LLMKindReflect       = wire.LLMKindReflect
+	LLMKindPropose       = wire.LLMKindPropose
+	LLMKindReflectWeekly = wire.LLMKindReflectWeekly
+	LLMKindProposeVerify = wire.LLMKindProposeVerify
+	LLMKindSkillRevision = wire.LLMKindSkillRevision
+	LLMKindInduction     = wire.LLMKindInduction
+	LLMKindChallenge     = wire.LLMKindChallenge
+	LLMKindFacts         = wire.LLMKindFacts
+	LLMKindSkillMerge    = wire.LLMKindSkillMerge
 )
 
 // LLMOutput mirrors one row of the llm_outputs table.
