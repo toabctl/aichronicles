@@ -142,6 +142,17 @@ func (s *Server) Run(ctx context.Context, r io.Reader, w io.Writer) error {
 			continue
 		}
 		if req.JSONRPC != "2.0" {
+			// JSON-RPC 2.0 §4.1 forbids any response (including
+			// errors) to a notification — a request with no `id`.
+			// Pre-fix this branch encoded an errorResponse with id
+			// substituted as null, interleaving a surprise frame
+			// into the stream. Drop the frame silently; the only
+			// other signal we have is the slog.Warn below.
+			if req.ID == nil {
+				s.Log.Warn("mcp: dropped malformed notification (jsonrpc!=\"2.0\")",
+					"method", req.Method)
+				continue
+			}
 			encMu.Lock()
 			_ = enc.Encode(errorResponse(req.ID, InvalidRequest, "jsonrpc must be \"2.0\"", nil))
 			encMu.Unlock()

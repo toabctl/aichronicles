@@ -139,6 +139,37 @@ func TestServer_WrongJSONRPCVersion_Rejected(t *testing.T) {
 	}
 }
 
+// TestServer_WrongJSONRPCVersion_NotificationDropped pins the
+// JSON-RPC 2.0 §4.1 rule: a notification (no `id`) must NEVER
+// produce a response, even when the protocol version is wrong.
+// Pre-fix the server still encoded an InvalidRequest error frame
+// with id substituted as null, interleaving a surprise response
+// into the bidirectional stream.
+func TestServer_WrongJSONRPCVersion_NotificationDropped(t *testing.T) {
+	t.Parallel()
+	s := New(ServerInfo{Name: "test", Version: "0.1"}, slog.New(slog.DiscardHandler))
+
+	in, inW := io.Pipe()
+	out := &bytes.Buffer{}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { defer wg.Done(); _ = s.Run(context.Background(), in, out) }()
+
+	// First frame: malformed-version notification. Second frame: a
+	// real request so we have something to anchor the assertion on.
+	_, _ = io.WriteString(inW, `{"jsonrpc":"1.0","method":"unknown"}`+"\n")
+	_, _ = io.WriteString(inW, `{"jsonrpc":"2.0","id":1,"method":"ping"}`+"\n")
+	_ = inW.Close()
+	wg.Wait()
+
+	// Exactly one response line — only the ping. The malformed
+	// notification must produce nothing.
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 response (the ping), got %d:\n%s", len(lines), out.String())
+	}
+}
+
 func TestServer_EmptyLinesIgnored(t *testing.T) {
 	t.Parallel()
 	s := New(ServerInfo{Name: "test", Version: "0.1"}, slog.New(slog.DiscardHandler))
