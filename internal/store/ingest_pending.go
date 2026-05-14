@@ -259,8 +259,9 @@ func QueryIngestPendingStats(ctx context.Context, db *sql.DB) (IngestPendingStat
 // regular tables, so COUNT(*) scans the rowid B-tree. The
 // backlog cap keeps N bounded, and the hot path uses the
 // in-memory atomic pendingDepth counter; CountPending is only
-// called at NewServer to seed that counter and on the cold
-// `/v1/admin/stats` path. (arch_review_2026_05_13 LOW: prior
+// called at NewServer (to seed that counter), on the cold
+// `/v1/admin/stats` path, and on the worker's test-mode fallback
+// when no atomic was wired in. (arch_review_2026_05_13 LOW: prior
 // doc claimed O(1).)
 func CountPending(ctx context.Context, db *sql.DB) (int, error) {
 	var n int

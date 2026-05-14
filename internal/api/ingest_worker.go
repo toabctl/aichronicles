@@ -189,7 +189,7 @@ func (w *IngestWorker) drain(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	before, err := store.CountPending(ctx, w.store.DB())
+	before, err := w.depth(ctx)
 	if err != nil {
 		return err
 	}
@@ -200,7 +200,7 @@ func (w *IngestWorker) drain(ctx context.Context) error {
 	if len(rows) > 0 {
 		w.processBatch(ctx, rows)
 	}
-	after, err := store.CountPending(ctx, w.store.DB())
+	after, err := w.depth(ctx)
 	if err != nil {
 		return err
 	}
@@ -215,6 +215,23 @@ func (w *IngestWorker) drain(ctx context.Context) error {
 		w.Wake()
 	}
 	return nil
+}
+
+// depth returns the pending backlog size as cheaply as possible.
+// In production the worker is constructed with a pointer to the
+// Server's in-memory pendingDepth atomic, so this is one atomic
+// load. Tests that don't wire the counter fall back to a SQL
+// COUNT(*) — same O(N) cost as before, but only on a code path
+// that doesn't ship.
+func (w *IngestWorker) depth(ctx context.Context) (int64, error) {
+	if w.pendingDepth != nil {
+		return w.pendingDepth.Load(), nil
+	}
+	n, err := store.CountPending(ctx, w.store.DB())
+	if err != nil {
+		return 0, err
+	}
+	return int64(n), nil
 }
 
 // preparedEvent holds the CPU-side work a pending row needs
