@@ -310,11 +310,12 @@ func runMergeLLM(
 	switch {
 	case err == nil:
 		var m prompts.MergedSkillResult
-		if jerr := json.Unmarshal([]byte(cached.Body), &m); jerr == nil {
+		jerr := json.Unmarshal([]byte(cached.Body), &m)
+		if jerr == nil {
 			_, _ = fmt.Fprintln(out, "merge: ✓ result cached, no LLM call")
 			return &m, nil
 		}
-		slog.Warn("merge: malformed cached body, re-running", "id", cached.ID, "err", err)
+		slog.Warn("merge: malformed cached body, re-running", "id", cached.ID, "err", jerr)
 	case errors.Is(err, apiclient.ErrNotFound):
 		// fall through to the LLM call
 	default:
