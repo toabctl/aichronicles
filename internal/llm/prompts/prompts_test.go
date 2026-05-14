@@ -505,6 +505,12 @@ func TestBuildSummary_SchemaIncludesSessionLinks(t *testing.T) {
 		`"repeats_failure_of"`,
 		`"supersedes"`,
 		`"related"`,
+		// UUIDv5 pattern: session ids are derived via uuid.NewSHA1
+		// in internal/events/envelope.go, so the schema must
+		// constrain to_session_id to that exact format. A loose
+		// minLength constraint let the model emit short prefixes
+		// which the downstream filter then silently dropped.
+		`"pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"`,
 	} {
 		if !strings.Contains(schema, want) {
 			t.Errorf("schema missing %q:\n%s", want, schema)

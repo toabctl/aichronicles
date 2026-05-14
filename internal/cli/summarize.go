@@ -327,7 +327,11 @@ func persistSessionLinks(
 		})
 	}
 	if dropped > 0 {
-		slog.Info("summarize: dropped fabricated session_links",
+		// Warn (not Info): each drop is the model emitting an id
+		// that wasn't in the candidate stanza or a kind that isn't
+		// in the enum — both are anti-fabrication contract
+		// violations the operator should see by default.
+		slog.Warn("summarize: dropped fabricated session_links",
 			"from_session_id", from, "dropped", dropped, "kept", len(links))
 	}
 	// Always call SaveSessionLinks (even with empty links) so a

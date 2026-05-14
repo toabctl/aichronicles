@@ -455,7 +455,7 @@ const summaryToolSchema = `{
         "required":["to_session_id","kind","rationale"],
         "additionalProperties": false,
         "properties":{
-          "to_session_id":{"type":"string","minLength":1},
+          "to_session_id":{"type":"string","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
           "kind":{"type":"string","enum":["builds_on","repeats_failure_of","supersedes","related"]},
           "rationale":{"type":"string","minLength":1,"maxLength":160}
         }
