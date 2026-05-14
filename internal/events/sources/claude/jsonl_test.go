@@ -1,9 +1,13 @@
 package claude
 
 import (
+	"bufio"
 	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/toabctl/aichronicles/internal/events"
@@ -148,6 +152,139 @@ func TestJSONLSource_EmptyRootYieldsNothing(t *testing.T) {
 	got := collect(t, src)
 	if len(got) != 0 {
 		t.Errorf("empty root: got %d events, want 0", len(got))
+	}
+}
+
+// TestJSONLSource_OversizeLineIsSkippedNotBuffered verifies that a
+// line exceeding the per-source bound is counted as Invalid and
+// skipped without being fully buffered in memory — the bound runs
+// during read, not post-hoc. With the old behavior, `br.ReadBytes('\n')`
+// would have allocated the entire oversize line first and then
+// dropped it, OOM-able on a pathological input. The shrunk bound +
+// surrounding-valid-lines test exercises both the discard-and-resume
+// path and that good lines on either side of the bad one survive.
+func TestJSONLSource_OversizeLineIsSkippedNotBuffered(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fixture.jsonl")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// First valid line, then 4 KiB of garbage with no newline + a
+	// trailing newline (the "huge line"), then second valid line.
+	if _, err := f.WriteString(userEntryFixture + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(strings.Repeat("x", 4096) + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(assistantEntryFixture + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	// Cap below the garbage line size but above the real fixtures
+	// (each fixture is ~200 bytes).
+	src := &JSONLSource{Root: path, maxLineBytes: 1024}
+	got := collect(t, src)
+
+	if len(got) != 2 {
+		t.Fatalf("got %d events, want 2 (oversize line must be skipped, good lines preserved)", len(got))
+	}
+	if src.Stats.Invalid != 1 {
+		t.Errorf("Invalid: got %d, want 1", src.Stats.Invalid)
+	}
+	if src.Stats.LinesRead != 3 {
+		t.Errorf("LinesRead: got %d, want 3 (oversize line counts toward lines read)", src.Stats.LinesRead)
+	}
+}
+
+func TestReadBoundedLine(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		input     string
+		max       int
+		wantLines []string
+		wantOver  []bool
+	}{
+		{
+			name:      "single short line",
+			input:     "abc\n",
+			max:       16,
+			wantLines: []string{"abc\n"},
+			wantOver:  []bool{false},
+		},
+		{
+			name:      "exactly at bound",
+			input:     "abcd\n",
+			max:       4,
+			wantLines: []string{"abcd\n"},
+			wantOver:  []bool{false},
+		},
+		{
+			name:      "over bound: discard and resume",
+			input:     "ok1\n" + strings.Repeat("x", 10) + "\nok2\n",
+			max:       4,
+			wantLines: []string{"ok1\n", "", "ok2\n"},
+			wantOver:  []bool{false, true, false},
+		},
+		{
+			name:      "over bound at EOF without trailing newline",
+			input:     strings.Repeat("x", 10),
+			max:       4,
+			wantLines: []string{""},
+			wantOver:  []bool{true},
+		},
+		{
+			name:      "empty",
+			input:     "",
+			max:       4,
+			wantLines: nil,
+			wantOver:  nil,
+		},
+		{
+			name:      "trailing partial line without newline",
+			input:     "abc",
+			max:       16,
+			wantLines: []string{"abc"},
+			wantOver:  []bool{false},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			br := bufio.NewReader(strings.NewReader(tt.input))
+			var gotLines []string
+			var gotOver []bool
+			for {
+				line, over, err := readBoundedLine(br, tt.max)
+				if !over && len(line) == 0 && errors.Is(err, io.EOF) {
+					break
+				}
+				gotLines = append(gotLines, string(line))
+				gotOver = append(gotOver, over)
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			}
+			if len(gotLines) != len(tt.wantLines) {
+				t.Fatalf("line count: got %d %v, want %d %v",
+					len(gotLines), gotLines, len(tt.wantLines), tt.wantLines)
+			}
+			for i := range tt.wantLines {
+				if gotLines[i] != tt.wantLines[i] {
+					t.Errorf("line[%d]: got %q, want %q", i, gotLines[i], tt.wantLines[i])
+				}
+				if gotOver[i] != tt.wantOver[i] {
+					t.Errorf("oversize[%d]: got %v, want %v", i, gotOver[i], tt.wantOver[i])
+				}
+			}
+		})
 	}
 }
 

@@ -72,6 +72,11 @@ type JSONLSource struct {
 	Logger *slog.Logger
 	Now    func() time.Time
 
+	// maxLineBytes is the per-line upper bound enforced during read.
+	// Zero means use the package const MaxLineBytes. Exposed only so
+	// tests can shrink the bound; production callers leave it zero.
+	maxLineBytes int
+
 	Stats JSONLStats
 }
 
@@ -132,20 +137,30 @@ func (s *JSONLSource) iterateFile(
 	s.Stats.FilesRead++
 
 	br := bufio.NewReaderSize(f, 1<<20)
+	max := s.maxLineBytes
+	if max <= 0 {
+		max = MaxLineBytes
+	}
 	var lineNum int
 	for {
 		if ctx.Err() != nil {
 			return yield(events.Event{}, ctx.Err())
 		}
-		line, readErr := br.ReadBytes('\n')
-		if len(line) > 0 {
+		line, oversize, readErr := readBoundedLine(br, max)
+		if oversize {
+			lineNum++
+			s.Stats.LinesRead++
+			s.Stats.Invalid++
+			logger.Warn("line too large",
+				"path", path, "line", lineNum, "cap", max)
+		} else if len(line) > 0 {
 			lineNum++
 			s.Stats.LinesRead++
 			if !s.processLine(path, lineNum, line, logger, yield) {
 				return false
 			}
 		}
-		if readErr == io.EOF {
+		if errors.Is(readErr, io.EOF) {
 			return true
 		}
 		if readErr != nil {
@@ -154,9 +169,46 @@ func (s *JSONLSource) iterateFile(
 	}
 }
 
+// readBoundedLine reads up to one '\n'-terminated line from br with
+// an in-memory cap of max bytes. Reads byte-by-byte through bufio's
+// buffer (so the cost is bookkeeping, not a syscall per byte) so the
+// caller never holds more than max+1 bytes in memory regardless of
+// how long the on-disk line is. When max is exceeded before '\n':
+// the rest of the offending line is consumed and discarded, then
+// (nil, true, nil) is returned so the caller can log + skip and
+// resume on the next line. The bound runs alongside the doc-comment
+// guarantee on MaxLineBytes; without it a pathological multi-GB line
+// would be fully buffered before the post-hoc length check fired.
+func readBoundedLine(br *bufio.Reader, max int) (line []byte, oversize bool, err error) {
+	line = make([]byte, 0, 4096)
+	for {
+		b, rerr := br.ReadByte()
+		if rerr != nil {
+			return line, false, rerr
+		}
+		line = append(line, b)
+		if b == '\n' {
+			return line, false, nil
+		}
+		if len(line) > max {
+			line = nil
+			for {
+				b, derr := br.ReadByte()
+				if derr != nil {
+					return nil, true, derr
+				}
+				if b == '\n' {
+					return nil, true, nil
+				}
+			}
+		}
+	}
+}
+
 // processLine handles one transcript line. Returns false only when
 // yield returned false (caller wants to stop). Format / validation
-// issues are counted and logged; they do NOT propagate.
+// issues are counted and logged; they do NOT propagate. Oversize
+// lines are handled in iterateFile before they reach here.
 func (s *JSONLSource) processLine(
 	path string,
 	lineNum int,
@@ -164,13 +216,6 @@ func (s *JSONLSource) processLine(
 	logger *slog.Logger,
 	yield func(events.Event, error) bool,
 ) bool {
-	if len(line) > MaxLineBytes {
-		s.Stats.Invalid++
-		logger.Warn("line too large",
-			"path", path, "line", lineNum,
-			"bytes", len(line), "cap", MaxLineBytes)
-		return true
-	}
 	line = bytesStripTrailingNewline(line)
 	if len(strings.TrimSpace(string(line))) == 0 {
 		return true
