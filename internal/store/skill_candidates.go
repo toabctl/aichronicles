@@ -104,29 +104,16 @@ type SkillExample struct {
 	Output string `json:"output"`
 }
 
-// SkillKind labels what shape a candidate skill encodes — a
-// success pattern ("when X fires, do Y") or a failure pitfall
-// ("when X is about to fail, AVOID Y"). EvoSkill (2603.02766) and
-// EvoSC (2602.01966) argue that contrastive induction needs both
-// forms; conflating them in one bank loses the negative-evidence
-// half of the corpus. Stored on the skill_candidates row so the
-// merge gate, retire signals, and SKILL.md frontmatter can branch
-// on the kind without re-deriving it from the body text.
-type SkillKind string
+// SkillKind and the SkillKind* constants are protocol-level
+// vocabulary. The canonical home is internal/wire/skill_kinds.go;
+// these aliases keep the existing store.SkillKind* call sites
+// working without a one-shot rename. Same shape as the
+// LLMOutputKind / SessionLink / MaintenanceAction lifts.
+type SkillKind = wire.SkillKind
 
 const (
-	// SkillKindPattern is the canonical success-driven form: the
-	// LLM saw the same successful procedure across two or more
-	// sessions and emitted a skill that codifies it.
-	SkillKindPattern SkillKind = "pattern"
-
-	// SkillKindPitfall is the failure-driven form: the LLM saw
-	// the same recurring failure mode across two or more
-	// failure_likely sessions and emitted a skill that names what
-	// to avoid (or how to recover early). Loaded by Claude Code
-	// the same way as a pattern skill; Claude reads its body and
-	// follows the avoid-this guidance.
-	SkillKindPitfall SkillKind = "pitfall"
+	SkillKindPattern = wire.SkillKindPattern
+	SkillKindPitfall = wire.SkillKindPitfall
 )
 
 // MaintenanceAction names the AutoSkill (Yang et al., 2026 —
