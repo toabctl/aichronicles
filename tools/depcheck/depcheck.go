@@ -77,6 +77,12 @@ var rules = []rule{
 // "all reads/writes go through apiclient" without forbidding the
 // package from importing internal/store entirely (cli still
 // legitimately imports type/enum constants from store).
+//
+// internal/api is intentionally NOT in this list. The api daemon
+// is the store-binding side of the wire boundary by design — its
+// handlers translate HTTP into store.Load/Save calls and project
+// rows to wire types. See the package doc on internal/api/server.go
+// for the rationale.
 type callRule struct {
 	Dir       string         // directory relative to repo root
 	Forbidden *regexp.Regexp // pattern that signals a violation

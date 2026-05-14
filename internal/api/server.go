@@ -9,6 +9,29 @@
 // internal/events). Clients ship raw envelopes and trust the server to
 // scrub before storage; even a buggy or malicious client claiming
 // redaction.applied=true is re-redacted.
+//
+// # Layering — api is the store-binding side of the wire boundary
+//
+// internal/api is the ONLY package outside internal/store that may
+// import internal/store directly. Handlers translate HTTP requests
+// into store.Load*/Save*/Find* calls, scan rows, and project them
+// to the wire types in internal/wire. This is by design:
+//
+//   - internal/store is the SQL adapter (database/sql, migrations,
+//     scan helpers). It has no notion of HTTP.
+//   - internal/wire holds the JSON shapes that cross process
+//     boundaries. It has no SQL, no HTTP.
+//   - internal/apiclient is the client-side of the wire boundary —
+//     used by internal/{web, cli, mcp} to reach the daemon over UDS.
+//   - internal/api is the server-side of the boundary. It binds
+//     store and wire together. tools/depcheck encodes the rule that
+//     web/cli/mcp must NOT call store.Load*/Save*/… directly; api is
+//     intentionally exempt because that IS its job.
+//
+// If a handler grew to do business logic beyond translation, the
+// right move would be to extract a helper inside internal/store
+// (where the SQL already lives) rather than to add an indirection
+// layer between api and store within the daemon process.
 package api
 
 import (
