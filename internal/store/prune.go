@@ -66,19 +66,32 @@ func Prune(ctx context.Context, db *sql.DB, opts PruneOptions) (PruneReport, err
 		DryRun:   opts.DryRun,
 	}
 
-	// Snapshot the would-be deletions in a read-only pass so
-	// dry-runs land identical numbers to live runs and so the
-	// final report can show them all even after the cascades
-	// have erased the source rows.
-	if err := db.QueryRowContext(ctx,
+	// Snapshot + DELETE in one transaction so the reported counts
+	// and the live mutation observe the same view of the world.
+	// Pre-fix the counts ran on the bare DB (snapshot isolation
+	// off) and the DELETE ran in a later tx, so a concurrent writer
+	// — including the sessions_agg_ai trigger that sets ended_at_ms
+	// on every event ingest — could change which sessions cross
+	// the cutoff in between. The "would delete N" promise then
+	// disagreed with what actually got deleted.
+	//
+	// Dry-runs roll back at the end; live runs commit. The counts
+	// land in `report` either way.
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return report, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
+
+	if err := tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM sessions WHERE ended_at_ms IS NOT NULL AND ended_at_ms < ?`,
 		opts.CutoffMs,
 	).Scan(&report.Sessions); err != nil {
 		return report, fmt.Errorf("count sessions: %w", err)
 	}
 	// raw_envelopes/events/extractions live behind the session
-	// cutoff transitively; count via a JOIN so the report
-	// reflects what cascades will eat.
+	// cutoff transitively; count via a JOIN so the report reflects
+	// what cascades will eat.
 	for table, dest := range map[string]*int{
 		"raw_envelopes": &report.RawEnvelopes,
 		"events":        &report.Events,
@@ -102,12 +115,12 @@ func Prune(ctx context.Context, db *sql.DB, opts PruneOptions) (PruneReport, err
 			      JOIN sessions s ON s.id = x.session_id
 			     WHERE s.ended_at_ms IS NOT NULL AND s.ended_at_ms < ?`
 		}
-		if err := db.QueryRowContext(ctx, q, opts.CutoffMs).Scan(dest); err != nil {
+		if err := tx.QueryRowContext(ctx, q, opts.CutoffMs).Scan(dest); err != nil {
 			return report, fmt.Errorf("count %s: %w", table, err)
 		}
 	}
 	if opts.IncludeLLMOutputs {
-		if err := db.QueryRowContext(ctx,
+		if err := tx.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM llm_outputs WHERE created_at_ms < ?`,
 			opts.CutoffMs,
 		).Scan(&report.LLMOutputs); err != nil {
@@ -116,42 +129,42 @@ func Prune(ctx context.Context, db *sql.DB, opts PruneOptions) (PruneReport, err
 	}
 
 	if opts.DryRun {
+		// Explicit rollback (the defer would handle it, but the
+		// intent is clearer here).
+		_ = tx.Rollback()
 		return report, nil
 	}
 
-	// Live delete: single transaction so a failure midway leaves
-	// the DB consistent. Order matters — raw_envelopes first so
-	// the cascade chains through events/extractions/fts, sessions
+	// Live delete order matters — raw_envelopes first so the
+	// cascade chains through events/extractions/fts, sessions
 	// second to drop the now-empty session rows.
-	if err := WithTx(ctx, db, func(tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM raw_envelopes
+		  WHERE event_id IN (
+		    SELECT e.event_id FROM events e
+		      JOIN sessions s ON s.id = e.session_id
+		     WHERE s.ended_at_ms IS NOT NULL AND s.ended_at_ms < ?
+		  )`,
+		opts.CutoffMs,
+	); err != nil {
+		return report, fmt.Errorf("delete raw_envelopes: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM sessions WHERE ended_at_ms IS NOT NULL AND ended_at_ms < ?`,
+		opts.CutoffMs,
+	); err != nil {
+		return report, fmt.Errorf("delete sessions: %w", err)
+	}
+	if opts.IncludeLLMOutputs {
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM raw_envelopes
-			  WHERE event_id IN (
-			    SELECT e.event_id FROM events e
-			      JOIN sessions s ON s.id = e.session_id
-			     WHERE s.ended_at_ms IS NOT NULL AND s.ended_at_ms < ?
-			  )`,
+			`DELETE FROM llm_outputs WHERE created_at_ms < ?`,
 			opts.CutoffMs,
 		); err != nil {
-			return fmt.Errorf("delete raw_envelopes: %w", err)
+			return report, fmt.Errorf("delete llm_outputs: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM sessions WHERE ended_at_ms IS NOT NULL AND ended_at_ms < ?`,
-			opts.CutoffMs,
-		); err != nil {
-			return fmt.Errorf("delete sessions: %w", err)
-		}
-		if opts.IncludeLLMOutputs {
-			if _, err := tx.ExecContext(ctx,
-				`DELETE FROM llm_outputs WHERE created_at_ms < ?`,
-				opts.CutoffMs,
-			); err != nil {
-				return fmt.Errorf("delete llm_outputs: %w", err)
-			}
-		}
-		return nil
-	}); err != nil {
-		return report, err
+	}
+	if err := tx.Commit(); err != nil {
+		return report, fmt.Errorf("commit: %w", err)
 	}
 	return report, nil
 }
