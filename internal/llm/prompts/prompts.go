@@ -333,6 +333,57 @@ func (r *ProposalResult) GroundEvidence(allowed map[string]struct{}) {
 	}
 }
 
+// GroundInductionEvidence drops every evidence row (Skill and
+// Workflow) whose SessionID doesn't equal the inducing session's
+// id. The induction prompt is grounded in EXACTLY ONE session, so
+// any other id the LLM emits is by definition a fabrication. The
+// schema's UUIDv5 pattern catches malformed strings; this catches
+// the harder case — a well-formed UUID that points somewhere else.
+//
+// inducingSessionID="" no-ops (callers without a known input id
+// shouldn't drop evidence they can't validate). Idempotent.
+func (r *InductionResult) GroundInductionEvidence(inducingSessionID string) {
+	if r == nil || strings.TrimSpace(inducingSessionID) == "" {
+		return
+	}
+	if r.Skill != nil {
+		r.Skill.Evidence = filterProposalEvidenceByID(r.Skill.Evidence, inducingSessionID)
+	}
+	if r.Workflow != nil {
+		r.Workflow.Evidence = filterWorkflowEvidenceByID(r.Workflow.Evidence, inducingSessionID)
+	}
+}
+
+// filterProposalEvidenceByID keeps only entries whose SessionID
+// equals want. Empty or whitespace-only IDs are dropped.
+func filterProposalEvidenceByID(ev []ProposalEvidence, want string) []ProposalEvidence {
+	if len(ev) == 0 {
+		return ev
+	}
+	out := make([]ProposalEvidence, 0, len(ev))
+	for _, e := range ev {
+		if strings.TrimSpace(e.SessionID) == want {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// filterWorkflowEvidenceByID keeps only entries whose SessionID
+// equals want. Empty or whitespace-only IDs are dropped.
+func filterWorkflowEvidenceByID(ev []WorkflowEvidence, want string) []WorkflowEvidence {
+	if len(ev) == 0 {
+		return ev
+	}
+	out := make([]WorkflowEvidence, 0, len(ev))
+	for _, e := range ev {
+		if strings.TrimSpace(e.SessionID) == want {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // ProposalEvidence grounds one proposal in actual session text.
 // quote is a verbatim excerpt (≤160 chars) from the session, not a
 // paraphrase — paraphrase loses the property that the user can grep

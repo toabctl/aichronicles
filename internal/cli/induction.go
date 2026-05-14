@@ -644,6 +644,15 @@ func RunInductionForSession(
 	if err := json.Unmarshal([]byte(row.Body), &result); err != nil {
 		return id, fmt.Errorf("induction: parse persisted body: %w", err)
 	}
+	// Anti-fabrication grounding: the induction prompt is grounded
+	// in exactly one session (sessionID). Drop every evidence row
+	// — on the Skill and on the Workflow — whose SessionID points
+	// somewhere else; the LLM cannot legitimately cite another
+	// session, so a foreign id is a hallucination. The schema's
+	// UUIDv5 pattern already rejects malformed strings; this catches
+	// the harder case where the model emits a syntactically valid
+	// UUID that isn't the input session's id.
+	result.GroundInductionEvidence(sessionID)
 	// Lifecycle tracking: if the LLM extracted a skill, record it
 	// in skill_candidates with its AutoSkill metadata (triggers,
 	// tags, examples, version). A later maintenance decision (add /

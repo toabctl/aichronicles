@@ -1311,6 +1311,62 @@ func TestProposalResult_GroundEvidence(t *testing.T) {
 	}
 }
 
+// TestInductionResult_GroundInductionEvidence pins that the
+// induction filter drops every evidence row whose SessionID isn't
+// the inducing session's id. The induction prompt is grounded in
+// exactly one session, so any foreign id is by definition a
+// hallucination.
+func TestInductionResult_GroundInductionEvidence(t *testing.T) {
+	t.Parallel()
+	const inducer = "00000000-0000-0000-0000-000000000001"
+	const ghost = "00000000-0000-0000-0000-000000000099"
+
+	r := &InductionResult{
+		Skill: &ProposedSkill{
+			Name: "deploy-staging",
+			Evidence: []ProposalEvidence{
+				{SessionID: inducer, Quote: "ok"},
+				{SessionID: ghost, Quote: "hallucinated"},
+			},
+		},
+		Workflow: &InducedWorkflow{
+			TaskShape: "deploy-service",
+			Evidence: []WorkflowEvidence{
+				{SessionID: ghost, Quote: "fake"},
+				{SessionID: inducer, Quote: "real"},
+			},
+		},
+	}
+	r.GroundInductionEvidence(inducer)
+
+	if len(r.Skill.Evidence) != 1 || r.Skill.Evidence[0].SessionID != inducer {
+		t.Errorf("skill evidence not filtered: %v", r.Skill.Evidence)
+	}
+	if len(r.Workflow.Evidence) != 1 || r.Workflow.Evidence[0].SessionID != inducer {
+		t.Errorf("workflow evidence not filtered: %v", r.Workflow.Evidence)
+	}
+}
+
+// TestInductionResult_GroundInductionEvidence_EmptyIDNoops pins
+// that an empty inducing id is treated as "don't filter" — callers
+// without a known anchor shouldn't strip evidence they can't
+// validate.
+func TestInductionResult_GroundInductionEvidence_EmptyIDNoops(t *testing.T) {
+	t.Parallel()
+	r := &InductionResult{
+		Skill: &ProposedSkill{
+			Name: "deploy-staging",
+			Evidence: []ProposalEvidence{
+				{SessionID: "00000000-0000-0000-0000-000000000099", Quote: "ok"},
+			},
+		},
+	}
+	r.GroundInductionEvidence("")
+	if len(r.Skill.Evidence) != 1 {
+		t.Errorf("empty inducing id should no-op, got %d evidence rows", len(r.Skill.Evidence))
+	}
+}
+
 // TestBuildMergeSkill_RendersCandidateScriptsAndKind pins the
 // fix for the "scripts silently dropped" bug: when the candidate
 // has Scripts and a contrastive Kind, the merge prompt MUST surface
