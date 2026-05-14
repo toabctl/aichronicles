@@ -552,17 +552,34 @@ func BuildSummary(sessionID string, events []events.EventView, in SummaryInputs)
 // annotate. The model is told to drop links it can't attribute so
 // noise in extractions (e.g. spurious URLs in tool output) doesn't
 // pollute the final summary.
+//
+// URLs that contained a secret are dropped, not surfaced as
+// "<redacted:kind>" placeholders. The model is asked to copy each
+// link verbatim into session_links; if we showed it a marker the
+// marker would propagate into the persisted summary as the link's
+// stored value. Recording the fired patterns still notifies the
+// caller that a secret was encountered.
 func renderLinksBlock(links []string, pats patternSet) string {
 	if len(links) == 0 {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString("\nLinks observed in this session — annotate each with a specific `used_for` in the record_summary `links` field. DROP any you cannot confidently attribute; do NOT invent new URLs:\n")
+	kept := make([]string, 0, len(links))
 	for _, url := range links {
 		clean, names := redact.Outbound(url)
-		pats.addAll(names)
+		if len(names) > 0 {
+			pats.addAll(names)
+			continue
+		}
+		kept = append(kept, clean)
+	}
+	if len(kept) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nLinks observed in this session — annotate each with a specific `used_for` in the record_summary `links` field. DROP any you cannot confidently attribute; do NOT invent new URLs:\n")
+	for _, url := range kept {
 		b.WriteString("- ")
-		b.WriteString(clean)
+		b.WriteString(url)
 		b.WriteByte('\n')
 	}
 	return b.String()
@@ -625,17 +642,33 @@ func renderPriorSessionsBlock(prior []CandidatePriorSession, pats patternSet) st
 // key_files from this list when present and to use the path string
 // from the transcript verbatim for any file referenced only in
 // prose.
+//
+// Paths that contained a secret are dropped rather than surfaced
+// as "<redacted:kind>" — the schema asks the model to copy each
+// path verbatim into key_files, so a marker would propagate into
+// the persisted summary. The fired patterns still feed back to
+// the caller via pats.
 func renderFilesBlock(files []string, pats patternSet) string {
 	if len(files) == 0 {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString("\nFiles observed via tool calls in this session — prefer these as `key_files` entries. Use the path strings verbatim. If a file appears only in prose (user prompt or assistant text), copy that path verbatim too; do NOT shorten or reformat:\n")
+	kept := make([]string, 0, len(files))
 	for _, p := range files {
 		clean, names := redact.Outbound(p)
-		pats.addAll(names)
+		if len(names) > 0 {
+			pats.addAll(names)
+			continue
+		}
+		kept = append(kept, clean)
+	}
+	if len(kept) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nFiles observed via tool calls in this session — prefer these as `key_files` entries. Use the path strings verbatim. If a file appears only in prose (user prompt or assistant text), copy that path verbatim too; do NOT shorten or reformat:\n")
+	for _, p := range kept {
 		b.WriteString("- ")
-		b.WriteString(clean)
+		b.WriteString(p)
 		b.WriteByte('\n')
 	}
 	return b.String()

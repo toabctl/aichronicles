@@ -185,6 +185,33 @@ func TestBuildSummary_RendersFilesBlockWhenPresent(t *testing.T) {
 	}
 }
 
+func TestBuildSummary_FilePathsWithSecretsDroppedNotMarked(t *testing.T) {
+	t.Parallel()
+	events := []events.EventView{
+		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
+	}
+	// File paths shouldn't usually carry credentials, but if a
+	// shell session pastes a curl URL into a tool argument the
+	// FilePath extractor's heuristics can occasionally grab one.
+	// The model is told to use paths verbatim in key_files — so a
+	// "<redacted:kind>" marker, if surfaced, would propagate.
+	files := []string{
+		"/home/me/repo/normal.go",
+		"https://user:pw@example.com/dl/x.tar.gz",
+	}
+	built, err := BuildSummary("sess-f-leak", events, SummaryInputs{Files: files})
+	if err != nil {
+		t.Fatalf("BuildSummary: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	if strings.Contains(body, "<redacted:basic_auth_url>") {
+		t.Errorf("files stanza surfaced a marker:\n%s", body)
+	}
+	if !strings.Contains(body, "/home/me/repo/normal.go") {
+		t.Errorf("safe path should survive scrubbing:\n%s", body)
+	}
+}
+
 func TestBuildSummary_OmitsFilesBlockWhenNoneProvided(t *testing.T) {
 	t.Parallel()
 	events := []events.EventView{
@@ -249,9 +276,15 @@ func TestBuildSummary_LinksPassThroughEgressRedaction(t *testing.T) {
 		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
 	}
 	// A URL carrying a basic-auth credential — the kind of thing
-	// extractions can capture verbatim. renderLinksBlock must scrub
-	// it before it reaches the prompt.
-	links := []string{"https://user:s3cret@example.com/foo"}
+	// extractions can capture verbatim. renderLinksBlock must drop
+	// it entirely (not just scrub to a marker), because the model
+	// is asked to copy URLs verbatim into session_links — surfacing
+	// a "<redacted:kind>" placeholder would propagate the marker
+	// into the persisted summary as the link's stored value.
+	links := []string{
+		"https://example.com/safe",
+		"https://user:s3cret@example.com/foo",
+	}
 	built, err := BuildSummary("sess-leak", events, SummaryInputs{Links: links})
 	if err != nil {
 		t.Fatalf("BuildSummary: %v", err)
@@ -259,6 +292,12 @@ func TestBuildSummary_LinksPassThroughEgressRedaction(t *testing.T) {
 	body := built.Request.Messages[0].Content
 	if strings.Contains(body, "s3cret") {
 		t.Errorf("links stanza leaked creds:\n%s", body)
+	}
+	if strings.Contains(body, "<redacted:basic_auth_url>") {
+		t.Errorf("links stanza surfaced a redaction marker — model could echo it into session_links:\n%s", body)
+	}
+	if !strings.Contains(body, "https://example.com/safe") {
+		t.Errorf("safe URL should survive scrubbing:\n%s", body)
 	}
 	hasPattern := false
 	for _, p := range built.Patterns {
@@ -269,6 +308,27 @@ func TestBuildSummary_LinksPassThroughEgressRedaction(t *testing.T) {
 	}
 	if !hasPattern {
 		t.Errorf("Patterns should report basic_auth_url, got %v", built.Patterns)
+	}
+}
+
+func TestBuildSummary_LinksStanzaOmittedWhenAllSecrets(t *testing.T) {
+	t.Parallel()
+	events := []events.EventView{
+		{Kind: "user_prompt", ContentText: nullS("x"), TsSourceMs: 1},
+	}
+	// Every URL contains a secret → the entire stanza should be
+	// omitted rather than left empty with just the header line.
+	links := []string{
+		"https://u:p@a.example.com/",
+		"https://x:y@b.example.com/",
+	}
+	built, err := BuildSummary("sess-all-secrets", events, SummaryInputs{Links: links})
+	if err != nil {
+		t.Fatalf("BuildSummary: %v", err)
+	}
+	body := built.Request.Messages[0].Content
+	if strings.Contains(body, "Links observed") {
+		t.Errorf("stanza header should be omitted when all links scrubbed:\n%s", body)
 	}
 }
 
