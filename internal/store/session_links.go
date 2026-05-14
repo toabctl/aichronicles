@@ -7,37 +7,25 @@ import (
 	"fmt"
 	"slices"
 	"time"
+
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
-// SessionLinkKind enumerates the four typed inter-session
-// relationships the summarize prompt is allowed to emit. The list
-// is closed — both the summarize tool schema and the migration's
-// CHECK constraint reject anything else, so a typo from the LLM
-// can't smuggle a fifth category in.
-//
-// Semantics (kept short so the prompt and the schema stay aligned):
-//
-//   - builds_on:           this session continues / extends the prior session's work.
-//   - repeats_failure_of:  this session hit the same wall the prior session hit.
-//   - supersedes:          this session's outcome replaces the prior session's outcome
-//     (e.g. we redid the migration the right way).
-//   - related:             topical overlap, but no causal claim.
+// SessionLink* constants live in internal/wire — they're protocol
+// vocabulary the summarize prompt emits and the web/CLI both
+// consume. These re-exports keep existing store.SessionLinkX
+// callers working unchanged; new code should use wire.SessionLinkX
+// directly. arch_review_2026_05_13 LOW followup.
 const (
-	SessionLinkBuildsOn         = "builds_on"
-	SessionLinkRepeatsFailureOf = "repeats_failure_of"
-	SessionLinkSupersedes       = "supersedes"
-	SessionLinkRelated          = "related"
+	SessionLinkBuildsOn         = wire.SessionLinkBuildsOn
+	SessionLinkRepeatsFailureOf = wire.SessionLinkRepeatsFailureOf
+	SessionLinkSupersedes       = wire.SessionLinkSupersedes
+	SessionLinkRelated          = wire.SessionLinkRelated
 )
 
-// SessionLinkKinds is the canonical ordered list (also the order
-// the UI renders; "related" last so it doesn't visually crowd out
-// the more meaningful causal kinds).
-var SessionLinkKinds = []string{
-	SessionLinkBuildsOn,
-	SessionLinkRepeatsFailureOf,
-	SessionLinkSupersedes,
-	SessionLinkRelated,
-}
+// SessionLinkKinds is the canonical ordered list, re-exported from
+// internal/wire so existing callers keep working.
+var SessionLinkKinds = wire.SessionLinkKinds
 
 // IsValidSessionLinkKind matches the migration's CHECK clause —
 // keep these in sync if a fifth kind is ever added.

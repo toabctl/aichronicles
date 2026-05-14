@@ -48,6 +48,37 @@ type SessionDigestsResponse struct {
 	Digests []SessionDigest `json:"digests"`
 }
 
+// SessionLinkKind enumerates the four typed inter-session relationships
+// the summarize prompt is allowed to emit. The list is closed — the
+// summarize tool schema and the SQL migration's CHECK constraint both
+// reject anything else. Lives in wire/ because it's protocol-level
+// vocabulary every JSON body and every UI listing consumes; store/
+// re-exports these via type aliases for backwards compat.
+//
+// Semantics:
+//
+//   - builds_on:           this session continues / extends the prior session's work.
+//   - repeats_failure_of:  this session hit the same wall the prior session hit.
+//   - supersedes:          this session's outcome replaces the prior session's outcome
+//     (e.g. we redid the migration the right way).
+//   - related:             topical overlap, but no causal claim.
+const (
+	SessionLinkBuildsOn         = "builds_on"
+	SessionLinkRepeatsFailureOf = "repeats_failure_of"
+	SessionLinkSupersedes       = "supersedes"
+	SessionLinkRelated          = "related"
+)
+
+// SessionLinkKinds is the canonical ordered list, also the order the UI
+// renders. "related" last so it doesn't visually crowd out the more
+// meaningful causal kinds.
+var SessionLinkKinds = []string{
+	SessionLinkBuildsOn,
+	SessionLinkRepeatsFailureOf,
+	SessionLinkSupersedes,
+	SessionLinkRelated,
+}
+
 // SessionLinkRow is the wire shape for one session_links row returned
 // by GET /v1/session-links. Both ends are populated unconditionally
 // so the web's outgoing/incoming sidebars consume one shape.
