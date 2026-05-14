@@ -255,9 +255,16 @@ func builtinDetectors() []Scanner {
 			WithPrefilter("AIza"),
 		// Google OAuth access token. Format documented in
 		// google.golang.org/api/oauth2/v2 and the Identity Platform
-		// spec: `ya29.` prefix then a long opaque body. Real tokens
+		// spec: `ya29.` prefix then a long opaque body of
+		// [A-Za-z0-9_-] (no dots in the body itself). Real tokens
 		// are 100+ chars but the prefix is the load-bearing literal.
-		NewDetector("gcp_oauth_access_token", `\bya29\.[A-Za-z0-9._-]{20,}`).
+		// Body class deliberately excludes `.`: keeping it in the
+		// class lets the greedy match over-eat neighbouring path /
+		// filename text after the token (e.g. ya29.<token>.json
+		// would redact through ".json"), producing a wider marker
+		// than necessary. Matches the gcp_oauth_refresh_token
+		// detector's body class for the same reason.
+		NewDetector("gcp_oauth_access_token", `\bya29\.[A-Za-z0-9_-]{20,}`).
 			WithPrefilter("ya29."),
 		// Google OAuth refresh token. Stored in
 		// ~/.config/gcloud/application_default_credentials.json under

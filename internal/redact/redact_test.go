@@ -463,6 +463,25 @@ func TestDefault_GCPServiceAccountJSONPrivateKeyRedacted(t *testing.T) {
 	}
 }
 
+// TestDefault_GCPOAuthAccessTokenDoesNotOverEatPath guards against
+// the body class swallowing trailing path / filename text after the
+// token. Real ya29.* tokens are pure [A-Za-z0-9_-] in the body — a
+// dot in the class lets the greedy match extend past the token
+// into surrounding text (e.g. `ya29.<token>.json`), producing a
+// wider redaction marker that hides legitimate context.
+func TestDefault_GCPOAuthAccessTokenDoesNotOverEatPath(t *testing.T) {
+	t.Parallel()
+	token := "ya29." + strings.Repeat("a", 80)
+	in := "creds/" + token + ".json /next/file"
+	red, patterns := Replace(in, Default().Scan(in))
+	if !contains(patterns, "gcp_oauth_access_token") {
+		t.Fatalf("gcp_oauth_access_token did not fire; patterns=%v", patterns)
+	}
+	if !strings.HasSuffix(red, ".json /next/file") {
+		t.Errorf("redaction over-ate trailing path; redacted=%q", red)
+	}
+}
+
 func TestDefault_BearerTokenCaseInsensitive(t *testing.T) {
 	t.Parallel()
 	for _, prefix := range []string{"Bearer", "bearer", "BEARER", "BeArEr"} {
