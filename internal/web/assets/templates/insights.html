@@ -64,7 +64,7 @@
       {{range .ActivityByHour}}
       <tr>
         <td class="ts">{{printf "%02d" .Hour}}</td>
-        <td class="bar-cell"><span class="bar" style="width: {{printf "%.1f" .Width}}%"></span></td>
+        <td class="bar-cell"><span class="bar bar-w-{{.WidthBucket}}"></span></td>
         <td>{{.Count}}</td>
       </tr>
       {{end}}

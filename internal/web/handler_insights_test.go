@@ -35,7 +35,7 @@ func TestInsightsPage_RendersAllSections(t *testing.T) {
 		"Overview",
 		"sessions",
 		"Activity by hour",
-		`<span class="bar"`, // histogram bars present
+		`<span class="bar bar-w-`, // histogram bars rendered with bucketed width class (CSP-safe; no inline style)
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/insights missing %q\n--- body ---\n%s", want, body)

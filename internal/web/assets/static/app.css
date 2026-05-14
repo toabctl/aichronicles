@@ -37,6 +37,22 @@ table.activity .bar {
   vertical-align: middle;
   min-width: 1px; /* non-zero hours always show a sliver */
 }
+/* Width buckets for the activity histogram. Inline `style="width:…"`
+   would be blocked by the strict CSP (no 'unsafe-inline' in
+   style-src); precomputed bucket classes let us keep the policy
+   strict while still varying bar widths per hour. The handler maps
+   each hour's count to a 0..10 decile of the busiest hour. */
+table.activity .bar-w-0  { width: 0; }
+table.activity .bar-w-1  { width: 10%; }
+table.activity .bar-w-2  { width: 20%; }
+table.activity .bar-w-3  { width: 30%; }
+table.activity .bar-w-4  { width: 40%; }
+table.activity .bar-w-5  { width: 50%; }
+table.activity .bar-w-6  { width: 60%; }
+table.activity .bar-w-7  { width: 70%; }
+table.activity .bar-w-8  { width: 80%; }
+table.activity .bar-w-9  { width: 90%; }
+table.activity .bar-w-10 { width: 100%; }
 
 /* Source-agent filter chips on the sessions list. Compact pill
    row that sits between the header and the live feed; the

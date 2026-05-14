@@ -351,12 +351,14 @@ type InsightsSkillRow struct {
 }
 
 // InsightsHourRow is one bar in the activity-by-hour histogram.
-// Width is a 0–100 percentage of the busiest hour's count, so
-// the template can render `style="width: {{.Width}}%"` directly.
+// WidthBucket is a 0–10 bucket of the busiest hour's count, so
+// the template can render `class="bar bar-w-{{.WidthBucket}}"` —
+// inline `style="width:…"` would be blocked by the strict CSP
+// (style-src 'self' without 'unsafe-inline').
 type InsightsHourRow struct {
-	Hour  int
-	Count int
-	Width float64
+	Hour        int
+	Count       int
+	WidthBucket int // 0–10, maps to a .bar-w-N CSS class
 }
 
 // InsightsSessionRow is one row in the "top sessions" table.

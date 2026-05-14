@@ -71,8 +71,10 @@ func buildInsightsPage(r wire.Insights, days int) InsightsPage {
 		})
 	}
 
-	// Activity-by-hour — compute bar width as a percent of the
-	// busiest hour so the SVG-free CSS bar scales naturally.
+	// Activity-by-hour — bucket bar width into 0–10 (deciles of the
+	// busiest hour's count) so the template can pick a CSS class
+	// rather than emit an inline `style="width:…"` attribute that
+	// the strict CSP would block.
 	maxCount := 0
 	for _, b := range r.ActivityByHour {
 		if b.Count > maxCount {
@@ -80,14 +82,10 @@ func buildInsightsPage(r wire.Insights, days int) InsightsPage {
 		}
 	}
 	for _, b := range r.ActivityByHour {
-		width := 0.0
-		if maxCount > 0 {
-			width = 100 * float64(b.Count) / float64(maxCount)
-		}
 		page.ActivityByHour = append(page.ActivityByHour, InsightsHourRow{
-			Hour:  b.Hour,
-			Count: b.Count,
-			Width: width,
+			Hour:        b.Hour,
+			Count:       b.Count,
+			WidthBucket: hourWidthBucket(b.Count, maxCount),
 		})
 	}
 
@@ -109,4 +107,22 @@ func buildInsightsPage(r wire.Insights, days int) InsightsPage {
 	}
 
 	return page
+}
+
+// hourWidthBucket maps an hour's count onto 0..10 deciles of
+// maxCount. Pairs with .bar-w-0…bar-w-10 classes in app.css.
+// A non-zero count always returns at least 1 so the bar
+// renders a visible sliver instead of disappearing.
+func hourWidthBucket(count, maxCount int) int {
+	if maxCount <= 0 || count <= 0 {
+		return 0
+	}
+	bucket := count * 10 / maxCount
+	if bucket < 1 {
+		bucket = 1
+	}
+	if bucket > 10 {
+		bucket = 10
+	}
+	return bucket
 }
