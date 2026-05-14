@@ -36,7 +36,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/redact"
-	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // Built is the output of every Build* function. Returning it as a
@@ -704,7 +704,7 @@ type SessionDigest struct {
 	// observable signals (tool failures, git undos, consecutive
 	// prompt repeats) and is not ground truth; downstream prompts
 	// treat it as a prior, not a rule.
-	Outcome *store.SessionOutcome
+	Outcome *wire.SessionOutcome
 }
 
 const reflectSystem = `You reflect on recent coding sessions to spot recurring patterns of work and recurring pain points. You MUST call the record_reflection tool exactly once.
@@ -3427,16 +3427,16 @@ func humanAgo(now time.Time, ms int64) string {
 // (tool_failure_count, git_undo_count, prompt_repeat_count,
 // last_event_kind). Downstream prompts treat it as a prior, not
 // ground truth.
-func renderOutcomeCue(o *store.SessionOutcome) string {
+func renderOutcomeCue(o *wire.SessionOutcome) string {
 	if o == nil {
 		return ""
 	}
 	switch o.Outcome {
-	case store.OutcomeSuccessLikely:
+	case wire.OutcomeSuccessLikely:
 		return fmt.Sprintf("Outcome: success_likely (%d tool_uses)\n", o.ToolUseCount)
-	case store.OutcomeUnknown:
+	case wire.OutcomeUnknown:
 		return "Outcome: unknown\n"
-	case store.OutcomeFailureLikely, store.OutcomeMixed:
+	case wire.OutcomeFailureLikely, wire.OutcomeMixed:
 		parts := []string{
 			fmt.Sprintf("%d tool_failures", o.ToolFailureCount),
 			fmt.Sprintf("%d git_undos", o.GitUndoCount),

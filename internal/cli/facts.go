@@ -264,7 +264,7 @@ func RunFactsForSession(
 	if outcome, oerr := c.SessionOutcome(ctx, sessionID); oerr != nil {
 		slog.Warn("facts: skipping outcome cue", "session", sessionID, "err", oerr)
 	} else {
-		digest.Outcome = sessionOutcomeFromWire(outcome)
+		digest.Outcome = &outcome
 	}
 
 	built, err := prompts.BuildFacts(prompts.FactsFromSessionInputs{Digest: digest})

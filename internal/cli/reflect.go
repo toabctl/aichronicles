@@ -222,7 +222,7 @@ func digestsFromRowsWithLinks(
 		if outcome, oerr := c.SessionOutcome(ctx, r.ID); oerr != nil {
 			slog.Warn("digest: skipping outcome cue", "session", r.ID, "err", oerr)
 		} else {
-			d.Outcome = sessionOutcomeFromWire(outcome)
+			d.Outcome = &outcome
 		}
 		out = append(out, d)
 	}
@@ -239,27 +239,6 @@ func digestsFromRowsWithLinks(
 			len(out), len(rows))
 	}
 	return out, nil
-}
-
-// sessionOutcomeFromWire converts the api wire shape into the
-// store.SessionOutcome the prompts package consumes. Mechanical
-// projection — every field maps 1:1 except LastEventKind which
-// rehydrates the sql.NullString from the wire's *string.
-func sessionOutcomeFromWire(o wire.SessionOutcome) *store.SessionOutcome {
-	out := &store.SessionOutcome{
-		SessionID:         o.SessionID,
-		ComputedAtMs:      o.ComputedAtMs,
-		UserPromptCount:   o.UserPromptCount,
-		ToolUseCount:      o.ToolUseCount,
-		ToolFailureCount:  o.ToolFailureCount,
-		ErrorCount:        o.ErrorCount,
-		CompactCount:      o.CompactCount,
-		GitUndoCount:      o.GitUndoCount,
-		PromptRepeatCount: o.PromptRepeatCount,
-		Outcome:           store.OutcomeLabel(o.Outcome),
-	}
-	out.LastEventKind = o.LastEventKind
-	return out
 }
 
 // cachedLLMInput is the shared input shape for reflect and propose.

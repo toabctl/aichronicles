@@ -118,27 +118,7 @@ type SessionStartCwdResponse struct {
 	Cwd *string `json:"cwd"`
 }
 
-// SessionOutcome is the wire shape for one session_outcomes row,
-// returned by GET /v1/sessions/{id}/outcome. The endpoint reads-
-// or-backfills, mirroring store.EnsureSessionOutcome — a
-// previously-uncomputed session lands a fresh row on the first
-// read, and subsequent reads hit the cached value.
-//
-// Mirrors store.SessionOutcome 1:1; nullable LastEventKind is
-// projected to *string.
-type SessionOutcome struct {
-	SessionID         string  `json:"session_id"`
-	ComputedAtMs      int64   `json:"computed_at_ms"`
-	UserPromptCount   int     `json:"user_prompt_count"`
-	ToolUseCount      int     `json:"tool_use_count"`
-	ToolFailureCount  int     `json:"tool_failure_count"`
-	ErrorCount        int     `json:"error_count"`
-	CompactCount      int     `json:"compact_count"`
-	GitUndoCount      int     `json:"git_undo_count"`
-	PromptRepeatCount int     `json:"prompt_repeat_count"`
-	LastEventKind     *string `json:"last_event_kind,omitempty"`
-	// Outcome is the verdict label. Typed via OutcomeLabel so
-	// callers don't have to cast across the wire boundary; the
-	// JSON shape is still a plain string.
-	Outcome OutcomeLabel `json:"outcome"`
-}
+// SessionOutcome lives in session_outcomes.go alongside the
+// OutcomeLabel constants — see that file. Documented here so
+// readers chasing the GET /v1/sessions/{id}/outcome shape find a
+// pointer.

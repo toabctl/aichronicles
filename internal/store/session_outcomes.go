@@ -31,21 +31,10 @@ const (
 
 // SessionOutcome is one row of session_outcomes. Field meanings:
 // see migration 017 and the ComputeSessionOutcome rule comment.
-type SessionOutcome struct {
-	SessionID         string
-	ComputedAtMs      int64
-	UserPromptCount   int
-	ToolUseCount      int
-	ToolFailureCount  int
-	ErrorCount        int
-	CompactCount      int
-	GitUndoCount      int
-	PromptRepeatCount int
-	// LastEventKind is nil for sessions without an event we
-	// can pin a label on (vanishingly rare in practice).
-	LastEventKind *string
-	Outcome       OutcomeLabel
-}
+// Aliased to wire.SessionOutcome — the protocol shape and the
+// store shape are identical (the per-row tags drive both JSON and
+// scan order), so there's a single source of truth.
+type SessionOutcome = wire.SessionOutcome
 
 // gitUndoRE matches a single shell command (no chain operators)
 // that unambiguously undoes work in a git checkout. Conservative on

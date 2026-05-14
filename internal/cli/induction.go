@@ -594,7 +594,7 @@ func RunInductionForSession(
 	if outcome, oerr := c.SessionOutcome(ctx, sessionID); oerr != nil {
 		slog.Warn("induction: skipping outcome cue", "session", sessionID, "err", oerr)
 	} else {
-		digest.Outcome = sessionOutcomeFromWire(outcome)
+		digest.Outcome = &outcome
 	}
 
 	// Installed-skills enrichment so the induction prompt won't
