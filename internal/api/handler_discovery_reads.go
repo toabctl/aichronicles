@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -296,12 +298,28 @@ func (s *Server) handleSegmentSession(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "Missing session id", "")
 		return
 	}
+	// The body is optional (segmenter defaults all fields), but we
+	// can't gate the decode on ContentLength > 0 — a chunked
+	// transfer (perfectly legal) reports ContentLength == -1 and
+	// any opts the client sent would be silently discarded. Apply
+	// the same MaxBytesReader + DisallowUnknownFields discipline
+	// decodeJSONBody uses, and treat io.EOF (truly empty body) as
+	// "use defaults".
+	defer func() { _ = r.Body.Close() }()
+	r.Body = http.MaxBytesReader(w, r.Body, MaxJSONBodyBytes)
 	var req wire.SegmentSessionRequest
-	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeProblem(w, http.StatusBadRequest, "Invalid body", err.Error())
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeProblem(w, http.StatusRequestEntityTooLarge,
+				"Payload too large",
+				fmt.Sprintf("body exceeds %d bytes", MaxJSONBodyBytes))
 			return
 		}
+		writeProblem(w, http.StatusBadRequest, "Invalid body", err.Error())
+		return
 	}
 	evs, err := store.LoadEventsForSession(r.Context(), s.store.DB(), id, store.LoadEventsForSessionUnbounded)
 	if err != nil {
