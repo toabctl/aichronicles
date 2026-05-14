@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -208,6 +209,56 @@ func TestSaveSemanticFact_EvidenceCascadesOnSessionDelete(t *testing.T) {
 	}
 	if got[0].EvidenceSessionID != nil {
 		t.Errorf("evidence_session_id must NULL on cascade: got %v", *got[0].EvidenceSessionID)
+	}
+}
+
+// TestSemanticFacts_SchemaEnforcesQuoteWhenSessionSet bypasses the
+// Go writer guard (SaveSemanticFact rejects this in code) and
+// asserts that the SQL CHECK constraint added in migration 029
+// also rejects it. Two writers must agree: if a future migration,
+// direct INSERT, or new code path forgets the Go check, the table
+// is still safe.
+func TestSemanticFacts_SchemaEnforcesQuoteWhenSessionSet(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+	loID := mkFactsRow(t, s, 1_700_000_000_000)
+
+	const sessID = "00000000-0000-0000-0000-000000000def"
+	if _, err := s.DB().Exec(
+		`INSERT INTO sessions(id, source_agent, source_session_id) VALUES (?, 'claude-code', 'src-y')`,
+		sessID,
+	); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	cases := []struct {
+		name  string
+		quote any
+	}{
+		{"null quote", nil},
+		{"empty quote", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := s.DB().ExecContext(ctx,
+				`INSERT INTO semantic_facts(
+                     source_llm_output_id, subject, predicate, object,
+                     evidence_session_id, evidence_quote, asserted_at_ms
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				loID, "/work/proj", "runs_tests_via", "go test ./...",
+				sessID, tc.quote, 1_700_000_000_000,
+			)
+			if err == nil {
+				t.Fatal("expected CHECK constraint to reject session+empty-quote, got nil")
+			}
+			// SQLite reports CHECK violations with "CHECK constraint" in
+			// the message. We assert on the shape rather than the exact
+			// text so a future driver upgrade doesn't break us.
+			if !strings.Contains(err.Error(), "CHECK") && !strings.Contains(err.Error(), "constraint") {
+				t.Errorf("error doesn't look like a constraint violation: %v", err)
+			}
+		})
 	}
 }
 
