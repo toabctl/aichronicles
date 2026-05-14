@@ -27,7 +27,7 @@
   <tbody>
     {{range .Projects}}
     <tr class="nav-row" tabindex="0">
-      <td><a href="/?project={{.Root}}"><code>{{.Root}}</code></a>
+      <td><a href="/?project={{.Root | urlquery}}"><code>{{.Root}}</code></a>
         {{if gt .DistinctCwds 1}}<small> ({{.DistinctCwds}} sub-cwds)</small>{{end}}</td>
       <td>{{.Sessions}}</td>
       <td>{{.Events}}</td>
