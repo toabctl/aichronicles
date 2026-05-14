@@ -279,6 +279,33 @@ func builtinDetectors() []Scanner {
 			WithPrefilter("GOCSPX-"),
 		NewDetector("github_pat_fine_grained", `\bgithub_pat_[A-Za-z0-9_]{82}\b`).
 			WithPrefilter("github_pat_"),
+		// GitLab personal access token. Format documented at
+		// https://docs.gitlab.com/ee/security/tokens/ —
+		// `glpat-` prefix followed by 20+ chars of [A-Za-z0-9_-].
+		NewDetector("gitlab_pat", `\bglpat-[A-Za-z0-9_-]{20,}\b`).
+			WithPrefilter("glpat-"),
+		// Hugging Face user / access token. Format documented at
+		// https://huggingface.co/docs/hub/security-tokens —
+		// `hf_` prefix followed by 30+ alphanumeric chars.
+		NewDetector("huggingface_token", `\bhf_[A-Za-z0-9]{30,}\b`).
+			WithPrefilter("hf_"),
+		// Slack app-level token (distinct from bot/user xox{b,a,p,r,s}-
+		// tokens above). Format: xapp-<digit>-<app-id>-<creation-ts>-
+		// <hex signature>. Documented at
+		// https://api.slack.com/concepts/token-types — these grant
+		// app-scoped admin powers, so worth detecting separately.
+		NewDetector("slack_app_token",
+			`\bxapp-\d-[A-Z0-9]+-\d+-[a-f0-9]{20,}\b`).
+			WithPrefilter("xapp-"),
+		// SendGrid API key. Format documented at
+		// https://docs.sendgrid.com/ui/account-and-settings/api-keys —
+		// `SG.` prefix, 22-char part-1, dot, 43-char part-2; both
+		// parts are [A-Za-z0-9_-]. The two-part shape plus prefix is
+		// distinctive enough that prose with "SG." (chemistry, names)
+		// won't pass the regex even when it passes the prefilter.
+		NewDetector("sendgrid_api_key",
+			`\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b`).
+			WithPrefilter("SG."),
 		// gh[pousr]_ has no single literal prefix, but the union of
 		// the five concrete 4-byte prefixes covers every match.
 		NewDetector("github_pat_classic", `\bgh[pousr]_[A-Za-z0-9]{36}\b`).
