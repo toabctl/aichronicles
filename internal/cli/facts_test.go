@@ -42,7 +42,7 @@ func TestRunFactsForSession_PersistsFactsIntoSemanticFacts(t *testing.T) {
 				Predicate:    "uses_language_version",
 				Object:       "Go 1.26",
 				Confidence:   0.95,
-				Quote:        "go.mod requires 1.26",
+				Quote:        "go.mod requires Go 1.26",
 				WhatHappened: "the user inspected go.mod",
 			},
 			{
@@ -104,7 +104,7 @@ func TestRunFactsForSession_PersistsFactsIntoSemanticFacts(t *testing.T) {
 		"2 fact(s) (2 persisted to semantic_facts)",
 		"/work/systemd uses_language_version = Go 1.26",
 		"/work/systemd runs_tests_via = go test ./...",
-		"quote: go.mod requires 1.26",
+		"quote: go.mod requires Go 1.26",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("render missing %q\n--- output ---\n%s", want, got)
@@ -133,15 +133,18 @@ func TestRunFactsForSession_DropsFactsKeyedToWrongCwd(t *testing.T) {
 				Predicate:    "uses_language_version",
 				Object:       "Go 1.26",
 				Confidence:   0.95,
-				Quote:        "go.mod requires 1.26",
+				Quote:        "go.mod requires Go 1.26",
 				WhatHappened: "the user inspected go.mod",
 			},
 			{
-				Subject:      "/other/project", // fabricated — not the session's cwd
-				Predicate:    "runs_tests_via",
-				Object:       "pytest",
+				Subject:   "/other/project", // fabricated — not the session's cwd
+				Predicate: "runs_tests_via",
+				Object:    "pytest",
+				// Quote also doesn't appear in the summary, but the
+				// cwd filter would drop the row before the quote
+				// check fires anyway.
 				Confidence:   0.9,
-				Quote:        "pytest covers the suite",
+				Quote:        "tests run via go test ./...",
 				WhatHappened: "the user ran the test suite",
 			},
 		},
@@ -175,6 +178,61 @@ func TestRunFactsForSession_DropsFactsKeyedToWrongCwd(t *testing.T) {
 	}
 	if len(other) != 0 {
 		t.Errorf("expected zero facts for fabricated /other/project, got %d", len(other))
+	}
+}
+
+// TestRunFactsForSession_DropsParaphrasedQuote pins the substrate
+// substring check: a fact whose Quote isn't actually present in
+// the session's summary + first_prompt is a paraphrase (the
+// prompt's hard rule #2 forbids paraphrase). The schema lets a
+// non-empty string through; this Go check is the post-decode
+// substrate gate.
+func TestRunFactsForSession_DropsParaphrasedQuote(t *testing.T) {
+	t.Parallel()
+	s, sessID := seedSessionForSummarize(t)
+	plantSummary(t, s, sessID, "go modules", "the project pins go 1.26 in go.mod")
+
+	emit := prompts.FactsResult{
+		Found: true,
+		Facts: []prompts.InducedFact{
+			{
+				Subject:      "/work/systemd",
+				Predicate:    "uses_language_version",
+				Object:       "Go 1.26",
+				Confidence:   0.95,
+				Quote:        "the project pins Go 1.26 in go.mod", // exact (case-insensitive) substring
+				WhatHappened: "good",
+			},
+			{
+				Subject:      "/work/systemd",
+				Predicate:    "uses_dependency",
+				Object:       "modernc.org/sqlite",
+				Confidence:   0.9,
+				Quote:        "depends on modernc.org/sqlite via go.mod", // never in the summary — paraphrase
+				WhatHappened: "bad",
+			},
+		},
+		Rationale: "mix of grounded and paraphrased",
+	}
+	toolInput, _ := json.Marshal(emit)
+	f := &fakeLLM{toolInput: toolInput}
+
+	var out bytes.Buffer
+	if _, err := RunFactsForSession(context.Background(), apiForStore(t, s),
+		func() (llm.Client, error) { return f, nil },
+		FactsRunOptions{SessionID: sessID}, &out); err != nil {
+		t.Fatalf("RunFactsForSession: %v", err)
+	}
+
+	facts, err := store.LoadFactsForSubject(t.Context(), s.DB(), "/work/systemd", 0)
+	if err != nil {
+		t.Fatalf("LoadFactsForSubject: %v", err)
+	}
+	if len(facts) != 1 {
+		t.Fatalf("expected 1 fact (grounded), got %d", len(facts))
+	}
+	if facts[0].Predicate != "uses_language_version" {
+		t.Errorf("kept the wrong fact: %s", facts[0].Predicate)
 	}
 }
 

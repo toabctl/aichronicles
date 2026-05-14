@@ -305,7 +305,14 @@ func RunFactsForSession(
 	if err := json.Unmarshal([]byte(row.Body), &result); err != nil {
 		return id, fmt.Errorf("facts: parse persisted body: %w", err)
 	}
-	persistedCount := persistInducedFacts(ctx, c, id, sessionID, digest.Cwd, &result)
+	// Anti-fabrication substrate for quote grounding: the facts
+	// prompt sees only the summary + first prompt for the session,
+	// so any quote a fact cites MUST appear in one of those.
+	// Anything else is the LLM paraphrasing or transposing a quote
+	// — both of which the prompt's hard rule #2 forbids. Lowercase
+	// once so the per-fact substring check is case-insensitive.
+	substrate := strings.ToLower(digest.Summary + " " + digest.FirstPrompt)
+	persistedCount := persistInducedFacts(ctx, c, id, sessionID, digest.Cwd, substrate, &result)
 
 	if opts.JSON {
 		_, _ = io.WriteString(out, row.Body)
@@ -330,7 +337,17 @@ func RunFactsForSession(
 // is a fabrication — the LLM picked up a path from prose or
 // invented one. Per CLAUDE.md rule #7, drop the row rather than
 // land a confidently-wrong assertion keyed to the wrong project.
-func persistInducedFacts(ctx context.Context, c *apiclient.Client, llmOutputID int64, sessionID, sessionCwd string, result *prompts.FactsResult) int {
+//
+// substrate is the lowercased concatenation of the session's
+// summary and first_prompt — the only session content the facts
+// prompt is given. Quotes that don't appear (case-insensitively)
+// in substrate are paraphrases or transpositions; the prompt's
+// hard rule #2 says "Don't paraphrase ... the quote is the
+// substrate the user can grep to verify", and a paraphrased
+// quote silently fails that contract. Empty substrate disables
+// the check (tests that don't wire the digest text shouldn't
+// drop every fact).
+func persistInducedFacts(ctx context.Context, c *apiclient.Client, llmOutputID int64, sessionID, sessionCwd, substrate string, result *prompts.FactsResult) int {
 	if result == nil || !result.Found || len(result.Facts) == 0 {
 		return 0
 	}
@@ -344,6 +361,16 @@ func persistInducedFacts(ctx context.Context, c *apiclient.Client, llmOutputID i
 				"session_cwd", sessionCwd,
 				"predicate", f.Predicate)
 			continue
+		}
+		if substrate != "" && f.Quote != "" {
+			if !strings.Contains(substrate, strings.ToLower(strings.TrimSpace(f.Quote))) {
+				slog.Warn("facts: dropping fact whose quote isn't in the session's summary",
+					"llm_output_id", llmOutputID,
+					"subject", f.Subject,
+					"predicate", f.Predicate,
+					"quote", f.Quote)
+				continue
+			}
 		}
 		req := wire.SaveSemanticFactRequest{
 			SourceLLMOutputID: llmOutputID,
