@@ -202,9 +202,23 @@ func writeSessionFrame(w http.ResponseWriter, e wire.Event, now time.Time) error
 	cell := renderLatestEventCell(e)
 	status, title := sessionStatus(&e, now)
 	dot := renderStatusDot(e.SessionID, status, title, true /* OOB */)
+	// Defensive: a CR/LF in the session id would split the SSE
+	// frame and corrupt every downstream message on the connection.
+	// IDs are derived UUIDs in production so this is belt-and-braces.
+	safeID := sanitiseEventName(e.SessionID)
 	_, err := fmt.Fprintf(w, "id: %d\nevent: session-%s\ndata: %s%s\n\n",
-		e.IngestSeq, e.SessionID, cell, dot)
+		e.IngestSeq, safeID, cell, dot)
 	return err
+}
+
+// sanitiseEventName strips any character that would terminate an SSE
+// frame (CR/LF) from a string before it lands in an `event:` line.
+func sanitiseEventName(s string) string {
+	if !strings.ContainsAny(s, "\r\n") {
+		return s
+	}
+	r := strings.NewReplacer("\r", "", "\n", "")
+	return r.Replace(s)
 }
 
 // renderLiveEventFragment produces the one-line HTML row that
