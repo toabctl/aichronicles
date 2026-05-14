@@ -284,6 +284,36 @@ func TestOpenAI_Complete_RetriesOn5xxThenFails(t *testing.T) {
 	}
 }
 
+// TestOpenAI_Complete_ForceToolDisablesRetries mirrors the
+// Anthropic counterpart: a 429 on a tool-forced call must not
+// retry, regardless of the client-wide MaxRetries setting. The
+// CompletionUsage on the returned response reflects only the
+// final attempt, so retried tool calls under-count input tokens
+// and silently re-pay any cache prefix on every attempt.
+func TestOpenAI_Complete_ForceToolDisablesRetries(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	c := fakeOpenAI(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":{"message":"slow"}}`)
+	})
+	// Leave MaxRetries at the default; per-call override must win.
+
+	_, err := c.Complete(context.Background(), Request{
+		Messages:  []Message{{Role: RoleUser, Content: "x"}},
+		MaxTokens: 16,
+		Tools:     []Tool{{Name: "record_x", InputSchema: []byte(`{"type":"object"}`)}},
+		ForceTool: "record_x",
+	})
+	if err == nil {
+		t.Fatal("expected 429 error")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("ForceTool should produce exactly 1 attempt regardless of MaxRetries, got %d", got)
+	}
+}
+
 func TestOpenAI_Complete_RefusesEmptyAPIKey(t *testing.T) {
 	t.Parallel()
 	o := &OpenAI{APIKey: ""}

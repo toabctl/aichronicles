@@ -193,7 +193,20 @@ func (a *Anthropic) Complete(ctx context.Context, req Request) (*Response, error
 	}
 
 	a.ensureSDK()
-	msg, err := a.sdkClient.Messages.New(ctx, params)
+	// Tool-forced calls disable SDK retries per-request: the Usage
+	// struct on the returned message reflects only the FINAL
+	// attempt, so a 429 retried twice silently triples input-token
+	// spend while the accounting reports 1×. Equally bad, each
+	// retry re-sends the cache-controlled system prefix and pays
+	// the cache-miss cost again. The caller (propose / reflect /
+	// induce / facts / summary) decides whether to re-issue on
+	// transient failure; surfacing the 429 lets them account for
+	// the full attempt cost.
+	var callOpts []option.RequestOption
+	if req.ForceTool != "" {
+		callOpts = append(callOpts, option.WithMaxRetries(0))
+	}
+	msg, err := a.sdkClient.Messages.New(ctx, params, callOpts...)
 	if err != nil {
 		return nil, scrubAnthropicError(err)
 	}

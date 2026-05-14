@@ -132,7 +132,17 @@ func (o *OpenAI) Complete(ctx context.Context, req Request) (*Response, error) {
 	}
 
 	o.ensureSDK()
-	resp, err := o.sdkClient.Chat.Completions.New(ctx, params)
+	// Tool-forced calls disable SDK retries per-request: the
+	// CompletionUsage on the returned response reflects only the
+	// FINAL attempt, so a 429 retried twice silently triples
+	// input-token spend while the accounting reports 1×. The
+	// caller decides whether to re-issue on transient failure;
+	// surfacing the 429 lets them account for the full cost.
+	var callOpts []option.RequestOption
+	if req.ForceTool != "" {
+		callOpts = append(callOpts, option.WithMaxRetries(0))
+	}
+	resp, err := o.sdkClient.Chat.Completions.New(ctx, params, callOpts...)
 	if err != nil {
 		return nil, scrubOpenAIError(err)
 	}

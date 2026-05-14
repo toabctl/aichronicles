@@ -343,6 +343,38 @@ func TestAnthropic_Complete_ContextCancelledAborts(t *testing.T) {
 	}
 }
 
+// TestAnthropic_Complete_ForceToolDisablesRetries pins the
+// per-call retry override: a 429 response on a tool-forced call
+// must NOT retry, regardless of MaxRetries / DefaultMaxRetries.
+// Rationale: the Usage struct reflects only the final attempt, so
+// retried tool calls under-count input tokens by up to 3× and
+// silently re-pay the prompt-cache prefix on each attempt. The
+// caller is the right place to decide whether to re-issue.
+func TestAnthropic_Complete_ForceToolDisablesRetries(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	c := fakeAnthropic(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":"slow"}`)
+	})
+	// Leave MaxRetries at the default (3); the per-call override
+	// must still win for ForceTool requests.
+
+	_, err := c.Complete(context.Background(), Request{
+		Messages:  []Message{{Role: RoleUser, Content: "x"}},
+		MaxTokens: 16,
+		Tools:     []Tool{{Name: "record_x", InputSchema: []byte(`{"type":"object"}`)}},
+		ForceTool: "record_x",
+	})
+	if err == nil {
+		t.Fatal("expected 429 error")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("ForceTool should produce exactly 1 attempt regardless of MaxRetries, got %d", got)
+	}
+}
+
 func TestAnthropic_Complete_MaxRetriesNegativeDisables(t *testing.T) {
 	t.Parallel()
 	var calls atomic.Int32
