@@ -255,8 +255,13 @@ func QueryIngestPendingStats(ctx context.Context, db *sql.DB) (IngestPendingStat
 // then takes its outage path) instead of accepting an envelope
 // it can't drain.
 //
-// O(1) thanks to SQLite's COUNT(*) on a no-WHERE query (uses the
-// table's row count directly when no filter is present).
+// Cost: O(N) — SQLite doesn't maintain a stored row count for
+// regular tables, so COUNT(*) scans the rowid B-tree. The
+// backlog cap keeps N bounded, and the hot path uses the
+// in-memory atomic pendingDepth counter; CountPending is only
+// called at NewServer to seed that counter and on the cold
+// `/v1/admin/stats` path. (arch_review_2026_05_13 LOW: prior
+// doc claimed O(1).)
 func CountPending(ctx context.Context, db *sql.DB) (int, error) {
 	var n int
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ingest_pending`).Scan(&n); err != nil {
