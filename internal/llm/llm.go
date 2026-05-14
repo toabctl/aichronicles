@@ -23,7 +23,15 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 )
+
+// ErrNoAPIKey is returned by Complete when the provider was
+// constructed without (or has discovered an empty) API key.
+// Surfaced as a sentinel so CLI layers can errors.Is-match it and
+// suggest the export-the-env-var fix without grep'ing strings on
+// err.Error().
+var ErrNoAPIKey = errors.New("llm: API key not set")
 
 // Role identifies the speaker of a Message in a multi-turn Request.
 // Values mirror Anthropic's Messages API: user messages from the

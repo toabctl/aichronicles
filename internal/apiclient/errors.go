@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"syscall"
 
 	"github.com/toabctl/aichronicles/internal/wire"
@@ -115,17 +114,10 @@ func wrapTransportError(err error, baseURL, path string) error {
 }
 
 // isSocketUnavailable detects the common "daemon not running"
-// failure modes for a UDS dial: ENOENT (no such file), ECONNREFUSED
-// (no listener), and the wrapped variants the net package
-// produces.
+// failure modes for a UDS dial: ENOENT (no such file) and
+// ECONNREFUSED (no listener). Both are returned wrapped by net/http
+// on every supported Go version, so errors.Is on the syscall
+// sentinels matches reliably.
 func isSocketUnavailable(err error) bool {
-	if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) {
-		return true
-	}
-	// net errors sometimes carry the syscall error in a string
-	// (older Go versions or wrapping mismatches). Treat the
-	// canonical messages as a fallback signal.
-	msg := err.Error()
-	return strings.Contains(msg, "no such file or directory") ||
-		strings.Contains(msg, "connection refused")
+	return errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)
 }

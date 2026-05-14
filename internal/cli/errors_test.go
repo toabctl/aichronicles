@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/store"
 )
 
@@ -32,15 +34,15 @@ func TestHintForError(t *testing.T) {
 			wantContains: "longer prefix",
 		},
 		"missing anthropic key explains both env and config knob": {
-			err:          errors.New("anthropic: API key not set (expected in ANTHROPIC_API_KEY)"),
+			err:          fmt.Errorf("anthropic: %w (expected in ANTHROPIC_API_KEY)", llm.ErrNoAPIKey),
 			wantContains: "api_key_command",
 		},
 		"missing openai key triggers the same hint": {
-			err:          errors.New("openai: API key not set (expected in OPENAI_API_KEY)"),
+			err:          fmt.Errorf("openai: %w (expected in OPENAI_API_KEY)", llm.ErrNoAPIKey),
 			wantContains: "api_key_command",
 		},
 		"daemon socket missing points at setup": {
-			err:          errors.New("post to daemon: connect: no such file or directory"),
+			err:          fmt.Errorf("post to aichronicles-api: %w", apiclient.ErrSocketUnavailable),
 			wantContains: "systemctl --user",
 		},
 	}

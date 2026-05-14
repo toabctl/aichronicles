@@ -3,7 +3,6 @@ package llm
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -115,7 +114,7 @@ func (o *OpenAI) ensureSDK() {
 // returned, so a 401 echoing the API key never lands in a log line.
 func (o *OpenAI) Complete(ctx context.Context, req Request) (*Response, error) {
 	if o.APIKey == "" {
-		return nil, errors.New("openai: API key not set (expected in OPENAI_API_KEY)")
+		return nil, fmt.Errorf("openai: %w (expected in OPENAI_API_KEY)", ErrNoAPIKey)
 	}
 	if err := validateRequest(req); err != nil {
 		return nil, fmt.Errorf("openai: %w", err)

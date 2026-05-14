@@ -2,8 +2,9 @@ package cli
 
 import (
 	"errors"
-	"strings"
 
+	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/store"
 )
 
@@ -31,12 +32,11 @@ func hintForError(err error) string {
 	if errors.Is(err, store.ErrAmbiguousSessionPrefix) {
 		return "hint: pass a longer prefix to uniquely identify the session."
 	}
-	msg := err.Error()
-	if strings.Contains(msg, "ANTHROPIC_API_KEY") || strings.Contains(msg, "OPENAI_API_KEY") {
-		return "hint: export the env var, or set [llm.<provider>].api_key_command in `~/.config/aichronicles/config.toml` (chmod 600)."
+	if errors.Is(err, llm.ErrNoAPIKey) {
+		return "hint: export ANTHROPIC_API_KEY / OPENAI_API_KEY, or set [llm.<provider>].api_key_command in `~/.config/aichronicles/config.toml` (chmod 600)."
 	}
-	if strings.Contains(msg, "post to daemon") || strings.Contains(msg, "daemon unreachable") || strings.Contains(msg, "connect: no such file or directory") {
-		return "hint: check `systemctl --user status aichronicles.socket` and `aichronicles setup systemd` to (re)install the units."
+	if errors.Is(err, apiclient.ErrSocketUnavailable) {
+		return "hint: check `systemctl --user status aichronicles-api.service` and `aichronicles setup systemd` to (re)install the units."
 	}
 	return ""
 }

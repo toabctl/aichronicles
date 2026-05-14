@@ -176,7 +176,7 @@ func (a *Anthropic) ensureSDK() {
 // in a log line.
 func (a *Anthropic) Complete(ctx context.Context, req Request) (*Response, error) {
 	if a.APIKey == "" {
-		return nil, errors.New("anthropic: API key not set (expected in ANTHROPIC_API_KEY)")
+		return nil, fmt.Errorf("anthropic: %w (expected in ANTHROPIC_API_KEY)", ErrNoAPIKey)
 	}
 	if err := validateRequest(req); err != nil {
 		return nil, fmt.Errorf("anthropic: %w", err)
