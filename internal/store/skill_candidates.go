@@ -9,6 +9,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/nullable"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // InitialSkillVersion is the version stamp every newly-recorded
@@ -134,28 +135,22 @@ const (
 // of these actions: add a fresh on-disk SKILL.md, merge into an
 // existing skill, or discard the candidate. The empty string is the
 // pending state — extracted but not yet decided.
-type MaintenanceAction string
+//
+// The type and the four constants are protocol-level vocabulary —
+// the JSON `decision` field on /v1/skill-candidates carries one of
+// these strings. The canonical home is internal/wire as
+// SkillCandidateDecision / DecisionPending|Add|Merge|Discard;
+// these aliases keep the existing store.Maintenance* call sites
+// working without a one-shot rename. New code should reach for
+// wire.Decision* directly. Same shape as the LLMOutputKind and
+// SessionLink lifts (88025dc / 582d404).
+type MaintenanceAction = wire.SkillCandidateDecision
 
 const (
-	// MaintenancePending is the default state of a freshly recorded
-	// candidate. No on-disk artefact has been created and no
-	// decision has been written.
-	MaintenancePending MaintenanceAction = ""
-
-	// MaintenanceAdd is the AutoSkill action for "this candidate is
-	// a new skill" — a SKILL.md is materialised on disk at AddPath.
-	MaintenanceAdd MaintenanceAction = "add"
-
-	// MaintenanceMerge is the AutoSkill action for "this candidate
-	// refines an existing skill" — the LLM-merged result is written
-	// to the existing skill's path; MergedIntoID points at the
-	// surviving candidate row.
-	MaintenanceMerge MaintenanceAction = "merge"
-
-	// MaintenanceDiscard is the AutoSkill action for "this candidate
-	// is not worth keeping" — recorded so future propose runs can
-	// see what the user rejected and bias away from re-suggesting.
-	MaintenanceDiscard MaintenanceAction = "discard"
+	MaintenancePending = wire.DecisionPending
+	MaintenanceAdd     = wire.DecisionAdd
+	MaintenanceMerge   = wire.DecisionMerge
+	MaintenanceDiscard = wire.DecisionDiscard
 )
 
 // SkillCandidate is one row of the skill_candidates table — the

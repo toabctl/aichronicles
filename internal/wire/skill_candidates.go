@@ -40,11 +40,9 @@ type RecordSkillCandidateResponse struct {
 }
 
 // SkillCandidateDecision names the maintenance action recorded on a
-// skill_candidates row. The same string values also exist as
-// store.MaintenanceAction constants — the two are kept in sync by a
-// cross-package test (store can't import wire and wire can't import
-// store without breaking the layering invariants, but the literal
-// values must agree because they cross the wire).
+// skill_candidates row. Canonical type for the protocol-level
+// `decision` field; store.MaintenanceAction is now a type alias of
+// this, so there's a single source of truth.
 type SkillCandidateDecision string
 
 const (
