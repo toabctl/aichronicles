@@ -1164,3 +1164,106 @@ func TestSkillCandidatesMigration_Backfills(t *testing.T) {
 		t.Errorf("backfill: got Decision=%q want %q", rows[0].Decision, MaintenanceAdd)
 	}
 }
+
+// TestMergeInvariant_TargetMustBeAdded pins migration 028's
+// first trigger: merging into a candidate whose decision is
+// 'discard' (or pending/merge) is rejected at the DB layer so a
+// future code path that bypasses MarkSkillCandidateMerged still
+// can't write an inconsistent merged_into_id.
+func TestMergeInvariant_TargetMustBeAdded(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+
+	// Target is a discarded row — clearly not a legitimate merge
+	// destination.
+	targetLO := mkProposeRow(t, s, 1_700_000_000_000)
+	if err := RecordSkillCandidate(ctx, s.DB(), targetLO, "rejected", 1_700_000_000_000); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+	if err := MarkSkillCandidateDiscarded(ctx, s.DB(), targetLO, "rejected",
+		1_700_000_100_000); err != nil {
+		t.Fatalf("seed discard: %v", err)
+	}
+	rows, err := LoadSkillCandidatesByName(ctx, s.DB(), "rejected", 0)
+	if err != nil {
+		t.Fatalf("load target: %v", err)
+	}
+	targetID := rows[0].ID
+
+	// New candidate tries to merge into the discarded row.
+	srcLO := mkProposeRow(t, s, 1_700_001_000_000)
+	if err := RecordSkillCandidate(ctx, s.DB(), srcLO, "rejected", 1_700_001_000_000); err != nil {
+		t.Fatalf("seed src: %v", err)
+	}
+	err = MarkSkillCandidateMerged(ctx, s.DB(), srcLO, "rejected",
+		targetID, "/p", 1_700_001_500_000)
+	if err == nil {
+		t.Fatal("expected merge into discarded row to fail; the trigger should have aborted")
+	}
+	if !strings.Contains(err.Error(), "decision=add") {
+		t.Errorf("error message should name the invariant: %v", err)
+	}
+}
+
+// TestMergeInvariant_NoOrphanWhenAddDiscarded pins migration 028's
+// second trigger: an 'add' row that another candidate has merged
+// into cannot be discarded — the merge claim would become a
+// dangling pointer.
+func TestMergeInvariant_NoOrphanWhenAddDiscarded(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+
+	// Seed target as the canonical added skill.
+	targetLO := mkProposeRow(t, s, 1_700_000_000_000)
+	if err := RecordSkillCandidate(ctx, s.DB(), targetLO, "keep-me", 1_700_000_000_000); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+	if err := MarkSkillCandidateAdded(ctx, s.DB(), targetLO, "keep-me",
+		"/p", 1_700_000_100_000); err != nil {
+		t.Fatalf("seed add: %v", err)
+	}
+	rows, err := LoadSkillCandidatesByName(ctx, s.DB(), "keep-me", 0)
+	if err != nil {
+		t.Fatalf("load target: %v", err)
+	}
+	targetID := rows[0].ID
+
+	// Another candidate merges into the target.
+	srcLO := mkProposeRow(t, s, 1_700_001_000_000)
+	if err := RecordSkillCandidate(ctx, s.DB(), srcLO, "keep-me", 1_700_001_000_000); err != nil {
+		t.Fatalf("seed src: %v", err)
+	}
+	if err := MarkSkillCandidateMerged(ctx, s.DB(), srcLO, "keep-me",
+		targetID, "/p", 1_700_001_500_000); err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+
+	// Now try to discard the target. The trigger should refuse.
+	err = MarkSkillCandidateDiscarded(ctx, s.DB(), targetLO, "keep-me",
+		1_700_002_000_000)
+	if err == nil {
+		t.Fatal("expected discard of merge-targeted row to fail")
+	}
+	if !strings.Contains(err.Error(), "merge target") {
+		t.Errorf("error message should name the invariant: %v", err)
+	}
+}
+
+// TestMergeInvariant_HandAuthoredMergeStillAllowed pins that the
+// hand-authored-merge sentinel (merged_into_id=NULL) is not
+// affected by either trigger — the WHEN clauses gate on NOT NULL.
+func TestMergeInvariant_HandAuthoredMergeStillAllowed(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+	srcLO := mkProposeRow(t, s, 1_700_000_000_000)
+	if err := RecordSkillCandidate(ctx, s.DB(), srcLO, "fold-handcrafted", 1_700_000_000_000); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if err := MarkSkillCandidateMerged(ctx, s.DB(), srcLO, "fold-handcrafted",
+		0, "/p", 1_700_000_500_000); err != nil {
+		t.Fatalf("hand-authored merge should still succeed: %v", err)
+	}
+}
