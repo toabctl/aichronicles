@@ -275,9 +275,15 @@ func RecordSkillCandidateWithMetadata(ctx context.Context, db *sql.DB, llmOutput
 	if version == "" {
 		version = InitialSkillVersion
 	}
-	kind := meta.Kind
-	if kind == "" {
-		kind = SkillKindPattern
+	// kindParam is NULL when the caller didn't specify a kind so the
+	// INSERT path picks up the column's DEFAULT 'pattern' and the
+	// DO UPDATE path COALESCEs to the existing row's kind. Without
+	// the NULL marker a bare RecordSkillCandidate (which always lands
+	// the meta zero-value) would clobber a previously-recorded
+	// 'pitfall' on re-run.
+	var kindParam any
+	if meta.Kind != "" {
+		kindParam = string(meta.Kind)
 	}
 
 	_, err = db.ExecContext(ctx,
@@ -285,15 +291,15 @@ func RecordSkillCandidateWithMetadata(ctx context.Context, db *sql.DB, llmOutput
 			llm_output_id, skill_name, proposed_at_ms,
 			triggers, tags, examples, version, kind
 		)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'pattern'))
 		 ON CONFLICT(llm_output_id, skill_name) DO UPDATE SET
 		     triggers = COALESCE(excluded.triggers, skill_candidates.triggers),
 		     tags     = COALESCE(excluded.tags,     skill_candidates.tags),
 		     examples = COALESCE(excluded.examples, skill_candidates.examples),
 		     version  = COALESCE(skill_candidates.version, excluded.version),
-		     kind     = excluded.kind`,
+		     kind     = COALESCE(?, skill_candidates.kind)`,
 		llmOutputID, skillName, proposedAtMs,
-		nullableJSON(triggersJSON), nullableJSON(tagsJSON), nullableJSON(examplesJSON), version, string(kind),
+		nullableJSON(triggersJSON), nullableJSON(tagsJSON), nullableJSON(examplesJSON), version, kindParam, kindParam,
 	)
 	if err != nil {
 		return fmt.Errorf("insert skill_candidates: %w", err)

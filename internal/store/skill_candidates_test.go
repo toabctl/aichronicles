@@ -1061,6 +1061,45 @@ func TestRecordSkillCandidateWithMetadata_PersistsKind(t *testing.T) {
 	}
 }
 
+// TestRecordSkillCandidate_BareReRunPreservesKind pins the upsert
+// semantics for `kind`: once a candidate is recorded with an
+// explicit pitfall, a subsequent bare RecordSkillCandidate call on
+// the same (llm_output_id, skill_name) must NOT flip it back to
+// 'pattern'. The bare form lands an empty metadata zero-value
+// (Kind=""), which the writer translates to a NULL parameter so the
+// DO UPDATE clause COALESCEs to the existing row's kind rather than
+// the Go-side default.
+func TestRecordSkillCandidate_BareReRunPreservesKind(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+	loID := mkProposeRow(t, s, 1_700_000_000_000)
+
+	if err := RecordSkillCandidateWithMetadata(ctx, s.DB(),
+		loID, "avoid-shared-rebase", 1_700_000_000_000,
+		SkillCandidateMetadata{Kind: SkillKindPitfall}); err != nil {
+		t.Fatalf("seed pitfall: %v", err)
+	}
+
+	// Re-run via the bare entrypoint (no metadata): historically
+	// this defaulted kind to SkillKindPattern at the Go layer and
+	// the SQL set kind = excluded.kind, silently flipping pitfall
+	// to pattern. The fix routes empty meta.Kind through as SQL NULL.
+	if err := RecordSkillCandidate(ctx, s.DB(),
+		loID, "avoid-shared-rebase", 1_700_000_000_000); err != nil {
+		t.Fatalf("re-run bare: %v", err)
+	}
+
+	rows, err := LoadSkillCandidatesByName(ctx, s.DB(), "avoid-shared-rebase", 0)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if rows[0].Kind != SkillKindPitfall {
+		t.Errorf("kind clobbered by bare re-run: got %q want %q",
+			rows[0].Kind, SkillKindPitfall)
+	}
+}
+
 // TestSkillCandidates_NoSupersededByIdColumn pins migration 022's
 // payload: the dead `superseded_by_id` column from migration 018 is
 // gone after the table-recreate and the merged_into_id self-FK
