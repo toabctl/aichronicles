@@ -81,11 +81,20 @@ func newSSEBus(log *slog.Logger) *sseBus {
 // plus a cancel func. cancel must be called by the consumer
 // (typically via defer) so the bus releases the slot.
 //
-// If the bus is at SSEMaxSubscribers, returns (nil, nil, false).
-// Caller maps that to HTTP 429.
+// Returns (nil, nil, false) when the bus is at SSEMaxSubscribers
+// OR after Close() has flipped the closed flag. Caller maps either
+// to HTTP 429 / 503 (the SSE handler chooses 429 today). Without
+// the closed check, a request arriving in the small window between
+// Close() and srv.Shutdown cancelling its r.Context() could
+// successfully subscribe and then sit forever on a channel Publish
+// will never write to — graceful shutdown drains for the full
+// http.Server timeout per stranded subscriber.
 func (b *sseBus) subscribe() (<-chan wire.StreamEvent, func(), bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.closed.Load() {
+		return nil, nil, false
+	}
 	if len(b.subs) >= SSEMaxSubscribers {
 		return nil, nil, false
 	}

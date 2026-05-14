@@ -247,6 +247,29 @@ func TestSSEBus_PublishAfterCloseIsNoOp(t *testing.T) {
 	b.Publish(wire.StreamEvent{EventID: "post-close"})
 }
 
+// TestSSEBus_SubscribeAfterCloseReturnsFalse pins the
+// shutdown-race fix: a request that lands between Close() and
+// srv.Shutdown cancelling its r.Context() must NOT register a
+// new subscriber. Without this guard the SSE handler would park
+// on the channel forever, extending graceful shutdown by the
+// full http.Server drain timeout per stranded subscriber.
+func TestSSEBus_SubscribeAfterCloseReturnsFalse(t *testing.T) {
+	t.Parallel()
+	b := newSSEBus(nil)
+	b.Close()
+
+	ch, cancel, ok := b.subscribe()
+	if ok {
+		t.Errorf("subscribe after Close should fail; got ok=true")
+	}
+	if ch != nil {
+		t.Errorf("expected nil channel on closed bus; got %v", ch)
+	}
+	if cancel != nil {
+		t.Errorf("expected nil cancel on closed bus; got non-nil")
+	}
+}
+
 func TestSSEBus_ConcurrentPublishersAndSubscribers(t *testing.T) {
 	t.Parallel()
 	// Sanity: many publishers fanning out to many subscribers
