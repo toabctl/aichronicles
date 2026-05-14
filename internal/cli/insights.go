@@ -157,9 +157,11 @@ func renderInsightsText(out io.Writer, r *wire.Insights) error {
 			}
 			prompt := strings.TrimSpace(ts.FirstPrompt)
 			prompt = collapseWhitespace(prompt)
-			if len(prompt) > 60 {
-				prompt = prompt[:57] + "..."
-			}
+			// Rune-based truncation: byte-slicing at [:57] can cut
+			// a multibyte UTF-8 codepoint mid-sequence and produce
+			// invalid bytes in the list output. truncateRunes
+			// handles the boundary and appends the ellipsis.
+			prompt = truncateRunes(prompt, 60)
 			started := "-"
 			if ts.StartedAtMs != nil {
 				started = time.UnixMilli(*ts.StartedAtMs).UTC().Format("2006-01-02")

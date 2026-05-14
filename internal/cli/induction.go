@@ -369,7 +369,7 @@ func RunInductionSweep(
 				if _, eerr := c.SegmentSession(ctx, sid, wire.SegmentSessionRequest{}); eerr != nil {
 					slog.Warn("induction sweep: episode segmentation failed",
 						"session_id", sid, "err", eerr)
-					_, _ = fmt.Fprintf(errOut, "  ✗ episodes %s: %v\n", sid[:8], eerr)
+					_, _ = fmt.Fprintf(errOut, "  ✗ episodes %s: %v\n", preview.ShortID(sid), eerr)
 				}
 			}
 		}
@@ -453,7 +453,7 @@ func RunInductionSweep(
 					slog.Warn("induction sweep: summarize failed",
 						"session_id", cand.ID, "err", serr)
 					_, _ = fmt.Fprintf(errOut,
-						"  ✗ summarize %s: %v\n", cand.ID[:8], serr)
+						"  ✗ summarize %s: %v\n", preview.ShortID(cand.ID), serr)
 					summaryAvailable = false
 				}
 			}
@@ -477,7 +477,7 @@ func RunInductionSweep(
 			slog.Warn("induction sweep: session failed",
 				"session_id", cand.ID, "err", err)
 			_, _ = fmt.Fprintf(errOut,
-				"  ✗ %s: %v\n", cand.ID[:8], err)
+				"  ✗ %s: %v\n", preview.ShortID(cand.ID), err)
 		}
 
 		// Phase 3: auto-extract semantic facts from the same
@@ -495,7 +495,7 @@ func RunInductionSweep(
 				slog.Warn("induction sweep: facts failed",
 					"session_id", cand.ID, "err", ferr)
 				_, _ = fmt.Fprintf(errOut,
-					"  ✗ facts %s: %v\n", cand.ID[:8], ferr)
+					"  ✗ facts %s: %v\n", preview.ShortID(cand.ID), ferr)
 			}
 		}
 	}

@@ -3631,6 +3631,24 @@ func renderOutcomeCue(o *wire.SessionOutcome) string {
 // Non-tool requests produce byte-identical hashes to the pre-tools
 // version so any legacy caller that did not declare tools still hits
 // the same cache rows it used to.
+//
+// Separator analysis: NUL bytes (0x00) separate Role/Content and
+// successive messages. A NUL byte INSIDE Content could theoretically
+// move the parsed boundary and collide with a different (Role,
+// Content) layout. In practice the collision space is closed by:
+//   - Role is a controlled vocabulary ("user", "assistant",
+//     "system") — no NUL ever appears in Role.
+//   - Content is built from JSON-decoded strings; JSON forbids raw
+//     NUL in strings (parsers either escape it to backslash-u-0000 or reject).
+//   - Redaction never emits NUL — secrets are replaced with
+//     <redacted:kind> text.
+//
+// So the NUL-collision class requires synthetic Content built by a
+// caller bypassing JSON decoding AND redaction; the Anthropic
+// prompt-cache TTL is 5 min in any case, bounding the blast radius
+// to one cache window. Switching to length-prefix framing would
+// invalidate every existing cache row; the cost outweighs the
+// hypothetical benefit.
 func hashRequest(req llm.Request) string {
 	h := sha256.New()
 	h.Write([]byte(req.System))

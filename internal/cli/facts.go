@@ -406,14 +406,14 @@ func persistInducedFacts(ctx context.Context, c *apiclient.Client, llmOutputID i
 // outcome. Mirrors renderWorkflowResult's shape.
 func renderFactsResult(out io.Writer, sessionID string, r *prompts.FactsResult, persisted int) {
 	if !r.Found || len(r.Facts) == 0 {
-		_, _ = fmt.Fprintf(out, "facts: ✓ %s — no facts\n", sessionID[:8])
+		_, _ = fmt.Fprintf(out, "facts: ✓ %s — no facts\n", preview.ShortID(sessionID))
 		if r.Rationale != "" {
 			_, _ = fmt.Fprintf(out, "  rationale: %s\n", r.Rationale)
 		}
 		return
 	}
 	_, _ = fmt.Fprintf(out, "facts: ✓ %s — %d fact(s) (%d persisted to semantic_facts)\n",
-		sessionID[:8], len(r.Facts), persisted)
+		preview.ShortID(sessionID), len(r.Facts), persisted)
 	for _, f := range r.Facts {
 		_, _ = fmt.Fprintf(out, "  • %s %s = %s  (conf=%.2f)\n",
 			f.Subject, f.Predicate, f.Object, f.Confidence)
