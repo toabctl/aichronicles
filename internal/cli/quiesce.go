@@ -66,6 +66,6 @@ func RefuseIfDaemonRunning(ctx context.Context, sockFlag string) error {
 		// Reachable but unhealthy or any other error — be
 		// conservative and refuse: the daemon process may still
 		// be holding write locks even if /v1/healthz is unhappy.
-		return fmt.Errorf("%w: healthz probe returned %v", ErrDaemonRunning, hErr)
+		return fmt.Errorf("%w: healthz probe returned %w", ErrDaemonRunning, hErr)
 	}
 }

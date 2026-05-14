@@ -109,7 +109,7 @@ func wrapTransportError(err error, baseURL, path string) error {
 		return nil
 	}
 	if isSocketUnavailable(err) {
-		return fmt.Errorf("apiclient: %w (target=%s%s): %v", ErrSocketUnavailable, baseURL, path, err)
+		return fmt.Errorf("apiclient: %w (target=%s%s): %w", ErrSocketUnavailable, baseURL, path, err)
 	}
 	return fmt.Errorf("apiclient: transport (target=%s%s): %w", baseURL, path, err)
 }
