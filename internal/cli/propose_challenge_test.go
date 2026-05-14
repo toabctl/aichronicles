@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/store"
@@ -22,6 +23,11 @@ func TestRunPropose_ChallengeFlagPersistsWithKindChallenge(t *testing.T) {
 	t.Parallel()
 	s := seedSessionsForMeta(t, 3)
 
+	// Anchor the LLM's grounded_in at the first seeded session so
+	// the post-decode anchor filter (review 2026-05-14 P0) keeps
+	// the challenge rather than dropping it as ungrounded.
+	anchor := events.DeriveSessionID("claude-code", "sess-meta-000")
+
 	// LLM returns a real challenge so the rendered output is
 	// substantive; the default synthMinimalToolInput emits an
 	// empty list which would parse but read as "no challenges".
@@ -30,7 +36,7 @@ func TestRunPropose_ChallengeFlagPersistsWithKindChallenge(t *testing.T) {
 			Title:            "wire-structured-logs",
 			Problem:          "wire structured slog calls through internal/daemon so /v1/ingest emits one line per envelope",
 			Why:              "the user repeatedly grepped raw stderr in the ingest sessions; structured logs would give them journalctl filtering",
-			GroundedIn:       []string{"sess-1"},
+			GroundedIn:       []string{anchor},
 			Effort:           "small",
 			SuccessLooksLike: "journalctl -u aichronicles | jq emits one line per envelope with content_hash",
 		}},
@@ -65,7 +71,7 @@ func TestRunPropose_ChallengeFlagPersistsWithKindChallenge(t *testing.T) {
 		"wire-structured-logs",
 		"wire structured slog calls",
 		"effort=small",
-		"anchors: sess-1",
+		"anchors: " + anchor,
 		"success: journalctl",
 	} {
 		if !strings.Contains(rendered, want) {

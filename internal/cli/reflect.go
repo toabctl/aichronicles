@@ -263,6 +263,14 @@ type cachedLLMInput struct {
 	// set for single-session features (summary, induction) so the
 	// CLI listing can join back to sessions cleanly.
 	sessionID string
+	// renderBody, when non-nil, transforms the persisted body before
+	// rendering — anti-fabrication filters (e.g. dropping
+	// challenge.grounded_in entries the model can't ground in the
+	// canonical input lists) run here. The stored llm_outputs.body
+	// is what the LLM emitted; the rendered output is what passes
+	// the post-decode anchor check. Callers that don't need the
+	// hook leave this nil and rendering uses the raw body.
+	renderBody func(body string) (string, error)
 }
 
 // runCachedLLM implements the cache-first / lazy-client / clean-on-
@@ -297,7 +305,15 @@ func runCachedLLM(
 					return cached.ID, fmt.Errorf("%s: parse cached body: %w", in.kind, uerr)
 				}
 			}
-			if renderErr := emitLLMBody(in.output, in.kind, cached.Body, in.jsonRaw); renderErr != nil {
+			renderBody := cached.Body
+			if in.renderBody != nil {
+				rb, rerr := in.renderBody(renderBody)
+				if rerr != nil {
+					return cached.ID, fmt.Errorf("%s: filter cached body: %w", in.kind, rerr)
+				}
+				renderBody = rb
+			}
+			if renderErr := emitLLMBody(in.output, in.kind, renderBody, in.jsonRaw); renderErr != nil {
 				return cached.ID, fmt.Errorf("%s: render cached body: %w", in.kind, renderErr)
 			}
 			return cached.ID, nil
@@ -356,7 +372,15 @@ func runCachedLLM(
 		return 0, fmt.Errorf("%s: persist: %w", in.kind, err)
 	}
 
-	if renderErr := emitLLMBody(in.output, in.kind, body, in.jsonRaw); renderErr != nil {
+	renderBody := body
+	if in.renderBody != nil {
+		rb, rerr := in.renderBody(renderBody)
+		if rerr != nil {
+			return saveResp.ID, fmt.Errorf("%s: filter body: %w", in.kind, rerr)
+		}
+		renderBody = rb
+	}
+	if renderErr := emitLLMBody(in.output, in.kind, renderBody, in.jsonRaw); renderErr != nil {
 		return saveResp.ID, fmt.Errorf("%s: render body: %w", in.kind, renderErr)
 	}
 	return saveResp.ID, nil

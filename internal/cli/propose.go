@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -552,6 +553,28 @@ func runChallenge(
 			"patterns", strings.Join(built.Patterns, ","))
 	}
 
+	// Anti-fabrication allow-list: the canonical anchors the model
+	// could legitimately ground a challenge in. The schema's
+	// minItems:1 rejects empty arrays; the post-decode filter
+	// rejects arrays containing strings that aren't in this set.
+	allowedAnchors := make(map[string]struct{},
+		len(digests)+len(installed)+len(open))
+	for _, d := range digests {
+		if d.ID != "" {
+			allowedAnchors[d.ID] = struct{}{}
+		}
+	}
+	for _, sk := range installed {
+		if sk.Name != "" {
+			allowedAnchors[sk.Name] = struct{}{}
+		}
+	}
+	for _, it := range open {
+		if it.SessionID != "" {
+			allowedAnchors[it.SessionID] = struct{}{}
+		}
+	}
+
 	_, _ = fmt.Fprintf(progress, "calling LLM (challenge mode)...\n")
 	return runCachedLLM(ctx, c, newClient, cachedLLMInput{
 		kind:     store.LLMKindChallenge,
@@ -563,7 +586,30 @@ func runChallenge(
 		force:    opts.Force,
 		jsonRaw:  opts.JSON,
 		output:   out,
+		renderBody: func(body string) (string, error) {
+			return filterChallengeBody(body, allowedAnchors)
+		},
 	})
+}
+
+// filterChallengeBody parses a challenge body, drops anchors not in
+// allowed, drops challenges left with zero anchors, and re-encodes
+// the filtered shape. The stored llm_outputs.body is unchanged
+// (that's what the LLM emitted, the cache key matches it); the
+// returned body is what the user sees rendered.
+func filterChallengeBody(body string, allowed map[string]struct{}) (string, error) {
+	var r prompts.ChallengeResult
+	if err := json.Unmarshal([]byte(body), &r); err != nil {
+		// Unparseable — return as-is so the raw fallback in
+		// emitLLMBody still shows the user something.
+		return body, nil
+	}
+	r.FilterChallengeAnchors(allowed)
+	out, err := json.Marshal(&r)
+	if err != nil {
+		return "", fmt.Errorf("re-marshal filtered challenge: %w", err)
+	}
+	return string(out), nil
 }
 
 // mergeImpactIntoInvoked enriches each InvokedSkill in `invoked`

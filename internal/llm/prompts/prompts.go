@@ -2036,6 +2036,46 @@ type ChallengeResult struct {
 	Challenges []Challenge `json:"challenges"`
 }
 
+// FilterChallengeAnchors drops every GroundedIn entry that isn't
+// in the allowed set across every challenge. After filter, a
+// challenge whose anchors are empty is itself dropped — the
+// system prompt's rule that an ungrounded challenge is by
+// definition a fabrication. Whitespace-only entries are dropped
+// pre-check.
+//
+// allowed should be the closed union of (digest session ids,
+// installed-skill names, unresolved session ids) that the prompt
+// surfaced to the model. The schema's minItems:1 rejects empty
+// arrays but accepts arrays of fabricated strings; this helper is
+// the post-decode anchor check that closes the loop.
+//
+// Idempotent: a second call with the same allowed set is a no-op.
+func (r *ChallengeResult) FilterChallengeAnchors(allowed map[string]struct{}) {
+	if r == nil {
+		return
+	}
+	kept := r.Challenges[:0]
+	for _, c := range r.Challenges {
+		grounded := make([]string, 0, len(c.GroundedIn))
+		for _, a := range c.GroundedIn {
+			a = strings.TrimSpace(a)
+			if a == "" {
+				continue
+			}
+			if _, ok := allowed[a]; !ok {
+				continue
+			}
+			grounded = append(grounded, a)
+		}
+		if len(grounded) == 0 {
+			continue
+		}
+		c.GroundedIn = grounded
+		kept = append(kept, c)
+	}
+	r.Challenges = kept
+}
+
 // Challenge is one proposed next problem. Distinct from
 // ProposedSkill — a skill is something the user has DONE that
 // could be reused; a challenge is something the user HASN'T DONE
@@ -2124,7 +2164,7 @@ Hard rules:
 
 1. Every challenge MUST be grounded in either (a) a specific open thread from the "Open threads" stanza, OR (b) an observed capability gap — a recurring pattern in the digests that no installed skill covers. Drop challenges you can't ground; do NOT invent a problem to fill the slot.
 
-2. grounded_in[] MUST cite the canonical anchor: a session_id from the digests OR an installed-skill name OR a session_id from the open threads. Empty grounded_in = the challenge is fabricated; the schema rejects it (minItems:1).
+2. grounded_in[] MUST cite the canonical anchor: a session_id from the digests OR an installed-skill name OR a session_id from the open threads. Fabricated anchors are stripped post-decode (the runtime filters every entry against the canonical lists shown above; entries that don't match are silently dropped) — so a challenge whose grounded_in survives filter to zero is itself dropped. Don't pad grounded_in with adjacent-but-wrong names hoping one will stick.
 
 3. Avoid generic engineering advice ("write more tests", "improve performance", "add monitoring"). Specific challenges only — name the artefact, the change, and the observable outcome. "Wire structured logs through internal/daemon" qualifies; "improve observability" doesn't.
 

@@ -1367,6 +1367,54 @@ func TestInductionResult_GroundInductionEvidence_EmptyIDNoops(t *testing.T) {
 	}
 }
 
+// TestChallengeResult_FilterChallengeAnchors pins the
+// anti-fabrication anchor check: any GroundedIn entry not in the
+// allowed set is dropped; a challenge whose anchors filter to
+// zero is itself dropped (the system prompt's rule that an
+// ungrounded challenge is fabricated by definition).
+func TestChallengeResult_FilterChallengeAnchors(t *testing.T) {
+	t.Parallel()
+	const real1 = "00000000-0000-0000-0000-000000000001"
+	const real2 = "00000000-0000-0000-0000-000000000002"
+	const ghost = "00000000-0000-0000-0000-000000000099"
+	allowed := map[string]struct{}{
+		real1:             {},
+		real2:             {},
+		"installed-skill": {},
+	}
+
+	r := &ChallengeResult{
+		Challenges: []Challenge{
+			{
+				Title:      "kept-partial",
+				GroundedIn: []string{real1, ghost, "installed-skill"},
+			},
+			{
+				Title:      "dropped-no-anchors-left",
+				GroundedIn: []string{ghost, "unknown-skill", "  "},
+			},
+			{
+				Title:      "kept-all-valid",
+				GroundedIn: []string{real2},
+			},
+		},
+	}
+	r.FilterChallengeAnchors(allowed)
+
+	if len(r.Challenges) != 2 {
+		t.Fatalf("challenge count: got %d want 2 (ungrounded one should drop)", len(r.Challenges))
+	}
+	if r.Challenges[0].Title != "kept-partial" {
+		t.Errorf("[0] title: %s", r.Challenges[0].Title)
+	}
+	if len(r.Challenges[0].GroundedIn) != 2 {
+		t.Errorf("[0] anchors: got %v want [real1 installed-skill]", r.Challenges[0].GroundedIn)
+	}
+	if r.Challenges[1].Title != "kept-all-valid" {
+		t.Errorf("[1] title: %s", r.Challenges[1].Title)
+	}
+}
+
 // TestBuildMergeSkill_RendersCandidateScriptsAndKind pins the
 // fix for the "scripts silently dropped" bug: when the candidate
 // has Scripts and a contrastive Kind, the merge prompt MUST surface
