@@ -25,10 +25,10 @@ func (c *Client) LLMOutputByID(ctx context.Context, id int64) (wire.LLMOutput, e
 // created_at_ms for a given kind, or 0 when no rows match. Drives
 // the meta sweeper's per-kind cadence gate.
 func (c *Client) LLMOutputLastCreatedAt(ctx context.Context, kind string) (int64, error) {
-	q := url.Values{}
-	q.Set("kind", kind)
+	var q qparams
+	q.SetString("kind", kind)
 	var out wire.LLMOutputLastCreatedAtResponse
-	if err := c.do(ctx, http.MethodGet, "/v1/llm-outputs/last-created-at?"+q.Encode(), nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/llm-outputs/last-created-at"), nil, &out); err != nil {
 		return 0, err
 	}
 	return out.LastCreatedAtMs, nil
@@ -39,11 +39,11 @@ func (c *Client) LLMOutputLastCreatedAt(ctx context.Context, kind string) (int64
 // short-circuit phase 1 (auto-summarize) when the row is already
 // there.
 func (c *Client) LLMOutputExistsForSession(ctx context.Context, sessionID, kind string) (bool, error) {
-	q := url.Values{}
-	q.Set("session_id", sessionID)
-	q.Set("kind", kind)
+	var q qparams
+	q.SetString("session_id", sessionID)
+	q.SetString("kind", kind)
 	var out wire.LLMOutputExistsResponse
-	if err := c.do(ctx, http.MethodGet, "/v1/llm-outputs/exists?"+q.Encode(), nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/llm-outputs/exists"), nil, &out); err != nil {
 		return false, err
 	}
 	return out.Exists, nil
@@ -80,10 +80,10 @@ func (c *Client) LLMOutputsList(ctx context.Context, kind, sessionID string, lim
 // Summary fetches the cached summary for a session, or
 // ErrNotFound when none exists.
 func (c *Client) Summary(ctx context.Context, sessionID string) (wire.LLMOutput, error) {
-	q := url.Values{}
-	q.Set("session_id", sessionID)
+	var q qparams
+	q.SetString("session_id", sessionID)
 	var out wire.LLMOutput
-	if err := c.do(ctx, http.MethodGet, "/v1/summaries?"+q.Encode(), nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/summaries"), nil, &out); err != nil {
 		return wire.LLMOutput{}, err
 	}
 	return out, nil
@@ -98,10 +98,10 @@ func (c *Client) SummariesBatch(ctx context.Context, ids []string) (map[string]w
 	if len(ids) == 0 {
 		return map[string]wire.LLMOutput{}, nil
 	}
-	q := url.Values{}
-	q.Set("session_ids", strings.Join(ids, ","))
+	var q qparams
+	q.SetString("session_ids", strings.Join(ids, ","))
 	var out wire.SummariesBatchResponse
-	if err := c.do(ctx, http.MethodGet, "/v1/summaries/batch?"+q.Encode(), nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/summaries/batch"), nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Summaries, nil
@@ -110,11 +110,11 @@ func (c *Client) SummariesBatch(ctx context.Context, ids []string) (map[string]w
 // LLMOutputByHash fetches the cached llm output for a (kind,
 // prompt_hash) pair. Returns ErrNotFound when missing.
 func (c *Client) LLMOutputByHash(ctx context.Context, kind, promptHash string) (wire.LLMOutput, error) {
-	q := url.Values{}
-	q.Set("kind", kind)
-	q.Set("prompt_hash", promptHash)
+	var q qparams
+	q.SetString("kind", kind)
+	q.SetString("prompt_hash", promptHash)
 	var out wire.LLMOutput
-	if err := c.do(ctx, http.MethodGet, "/v1/llm-outputs?"+q.Encode(), nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/llm-outputs"), nil, &out); err != nil {
 		return wire.LLMOutput{}, err
 	}
 	return out, nil
