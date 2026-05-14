@@ -14,6 +14,16 @@ import (
 // Match the legacy CLI cap so the wire shape stays scannable.
 const auditSnippetRunes = 120
 
+// auditMaxRowsCeiling is the hard upper bound on rows scanned per
+// /v1/audit call, regardless of what the client passes. limit=0
+// (the default from parseNonNegativeIntQuery) used to mean
+// "no LIMIT clause" and triggered a full ORDER BY ts_source_ms DESC
+// scan of every row in `events` through the redact scanner — on a
+// real corpus that is hundreds of MB of regex work plus SQLite
+// write-lock contention. Now it means "the ceiling"; a client that
+// wants more rows must page via since_ms.
+const auditMaxRowsCeiling = 5000
+
 // handleAudit serves GET /v1/audit. Walks events.content_text and
 // runs redact.Default() against every non-null row, returning one
 // finding per matched event plus aggregate counters.
@@ -34,6 +44,13 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	limit, ok := parseNonNegativeIntQuery(w, r, "limit", 0)
 	if !ok {
 		return
+	}
+	// Clamp to the server-side ceiling. 0 ("missing") means "use the
+	// ceiling"; anything above the ceiling silently clamps so an
+	// operator passing limit=99999 doesn't strand the whole daemon
+	// in a redact-everything pass.
+	if limit <= 0 || limit > auditMaxRowsCeiling {
+		limit = auditMaxRowsCeiling
 	}
 
 	sqlText, args := buildAuditQuery(sinceMs, limit)
