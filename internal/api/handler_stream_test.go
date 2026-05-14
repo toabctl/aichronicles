@@ -101,6 +101,100 @@ func TestHandleStream_DeliversIngestedEventToLiveSubscriber(t *testing.T) {
 	}
 }
 
+// TestHandleStream_ReplaysSinceSeq pins the SSE resume contract:
+// a client that reconnects with Last-Event-ID (or ?since_seq=)
+// receives every event with a higher ingest_seq from durable
+// storage before the bridge to the live bus picks up. Without
+// this, every event written during a reconnect gap is lost.
+func TestHandleStream_ReplaysSinceSeq(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	defer srv.Close()
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	// Pre-seed three events into the store via the ingest path —
+	// each lands an ingest_seq 1, 2, 3 with deterministic content.
+	for i := 0; i < 3; i++ {
+		env := validEnvelope(t)
+		body := mustJSON(t, env)
+		req := httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(body))
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("ingest %d: status=%d body=%s", i, rr.Code, rr.Body.String())
+		}
+	}
+
+	// Subscribe with Last-Event-ID=1; expect to replay seqs 2 and 3.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, httpSrv.URL+"/v1/stream", nil)
+	req.Header.Set("Last-Event-ID", "1")
+	resp, err := httpSrv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+
+	got := readSSEEventsUntil(t, resp.Body, 2, 3*time.Second)
+	if !strings.Contains(got, "id: 2") {
+		t.Errorf("expected replay frame id=2; got %q", got)
+	}
+	if !strings.Contains(got, "id: 3") {
+		t.Errorf("expected replay frame id=3; got %q", got)
+	}
+	if strings.Contains(got, "id: 1") {
+		t.Errorf("seq=1 should not replay (already delivered): %q", got)
+	}
+}
+
+// TestHandleStream_SinceSeqQueryParam pins the non-SSE entry
+// point: the `since_seq` query param resumes the same way the
+// Last-Event-ID header does, so curl-shaped clients and tests can
+// opt into replay without setting headers. When both are
+// supplied, the query param wins.
+func TestHandleStream_SinceSeqQueryParam(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	defer srv.Close()
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	for i := 0; i < 2; i++ {
+		env := validEnvelope(t)
+		body := mustJSON(t, env)
+		req := httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(body))
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("ingest %d: status=%d body=%s", i, rr.Code, rr.Body.String())
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, httpSrv.URL+"/v1/stream?since_seq=1", nil)
+	// Header set to a value the query param should override.
+	req.Header.Set("Last-Event-ID", "999")
+	resp, err := httpSrv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+
+	got := readSSEEventsUntil(t, resp.Body, 1, 3*time.Second)
+	if !strings.Contains(got, "id: 2") {
+		t.Errorf("expected replay frame id=2 via since_seq query param; got %q", got)
+	}
+}
+
 func TestHandleStream_429WhenAtCapacity(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)

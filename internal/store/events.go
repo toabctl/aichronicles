@@ -11,6 +11,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/preview"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // ErrNoSuchSession is returned when a session-id prefix does not match
@@ -1040,3 +1041,47 @@ func LoadEventsForSession(ctx context.Context, db *sql.DB, sessionID string, lim
 // default" (limit <= 0 with the existing behaviour) and "this many
 // rows please" (limit > 0).
 const LoadEventsForSessionUnbounded = -1
+
+// LoadStreamEventsSinceSeq returns the SSE-shaped events whose
+// ingest_seq is strictly greater than sinceSeq, ordered ascending,
+// capped at limit. It powers the GET /v1/stream Last-Event-ID
+// resume path: a client that disconnected at seq=X reconnects with
+// Last-Event-ID: X, and we replay (X, X+N] from durable storage
+// before bridging the live SSE bus.
+//
+// Joins raw_envelopes (the authoritative ingest_seq) against events
+// (which carries session_id and kind in the typed projection). Rows
+// in raw_envelopes that haven't yet been pipelined into events are
+// excluded — they were never emitted as live StreamEvents either,
+// so a "resume" client shouldn't see them now.
+func LoadStreamEventsSinceSeq(ctx context.Context, db *sql.DB, sinceSeq int64, limit int) ([]wire.StreamEvent, error) {
+	if sinceSeq < 0 {
+		sinceSeq = 0
+	}
+	if limit <= 0 {
+		limit = 1000
+	}
+	rows, err := db.QueryContext(ctx,
+		`SELECT r.ingest_seq, r.event_id, e.session_id, e.kind, r.ts_server_ms
+		   FROM raw_envelopes r
+		   JOIN events e ON e.event_id = r.event_id
+		  WHERE r.ingest_seq > ?
+		  ORDER BY r.ingest_seq ASC
+		  LIMIT ?`,
+		sinceSeq, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query stream events since %d: %w", sinceSeq, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []wire.StreamEvent
+	for rows.Next() {
+		var ev wire.StreamEvent
+		if err := rows.Scan(&ev.IngestSeq, &ev.EventID, &ev.SessionID, &ev.Kind, &ev.TsServerMs); err != nil {
+			return nil, fmt.Errorf("scan stream event: %w", err)
+		}
+		out = append(out, ev)
+	}
+	return out, rows.Err()
+}
