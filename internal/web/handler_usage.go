@@ -2,7 +2,6 @@ package web
 
 import (
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -71,7 +70,7 @@ func (s *Server) usageHandler(w http.ResponseWriter, r *http.Request) {
 	prices, perr := loadPricesForWeb()
 	if perr != nil {
 		// Same posture as the CLI: log and continue with no costs.
-		slog.Warn("usage: prices file unreadable, hiding COST column", "err", perr)
+		s.log.Warn("usage: prices file unreadable, hiding COST column", "err", perr)
 	}
 
 	page := buildUsagePage(resp.Rows, resp.Totals, prices, days, now)
