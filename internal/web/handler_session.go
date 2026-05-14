@@ -51,8 +51,7 @@ func (s *Server) sessionDetailHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	case err != nil:
-		s.log.Error("sessionDetailHandler: resolve prefix", "id", id, "err", err)
-		http.Error(w, "could not resolve session", http.StatusInternalServerError)
+		s.internalError(w, "sessionDetailHandler: resolve prefix id="+id, "could not resolve session", err)
 		return
 	}
 	if resolved != id {
@@ -66,8 +65,7 @@ func (s *Server) sessionDetailHandler(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		s.log.Error("sessionDetailHandler: load", "id", resolved, "err", err)
-		http.Error(w, "could not load session", http.StatusInternalServerError)
+		s.internalError(w, "sessionDetailHandler: load id="+resolved, "could not load session", err)
 		return
 	}
 	s.render(w, r, "session", detail)

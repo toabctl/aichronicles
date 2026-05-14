@@ -46,8 +46,7 @@ func (s *Server) factsHandler(w http.ResponseWriter, r *http.Request) {
 	page.Subject = subject
 	resp, err := s.api.Facts(r.Context(), subject, 0)
 	if err != nil {
-		s.log.Error("factsHandler: load facts", "subject", subject, "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		s.internalError(w, "factsHandler: load facts subject="+subject, "could not load facts", err)
 		return
 	}
 	now := time.Now().UTC()
