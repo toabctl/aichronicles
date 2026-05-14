@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,8 +30,16 @@ func nilLLMClient() (llm.Client, error) { return nil, nil }
 // seedProposalOutput inserts one llm_outputs row with kind=propose
 // carrying the given ProposalResult body. Returns the row id.
 // Mirrors how runCachedLLM persists a fresh propose call.
+//
+// Also seeds a minimal sessions row for every distinct SessionID
+// cited in the result's evidence. loadLatestProposal's
+// resolveEvidenceSessions filter drops citations whose session
+// doesn't resolve via apiclient; without this, the previous
+// "fixture id passes the schema's UUID pattern" trick would still
+// fall through the filter and silently strip every evidence row.
 func seedProposalOutput(t *testing.T, s *store.Store, result *prompts.ProposalResult) int64 {
 	t.Helper()
+	seedResultEvidenceSessions(t, s, result)
 	body, err := json.Marshal(result)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -56,9 +65,44 @@ func seedProposalOutput(t *testing.T, s *store.Store, result *prompts.ProposalRe
 	return id
 }
 
+// seedResultEvidenceSessions inserts a minimal sessions row for
+// every distinct SessionID found in result's skill evidence so the
+// new resolveEvidenceSessions filter keeps the citations. Uses
+// INSERT OR IGNORE so multiple seedProposalOutput calls referencing
+// the same ids don't trip the PK unique constraint.
+func seedResultEvidenceSessions(t *testing.T, s *store.Store, result *prompts.ProposalResult) {
+	t.Helper()
+	seen := map[string]struct{}{}
+	for _, sk := range result.Skills {
+		for _, e := range sk.Evidence {
+			id := strings.TrimSpace(e.SessionID)
+			if id == "" {
+				continue
+			}
+			seen[id] = struct{}{}
+		}
+	}
+	i := 0
+	for id := range seen {
+		if _, err := s.DB().Exec(
+			`INSERT OR IGNORE INTO sessions(id, source_agent, source_session_id)
+			 VALUES (?, 'claude-code', ?)`,
+			id, fmt.Sprintf("src-%s-%d", t.Name(), i),
+		); err != nil {
+			t.Fatalf("seed session %s: %v", id, err)
+		}
+		i++
+	}
+}
+
 // sampleProposal builds a ProposalResult covering both shapes the
 // apply path needs to handle: a plain skill (no scripts) and a
 // skill that carries a helper script.
+//
+// The two evidence session ids are UUIDv5-shaped so they pass the
+// schema's pattern, AND seedProposalOutput seeds matching sessions
+// rows so loadLatestProposal's resolveEvidenceSessions filter keeps
+// the citations.
 func sampleProposal() *prompts.ProposalResult {
 	ev := []prompts.ProposalEvidence{
 		{SessionID: "abc12345-aaaa-bbbb-cccc-dddddddddddd",

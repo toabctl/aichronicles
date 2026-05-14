@@ -204,7 +204,43 @@ func loadLatestProposal(ctx context.Context, c *apiclient.Client, wantID int64) 
 	// rendering / persistence) sees the same filtered set. See
 	// prompts.FilterGroundedTriggers for the rule.
 	result.GroundTriggers()
+	// Anti-fabrication grounding II: drop evidence rows whose
+	// SessionID doesn't resolve to a real session via the api. The
+	// schema's UUIDv5 pattern catches obviously-malformed IDs; this
+	// catches the harder case — a syntactically valid but
+	// hallucinated UUID. Without it the SKILL.md provenance footer
+	// and `/propose` web hyperlinks confidently cite sessions that
+	// don't exist (review 2026-05-14 P0).
+	resolved := resolveEvidenceSessions(ctx, c, &result)
+	result.GroundEvidence(resolved)
 	return &result, output, nil
+}
+
+// resolveEvidenceSessions returns the subset of distinct evidence
+// SessionIDs across r.Skills that resolve to a real session via
+// c.Session. Anything that fails to resolve (not found, transport
+// error) is omitted — drop unresolvable references rather than
+// emit citations the user can't follow. One round-trip per distinct
+// id; propose payloads typically cite ≤25 sessions total so the
+// cost is bounded by the proposal size, not the backlog.
+func resolveEvidenceSessions(ctx context.Context, c *apiclient.Client, r *prompts.ProposalResult) map[string]struct{} {
+	seen := map[string]struct{}{}
+	for i := range r.Skills {
+		for _, e := range r.Skills[i].Evidence {
+			id := strings.TrimSpace(e.SessionID)
+			if id == "" {
+				continue
+			}
+			seen[id] = struct{}{}
+		}
+	}
+	out := make(map[string]struct{}, len(seen))
+	for id := range seen {
+		if _, err := c.Session(ctx, id); err == nil {
+			out[id] = struct{}{}
+		}
+	}
+	return out
 }
 
 // renderProposalIndex prints a short tabular view of every skill in

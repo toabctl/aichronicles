@@ -1213,6 +1213,104 @@ func TestProposalResult_GroundTriggers(t *testing.T) {
 	}
 }
 
+// TestFilterEvidenceBySessionAllowList covers the anti-fabrication
+// filter that drops Evidence rows whose SessionID isn't in the
+// caller's allowed set. The schema's UUIDv5 pattern rejects
+// obviously-malformed strings; this catches the harder case — an
+// otherwise-valid UUID that doesn't resolve to a real session.
+func TestFilterEvidenceBySessionAllowList(t *testing.T) {
+	t.Parallel()
+	const valid = "00000000-0000-0000-0000-000000000001"
+	const ghost = "00000000-0000-0000-0000-000000000099"
+	allowed := map[string]struct{}{valid: {}}
+
+	tests := []struct {
+		name string
+		in   []ProposalEvidence
+		want []string // session IDs we expect to survive
+	}{
+		{
+			name: "empty input passes through",
+			in:   nil,
+			want: nil,
+		},
+		{
+			name: "valid id survives",
+			in:   []ProposalEvidence{{SessionID: valid, Quote: "q"}},
+			want: []string{valid},
+		},
+		{
+			name: "unknown id dropped",
+			in:   []ProposalEvidence{{SessionID: ghost, Quote: "q"}},
+			want: nil,
+		},
+		{
+			name: "whitespace id dropped",
+			in:   []ProposalEvidence{{SessionID: "   ", Quote: "q"}},
+			want: nil,
+		},
+		{
+			name: "mixed",
+			in: []ProposalEvidence{
+				{SessionID: valid, Quote: "q1"},
+				{SessionID: ghost, Quote: "q2"},
+				{SessionID: valid, Quote: "q3"},
+			},
+			want: []string{valid, valid},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := FilterEvidenceBySessionAllowList(tc.in, allowed)
+			if len(got) != len(tc.want) {
+				t.Fatalf("count: got %d want %d (rows=%v)", len(got), len(tc.want), got)
+			}
+			for i := range got {
+				if got[i].SessionID != tc.want[i] {
+					t.Errorf("[%d]: got %q want %q", i, got[i].SessionID, tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestProposalResult_GroundEvidence pins the in-place sweep across
+// every skill. Skills are independent: dropping a ghost from one
+// skill must not touch a valid evidence row in another.
+func TestProposalResult_GroundEvidence(t *testing.T) {
+	t.Parallel()
+	const real1 = "00000000-0000-0000-0000-000000000001"
+	const real2 = "00000000-0000-0000-0000-000000000002"
+	const ghost = "00000000-0000-0000-0000-000000000099"
+	allowed := map[string]struct{}{real1: {}, real2: {}}
+
+	r := &ProposalResult{
+		Skills: []ProposedSkill{
+			{
+				Name: "deploy-staging",
+				Evidence: []ProposalEvidence{
+					{SessionID: real1, Quote: "ok"},
+					{SessionID: ghost, Quote: "hallucinated"},
+				},
+			},
+			{
+				Name: "rollback-prod",
+				Evidence: []ProposalEvidence{
+					{SessionID: real2, Quote: "ok"},
+				},
+			},
+		},
+	}
+	r.GroundEvidence(allowed)
+	if len(r.Skills[0].Evidence) != 1 || r.Skills[0].Evidence[0].SessionID != real1 {
+		t.Errorf("skill 0: ghost not dropped: %v", r.Skills[0].Evidence)
+	}
+	if len(r.Skills[1].Evidence) != 1 || r.Skills[1].Evidence[0].SessionID != real2 {
+		t.Errorf("skill 1: real row dropped: %v", r.Skills[1].Evidence)
+	}
+}
+
 // TestBuildMergeSkill_RendersCandidateScriptsAndKind pins the
 // fix for the "scripts silently dropped" bug: when the candidate
 // has Scripts and a contrastive Kind, the merge prompt MUST surface

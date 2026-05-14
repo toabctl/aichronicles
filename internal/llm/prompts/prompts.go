@@ -289,6 +289,50 @@ func (r *ProposalResult) GroundTriggers() {
 	}
 }
 
+// FilterEvidenceBySessionAllowList returns the subset of evidence
+// whose SessionID is in the allowed set, with all other fields
+// preserved. Whitespace-only SessionIDs are dropped before the
+// allow-list check. Mirrors summarize's persistSessionLinks
+// candidate filter applied to the proposal / induction surfaces:
+// the schema's "minLength:1" guard only catches empty strings, not
+// hallucinated UUID-shaped IDs that don't resolve to a real
+// session. Citations that survive this filter point at sessions
+// the caller has confirmed exist.
+//
+// Returns the input unchanged when len(evidence) == 0 so callers
+// can chain without a length guard.
+func FilterEvidenceBySessionAllowList(evidence []ProposalEvidence, allowed map[string]struct{}) []ProposalEvidence {
+	if len(evidence) == 0 {
+		return evidence
+	}
+	out := make([]ProposalEvidence, 0, len(evidence))
+	for _, e := range evidence {
+		id := strings.TrimSpace(e.SessionID)
+		if id == "" {
+			continue
+		}
+		if _, ok := allowed[id]; !ok {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// GroundEvidence drops Evidence entries whose SessionID isn't in
+// allowed across every skill. Run after GroundTriggers so a
+// dropped evidence row also removes the quote substrate
+// FilterGroundedTriggers depended on (any trigger that needed the
+// dropped quote will lose its grounding on a re-filter). Idempotent.
+func (r *ProposalResult) GroundEvidence(allowed map[string]struct{}) {
+	if r == nil {
+		return
+	}
+	for i := range r.Skills {
+		r.Skills[i].Evidence = FilterEvidenceBySessionAllowList(r.Skills[i].Evidence, allowed)
+	}
+}
+
 // ProposalEvidence grounds one proposal in actual session text.
 // quote is a verbatim excerpt (≤160 chars) from the session, not a
 // paraphrase — paraphrase loses the property that the user can grep
@@ -769,7 +813,7 @@ const reflectionToolSchema = `{
         "required":["session_id","quote","what_happened"],
         "additionalProperties": false,
         "properties": {
-          "session_id":    {"type":"string","minLength":1},
+          "session_id":    {"type":"string","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
           "quote":         {"type":"string","minLength":1,"maxLength":160},
           "what_happened": {"type":"string","minLength":1}
         }
@@ -890,7 +934,7 @@ const proposalToolSchema = `{
         "required":["session_id","quote","what_happened"],
         "additionalProperties": false,
         "properties": {
-          "session_id":    {"type":"string","minLength":1},
+          "session_id":    {"type":"string","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
           "quote":         {"type":"string","minLength":1,"maxLength":160},
           "what_happened": {"type":"string","minLength":1}
         }
@@ -1529,7 +1573,7 @@ const inductionToolSchema = `{
             "required":["session_id","quote","what_happened"],
             "additionalProperties": false,
             "properties": {
-              "session_id":    {"type":"string","minLength":1},
+              "session_id":    {"type":"string","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
               "quote":         {"type":"string","minLength":30,"maxLength":160},
               "what_happened": {"type":"string","minLength":1}
             }
@@ -1585,7 +1629,7 @@ const inductionToolSchema = `{
             "required":["session_id","quote","what_happened"],
             "additionalProperties": false,
             "properties": {
-              "session_id":    {"type":"string","minLength":1},
+              "session_id":    {"type":"string","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
               "quote":         {"type":"string","minLength":1,"maxLength":160},
               "what_happened": {"type":"string","minLength":1,"maxLength":240}
             }
