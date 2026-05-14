@@ -70,6 +70,18 @@ func TestSaveSemanticFact_RejectsBadInputs(t *testing.T) {
 		{"missing asserted", SemanticFact{SourceLLMOutputID: loID, Subject: "s", Predicate: "p", Object: "o", Confidence: 1}},
 		{"confidence too low", SemanticFact{SourceLLMOutputID: loID, Subject: "s", Predicate: "p", Object: "o", AssertedAtMs: 1, Confidence: -0.01}},
 		{"confidence too high", SemanticFact{SourceLLMOutputID: loID, Subject: "s", Predicate: "p", Object: "o", AssertedAtMs: 1, Confidence: 1.01}},
+		{"session without quote", SemanticFact{
+			SourceLLMOutputID: loID, Subject: "s", Predicate: "p", Object: "o",
+			AssertedAtMs: 1, Confidence: 1,
+			EvidenceSessionID: ptrTo("00000000-0000-0000-0000-000000000001"),
+			// EvidenceQuote intentionally nil
+		}},
+		{"session with empty quote", SemanticFact{
+			SourceLLMOutputID: loID, Subject: "s", Predicate: "p", Object: "o",
+			AssertedAtMs: 1, Confidence: 1,
+			EvidenceSessionID: ptrTo("00000000-0000-0000-0000-000000000002"),
+			EvidenceQuote:     ptrTo(""),
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

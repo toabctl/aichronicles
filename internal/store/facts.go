@@ -96,6 +96,17 @@ func SaveSemanticFact(ctx context.Context, db *sql.DB, f SemanticFact) (int64, e
 	if f.Confidence < 0 || f.Confidence > 1 {
 		return 0, fmt.Errorf("SaveSemanticFact: confidence %v out of [0,1]", f.Confidence)
 	}
+	// A session claimed as evidence must come with a verbatim quote
+	// from that session. The reverse is fine — a quote without a
+	// session pointer (e.g. summarised across sessions) stands on
+	// its own. This is the verifiability contract from CLAUDE.md §7:
+	// if we record "session X grounds this fact," the user must be
+	// able to grep X for the substring that proves it.
+	if f.EvidenceSessionID != nil && *f.EvidenceSessionID != "" {
+		if f.EvidenceQuote == nil || *f.EvidenceQuote == "" {
+			return 0, errors.New("SaveSemanticFact: evidence_session_id requires a non-empty evidence_quote")
+		}
+	}
 
 	const q = `
 INSERT INTO semantic_facts(
