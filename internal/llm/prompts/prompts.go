@@ -3422,15 +3422,23 @@ func renderFailureModes(shapes []FailureShapeDigest) string {
 		if r := []rune(clean); len(r) > maxTitleRunes {
 			clean = string(r[:maxTitleRunes]) + "…"
 		}
-		short := preview.ShortID(fs.SessionID)
+		// Render the FULL UUID, not preview.ShortID. The proposal
+		// evidence schema (and rule 13's "cite failure-shaped
+		// sessions" instruction) requires a full
+		// ^[0-9a-f]{8}-…{12}$ session_id; if the failure session
+		// isn't also in Digests, the model has nowhere to copy
+		// the full id from and the evidence path either
+		// fabricates or omits the cite. Rendering the full UUID
+		// here is the canonical-list anti-fabrication pattern.
+		id := fs.SessionID
 		if fs.ToolFailureCount > 0 {
-			toolFailures = append(toolFailures, entry{short, clean, fs.ToolFailureCount})
+			toolFailures = append(toolFailures, entry{id, clean, fs.ToolFailureCount})
 		}
 		if fs.GitUndoCount > 0 {
-			gitUndos = append(gitUndos, entry{short, clean, fs.GitUndoCount})
+			gitUndos = append(gitUndos, entry{id, clean, fs.GitUndoCount})
 		}
 		if fs.PromptRepeatCount > 0 {
-			promptRepeats = append(promptRepeats, entry{short, clean, fs.PromptRepeatCount})
+			promptRepeats = append(promptRepeats, entry{id, clean, fs.PromptRepeatCount})
 		}
 	}
 

@@ -843,16 +843,20 @@ func TestBuildPropose_RendersFailureModesCluster(t *testing.T) {
 	body := built.Request.Messages[0].Content
 	for _, want := range []string{
 		"Failure modes observed across 3 failure-shaped sessions",
-		// tool_failures appears in 2 sessions → RECURRING
+		// tool_failures appears in 2 sessions → RECURRING. Full
+		// UUIDs (not preview.ShortID): the evidence schema rejects
+		// anything shorter, so the prompt has to surface the
+		// canonical value the model can copy into a session_id
+		// field.
 		"- tool_failures (2 sessions, RECURRING):",
-		"[00000000] deploy went sideways three times (3 tool_failures)",
-		"[00000000] rebase blew up (2 tool_failures)",
+		"[00000000-0000-0000-0000-0000000000aa] deploy went sideways three times (3 tool_failures)",
+		"[00000000-0000-0000-0000-0000000000bb] rebase blew up (2 tool_failures)",
 		// git_undos appears in 1 session (the deploy one too) → ONE-OFF
 		"- git_undos (1 sessions, ONE-OFF):",
-		"[00000000] deploy went sideways three times (1 git_undos)",
+		"[00000000-0000-0000-0000-0000000000aa] deploy went sideways three times (1 git_undos)",
 		// prompt_repeats appears in 1 session → ONE-OFF
 		"- prompt_repeats (1 sessions, ONE-OFF):",
-		"[00000000] fix the test flake (2 prompt_repeats)",
+		"[00000000-0000-0000-0000-0000000000cc] fix the test flake (2 prompt_repeats)",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q\n--- body ---\n%s", want, body)
@@ -912,8 +916,8 @@ func TestBuildPropose_FailureModesPassThroughEgressRedaction(t *testing.T) {
 func TestRenderFailureModes_OmitsBucketsThatHaveNoSessions(t *testing.T) {
 	t.Parallel()
 	shapes := []FailureShapeDigest{
-		{SessionID: "00000000-only-tools", Title: "all tool fails", ToolFailureCount: 4},
-		{SessionID: "00000000-also-tools", Title: "another tool fail", ToolFailureCount: 2},
+		{SessionID: "00000000-0000-0000-0000-000000000aa1", Title: "all tool fails", ToolFailureCount: 4},
+		{SessionID: "00000000-0000-0000-0000-000000000aa2", Title: "another tool fail", ToolFailureCount: 2},
 	}
 	out := renderFailureModes(shapes)
 	if !strings.Contains(out, "- tool_failures (2 sessions, RECURRING):") {
@@ -923,6 +927,29 @@ func TestRenderFailureModes_OmitsBucketsThatHaveNoSessions(t *testing.T) {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("unexpected %q bucket on tool-only corpus:\n%s", unwanted, out)
 		}
+	}
+}
+
+// TestRenderFailureModes_EmitsFullUUIDsNotPreviewShortID pins the
+// fix for review-#7 RISK #15: the proposal evidence schema requires
+// a full ^[0-9a-f]{8}-…{12}$ session_id, so preview.ShortID-shaped
+// 8-char prefixes leave the model with nowhere to copy a citation
+// from when the failure session isn't also in Digests. Render the
+// full UUID exactly as the canonical-list pattern demands.
+func TestRenderFailureModes_EmitsFullUUIDsNotPreviewShortID(t *testing.T) {
+	t.Parallel()
+	shapes := []FailureShapeDigest{
+		{SessionID: "deadbeef-1111-2222-3333-444455556666", Title: "stuck", ToolFailureCount: 1},
+	}
+	out := renderFailureModes(shapes)
+	if !strings.Contains(out, "[deadbeef-1111-2222-3333-444455556666]") {
+		t.Errorf("expected full UUID in bucket entry, got:\n%s", out)
+	}
+	// And the bare 8-char prefix must NOT appear standalone as the
+	// rendered id (it can legitimately appear inside the full UUID
+	// or in a title, so check for the bracketed-only form).
+	if strings.Contains(out, "[deadbeef]") {
+		t.Errorf("preview.ShortID form leaked: \n%s", out)
 	}
 }
 
