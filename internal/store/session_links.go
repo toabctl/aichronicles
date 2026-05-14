@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/wire"
@@ -27,11 +26,11 @@ const (
 // internal/wire so existing callers keep working.
 var SessionLinkKinds = wire.SessionLinkKinds
 
-// IsValidSessionLinkKind matches the migration's CHECK clause —
-// keep these in sync if a fifth kind is ever added.
-func IsValidSessionLinkKind(k string) bool {
-	return slices.Contains(SessionLinkKinds, k)
-}
+// IsValidSessionLinkKind re-exports the canonical predicate from
+// internal/wire/session_reads.go so existing store.IsValidSessionLinkKind
+// callers keep working. New code should reach wire.IsValidSessionLinkKind
+// directly.
+var IsValidSessionLinkKind = wire.IsValidSessionLinkKind
 
 // SessionLink is one (from, to, kind) row.
 type SessionLink struct {

@@ -1,5 +1,7 @@
 package wire
 
+import "slices"
+
 // SessionEvent is the wire shape for one stored event row as
 // returned by GET /v1/sessions/{id}/events. Mirrors events.EventView
 // with nullable columns projected to *T pointers. The richer
@@ -77,6 +79,16 @@ var SessionLinkKinds = []string{
 	SessionLinkRepeatsFailureOf,
 	SessionLinkSupersedes,
 	SessionLinkRelated,
+}
+
+// IsValidSessionLinkKind reports whether k is one of the four
+// canonical kinds. The SQL migration's CHECK clause and the
+// summarize prompt's allowed-set both gate on the same membership
+// — keep these in sync if a fifth kind is ever added. Lives here
+// (next to the constants it validates) so non-store callers can
+// reach the predicate without pulling internal/store.
+func IsValidSessionLinkKind(k string) bool {
+	return slices.Contains(SessionLinkKinds, k)
 }
 
 // SessionLinkRow is the wire shape for one session_links row returned
