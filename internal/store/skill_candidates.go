@@ -846,43 +846,51 @@ SELECT sc.id, sc.llm_output_id, sc.skill_name, sc.proposed_at_ms,
 // from re-suggesting candidates the user has implicitly declined.
 //
 // Only one row is returned per skill_name (the newest proposal),
-// even if multiple llm_outputs rows propose the same name. Older
-// duplicates are filtered Go-side after the SQL ORDER BY.
+// even if multiple llm_outputs rows propose the same name. Dedup
+// happens in SQL via ROW_NUMBER() PARTITION BY skill_name; LIMIT
+// then caps the rows the driver materialises. Prior implementations
+// streamed every pending row and deduped Go-side after ORDER BY,
+// which scaled with backlog size rather than with the caller's
+// requested limit.
 //
 // limit ≤0 falls back to 50. sinceMs ≤0 disables the time filter.
 func LoadPendingSkillCandidates(ctx context.Context, db *sql.DB, sinceMs int64, limit int) ([]SkillCandidate, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	q := `SELECT ` + candidateColumns + `
-	        FROM skill_candidates
-	       WHERE decision IS NULL`
 	args := []any{}
+	sinceClause := ""
 	if sinceMs > 0 {
-		q += ` AND proposed_at_ms >= ?`
+		sinceClause = ` AND proposed_at_ms >= ?`
 		args = append(args, sinceMs)
 	}
-	q += ` ORDER BY proposed_at_ms DESC`
+	q := `WITH ranked AS (
+	        SELECT skill_candidates.*,
+	               ROW_NUMBER() OVER (
+	                 PARTITION BY skill_name
+	                 ORDER BY proposed_at_ms DESC, id DESC
+	               ) AS rn
+	          FROM skill_candidates
+	         WHERE decision IS NULL` + sinceClause + `
+	      )
+	      SELECT ` + candidateColumns + `
+	        FROM ranked
+	       WHERE rn = 1
+	       ORDER BY proposed_at_ms DESC
+	       LIMIT ?`
+	args = append(args, limit)
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("load pending: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	seen := make(map[string]struct{})
 	var out []SkillCandidate
 	for rows.Next() {
 		r, err := scanSkillCandidate(rows)
 		if err != nil {
 			return nil, err
 		}
-		if _, dup := seen[r.SkillName]; dup {
-			continue
-		}
-		seen[r.SkillName] = struct{}{}
 		out = append(out, r)
-		if len(out) >= limit {
-			break
-		}
 	}
 	return out, rows.Err()
 }
