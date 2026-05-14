@@ -49,7 +49,13 @@ const (
 // streamPollInterval. Heartbeat keeps the channel open during
 // idle. Cleanup tied to r.Context().Done().
 func (s *Server) streamHandler(w http.ResponseWriter, r *http.Request) {
-	if s.streamCount.Load() >= streamMaxConcurrent {
+	// Increment-then-check is atomic — a load-then-increment pair
+	// would race two concurrent requests both passing the limit
+	// check before either bumped the counter. Decrement on the
+	// reject path so a rejected connection doesn't permanently
+	// consume a slot.
+	if s.streamCount.Add(1) > streamMaxConcurrent {
+		s.streamCount.Add(-1)
 		// Refuse rather than serve a degraded experience.
 		// Returning 429 lets the htmx ext / EventSource back
 		// off gracefully via its built-in reconnect backoff.
@@ -57,7 +63,6 @@ func (s *Server) streamHandler(w http.ResponseWriter, r *http.Request) {
 			http.StatusTooManyRequests)
 		return
 	}
-	s.streamCount.Add(1)
 	defer s.streamCount.Add(-1)
 
 	flusher, ok := w.(http.Flusher)
