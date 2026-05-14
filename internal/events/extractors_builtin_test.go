@@ -158,7 +158,7 @@ func TestFilePath_AbsolutePathPassesThroughUntouched(t *testing.T) {
 	}
 }
 
-func TestFilePath_RelativePathNoCwdKeptAsIs(t *testing.T) {
+func TestFilePath_RelativePathNoCwdDropped(t *testing.T) {
 	t.Parallel()
 	env := &Envelope{
 		Tool: &Tool{Name: "Read"},
@@ -169,12 +169,13 @@ func TestFilePath_RelativePathNoCwdKeptAsIs(t *testing.T) {
 			},
 		},
 	}
-	got := toKV(DefaultExtractors().Run(env))
-	// Best-effort fallback: with no anchor, store the literal.
-	// Better than dropping the row outright.
-	want := []kindValue{{ExtractionKindFilePath, "config.go"}}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("got %v, want %v", got, want)
+	got := DefaultExtractors().Run(env)
+	// An unanchored "config.go" would collide across every project
+	// with a file by that name and isn't grep-friendly. CLAUDE.md
+	// §7 prefers dropping the row over storing a wrong-looking
+	// value the user might trust.
+	if len(got) != 0 {
+		t.Errorf("relative path with no cwd should drop the extraction, got %v", got)
 	}
 }
 

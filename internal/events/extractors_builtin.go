@@ -54,6 +54,13 @@ func URLExtractor(env *Envelope) []Extraction {
 // the resulting `key_files` / search hits are noticeably more
 // useful when every stored path is canonical. Absolute inputs
 // pass through untouched (filepath.IsAbs short-circuits).
+//
+// When the path is relative AND env.Cwd is empty the extraction
+// is dropped: storing an unanchored "config.go" string would
+// collide across every project that has a config.go file and
+// would not be grep-friendly. CLAUDE.md §7 prefers no extraction
+// over a wrong one — the LLM can still infer the path from prose
+// context downstream if it matters.
 func FilePathExtractor(env *Envelope) []Extraction {
 	input, ok := toolInput(env)
 	if !ok {
@@ -63,7 +70,10 @@ func FilePathExtractor(env *Envelope) []Extraction {
 	if !ok || path == "" {
 		return nil
 	}
-	if !filepath.IsAbs(path) && env.Cwd != "" {
+	if !filepath.IsAbs(path) {
+		if env.Cwd == "" {
+			return nil
+		}
 		path = filepath.Join(env.Cwd, path)
 	}
 	return []Extraction{{Kind: ExtractionKindFilePath, Value: path}}
