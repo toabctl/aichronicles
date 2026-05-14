@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -70,5 +71,40 @@ func TestParseInt64Query(t *testing.T) {
 				t.Errorf("body %q missing title %q", rr.Body.String(), tc.wantTitle)
 			}
 		})
+	}
+}
+
+// TestDecodeJSONBody_RejectsOversizedPayload pins the
+// MaxJSONBodyBytes cap: a chunked-transfer / streamed POST whose
+// body exceeds the cap returns 413 rather than streaming gigabytes
+// into json.Decoder. Without the wrap, a malicious or buggy client
+// could OOM the daemon despite the small struct shape on the
+// server side.
+func TestDecodeJSONBody_RejectsOversizedPayload(t *testing.T) {
+	t.Parallel()
+
+	// Build a body just over the cap. The content is a
+	// well-formed JSON string with a giant filler so the decoder
+	// would otherwise allocate proportionally.
+	overSize := MaxJSONBodyBytes + 1024
+	body := make([]byte, 0, overSize+32)
+	body = append(body, []byte(`{"name":"`)...)
+	body = append(body, bytes.Repeat([]byte("a"), overSize)...)
+	body = append(body, []byte(`"}`)...)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader(body))
+
+	var dst struct {
+		Name string `json:"name"`
+	}
+	if ok := decodeJSONBody(rr, req, &dst); ok {
+		t.Fatalf("decodeJSONBody should have refused oversize body")
+	}
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusRequestEntityTooLarge)
+	}
+	if !strings.Contains(rr.Body.String(), "Payload too large") {
+		t.Errorf("body missing 413 title: %q", rr.Body.String())
 	}
 }

@@ -3,6 +3,8 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -25,8 +27,16 @@ func (s *Server) handleScrub(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = r.Body.Close() }()
 
 	var req wire.ScrubRequest
+	r.Body = http.MaxBytesReader(w, r.Body, MaxJSONBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeProblem(w, http.StatusRequestEntityTooLarge,
+				"Payload too large",
+				fmt.Sprintf("body exceeds %d bytes", MaxJSONBodyBytes))
+			return
+		}
 		writeProblem(w, http.StatusBadRequest, "Read request body failed", err.Error())
 		return
 	}
@@ -60,8 +70,16 @@ func (s *Server) handlePrune(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = r.Body.Close() }()
 
 	var req wire.PruneRequest
+	r.Body = http.MaxBytesReader(w, r.Body, MaxJSONBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeProblem(w, http.StatusRequestEntityTooLarge,
+				"Payload too large",
+				fmt.Sprintf("body exceeds %d bytes", MaxJSONBodyBytes))
+			return
+		}
 		writeProblem(w, http.StatusBadRequest, "Read request body failed", err.Error())
 		return
 	}

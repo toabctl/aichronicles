@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -106,21 +108,42 @@ func parseSessionIDsQuery(raw string) []string {
 	return out
 }
 
+// MaxJSONBodyBytes caps the request body size every decodeJSONBody
+// caller accepts. Generous enough to cover the largest legitimate
+// write (a skill candidate's triggers + tags + examples can run a
+// few hundred KB in the worst case) without exposing the daemon to
+// a 10 GB chunked-body OOM. The ingest path does NOT go through
+// decodeJSONBody — it has its own bound at DefaultMaxEnvelopeBytes
+// because real assistant_message envelopes legitimately exceed
+// MaxJSONBodyBytes.
+const MaxJSONBodyBytes = 4 << 20 // 4 MiB
+
 // decodeJSONBody is the canonical JSON-decode prologue every POST
-// handler runs: close r.Body when we return, reject unknown fields
-// (so a typo'd payload doesn't silently drop content), and emit a
-// 400 "Malformed body" with the decoder's error as detail on
-// failure. Returns true on success; the caller must return on a
-// false result.
+// handler runs: cap the body at MaxJSONBodyBytes via
+// http.MaxBytesReader so a chunked-transfer payload can't stream
+// gigabytes into json.Decoder; close r.Body when we return; reject
+// unknown fields (so a typo'd payload doesn't silently drop
+// content); emit a 400 "Malformed body" — or 413 "Payload too
+// large" if the cap tripped — with the decoder's error as detail
+// on failure. Returns true on success; the caller must return on
+// a false result.
 //
 // Strict-mode is the default for new endpoints to keep the wire
 // contract enforceable; legacy permissive sites have been migrated
 // to match.
 func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 	defer func() { _ = r.Body.Close() }()
+	r.Body = http.MaxBytesReader(w, r.Body, MaxJSONBodyBytes)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeProblem(w, http.StatusRequestEntityTooLarge,
+				"Payload too large",
+				fmt.Sprintf("body exceeds %d bytes", MaxJSONBodyBytes))
+			return false
+		}
 		writeProblem(w, http.StatusBadRequest, "Malformed body", err.Error())
 		return false
 	}
