@@ -75,6 +75,31 @@ func TestUsagePage_RendersTokenTotals(t *testing.T) {
 	}
 }
 
+// TestFormatThousands_Negative covers the defensive sign-strip
+// branch added when guarding against negative token counts. Token
+// counts are non-negative today; the test pins the contract so a
+// future caller doesn't regress to "-,123,4"-style garbled output.
+func TestFormatThousands_Negative(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in   int64
+		want string
+	}{
+		{0, "0"},
+		{42, "42"},
+		{1234, "1,234"},
+		{1234567, "1,234,567"},
+		{-1, "-1"},
+		{-1234, "-1,234"},
+		{-1234567, "-1,234,567"},
+	}
+	for _, tc := range cases {
+		if got := formatThousands(tc.in); got != tc.want {
+			t.Errorf("formatThousands(%d): got %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 // TestUsagePage_DaysParamRespected confirms ?days=7 flows into the
 // heading and chip-active class.
 func TestUsagePage_DaysParamRespected(t *testing.T) {

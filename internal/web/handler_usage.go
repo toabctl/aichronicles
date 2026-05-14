@@ -139,10 +139,19 @@ func buildUsagePage(rows []wire.UsageRow, totals wire.UsageTotals, prices pricin
 // formatThousands renders an int64 with comma separators. Local copy
 // (rather than import-from-cli) to keep the web package free of
 // upward dependencies on cli — the function is tiny.
+//
+// Token counts are always non-negative in practice; the sign-strip
+// branch is defensive so a future caller passing a negative value
+// gets "-1,234" instead of garbled output ("-,123,4").
 func formatThousands(n int64) string {
+	sign := ""
+	if n < 0 {
+		sign = "-"
+		n = -n
+	}
 	s := fmt.Sprintf("%d", n)
 	if len(s) <= 3 {
-		return s
+		return sign + s
 	}
 	rem := len(s) % 3
 	out := ""
@@ -158,5 +167,5 @@ func formatThousands(n int64) string {
 			out += ","
 		}
 	}
-	return out
+	return sign + out
 }
