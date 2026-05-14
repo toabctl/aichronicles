@@ -86,6 +86,19 @@ const (
 // than silently buffering more.
 const DefaultIngestQueueMax = 10000
 
+// ingestEnqueueBudget bounds the WithTx + EnqueuePending call
+// independent of r.Context(). The hook's HTTP client can deadline
+// mid-flight (a 2s default isn't always enough under contention)
+// or the user can ^C the agent — but once the daemon has the body
+// bytes, the user's intent has been captured. Honoring r.Context()
+// cancellation for the durability step turns a client-side timeout
+// into permanent data loss: the row never lands in ingest_pending
+// and no retry triggers. A detached context with a bounded budget
+// lets the insert finish even when the client has hung up; dedup
+// at the UNIQUE(event_id) constraint absorbs the case where the
+// hook retried and both calls land.
+const ingestEnqueueBudget = 10 * time.Second
+
 // Server is the HTTP-facing surface of aichronicles-api. Owns the
 // store handle, an events.Pipeline configured for server-side
 // redaction, an in-process SSE bus that fan-outs every accepted
@@ -430,10 +443,18 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Decouple the durability path from r.Context(). See
+	// ingestEnqueueBudget for the rationale: a client-side timeout
+	// or ^C between "we have the body" and "row committed to
+	// ingest_pending" silently dropped events; the same hook had
+	// already finished its work and never retries on its own.
+	enqueueCtx, cancelEnqueue := context.WithTimeout(context.Background(), ingestEnqueueBudget)
+	defer cancelEnqueue()
+
 	var deduped bool
-	if err := store.WithTx(r.Context(), s.store.DB(), func(tx *sql.Tx) error {
+	if err := store.WithTx(enqueueCtx, s.store.DB(), func(tx *sql.Tx) error {
 		var err error
-		_, deduped, err = store.EnqueuePending(r.Context(), tx, env.EventID, body, time.Now().UnixMilli())
+		_, deduped, err = store.EnqueuePending(enqueueCtx, tx, env.EventID, body, time.Now().UnixMilli())
 		return err
 	}); err != nil {
 		// Reservation didn't translate into a real row; release it.

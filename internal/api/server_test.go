@@ -94,6 +94,38 @@ func TestIngest_Accepts_ValidEnvelope(t *testing.T) {
 	}
 }
 
+// TestIngest_PersistsDespiteCanceledRequestContext pins the
+// durability decoupling for handleIngest: once the daemon has the
+// full body bytes, the enqueue must run to completion regardless
+// of the client's r.Context() cancellation. Pre-fix, a hook whose
+// HTTP client deadlined mid-flight (observed once in the wild —
+// "enqueue pending: insert: context canceled" in journalctl)
+// produced permanent data loss because the row never reached
+// ingest_pending and the hook never retries.
+//
+// We check ingest_pending rather than events: in production the
+// worker drains pending rows on the daemon's lifetime context, not
+// the request context, so the worker side of the pipeline is
+// independent. The lossy seam was the enqueue tx; that's what we
+// pin here.
+func TestIngest_PersistsDespiteCanceledRequestContext(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+
+	body := validBody(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // request context dead before the handler runs
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/ingest", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	var n int
+	_ = srv.store.DB().QueryRow(`SELECT COUNT(*) FROM ingest_pending`).Scan(&n)
+	if n != 1 {
+		t.Errorf("ingest_pending: got %d want 1 (canceled ctx must not lose the row)", n)
+	}
+}
+
 func TestIngest_DuplicateRetainsSingleRawEnvelope(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)
