@@ -62,7 +62,7 @@ func TestE2E_IngestSummarizeFetchViaMCP(t *testing.T) {
 	}`)
 
 	var stderr bytes.Buffer
-	if err := cli.RunHook(bytes.NewReader(hook), &stderr, sock, ""); err != nil {
+	if err := cli.RunHook(t.Context(), bytes.NewReader(hook), &stderr, sock, ""); err != nil {
 		t.Fatalf("RunIngest: %v", err)
 	}
 	// Block on the worker before the next phase queries

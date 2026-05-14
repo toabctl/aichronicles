@@ -97,7 +97,7 @@ func TestCLI_IngestRoundTrip(t *testing.T) {
 	}`)
 
 	var stderr bytes.Buffer
-	if err := cli.RunHook(bytes.NewReader(hook), &stderr, sock, ""); err != nil {
+	if err := cli.RunHook(t.Context(), bytes.NewReader(hook), &stderr, sock, ""); err != nil {
 		t.Fatalf("RunHook returned error: %v", err)
 	}
 	if stderr.Len() != 0 {
@@ -157,7 +157,7 @@ func TestCLI_IngestRedactsSecretsEndToEnd(t *testing.T) {
 	}`)
 
 	var stderr bytes.Buffer
-	if err := cli.RunHook(bytes.NewReader(hook), &stderr, sock, ""); err != nil {
+	if err := cli.RunHook(t.Context(), bytes.NewReader(hook), &stderr, sock, ""); err != nil {
 		t.Fatalf("RunIngest: %v", err)
 	}
 	waitDrain()
@@ -229,7 +229,7 @@ func TestCLI_IngestRespectsDenyPaths(t *testing.T) {
 	}`)
 
 	var stderr bytes.Buffer
-	if err := cli.RunHook(bytes.NewReader(hook), &stderr, sock, ""); err != nil {
+	if err := cli.RunHook(t.Context(), bytes.NewReader(hook), &stderr, sock, ""); err != nil {
 		t.Fatalf("RunIngest: %v", err)
 	}
 
@@ -250,7 +250,7 @@ func TestCLI_IngestRespectsDenyPaths(t *testing.T) {
 		"prompt": "ok"
 	}`)
 	stderr.Reset()
-	if err := cli.RunHook(bytes.NewReader(hookOK), &stderr, sock, ""); err != nil {
+	if err := cli.RunHook(t.Context(), bytes.NewReader(hookOK), &stderr, sock, ""); err != nil {
 		t.Fatalf("RunHook allowed: %v", err)
 	}
 	waitDrain()
@@ -276,7 +276,7 @@ func TestCLI_IngestUnreachableDaemon_LogsAndContinues(t *testing.T) {
 	hook := []byte(`{"session_id":"x","hook_event_name":"UserPromptSubmit","cwd":"/","prompt":"hi"}`)
 	var stderr bytes.Buffer
 
-	err := cli.RunHook(bytes.NewReader(hook), &stderr, filepath.Join(t.TempDir(), "nope.sock"), "")
+	err := cli.RunHook(t.Context(), bytes.NewReader(hook), &stderr, filepath.Join(t.TempDir(), "nope.sock"), "")
 	if err != nil {
 		t.Fatalf("expected nil error even when daemon unreachable, got %v", err)
 	}
@@ -300,7 +300,7 @@ func TestCLI_IngestUnreachableDaemon_FlipsOutageFlag(t *testing.T) {
 	isolateEnv(t)
 	hook := []byte(`{"session_id":"x","hook_event_name":"UserPromptSubmit","cwd":"/","prompt":"hi"}`)
 
-	err := cli.RunHook(bytes.NewReader(hook), &bytes.Buffer{},
+	err := cli.RunHook(t.Context(), bytes.NewReader(hook), &bytes.Buffer{},
 		filepath.Join(t.TempDir(), "nope.sock"), "")
 	if err != nil {
 		t.Fatalf("RunIngest: %v", err)
@@ -324,7 +324,7 @@ func TestCLI_IngestRecoveryClearsOutageFlag(t *testing.T) {
 	// First: fail once to plant the flag.
 	missingSock := filepath.Join(t.TempDir(), "nope.sock")
 	hook := []byte(`{"session_id":"x","hook_event_name":"UserPromptSubmit","cwd":"/","prompt":"hi"}`)
-	if err := cli.RunHook(bytes.NewReader(hook), &bytes.Buffer{}, missingSock, ""); err != nil {
+	if err := cli.RunHook(t.Context(), bytes.NewReader(hook), &bytes.Buffer{}, missingSock, ""); err != nil {
 		t.Fatalf("first RunIngest: %v", err)
 	}
 	flag := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "aichronicles", "outage.flag")
@@ -342,7 +342,7 @@ func TestCLI_IngestRecoveryClearsOutageFlag(t *testing.T) {
 	defer func() { _ = s.Close() }()
 	startAPIDaemon(t, s, sock)
 
-	if err := cli.RunHook(bytes.NewReader(hook), &bytes.Buffer{}, sock, ""); err != nil {
+	if err := cli.RunHook(t.Context(), bytes.NewReader(hook), &bytes.Buffer{}, sock, ""); err != nil {
 		t.Fatalf("second RunIngest: %v", err)
 	}
 	if _, err := os.Stat(flag); !os.IsNotExist(err) {
@@ -407,7 +407,7 @@ func TestCLI_IngestHangingDaemon_FlipsOutageFlag(t *testing.T) {
 	var stderr bytes.Buffer
 
 	start := time.Now()
-	err = cli.RunHook(bytes.NewReader(hook), &stderr, sockPath, "")
+	err = cli.RunHook(t.Context(), bytes.NewReader(hook), &stderr, sockPath, "")
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -429,6 +429,72 @@ func TestCLI_IngestHangingDaemon_FlipsOutageFlag(t *testing.T) {
 	if _, err := os.Stat(flag); err != nil {
 		t.Fatalf("hanging-daemon ingest must flip the outage flag at %s; got: %v",
 			flag, err)
+	}
+}
+
+// TestCLI_HookHonorsParentContextCancellation pins the Ctrl-C
+// path. Pre-fix, RunHook derived its per-request deadline from
+// context.Background(), so cobra's signal-installed root context
+// (cmd.Context()) had no path to the in-flight POST — a user
+// interrupting `aichronicles hook` waited out the full
+// IngestTimeout. The fix routes the parent context through;
+// cancelling it must unblock the call promptly.
+func TestCLI_HookHonorsParentContextCancellation(t *testing.T) {
+	isolateEnv(t)
+
+	// Same hanging-daemon listener as
+	// TestCLI_IngestHangingDaemon_FlipsOutageFlag: accept the
+	// connection, then never read or respond. With Background()
+	// as parent the call would wait the full defaultHookTimeout
+	// (2s); with the parent ctx canceled, it should exit fast.
+	sockPath := filepath.Join(t.TempDir(), "sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				<-stop
+				_ = c.Close()
+			}(conn)
+		}
+	}()
+	defer func() {
+		close(stop)
+		_ = ln.Close()
+		wg.Wait()
+	}()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	// Cancel after a short delay so the call has time to start
+	// the POST and park on the unresponsive socket.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	hook := []byte(`{"session_id":"x","hook_event_name":"UserPromptSubmit","cwd":"/","prompt":"hi"}`)
+	var stderr bytes.Buffer
+	start := time.Now()
+	if err := cli.RunHook(ctx, bytes.NewReader(hook), &stderr, sockPath, ""); err != nil {
+		t.Fatalf("RunHook must not surface cancellation to the hook, got: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	// Without the fix the call would wait out the full
+	// IngestTimeout (≥2s default). The cancellation should unblock
+	// it well below that — pin at 1s as the regression bound.
+	if elapsed > time.Second {
+		t.Errorf("RunHook blocked for %v after parent ctx cancel; signal didn't propagate", elapsed)
 	}
 }
 
@@ -462,7 +528,7 @@ func TestCLI_Ingest503QueueFull_FlipsOutageFlag(t *testing.T) {
 
 	hook := []byte(`{"session_id":"qf","hook_event_name":"UserPromptSubmit","cwd":"/","prompt":"hi"}`)
 	var stderr bytes.Buffer
-	if err := cli.RunHook(bytes.NewReader(hook), &stderr, sockPath, ""); err != nil {
+	if err := cli.RunHook(t.Context(), bytes.NewReader(hook), &stderr, sockPath, ""); err != nil {
 		t.Fatalf("RunHook must not surface 503 to the hook, got: %v", err)
 	}
 	if !strings.Contains(stderr.String(), "event_dropped") {

@@ -66,7 +66,7 @@ func newHookCmd() *cobra.Command {
 			"Blocking policy: this command NEVER fails the hook. Errors are\n" +
 			"logged to stderr as structured records and the process exits 0.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return RunHook(cmd.InOrStdin(), cmd.ErrOrStderr(), socketFlag, agentSlug)
+			return RunHook(cmd.Context(), cmd.InOrStdin(), cmd.ErrOrStderr(), socketFlag, agentSlug)
 		},
 	}
 	cmd.Flags().StringVar(&socketFlag, "socket", "",
@@ -89,7 +89,13 @@ func newHookLogger(stderr io.Writer) *slog.Logger {
 // aichronicles-api. The error return exists for the cobra interface;
 // in practice this command always returns nil so a missing or broken
 // daemon never fails a Claude hook.
-func RunHook(stdin io.Reader, stderr io.Writer, socketFlag, agentSlug string) error {
+//
+// ctx is the parent for the per-request ingest deadline so Ctrl-C
+// (cobra installs signal-handling on the root command's context)
+// cancels the in-flight POST instead of waiting out the full
+// IngestTimeout. Tests that don't need cancellation pass
+// context.Background().
+func RunHook(ctx context.Context, stdin io.Reader, stderr io.Writer, socketFlag, agentSlug string) error {
 	log := newHookLogger(stderr)
 
 	raw, err := io.ReadAll(stdin)
@@ -139,7 +145,7 @@ func RunHook(stdin io.Reader, stderr io.Writer, socketFlag, agentSlug string) er
 
 	tracker := outageTracker(log)
 
-	ctx, cancel := context.WithTimeout(context.Background(),
+	ctx, cancel := context.WithTimeout(ctx,
 		cfg.Limits.IngestTimeout.Or(defaultHookTimeout))
 	defer cancel()
 
