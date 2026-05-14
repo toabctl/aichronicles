@@ -18,7 +18,7 @@ For the static view, two complementary docs:
 
 | Trigger                                                   | What runs                                                                                                  | Cadence                                                |
 | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Claude Code / Gemini CLI hook fires                       | `aichronicles ingest` → daemon → `raw_envelopes` + `events` (+ FTS / extractions / sessions aggregates)    | Every event (prompt, tool call, response, …)           |
+| Claude Code / Gemini CLI hook fires                       | `aichronicles hook` → daemon → `raw_envelopes` + `events` (+ FTS / extractions / sessions aggregates)     | Every event (prompt, tool call, response, …)           |
 | `aichronicles-cron-induction.timer` fires                 | One sweep: phase 0 (segment stale episodes) → 1 (summarize) → 2 (induction) → 3 (facts), per candidate     | `OnUnitInactiveSec=15min` (configurable in the unit)   |
 | `aichronicles-cron-meta-analysis.timer` fires             | Cadence-gated dispatch of overdue propose / reflect / challenge / reflect_weekly / skill_revision           | `OnUnitInactiveSec=1h` (configurable in the unit)      |
 | `aichronicles summarize --session <id>`                   | One summarize LLM call → `llm_outputs(kind=summary)`                                                       | Manual, on demand                                      |
@@ -26,7 +26,7 @@ For the static view, two complementary docs:
 | `aichronicles propose add` / `merge` / `discard --skill X` | One `skill_candidates` lifecycle transition; `add`/`merge` also write `<skills>/<name>/SKILL.md` to disk   | Manual, per skill                                      |
 | `aichronicles induction sweep` (manual)                   | One-shot of the timer-driven sweep; useful when the timer is off or you want per-session output on stdout   | Manual, on demand                                      |
 | `aichronicles meta sweep` (manual)                        | One-shot of the cadence-gated meta dispatch; same gating as the timer-driven run                            | Manual, on demand                                      |
-| MCP tool call from Claude Code (`search_events`, `find_episodes`, `get_summary`, …) | Read-only SQL against the store; no writes                                                                 | Per agent tool-use, while a session is active          |
+| MCP tool call from Claude Code (`search_events`, `find_episodes`, `get_summary`, …) | Read-only HTTP through `internal/apiclient` against `aichronicles-api`'s UDS; no writes                    | Per agent tool-use, while a session is active          |
 
 The sections below detail each automatic flow (A, D) and each
 manual flow (B, E), plus the read-only MCP path (C).

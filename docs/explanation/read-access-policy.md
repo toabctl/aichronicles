@@ -5,14 +5,15 @@ through the wire (`internal/apiclient` → UDS → `internal/api`)?
 
 ## The rule
 
-**In-process readers may share the `*store.Store` handle.
-Out-of-process readers MUST go through `internal/apiclient`.**
+**Only `aichronicles-api` is allowed to bind `internal/store`. Every
+other process — CLI, web, MCP — reads + writes through
+`internal/apiclient` against the daemon's UDS.**
 
 | Package | Process | Allowed access |
 |---|---|---|
 | `internal/api` | `aichronicles-api` daemon | direct `internal/store` (it IS the store-owning process) |
-| `internal/web` | `aichronicles-api` daemon (folded in) | direct `internal/store` (same handle, same process) |
-| `internal/cli` | per-command CLI (`aichronicles ...`) | `internal/apiclient` only |
+| `internal/web` | `aichronicles-web.service` daemon (separate process from api) | `internal/apiclient` only |
+| `internal/cli` | per-command CLI (`aichronicles ...`) | `internal/apiclient` for read paths; direct `internal/store` only for designated writer commands (induction, reflect, scrub, prune, backfill) that legitimately need exclusive store access |
 | `internal/mcp` | `aichronicles mcp serve` (stdio child of the editor) | `internal/apiclient` only |
 
 ## Why this shape
@@ -34,31 +35,31 @@ from it. Today every cross-process consumer reads through the
 daemon's HTTP-over-UDS surface and the daemon is the only SQLite
 opener.
 
-For same-process consumers (the web HTML surface mounted inside the
-daemon process), going through a UDS hop to its own process would
-add latency and a connection per page-load for zero benefit. Sharing
-the handle is correct.
+The previous version of this doc described an alternate design where
+`internal/web` ran inside the api daemon process and shared the
+`*store.Store` handle in-process. That design was reverted —
+`aichronicles-web` is now a separately-supervised systemd unit
+(`aichronicles-web.service`) that fronts the api's UDS. The
+blast-radius isolation (a web-handler bug can't take down ingest) was
+the load-bearing reason; the latency hit of the extra hop is
+negligible for the personal-use scale.
 
 ## Enforcement
 
 `tools/depcheck` enforces this rule mechanically:
 
-- `internal/cli` and `internal/mcp` must not call
+- `internal/cli`, `internal/mcp`, and `internal/web` must not call
   `store.Load*|Save*|Insert*|Update*|Delete*|Has*|Last*|Query*|Vacuum*|Segment*`
   in non-test files. Test files are exempt because they spin up an
   in-process api server against a temp store — sharing the handle in
   a test is fine.
-- `internal/web` is INTENTIONALLY not subject to this rule.
+- Several supplementary layering rules guard the dependency arrows:
+  `internal/store` must not import `internal/api`, `internal/apiclient`,
+  the orchestration layers, or `net/http`; `internal/redact` must not
+  import any sibling `internal/*`; `cmd/aichronicles` must not import
+  `internal/api`. Run `go run ./tools/depcheck` to verify the full set;
+  CI runs it on every PR.
 
-Run `go run ./tools/depcheck` to verify; CI runs it on every PR.
-
-## What changes if the unified-daemon-with-folded-web design ever
-splits
-
-If `aichronicles web` were to revert to a separately-supervised
-sibling process (the architectural follow-up flagged as HIGH #4 in
-arch_review_2026_05_13), `internal/web` would also fall under the
-"out-of-process" bucket and the depcheck rule would extend to cover
-it. Until then, the in-process share is the right choice.
-
-History: arch_review_2026_05_13 MEDIUM #5.
+History: arch_review_2026_05_13 MEDIUM #5 (cross-process migration),
+arch_review_2026_05_14 (web split + depcheck rule expansion),
+arch_review_2026_05_14_late (post-split doc refresh).

@@ -70,7 +70,8 @@ rearchitecture collapsed that into a single store-owning process.)
 
 | Binary | Process kind | Lifecycle | Owns |
 |---|---|---|---|
-| `aichronicles-api` | Long-running daemon | systemd `--user` unit, socket-activated | The single SQLite-handling process. Serves `/v1/*` JSON read+write API, `/v1/stream` SSE live activity, `/` web HTML (folded in once `internal/web` migration completes). Server-side redaction; the only point of "no unredacted bytes in storage" enforcement. |
+| `aichronicles-api` | Long-running daemon | systemd `--user` unit, socket-activated | The single SQLite-handling process. Serves `/v1/*` JSON read+write API and `/v1/stream` SSE live activity. Server-side redaction; the only point of "no unredacted bytes in storage" enforcement. |
+| `aichronicles-web` | Long-running daemon | systemd `--user` unit (`aichronicles-web.service`) | Renders `/` web HTML. Reads via `internal/apiclient` against `aichronicles-api`'s UDS — separate process so a web-handler bug can't take down ingest. |
 | `aichronicles hook` | Short-lived hook subprocess | Forked per Claude Code / Gemini CLI hook event | One envelope's worth of translation + POST to `aichronicles-api`. Translation is pure (post-Phase 0); the api applies redaction. Fire-and-forget: every error path logs and exits 0 so the hook never breaks the agent's prompt loop. |
 | `aichronicles induction sweep` | Short-lived periodic | `aichronicles-cron-induction.timer` (15min default) | Single-session induction across idle sessions |
 | `aichronicles meta sweep` | Short-lived periodic | `aichronicles-cron-meta-analysis.timer` (1h poll, per-kind cadences in SQLite) | Cadence-gated meta-analyses (propose / reflect / challenge / digest_weekly / skill_revision) |
@@ -403,18 +404,22 @@ internal/cli         ──▶ internal/events, internal/events/sources/{claude,
 internal/api         ──▶ internal/wire, internal/events, internal/store, internal/redact
 internal/apiclient   ──▶ internal/wire, internal/events
 internal/agents      ──▶ (no internal deps)
-internal/mcp         ──▶ internal/apiclient, internal/events, internal/llm
+internal/mcp         ──▶ internal/apiclient, internal/wire, internal/llm,
+                         internal/llm/prompts, internal/skills, internal/preview,
+                         internal/timefmt
                          (cross-process; reads via the api UDS)
-internal/web         ──▶ internal/events, internal/store, internal/llm/prompts
-                         (separate process; reads SQLite directly via WAL —
-                          slated to migrate to apiclient like mcp did)
-internal/store       ──▶ internal/events
-internal/llm/prompts      ──▶ internal/events, internal/llm, internal/redact, internal/store
+internal/web         ──▶ internal/apiclient, internal/wire, internal/preview,
+                         internal/timefmt
+                         (cross-process daemon — aichronicles-web.service —
+                          fronting the api UDS; the previous "reads SQLite
+                          directly via WAL" arrow was the pre-split design)
+internal/store       ──▶ internal/events, internal/wire, internal/nullable, internal/redact
+internal/llm/prompts      ──▶ internal/events, internal/llm, internal/redact, internal/wire
 internal/llm              ──▶ internal/redact (egress scrub)
 internal/events/sources/* ──▶ internal/events, internal/agents (slug only)
 internal/wire              ──▶ (stdlib only)
 internal/events           ──▶ internal/redact (for ScannerRedactor adapter)
-internal/redact           ──▶ (no aichronicles deps)
+internal/redact           ──▶ (no aichronicles deps; enforced by depcheck)
 ```
 
 Enforced rules:
@@ -565,9 +570,14 @@ registers a set of read-only tools (`search_events`,
 `get_insights`, `list_skills`, `list_subagents`, `list_workflows`,
 `find_fact_subjects`).
 
-All tools read through `*store.Store` — no privileged writes. An
-MCP client that compromises its sandbox still only reads stored
-events, already scrubbed at ingest. Tool registration: `internal/mcp/tools_aichronicles.go`.
+All tools read through `internal/apiclient` against
+`aichronicles-api` over UDS — no privileged writes, no direct
+SQLite access from the MCP process. An MCP client that compromises
+its sandbox still only reads stored events, already scrubbed at
+ingest. Tool registration entry points: `internal/mcp/tools_apiclient.go`
+(`RegisterAichroniclesAPITools`, the bulk of the catalog),
+`internal/mcp/tools_analytics.go`, `internal/mcp/tools_aichronicles_llm.go`;
+helpers in `internal/mcp/tools_aichronicles.go`.
 
 We deliberately do not depend on an external MCP SDK. The
 protocol surface we use is small and stable, and self-contained
