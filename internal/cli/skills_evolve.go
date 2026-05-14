@@ -258,8 +258,18 @@ func runSkillsEvolve(
 	}
 
 	v2Path := skillPath + ".v2"
-	if err := os.WriteFile(v2Path, []byte(revision.RevisedBody), 0o644); err != nil {
-		return fmt.Errorf("write v2: %w", err)
+	// Atomic write: tmp + rename so a Ctrl-C or crash between open
+	// and close can't leave a half-written .v2 on disk. The
+	// suggested next command (`mv .v2 .md`) would otherwise
+	// overwrite a good SKILL.md with garbage. Mirrors the pattern
+	// writeMergedSkill uses in propose_merge.
+	tmp := v2Path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(revision.RevisedBody), 0o644); err != nil {
+		return fmt.Errorf("write tmp: %w", err)
+	}
+	if err := os.Rename(tmp, v2Path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("rename v2: %w", err)
 	}
 	_, _ = fmt.Fprintf(out, "evolve: ✓ wrote %s\n", v2Path)
 	_, _ = fmt.Fprintf(out, "  rationale: %s\n", revision.Rationale)

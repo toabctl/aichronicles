@@ -301,8 +301,15 @@ func mondayOf(t time.Time) time.Time {
 // started_at, 0) shape the rest of the store uses for the
 // "effective ts" expression — same definition prune / insights /
 // sessions all rely on.
+//
+// Allocates a fresh slice rather than reusing rows' backing array.
+// Pre-fix, the function used rows[:0] which silently overwrote the
+// caller's slice entries — today every caller discards the
+// original, but the pattern is a footgun for any future caller
+// that retains a reference (e.g. caching the response struct that
+// produced `rows`).
 func filterDigestsBefore(rows []wire.SessionDigest, upperMs int64) []wire.SessionDigest {
-	out := rows[:0]
+	out := make([]wire.SessionDigest, 0, len(rows))
 	for _, r := range rows {
 		var end int64
 		switch {
