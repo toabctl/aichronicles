@@ -142,7 +142,7 @@ func (s *Server) handleSessionOutcome(w http.ResponseWriter, r *http.Request) {
 		CompactCount:      row.CompactCount,
 		GitUndoCount:      row.GitUndoCount,
 		PromptRepeatCount: row.PromptRepeatCount,
-		Outcome:           string(row.Outcome),
+		Outcome:           row.Outcome,
 		LastEventKind:     row.LastEventKind,
 	})
 }

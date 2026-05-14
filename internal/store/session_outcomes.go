@@ -12,39 +12,21 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/nullable"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
-// OutcomeLabel is the coarse derived verdict for a session. The
-// `_likely` suffix is deliberate: these are heuristics over
-// observational data, not ground truth. Downstream consumers read
-// them as priors, not facts.
-type OutcomeLabel string
+// OutcomeLabel and the Outcome* constants are protocol-level
+// vocabulary. The canonical home is internal/wire/session_outcomes.go;
+// these aliases keep the existing store.Outcome* call sites working
+// without a one-shot rename. Same shape as the LLMOutputKind /
+// SessionLink / SkillKind / MaintenanceAction lifts.
+type OutcomeLabel = wire.OutcomeLabel
 
 const (
-	// OutcomeSuccessLikely — clean activity, no failure markers.
-	// Defined as: tool_use_count >= 1 AND tool_failure_count == 0
-	// AND git_undo_count == 0 AND prompt_repeat_count == 0 AND
-	// error_count == 0.
-	OutcomeSuccessLikely OutcomeLabel = "success_likely"
-
-	// OutcomeFailureLikely — strong failure signals. Defined as
-	// any one of: tool_failure_count >= toolFailureFloor (where the
-	// floor scales with session size — see toolFailureFloor);
-	// git_undo_count >= 1; prompt_repeat_count >= 2; or "session
-	// ended on tool_failure or error" (last_event_kind in
-	// failure-shaped values AND tool_failure_count + error_count
-	// >= 1).
-	OutcomeFailureLikely OutcomeLabel = "failure_likely"
-
-	// OutcomeMixed — real activity with weak failure signals. The
-	// session got somewhere but had friction. Used when the row
-	// fails the success bar but doesn't trip the failure bar.
-	OutcomeMixed OutcomeLabel = "mixed"
-
-	// OutcomeUnknown — too thin to label. tool_use_count == 0 and
-	// user_prompt_count <= 1 — typically aborted preambles, never
-	// got far enough to leave a trail.
-	OutcomeUnknown OutcomeLabel = "unknown"
+	OutcomeSuccessLikely = wire.OutcomeSuccessLikely
+	OutcomeFailureLikely = wire.OutcomeFailureLikely
+	OutcomeMixed         = wire.OutcomeMixed
+	OutcomeUnknown       = wire.OutcomeUnknown
 )
 
 // SessionOutcome is one row of session_outcomes. Field meanings:

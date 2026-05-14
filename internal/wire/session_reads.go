@@ -125,7 +125,8 @@ type SessionOutcome struct {
 	GitUndoCount      int     `json:"git_undo_count"`
 	PromptRepeatCount int     `json:"prompt_repeat_count"`
 	LastEventKind     *string `json:"last_event_kind,omitempty"`
-	// Outcome is the label string ("success_likely", "failure_likely",
-	// "mixed", "unknown"). Mirrors store.OutcomeLabel.
-	Outcome string `json:"outcome"`
+	// Outcome is the verdict label. Typed via OutcomeLabel so
+	// callers don't have to cast across the wire boundary; the
+	// JSON shape is still a plain string.
+	Outcome OutcomeLabel `json:"outcome"`
 }
