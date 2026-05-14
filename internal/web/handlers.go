@@ -255,11 +255,24 @@ func loadSessionsForList(ctx context.Context, s *Server, limit int, f sessionLis
 		ids = append(ids, d.ID)
 	}
 
-	summaries, sErr := s.api.SummariesBatch(ctx, ids)
+	// SummariesBatch and EventsLatestBatch are independent —
+	// dispatch in parallel so the page's latency floor is one RTT
+	// (the longer call) instead of two stacked sequentially.
+	var (
+		summaries    map[string]wire.LLMOutput
+		latestEvents map[string]wire.Event
+		sErr, eErr   error
+		done         = make(chan struct{})
+	)
+	go func() {
+		latestEvents, eErr = s.api.EventsLatestBatch(ctx, ids)
+		close(done)
+	}()
+	summaries, sErr = s.api.SummariesBatch(ctx, ids)
+	<-done
 	if sErr != nil {
 		return nil, fmt.Errorf("load summaries: %w", sErr)
 	}
-	latestEvents, eErr := s.api.EventsLatestBatch(ctx, ids)
 	if eErr != nil {
 		return nil, fmt.Errorf("load latest events: %w", eErr)
 	}
