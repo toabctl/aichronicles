@@ -232,12 +232,19 @@ type ProjectRow struct {
 // installed (SKILL.md files on disk), invoked (skill_load
 // extractions ranked by frequency), stale (skills whose loads
 // correlate with tool_failure events).
+//
+// LoadErrors carries one entry per section whose apiclient call
+// failed. The page renders without that section's data but the
+// template surfaces a banner so the user can tell "empty" from
+// "broken" — previously a daemon error silently rendered as
+// "no installed skills" with no indication anything went wrong.
 type SkillsPage struct {
-	Title     string
-	Days      int
-	Installed []wire.InstalledSkill
-	Invoked   []wire.InvokedSkill
-	Stale     []StaleSkillRow
+	Title      string
+	Days       int
+	Installed  []wire.InstalledSkill
+	Invoked    []wire.InvokedSkill
+	Stale      []StaleSkillRow
+	LoadErrors []string
 }
 
 // StaleSkillRow is one row in the stale-candidates table. Pre-

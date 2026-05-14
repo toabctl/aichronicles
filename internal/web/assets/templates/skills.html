@@ -13,6 +13,16 @@
   <a href="/skills?days=90" class="agent-chip{{if eq .Days 90}} agent-chip-active{{end}}">90d</a>
 </nav>
 
+{{if .LoadErrors}}
+<article class="load-errors" role="alert">
+  <strong>Some sections failed to load:</strong>
+  <ul>
+    {{range .LoadErrors}}<li>{{.}}</li>{{end}}
+  </ul>
+  <small>Check the aichronicles-web log for the upstream error.</small>
+</article>
+{{end}}
+
 {{if .Installed}}
 <article>
   <header><h2>Installed <small>({{len .Installed}})</small></h2></header>

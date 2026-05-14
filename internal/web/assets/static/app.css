@@ -19,6 +19,20 @@ main.container {
   max-width: min(2400px, 95vw);
 }
 
+/* Page-level "this section failed to load" banner. Rendered as a
+   thin red-bordered <article> so the user sees that one chunk of
+   the page is missing data rather than mistaking an upstream
+   failure for an empty result. */
+article.load-errors {
+  border-left: 3px solid #dc2626;
+  background: rgba(220, 38, 38, 0.08);
+  padding: 0.5rem 0.75rem;
+  margin: 0.5rem 0 1rem 0;
+}
+article.load-errors ul {
+  margin: 0.25rem 0;
+}
+
 /* Activity-by-hour histogram bars on /insights. Each row is a
    simple HH cell + bar cell + count, with the bar's width set
    server-side as a percentage of the busiest hour's count. Plain

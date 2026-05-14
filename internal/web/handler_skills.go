@@ -32,15 +32,21 @@ func (s *Server) skillsHandler(w http.ResponseWriter, r *http.Request) {
 	rawDays, _ := strconv.Atoi(r.URL.Query().Get("days"))
 	sinceMs, days := timefmt.SinceMsFromDays(rawDays, skillsDefaultDays, 365, time.Now())
 
+	page := SkillsPage{Title: "Skills", Days: days}
+
 	installedResp, err := s.api.InstalledSkills(r.Context(), sinceMs)
 	if err != nil {
 		s.log.Error("skillsHandler: installed", "err", err)
-		// Non-fatal: the page can still render the other two
-		// sections without the installed list.
+		page.LoadErrors = append(page.LoadErrors, "could not load installed skills")
+	} else {
+		page.Installed = installedResp.Skills
 	}
 	invokedResp, err := s.api.InvokedSkills(r.Context(), sinceMs)
 	if err != nil {
 		s.log.Error("skillsHandler: invoked", "err", err)
+		page.LoadErrors = append(page.LoadErrors, "could not load invoked skills")
+	} else {
+		page.Invoked = invokedResp.Skills
 	}
 	const staleWindowMs = int64(10 * 60 * 1000) // matches CLI default
 	staleResp, err := s.api.SkillStaleness(r.Context(), wire.SkillStalenessRequest{
@@ -49,15 +55,11 @@ func (s *Server) skillsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		s.log.Error("skillsHandler: staleness", "err", err)
+		page.LoadErrors = append(page.LoadErrors, "could not load stale-skill correlations")
+	} else {
+		page.Stale = buildStaleRows(staleResp.Skills)
 	}
 
-	page := SkillsPage{
-		Title:     "Skills",
-		Days:      days,
-		Installed: installedResp.Skills,
-		Invoked:   invokedResp.Skills,
-		Stale:     buildStaleRows(staleResp.Skills),
-	}
 	s.render(w, r, "skills", page)
 }
 
