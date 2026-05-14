@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/timefmt"
 	"github.com/toabctl/aichronicles/internal/wire"
@@ -258,23 +260,32 @@ func loadSessionsForList(ctx context.Context, s *Server, limit int, f sessionLis
 	// SummariesBatch and EventsLatestBatch are independent —
 	// dispatch in parallel so the page's latency floor is one RTT
 	// (the longer call) instead of two stacked sequentially.
+	// errgroup.WithContext cancels the sibling call as soon as
+	// either errors out, and guarantees both goroutines have
+	// returned before Wait() releases — no leak on caller cancel.
 	var (
 		summaries    map[string]wire.LLMOutput
 		latestEvents map[string]wire.Event
-		sErr, eErr   error
-		done         = make(chan struct{})
 	)
-	go func() {
-		latestEvents, eErr = s.api.EventsLatestBatch(ctx, ids)
-		close(done)
-	}()
-	summaries, sErr = s.api.SummariesBatch(ctx, ids)
-	<-done
-	if sErr != nil {
-		return nil, fmt.Errorf("load summaries: %w", sErr)
-	}
-	if eErr != nil {
-		return nil, fmt.Errorf("load latest events: %w", eErr)
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		var err error
+		summaries, err = s.api.SummariesBatch(gctx, ids)
+		if err != nil {
+			return fmt.Errorf("load summaries: %w", err)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		var err error
+		latestEvents, err = s.api.EventsLatestBatch(gctx, ids)
+		if err != nil {
+			return fmt.Errorf("load latest events: %w", err)
+		}
+		return nil
+	})
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	for i := range out {
