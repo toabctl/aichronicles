@@ -47,3 +47,4 @@ aichronicles propose [flags]
 * [aichronicles propose discard](./aichronicles_propose_discard.md)	 - Mark a proposed skill as discarded (AutoSkill action 'discard')
 * [aichronicles propose list](./aichronicles_propose_list.md)	 - List skills in the latest cached propose output
 * [aichronicles propose merge](./aichronicles_propose_merge.md)	 - Merge a proposed skill into the existing on-disk SKILL.md (AutoSkill action 'merge')
+* [aichronicles propose verify](./aichronicles_propose_verify.md)	 - Run the propose-add critic gate without writing anything

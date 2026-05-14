@@ -32,6 +32,7 @@ Auto-generated from the live `cobra.Command.Long` strings via `make docs-cli`. E
 - [`aichronicles propose discard`](./aichronicles_propose_discard.md)
 - [`aichronicles propose list`](./aichronicles_propose_list.md)
 - [`aichronicles propose merge`](./aichronicles_propose_merge.md)
+- [`aichronicles propose verify`](./aichronicles_propose_verify.md)
 - [`aichronicles prune`](./aichronicles_prune.md)
 - [`aichronicles reflect`](./aichronicles_reflect.md)
 - [`aichronicles scrub`](./aichronicles_scrub.md)

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 )
@@ -177,6 +179,26 @@ func TestProposeAdd_NoVerifyFlag_BypassesCriticEntirely(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "critic") {
 		t.Errorf("--no-verify output should not mention the critic:\n%s", out.String())
+	}
+}
+
+func TestNewProposeVerifyCmd_RegisteredUnderPropose(t *testing.T) {
+	t.Parallel()
+	root := newProposeCmd()
+	var verify *cobra.Command
+	for _, c := range root.Commands() {
+		if c.Name() == "verify" {
+			verify = c
+			break
+		}
+	}
+	if verify == nil {
+		t.Fatalf("propose verify is not wired into newProposeCmd's subcommand list")
+	}
+	// Sanity: --skill flag exists. The flag is the entire UX —
+	// without it the command is a no-op.
+	if verify.Flags().Lookup("skill") == nil {
+		t.Errorf("propose verify is missing --skill flag")
 	}
 }
 

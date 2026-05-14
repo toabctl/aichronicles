@@ -130,6 +130,7 @@ func newProposeCmd() *cobra.Command {
 	cmd.AddCommand(newProposeMergeCmd())
 	cmd.AddCommand(newProposeDiscardCmd())
 	cmd.AddCommand(newProposeListCmd())
+	cmd.AddCommand(newProposeVerifyCmd())
 	return cmd
 }
 

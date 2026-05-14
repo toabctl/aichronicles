@@ -12,13 +12,94 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
+
+// newProposeVerifyCmd surfaces the Voyager-style critic gate as its
+// own leaf command. The same critic that `propose add` runs (via
+// verifyProposalOrAbort) can be invoked standalone for a dry run:
+// load the latest proposal, pick a skill, see the critic's verdict
+// without writing any files. Exit code mirrors the gate — non-zero
+// on refusal so the command composes with shell pipelines.
+//
+// Reuses the propose_verify cache (kind=propose_verify keyed by
+// outputID + skill name), so calling `propose verify` then `propose
+// add` is free for the second call.
+func newProposeVerifyCmd() *cobra.Command {
+	var (
+		dbPath    string
+		sockFlag  string
+		skillName string
+		outputID  int64
+	)
+	cmd := &cobra.Command{
+		Use:   "verify --skill <name>",
+		Short: "Run the propose-add critic gate without writing anything",
+		Long: "Loads the latest cached propose output (or the one identified\n" +
+			"by --output-id), finds the named skill, and runs the Voyager-\n" +
+			"style critic LLM against it — the same check `propose add`\n" +
+			"runs unless --no-verify is set.\n\n" +
+			"Useful for: previewing the critic's verdict before committing\n" +
+			"to an add; debugging a refusal you saw in `propose add`;\n" +
+			"warming the kind=propose_verify cache so a subsequent add\n" +
+			"is free.\n\n" +
+			"Returns exit code 0 when the critic approves, non-zero with\n" +
+			"the concern + recommendation on refusal. Requires " + llm.APIKeyEnv + "\n" +
+			"on a cache miss.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			s, err := openStore(dbPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = s.Close() }()
+			c, err := openAPIClient(sockFlag)
+			if err != nil {
+				return err
+			}
+
+			if skillName == "" {
+				return errors.New("--skill <name> is required (run `aichronicles propose list` to see options)")
+			}
+
+			result, output, err := loadLatestProposal(cmd.Context(), c, outputID)
+			if err != nil {
+				return err
+			}
+			sk, err := findProposedSkill(result, skillName)
+			if err != nil {
+				return err
+			}
+
+			cfg, cfgErr := config.Load()
+			if cfgErr != nil {
+				return cfgErr
+			}
+			llmCfg := LLMConfigFromFile(cfg.LLM)
+			ctx, cancel := context.WithTimeout(cmd.Context(),
+				cfg.Limits.ReflectTimeout.Or(defaultMetaLLMTimeout))
+			defer cancel()
+			newClient := func() (llm.Client, error) {
+				return llm.FromConfig(ctx, llmCfg)
+			}
+			return verifyProposalOrAbort(ctx, s, c, sk, output.ID, newClient, cmd.OutOrStdout())
+		},
+	}
+	addDBFlag(cmd, &dbPath)
+	addSocketFlag(cmd, &sockFlag)
+	cmd.Flags().StringVar(&skillName, "skill", "",
+		"name of a skill from the proposal to verify")
+	cmd.Flags().Int64Var(&outputID, "output-id", 0,
+		"specific llm_outputs row id (default: latest propose row)")
+	return cmd
+}
 
 // verifyProposalOrAbort runs the Voyager-style critic gate before
 // `propose add` writes anything. The critic's decision is cached
