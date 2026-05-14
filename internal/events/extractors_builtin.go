@@ -3,7 +3,6 @@ package events
 import (
 	"path/filepath"
 	"regexp"
-	"strings"
 )
 
 // urlRE matches http/https URLs conservatively. The character class
@@ -28,7 +27,7 @@ func URLExtractor(env *Envelope) []Extraction {
 	out := make([]Extraction, 0, len(matches))
 	seen := make(map[string]struct{}, len(matches))
 	for _, m := range matches {
-		m = strings.TrimRight(m, ".,;:!?)]}")
+		m = trimURLTail(m)
 		if m == "" {
 			continue
 		}
@@ -39,6 +38,50 @@ func URLExtractor(env *Envelope) []Extraction {
 		out = append(out, Extraction{Kind: ExtractionKindURL, Value: m})
 	}
 	return out
+}
+
+// trimURLTail removes trailing prose punctuation from a captured URL
+// without breaking URLs that legitimately end in a closing bracket.
+// Always-strip chars (.,;:!?) are unconditional. Brackets ()[]{} are
+// stripped only when unbalanced — Wikipedia-style URLs such as
+// https://en.wikipedia.org/wiki/Foo_(bar) end in a balanced `)` that
+// previously got mangled to "...Foo_(bar" by a naive TrimRight.
+func trimURLTail(s string) string {
+	for len(s) > 0 {
+		last := s[len(s)-1]
+		switch last {
+		case '.', ',', ';', ':', '!', '?':
+			s = s[:len(s)-1]
+			continue
+		case ')':
+			if countByte(s, '(') < countByte(s, ')') {
+				s = s[:len(s)-1]
+				continue
+			}
+		case ']':
+			if countByte(s, '[') < countByte(s, ']') {
+				s = s[:len(s)-1]
+				continue
+			}
+		case '}':
+			if countByte(s, '{') < countByte(s, '}') {
+				s = s[:len(s)-1]
+				continue
+			}
+		}
+		return s
+	}
+	return s
+}
+
+func countByte(s string, b byte) int {
+	n := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == b {
+			n++
+		}
+	}
+	return n
 }
 
 // FilePathExtractor emits one extraction per file_path carried by a
@@ -55,12 +98,14 @@ func URLExtractor(env *Envelope) []Extraction {
 // useful when every stored path is canonical. Absolute inputs
 // pass through untouched (filepath.IsAbs short-circuits).
 //
-// When the path is relative AND env.Cwd is empty the extraction
-// is dropped: storing an unanchored "config.go" string would
-// collide across every project that has a config.go file and
-// would not be grep-friendly. CLAUDE.md §7 prefers no extraction
-// over a wrong one — the LLM can still infer the path from prose
-// context downstream if it matters.
+// When the path is relative AND env.Cwd is empty OR non-absolute
+// the extraction is dropped: storing an unanchored "config.go"
+// string would collide across every project that has a config.go
+// file, and joining with a relative env.Cwd ("aichronicles/")
+// produces a fabricated path indistinguishable from a real
+// extraction. CLAUDE.md §7 prefers no extraction over a wrong one
+// — the LLM can still infer the path from prose context
+// downstream if it matters.
 func FilePathExtractor(env *Envelope) []Extraction {
 	input, ok := toolInput(env)
 	if !ok {
@@ -71,7 +116,7 @@ func FilePathExtractor(env *Envelope) []Extraction {
 		return nil
 	}
 	if !filepath.IsAbs(path) {
-		if env.Cwd == "" {
+		if env.Cwd == "" || !filepath.IsAbs(env.Cwd) {
 			return nil
 		}
 		path = filepath.Join(env.Cwd, path)

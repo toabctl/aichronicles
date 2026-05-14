@@ -179,6 +179,61 @@ func TestFilePath_RelativePathNoCwdDropped(t *testing.T) {
 	}
 }
 
+// TestFilePath_RelativeCwdDropped pins the anti-fabrication
+// strictening for FilePathExtractor: env.Cwd MUST be absolute
+// before we join it with a relative path. A non-absolute cwd
+// joined with "internal/foo.go" produces an unanchored
+// "aichronicles/internal/foo.go" that looks like a real
+// extraction in search results but isn't. CLAUDE.md §7: drop
+// rather than fabricate.
+func TestFilePath_RelativeCwdDropped(t *testing.T) {
+	t.Parallel()
+	env := &Envelope{
+		Tool: &Tool{Name: "Read"},
+		Cwd:  "aichronicles", // not absolute — agent or import bug
+		Payload: map[string]any{
+			"tool_input": map[string]any{
+				"file_path": "internal/foo.go",
+			},
+		},
+	}
+	got := DefaultExtractors().Run(env)
+	if len(got) != 0 {
+		t.Errorf("relative cwd + relative path should drop the extraction, got %v", got)
+	}
+}
+
+// TestURL_WikipediaStyleClosingParenPreserved pins the
+// balanced-bracket trim fix: URLs whose path legitimately ends in
+// a closing bracket (Wikipedia disambiguation pages are the
+// canonical example) must NOT have it stripped. Pre-fix, the
+// naive TrimRight produced "https://en.wikipedia.org/wiki/Foo_(bar"
+// which 404s.
+func TestURL_WikipediaStyleClosingParenPreserved(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"balanced parens kept", "see https://en.wikipedia.org/wiki/Foo_(bar)", "https://en.wikipedia.org/wiki/Foo_(bar)"},
+		{"trailing period stripped", "see https://example.com/a.", "https://example.com/a"},
+		{"unbalanced close stripped", "see (https://example.com/a)", "https://example.com/a"},
+		{"comma after balanced parens", "see https://en.wikipedia.org/wiki/Foo_(bar),", "https://en.wikipedia.org/wiki/Foo_(bar)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := &Envelope{ContentText: tc.in}
+			got := toKV(DefaultExtractors().Run(env))
+			want := []kindValue{{ExtractionKindURL, tc.want}}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("input %q: got %v, want %v", tc.in, got, want)
+			}
+		})
+	}
+}
+
 func TestFilePath_NonFileToolSkipped(t *testing.T) {
 	t.Parallel()
 	// Grep does not emit a canonical file_path — skip even if present.
