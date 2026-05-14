@@ -70,6 +70,60 @@ var rules = []rule{
 		Forbidden: []string{"github.com/toabctl/aichronicles/internal/store"},
 		Reason:    "apiclient must not import internal/store; it is a wire-only client",
 	},
+	{
+		// cmd/aichronicles is the CLI binary. It legitimately
+		// imports internal/cli, which legitimately reaches into
+		// internal/store for writer commands (induction, reflect,
+		// scrub, prune, backfill). What it must NOT do is link the
+		// daemon's HTTP server stack — that belongs to
+		// cmd/aichronicles-api only. Without this rule a stray
+		// `import "internal/api"` from a new CLI subcommand would
+		// silently pull every handler / middleware / SSE bus into
+		// the CLI binary and grow its blast radius.
+		From:      "github.com/toabctl/aichronicles/cmd/aichronicles",
+		Forbidden: []string{"github.com/toabctl/aichronicles/internal/api"},
+		Reason:    "the CLI binary must not link the api daemon's HTTP server (cmd/aichronicles-api owns that)",
+	},
+	{
+		// internal/redact is a leaf detector library: regex patterns
+		// + a tiny scan/replace runtime, no aichronicles-specific
+		// concepts. The threat-model and architecture docs both
+		// describe it as a self-contained dependency. Enforce: it
+		// must not pull any sibling internal/* package, otherwise a
+		// future detector that knows about events / sessions / etc.
+		// would silently couple the leaf to the rest of the
+		// codebase.
+		From: "github.com/toabctl/aichronicles/internal/redact",
+		Forbidden: []string{
+			"github.com/toabctl/aichronicles/internal/events",
+			"github.com/toabctl/aichronicles/internal/store",
+			"github.com/toabctl/aichronicles/internal/api",
+			"github.com/toabctl/aichronicles/internal/apiclient",
+			"github.com/toabctl/aichronicles/internal/cli",
+			"github.com/toabctl/aichronicles/internal/wire",
+			"github.com/toabctl/aichronicles/internal/llm",
+			"github.com/toabctl/aichronicles/internal/mcp",
+			"github.com/toabctl/aichronicles/internal/web",
+		},
+		Reason: "internal/redact is a leaf detector library; depending on it must never pull in other layers",
+	},
+	{
+		// internal/store is the SQLite adapter. HTTP, IPC, and the
+		// orchestration packages depend on it — not the other way
+		// around. A reverse edge (store reaching up to api / cli /
+		// web / mcp or importing net/http) would invert the
+		// architecture's dependency arrows.
+		From: "github.com/toabctl/aichronicles/internal/store",
+		Forbidden: []string{
+			"net/http",
+			"github.com/toabctl/aichronicles/internal/api",
+			"github.com/toabctl/aichronicles/internal/apiclient",
+			"github.com/toabctl/aichronicles/internal/cli",
+			"github.com/toabctl/aichronicles/internal/mcp",
+			"github.com/toabctl/aichronicles/internal/web",
+		},
+		Reason: "internal/store is the SQLite adapter; HTTP / IPC / orchestration layers depend on it, not the reverse",
+	},
 }
 
 // callRule expresses a code-pattern invariant: in non-test files
