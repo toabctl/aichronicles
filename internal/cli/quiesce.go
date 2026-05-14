@@ -42,13 +42,21 @@ const refuseIfDaemonRunningTimeout = 2 * time.Second
 //
 // sockFlag follows the same precedence as openAPIClient: explicit
 // flag → $AICHRONICLES_API_SOCKET → XDG default.
+//
+// Resolution failure (the socket path itself can't be computed —
+// XDG is unset, $AICHRONICLES_API_SOCKET points at an unreadable
+// path, etc.) is surfaced as an error rather than silently
+// proceeding. Previously a misconfigured env var made backfill /
+// scrub assume "no daemon" even when one was running on a
+// different socket the user had simply mistyped; aggressive
+// correctness refuses to evaluate the premise rather than
+// guessing.
 func RefuseIfDaemonRunning(ctx context.Context, sockFlag string) error {
 	c, err := openAPIClient(sockFlag)
 	if err != nil {
-		// Resolution failure is not the daemon's fault — let the
-		// caller proceed; if the path is wrong, the subsequent
-		// operation will fail on its own with a clearer error.
-		return nil //nolint:nilerr // resolution failure is operator-misconfig, not a running daemon
+		return fmt.Errorf("cannot verify daemon state (socket path resolution failed): %w; "+
+			"pass --socket=<path> or fix $AICHRONICLES_API_SOCKET, "+
+			"then re-run the command", err)
 	}
 
 	probeCtx, cancel := context.WithTimeout(ctx, refuseIfDaemonRunningTimeout)
