@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -88,14 +89,10 @@ func buildProjectsPage(aggs []wire.ProjectAggregate, days int, now time.Time) Pr
 // sortProjectRowsByActivity is an in-place stable sort by descending
 // LastActivityMs, then ascending Root path.
 func sortProjectRowsByActivity(rows []ProjectRow) {
-	for i := 1; i < len(rows); i++ {
-		for j := i; j > 0; j-- {
-			a, b := rows[j-1], rows[j]
-			swap := a.SortKey < b.SortKey || (a.SortKey == b.SortKey && a.Root > b.Root)
-			if !swap {
-				break
-			}
-			rows[j-1], rows[j] = rows[j], rows[j-1]
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].SortKey != rows[j].SortKey {
+			return rows[i].SortKey > rows[j].SortKey
 		}
-	}
+		return rows[i].Root < rows[j].Root
+	})
 }
