@@ -7,8 +7,8 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/preview"
-	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/timefmt"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // workflowsHandler renders /workflows — every kind=induction row
@@ -21,7 +21,7 @@ import (
 // as flat slices so the template stays free of nested lookups.
 func (s *Server) workflowsHandler(w http.ResponseWriter, r *http.Request) {
 	const corpusCap = 200
-	rows, err := s.api.LLMOutputsList(r.Context(), string(store.LLMKindInduction), "", corpusCap)
+	rows, err := s.api.LLMOutputsList(r.Context(), string(wire.LLMKindInduction), "", corpusCap)
 	if err != nil {
 		s.internalError(w, "workflowsHandler: load induction rows", "internal error", err)
 		return

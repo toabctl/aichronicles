@@ -11,7 +11,6 @@ import (
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/preview"
-	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -190,7 +189,7 @@ func loadRelatedSessions(ctx context.Context, s *Server, id string) ([]RelatedSe
 	}
 
 	groups := make([]RelatedSessionGroup, 0, len(by))
-	for _, k := range store.SessionLinkKinds {
+	for _, k := range wire.SessionLinkKinds {
 		b, ok := by[k]
 		if !ok {
 			continue
@@ -229,13 +228,13 @@ func loadRelatedSessions(ctx context.Context, s *Server, id string) ([]RelatedSe
 // "(other session)" framing per-entry rather than per-group.
 func relatedSessionLabel(kind string) string {
 	switch kind {
-	case store.SessionLinkBuildsOn:
+	case wire.SessionLinkBuildsOn:
 		return "Builds on"
-	case store.SessionLinkRepeatsFailureOf:
+	case wire.SessionLinkRepeatsFailureOf:
 		return "Repeats failure of"
-	case store.SessionLinkSupersedes:
+	case wire.SessionLinkSupersedes:
 		return "Supersedes"
-	case store.SessionLinkRelated:
+	case wire.SessionLinkRelated:
 		return "Related"
 	default:
 		return kind
@@ -358,7 +357,7 @@ func loadLatestSummary(ctx context.Context, s *Server, sessionID string) (*Sessi
 	// Pick the most recent kind=summary output. SessionLLMOutputs
 	// orders by created_at_ms DESC, so the first match is the latest.
 	for _, o := range outs {
-		if o.Kind != string(store.LLMKindSummary) {
+		if o.Kind != string(wire.LLMKindSummary) {
 			continue
 		}
 		var parsed prompts.SummaryResult

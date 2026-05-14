@@ -8,7 +8,6 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/preview"
-	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -31,7 +30,7 @@ func (s *Server) digestsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rows, err := s.api.LLMOutputsList(r.Context(), string(store.LLMKindReflectWeekly), "", limit)
+	rows, err := s.api.LLMOutputsList(r.Context(), string(wire.LLMKindReflectWeekly), "", limit)
 	if err != nil {
 		s.internalError(w, "digestsHandler: load", "could not load digests", err)
 		return
