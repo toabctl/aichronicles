@@ -112,6 +112,72 @@ func TestRunFactsForSession_PersistsFactsIntoSemanticFacts(t *testing.T) {
 	}
 }
 
+// TestRunFactsForSession_DropsFactsKeyedToWrongCwd pins the
+// anti-fabrication anchor: the facts prompt's hard rule says
+// "Subject is the session's CWD", so a Subject pointing somewhere
+// else is a hallucination. The seeded session's cwd is
+// /work/systemd; the LLM emits one fact keyed to that and one to
+// a fabricated /other/project — only the matching one survives.
+func TestRunFactsForSession_DropsFactsKeyedToWrongCwd(t *testing.T) {
+	t.Parallel()
+	s, sessID := seedSessionForSummarize(t)
+	plantSummary(t, s, sessID,
+		"go module audit",
+		"go.mod requires Go 1.26; tests run via go test ./...")
+
+	emit := prompts.FactsResult{
+		Found: true,
+		Facts: []prompts.InducedFact{
+			{
+				Subject:      "/work/systemd",
+				Predicate:    "uses_language_version",
+				Object:       "Go 1.26",
+				Confidence:   0.95,
+				Quote:        "go.mod requires 1.26",
+				WhatHappened: "the user inspected go.mod",
+			},
+			{
+				Subject:      "/other/project", // fabricated — not the session's cwd
+				Predicate:    "runs_tests_via",
+				Object:       "pytest",
+				Confidence:   0.9,
+				Quote:        "pytest covers the suite",
+				WhatHappened: "the user ran the test suite",
+			},
+		},
+		Rationale: "extracted contracts",
+	}
+	toolInput, _ := json.Marshal(emit)
+	f := &fakeLLM{toolInput: toolInput}
+
+	var out bytes.Buffer
+	id, err := RunFactsForSession(context.Background(), apiForStore(t, s),
+		func() (llm.Client, error) { return f, nil },
+		FactsRunOptions{SessionID: sessID}, &out)
+	if err != nil {
+		t.Fatalf("RunFactsForSession: %v", err)
+	}
+	if id == 0 {
+		t.Error("expected non-zero llm_outputs row id")
+	}
+
+	// Only the cwd-anchored fact lands in semantic_facts.
+	systemd, err := store.LoadFactsForSubject(t.Context(), s.DB(), "/work/systemd", 0)
+	if err != nil {
+		t.Fatalf("LoadFactsForSubject: %v", err)
+	}
+	if len(systemd) != 1 {
+		t.Errorf("expected 1 fact for /work/systemd, got %d", len(systemd))
+	}
+	other, err := store.LoadFactsForSubject(t.Context(), s.DB(), "/other/project", 0)
+	if err != nil {
+		t.Fatalf("LoadFactsForSubject /other: %v", err)
+	}
+	if len(other) != 0 {
+		t.Errorf("expected zero facts for fabricated /other/project, got %d", len(other))
+	}
+}
+
 func TestRunFactsForSession_NoFactsFoundDoesNotPersist(t *testing.T) {
 	t.Parallel()
 	s, sessID := seedSessionForSummarize(t)

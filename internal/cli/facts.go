@@ -305,7 +305,7 @@ func RunFactsForSession(
 	if err := json.Unmarshal([]byte(row.Body), &result); err != nil {
 		return id, fmt.Errorf("facts: parse persisted body: %w", err)
 	}
-	persistedCount := persistInducedFacts(ctx, c, id, sessionID, &result)
+	persistedCount := persistInducedFacts(ctx, c, id, sessionID, digest.Cwd, &result)
 
 	if opts.JSON {
 		_, _ = io.WriteString(out, row.Body)
@@ -323,13 +323,28 @@ func RunFactsForSession(
 // typically equals len(result.Facts) but may be lower if individual
 // rows fail validation. Uses asserted_at_ms = now() so re-runs
 // against the same session refresh the timestamp.
-func persistInducedFacts(ctx context.Context, c *apiclient.Client, llmOutputID int64, sessionID string, result *prompts.FactsResult) int {
+//
+// sessionCwd is the inducing session's cwd. When non-empty, facts
+// whose Subject doesn't match it are dropped: the prompt's hard
+// rule says "subject is the session's CWD", so a foreign Subject
+// is a fabrication — the LLM picked up a path from prose or
+// invented one. Per CLAUDE.md rule #7, drop the row rather than
+// land a confidently-wrong assertion keyed to the wrong project.
+func persistInducedFacts(ctx context.Context, c *apiclient.Client, llmOutputID int64, sessionID, sessionCwd string, result *prompts.FactsResult) int {
 	if result == nil || !result.Found || len(result.Facts) == 0 {
 		return 0
 	}
 	now := time.Now().UnixMilli()
 	persisted := 0
 	for _, f := range result.Facts {
+		if sessionCwd != "" && f.Subject != sessionCwd {
+			slog.Warn("facts: dropping fact whose subject doesn't match session cwd",
+				"llm_output_id", llmOutputID,
+				"subject", f.Subject,
+				"session_cwd", sessionCwd,
+				"predicate", f.Predicate)
+			continue
+		}
 		req := wire.SaveSemanticFactRequest{
 			SourceLLMOutputID: llmOutputID,
 			Subject:           f.Subject,
