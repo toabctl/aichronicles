@@ -30,18 +30,31 @@ import (
 // at startup rather than silently shadowing one handler with
 // another.
 func RegisterAichroniclesAPITools(s *Server, c *apiclient.Client) {
+	// Context injection — pull at SessionStart so the agent opens
+	// with prior unresolved items and a project snapshot in hand.
 	registerGetUnresolvedForCwd(s, c)
+	registerGetProjectContext(s, c)
+
+	// Semantic memory — typed (subject, predicate, object) facts
+	// the LLM extracted from prior sessions.
 	registerGetFactsForSubject(s, c)
 	registerFindFactSubjects(s, c)
+
+	// Procedural memory — what the user has built up as reusable
+	// capabilities (SKILL.md staleness signals, workflow recipes).
 	registerGetSkillStaleness(s, c)
-	registerGetInsights(s, c)
-	registerFindEpisodes(s, c)
-	registerListSubagents(s, c)
-	registerSearchEvents(s, c)
+	registerListWorkflows(s, c)
+
+	// Episodic / discovery — sessions, summaries, episode boundaries,
+	// subagent threads.
 	registerListSessions(s, c)
 	registerGetSummary(s, c)
-	registerListWorkflows(s, c)
-	registerGetProjectContext(s, c)
+	registerFindEpisodes(s, c)
+	registerListSubagents(s, c)
+
+	// Search and analytics — corpus-wide queries.
+	registerSearchEvents(s, c)
+	registerGetInsights(s, c)
 }
 
 func registerGetUnresolvedForCwd(s *Server, c *apiclient.Client) {
