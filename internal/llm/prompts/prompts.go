@@ -2272,10 +2272,10 @@ func excerptForVerify(sk ProposedSkill) string {
 	for _, sc := range sk.Scripts {
 		fmt.Fprintf(&b, "script %q: %s\n", sc.Name, strings.TrimSpace(sc.Purpose))
 	}
-	const cap = 600
+	const maxRunes = 600
 	r := []rune(b.String())
-	if len(r) > cap {
-		return string(r[:cap]) + "…"
+	if len(r) > maxRunes {
+		return string(r[:maxRunes]) + "…"
 	}
 	return b.String()
 }
