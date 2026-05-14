@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -227,23 +228,30 @@ func TestRunMetaAnalysisSweep_EmptyWindowIsNotAFailure(t *testing.T) {
 	}
 }
 
-// TestIsEmptyWindowErr exercises the message-matching gate.
+// TestIsEmptyWindowErr exercises the sentinel-based gate. The
+// matcher accepts any error wrapping ErrEmptyWindow regardless of
+// the human-readable prefix, so adding new producers doesn't require
+// updating the fragment list.
 func TestIsEmptyWindowErr(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
+		name string
 		err  error
 		want bool
 	}{
-		{nil, false},
-		{errors.New("propose: no sessions in the requested window"), true},
-		{errors.New("digest weekly: no sessions in week of 2026-04-20"), true},
-		{errors.New("digest weekly: no summarised sessions in week of 2026-04-20"), true},
-		{errors.New("some unrelated failure"), false},
-		{context.Canceled, false},
+		{"nil", nil, false},
+		{"propose-empty", fmt.Errorf("propose: no sessions in the requested window: %w", ErrEmptyWindow), true},
+		{"digest-weekly-no-sessions", fmt.Errorf("digest weekly: no sessions in week of 2026-04-20: %w", ErrEmptyWindow), true},
+		{"digest-weekly-no-summarised", fmt.Errorf("digest weekly: no summarised sessions in week of 2026-04-20: %w", ErrEmptyWindow), true},
+		{"need-≥2-summaries", fmt.Errorf("need ≥2 sessions with summaries to reflect/propose; 1 of 3 in window are summarized: %w", ErrEmptyWindow), true},
+		{"unrelated", errors.New("some unrelated failure"), false},
+		{"ctx-canceled", context.Canceled, false},
 	} {
-		if got := isEmptyWindowErr(tc.err); got != tc.want {
-			t.Errorf("isEmptyWindowErr(%v): got %v, want %v", tc.err, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isEmptyWindowErr(tc.err); got != tc.want {
+				t.Errorf("isEmptyWindowErr(%v): got %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 

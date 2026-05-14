@@ -7,6 +7,13 @@ import (
 	"github.com/toabctl/aichronicles/internal/store"
 )
 
+// ErrEmptyWindow is the sentinel propose / reflect / digest commands
+// wrap when the requested window has too few summarised sessions to
+// build a prompt. The meta-analysis sweeper treats it as a quiet-
+// system signal rather than a failure so an empty week doesn't fill
+// the operator's log with noise.
+var ErrEmptyWindow = errors.New("empty window")
+
 // hintForError returns a one-line follow-up when err matches a known
 // failure mode the user can act on. Empty string when no hint applies.
 //

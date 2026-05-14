@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
@@ -494,28 +493,11 @@ func runSkillRevisionForSweep(
 	return firstErr
 }
 
-// isEmptyWindowErr recognises the "no sessions in window" sentinel
-// strings the Run* functions return. We don't want a quiet system
-// to look like a meta-sweep failure in the operator's log.
-//
-// String-matching isn't pretty but the underlying errors are
-// constructed via errors.New / fmt.Errorf without sentinel values,
-// and sticking sentinel values in just for this gate would
-// over-couple the sweep to the orchestrators. The fragments are
-// stable and covered by tests.
+// isEmptyWindowErr recognises the ErrEmptyWindow sentinel that
+// propose / reflect / digest commands wrap when the requested window
+// has too few summarised sessions to feed a prompt. We don't want a
+// quiet system to look like a meta-sweep failure in the operator's
+// log.
 func isEmptyWindowErr(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	for _, frag := range []string{
-		"no sessions in the requested window",
-		"no sessions in week of",
-		"no summarised sessions in week of",
-	} {
-		if strings.Contains(msg, frag) {
-			return true
-		}
-	}
-	return false
+	return errors.Is(err, ErrEmptyWindow)
 }

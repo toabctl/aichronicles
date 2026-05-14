@@ -127,7 +127,7 @@ func RunReflect(
 		return 0, fmt.Errorf("reflect: load sessions: %w", err)
 	}
 	if len(resp.Digests) == 0 {
-		return 0, errors.New("reflect: no sessions in the requested window")
+		return 0, fmt.Errorf("reflect: no sessions in the requested window: %w", ErrEmptyWindow)
 	}
 
 	digests, err := digestsFromRowsWithLinks(ctx, c, resp.Digests)
@@ -235,8 +235,8 @@ func digestsFromRowsWithLinks(
 		return nil, fmt.Errorf(
 			"need ≥2 sessions with summaries to reflect/propose; %d of %d in window are summarized. "+
 				"Run `aichronicles summaries missing --since <window>` to see candidates, "+
-				"then `aichronicles summaries fill --since <window>` to fill them in one shot",
-			len(out), len(rows))
+				"then `aichronicles summaries fill --since <window>` to fill them in one shot: %w",
+			len(out), len(rows), ErrEmptyWindow)
 	}
 	return out, nil
 }

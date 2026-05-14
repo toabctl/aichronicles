@@ -189,8 +189,8 @@ func RunDigestWeekly(
 	// requested week.
 	rows := filterDigestsBefore(resp.Digests, opts.PeriodEnd.UnixMilli())
 	if len(rows) == 0 {
-		return 0, fmt.Errorf("digest weekly: no sessions in week of %s",
-			opts.PeriodStart.Format("2006-01-02"))
+		return 0, fmt.Errorf("digest weekly: no sessions in week of %s: %w",
+			opts.PeriodStart.Format("2006-01-02"), ErrEmptyWindow)
 	}
 
 	digests, err := digestsFromRowsWithLinks(ctx, c, rows)
@@ -198,8 +198,8 @@ func RunDigestWeekly(
 		return 0, fmt.Errorf("digest weekly: enrich digests: %w", err)
 	}
 	if len(digests) == 0 {
-		return 0, fmt.Errorf("digest weekly: no summarised sessions in week of %s",
-			opts.PeriodStart.Format("2006-01-02"))
+		return 0, fmt.Errorf("digest weekly: no summarised sessions in week of %s: %w",
+			opts.PeriodStart.Format("2006-01-02"), ErrEmptyWindow)
 	}
 
 	built, err := prompts.BuildReflect(digests, opts.PeriodEnd.Sub(opts.PeriodStart))

@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -190,7 +189,7 @@ func RunPropose(
 		return 0, fmt.Errorf("propose: load sessions: %w", err)
 	}
 	if len(resp.Digests) == 0 {
-		return 0, errors.New("propose: no sessions in the requested window")
+		return 0, fmt.Errorf("propose: no sessions in the requested window: %w", ErrEmptyWindow)
 	}
 
 	_, _ = fmt.Fprintf(progress, "  loaded %d session(s), enriching with extractions...\n", len(resp.Digests))
