@@ -262,6 +262,61 @@ func TestResolveSessionIDPrefix_AmbiguousLists(t *testing.T) {
 	}
 }
 
+// TestResolveSessionIDPrefix_DeterministicListing pins the
+// stability promise of the ambiguity-list message: without an
+// ORDER BY clause the engine is free to return any subset of N
+// matching ids when the prefix matches more than
+// ambiguityListLimit, so a user re-running the same command saw
+// different candidate lists. Sorted ascending by id keeps the
+// output reproducible.
+func TestResolveSessionIDPrefix_DeterministicListing(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	// Seed more than ambiguityListLimit matches in non-sorted insert
+	// order so any reliance on rowid would surface as a mismatch.
+	ids := []string{
+		"deadbeef-0000-0000-0000-000000000007",
+		"deadbeef-0000-0000-0000-000000000003",
+		"deadbeef-0000-0000-0000-000000000005",
+		"deadbeef-0000-0000-0000-000000000001",
+		"deadbeef-0000-0000-0000-000000000006",
+		"deadbeef-0000-0000-0000-000000000004",
+		"deadbeef-0000-0000-0000-000000000002",
+	}
+	for _, id := range ids {
+		if _, err := s.DB().Exec(
+			`INSERT INTO sessions(id, source_agent, source_session_id) VALUES (?, 'claude-code', ?)`,
+			id, id,
+		); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	_, err := ResolveSessionIDPrefix(t.Context(), s.DB(), "deadbeef")
+	if !errors.Is(err, ErrAmbiguousSessionPrefix) {
+		t.Fatalf("want ErrAmbiguousSessionPrefix, got %v", err)
+	}
+	msg := err.Error()
+	// Lowest ids must appear first (ORDER BY id ASC). The 7th id
+	// should not appear since the listing caps at ambiguityListLimit.
+	lowest := []string{
+		"000000000001", "000000000002", "000000000003",
+		"000000000004", "000000000005",
+	}
+	prev := -1
+	for _, suffix := range lowest {
+		idx := strings.Index(msg, suffix)
+		if idx < 0 {
+			t.Errorf("ambiguity message missing %q: %s", suffix, msg)
+			continue
+		}
+		if idx <= prev {
+			t.Errorf("ids out of ascending order in message: %s", msg)
+		}
+		prev = idx
+	}
+}
+
 func TestResolveSessionIDPrefix_RejectsNonHexInput(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)

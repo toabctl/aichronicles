@@ -51,7 +51,7 @@ func ResolveSessionIDPrefix(ctx context.Context, db *sql.DB, prefix string) (str
 	}
 
 	rows, err := db.QueryContext(ctx,
-		`SELECT id FROM sessions WHERE id LIKE ? || '%' LIMIT ?`,
+		`SELECT id FROM sessions WHERE id LIKE ? || '%' ORDER BY id LIMIT ?`,
 		prefix, ambiguityListLimit+1,
 	)
 	if err != nil {
