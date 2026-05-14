@@ -59,10 +59,16 @@ func (r *ScannerRedactor) Apply(env *Envelope) {
 
 // ApplyRedaction scans every free-text field on env with scanner and
 // rewrites detected secrets to <redacted:kind> markers in place.
-// env.Redaction is populated with the union of every pattern that
-// fired across all fields; env.Redaction.Applied is set to true
+// env.Redaction is populated with every pattern that fired across
+// all fields in THIS pass; env.Redaction.Applied is set to true
 // unconditionally so downstream code can use it as a "scrubber ran"
 // signal independent of whether anything actually matched.
+//
+// Patterns reflect THIS pass only, not a historical union. Scrub
+// (the only re-scrubbing caller) gates on len(Patterns)==0 to skip
+// the rewrite when this pass found nothing new, which preserves the
+// original ingest-time pattern list in the persisted envelope_json
+// untouched.
 //
 // Fields covered:
 //   - ContentText (free-form string)
