@@ -172,8 +172,13 @@ func TestOpenAI_Complete_SendsToolsAndForcedToolChoice(t *testing.T) {
 	if fn["name"] != "record_x" {
 		t.Errorf("function name: %v", fn["name"])
 	}
-	if fn["strict"] != true {
-		t.Errorf("strict mode should be on, got %v", fn["strict"])
+	// Strict mode is intentionally NOT set: our tool schemas have
+	// optional top-level fields (skill, workflow, …) that OpenAI's
+	// strict mode would reject because they aren't in `required`.
+	// json.Unmarshal into the typed result struct is the real
+	// validation gate.
+	if _, present := fn["strict"]; present {
+		t.Errorf("strict should not appear in tool definition; got %v", fn["strict"])
 	}
 	params, ok := fn["parameters"].(map[string]any)
 	if !ok || params["type"] != "object" {

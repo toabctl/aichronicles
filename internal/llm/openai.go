@@ -105,9 +105,11 @@ func (o *OpenAI) ensureSDK() {
 // Complete issues a Chat Completions call via the SDK and translates
 // the reply into the provider-neutral Response. Tool use maps to
 // OpenAI's function-calling: each Tool becomes a function-typed tool,
-// ForceTool maps to tool_choice={"type":"function","function":{...}},
-// and `strict: true` is set on every function so OpenAI server-side
-// validates the schema. Token usage is mapped from CompletionUsage.
+// ForceTool maps to tool_choice={"type":"function","function":{...}}.
+// Strict mode is OFF (see buildOpenAIParams for the reason) — we
+// validate the model output via json.Unmarshal into the typed
+// result struct, the same path Anthropic uses. Token usage is
+// mapped from CompletionUsage.
 //
 // Errors from the upstream pass through redact.Outbound before being
 // returned, so a 401 echoing the API key never lands in a log line.
@@ -173,11 +175,18 @@ func buildOpenAIParams(req Request, model string) (openaisdk.ChatCompletionNewPa
 			fn := shared.FunctionDefinitionParam{
 				Name:       t.Name,
 				Parameters: schema,
-				// Strict mode pins schema validation server-side, which
-				// matches Anthropic's default behavior on tool inputs.
-				// We always want this — we built the schema ourselves
-				// and we want guaranteed compliance.
-				Strict: param.NewOpt(true),
+				// Strict mode is intentionally OFF. OpenAI's "strict"
+				// flag demands that every key in `properties` also
+				// appear in `required` (the canonical workaround is to
+				// rewrite optional fields as type:["…","null"] AND
+				// list them in required). Several of our tool schemas
+				// — induction, propose, summary — express "emit one of
+				// these, or both, or neither" by leaving the top-level
+				// sub-objects (skill / workflow / placeholders / etc.)
+				// out of required, so strict-on would 400 every call.
+				// We rely on json.Unmarshal into the typed result
+				// struct as the actual validation; Anthropic doesn't
+				// have an equivalent flag and the pipeline copes fine.
 			}
 			if t.Description != "" {
 				fn.Description = param.NewOpt(t.Description)
