@@ -119,9 +119,13 @@ type SessionDetail struct {
 	// + source id) and is NOT what `claude --resume` accepts.
 	// ResumeCommand is the pre-rendered shell one-liner the
 	// "Resume" button copies — empty when SourceAgent is unknown.
-	SourceAgent     string
-	SourceSessionID string
-	ResumeCommand   string
+	// ResumeCommandDangerous appends --dangerously-skip-permissions
+	// for claude-code; empty for every other agent (the flag is
+	// Claude-Code-specific) so the second button stays hidden.
+	SourceAgent            string
+	SourceSessionID        string
+	ResumeCommand          string
+	ResumeCommandDangerous string
 
 	// RelatedSessions groups outgoing+incoming session_links into
 	// the four canonical kinds for the sidebar. Empty groups stay

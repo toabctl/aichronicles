@@ -488,9 +488,84 @@ func TestSessionDetail_RendersResumeButton(t *testing.T) {
 		`class="resume-btn"`,
 		`data-resume-cmd="cd /work/sess-resume &amp;&amp; claude --resume sess-resume"`,
 		`>↻ resume</button>`,
+		// "skip perms" companion button: same machinery, same
+		// data-resume-cmd attribute the click handler reads, with
+		// --dangerously-skip-permissions appended to the command.
+		`class="resume-btn resume-btn-dangerous"`,
+		`data-resume-cmd="cd /work/sess-resume &amp;&amp; claude --resume sess-resume --dangerously-skip-permissions"`,
+		`>↻ resume (skip perms)</button>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("session page missing %q\n--- body ---\n%s", want, body)
 		}
+	}
+}
+
+func TestBuildResumeCommandDangerous(t *testing.T) {
+	t.Parallel()
+	cwdFoo := "/home/tom/devel/foo"
+	cwdEmpty := ""
+	cwdX := "/x"
+	cases := []struct {
+		name     string
+		agent    string
+		sourceID string
+		cwd      *string
+		want     string
+	}{
+		{
+			name:     "claude-code with cwd",
+			agent:    "claude-code",
+			sourceID: "5c407125-a64a-46c1-96d5-65ca14bdd9fc",
+			cwd:      &cwdFoo,
+			want:     "cd /home/tom/devel/foo && claude --resume 5c407125-a64a-46c1-96d5-65ca14bdd9fc --dangerously-skip-permissions",
+		},
+		{
+			name:     "claude-code without cwd",
+			agent:    "claude-code",
+			sourceID: "abc",
+			cwd:      nil,
+			want:     "claude --resume abc --dangerously-skip-permissions",
+		},
+		{
+			name:     "claude-code with empty cwd",
+			agent:    "claude-code",
+			sourceID: "abc",
+			cwd:      &cwdEmpty,
+			want:     "claude --resume abc --dangerously-skip-permissions",
+		},
+		{
+			// gemini-cli has its own bypass under a different name;
+			// we don't emit a flag the binary will reject. Empty
+			// hides the button.
+			name:     "gemini-cli yields empty",
+			agent:    "gemini-cli",
+			sourceID: "9a640b1c-eefa-40ef-897a-0437f0931706",
+			cwd:      &cwdX,
+			want:     "",
+		},
+		{
+			name:     "unknown agent yields empty",
+			agent:    "some-future-agent",
+			sourceID: "abc",
+			cwd:      &cwdX,
+			want:     "",
+		},
+		{
+			name:     "missing source id yields empty",
+			agent:    "claude-code",
+			sourceID: "",
+			cwd:      &cwdX,
+			want:     "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := buildResumeCommandDangerousPtr(tc.agent, tc.sourceID, tc.cwd)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

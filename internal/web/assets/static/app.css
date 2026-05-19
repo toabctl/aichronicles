@@ -258,6 +258,19 @@ tr.nav-row:focus-visible {
   color: #fff;
   border-color: #16a34a;
 }
+/* "skip perms" variant of the resume button. Tinted amber so a
+   glance at the header makes clear which one copies the command
+   that bypasses Claude Code's permission prompts. The .resume-btn-
+   copied flash still wins over this on click (same selector
+   specificity, later in the file). */
+.resume-btn.resume-btn-dangerous {
+  border-color: #d97706;
+  color: #b45309;
+}
+.resume-btn.resume-btn-dangerous:hover {
+  background: #fef3c7;
+  color: #92400e;
+}
 
 /* Cached-summary topic shown inline below the first prompt on
    search results. Muted + italic so the prompt remains the primary

@@ -296,16 +296,17 @@ func loadSessionHeader(ctx context.Context, s *Server, id string) (*SessionDetai
 	}
 
 	return &SessionDetail{
-		Title:           "session " + preview.ShortID(digest.ID),
-		ID:              digest.ID,
-		ShortID:         preview.ShortID(digest.ID),
-		Cwd:             orDashPtr(digest.Cwd),
-		StartedAt:       absoluteOrDashPtr(digest.StartedAtMs),
-		EndedAt:         endedOrActivePtr(digest.EndedAtMs),
-		EventCount:      digest.EventCount,
-		SourceAgent:     digest.SourceAgent,
-		SourceSessionID: digest.SourceSessionID,
-		ResumeCommand:   buildResumeCommandPtr(digest.SourceAgent, digest.SourceSessionID, resumeCwd),
+		Title:                  "session " + preview.ShortID(digest.ID),
+		ID:                     digest.ID,
+		ShortID:                preview.ShortID(digest.ID),
+		Cwd:                    orDashPtr(digest.Cwd),
+		StartedAt:              absoluteOrDashPtr(digest.StartedAtMs),
+		EndedAt:                endedOrActivePtr(digest.EndedAtMs),
+		EventCount:             digest.EventCount,
+		SourceAgent:            digest.SourceAgent,
+		SourceSessionID:        digest.SourceSessionID,
+		ResumeCommand:          buildResumeCommandPtr(digest.SourceAgent, digest.SourceSessionID, resumeCwd),
+		ResumeCommandDangerous: buildResumeCommandDangerousPtr(digest.SourceAgent, digest.SourceSessionID, resumeCwd),
 	}, nil
 }
 
@@ -344,6 +345,23 @@ func buildResumeCommandPtr(agent, sourceSessionID string, cwd *string) string {
 		return "cd " + *cwd + " && " + base
 	}
 	return base
+}
+
+// buildResumeCommandDangerousPtr renders the same one-liner with
+// --dangerously-skip-permissions appended, for the "skip perms"
+// resume button. The flag is Claude-Code-specific (gemini-cli has
+// its own bypass under a different name, codex none we model), so
+// for any other agent we return "" and the template hides the
+// second button rather than emit a flag the binary will reject.
+func buildResumeCommandDangerousPtr(agent, sourceSessionID string, cwd *string) string {
+	if agent != "claude-code" {
+		return ""
+	}
+	base := buildResumeCommandPtr(agent, sourceSessionID, cwd)
+	if base == "" {
+		return ""
+	}
+	return base + " --dangerously-skip-permissions"
 }
 
 // loadLatestSummary returns the most recent summary llm_outputs

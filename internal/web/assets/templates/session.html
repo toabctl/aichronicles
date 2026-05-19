@@ -8,6 +8,12 @@
             data-resume-cmd="{{.ResumeCommand}}"
             title="Copy `{{.ResumeCommand}}` to clipboard so you can paste it in a terminal to resume the agent">↻ resume</button>
     {{end}}
+    {{if .ResumeCommandDangerous}}
+    <button type="button"
+            class="resume-btn resume-btn-dangerous"
+            data-resume-cmd="{{.ResumeCommandDangerous}}"
+            title="Copy `{{.ResumeCommandDangerous}}` to clipboard — resume with --dangerously-skip-permissions">↻ resume (skip perms)</button>
+    {{end}}
   </h1>
   <p><a href="/">← all sessions</a></p>
 </hgroup>
