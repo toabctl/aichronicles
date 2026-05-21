@@ -145,12 +145,43 @@ func RunHook(ctx context.Context, stdin io.Reader, stderr io.Writer, socketFlag,
 
 	tracker := outageTracker(log)
 
-	ctx, cancel := context.WithTimeout(ctx,
-		cfg.Limits.IngestTimeout.Or(defaultHookTimeout))
-	defer cancel()
-
+	parentCtx := ctx
+	budget := cfg.Limits.IngestTimeout.Or(defaultHookTimeout)
 	c := apiclient.NewClient(sockPath)
-	if _, err := c.Ingest(ctx, env); err != nil {
+	postOnce := func() error {
+		attemptCtx, cancel := context.WithTimeout(parentCtx, budget)
+		defer cancel()
+		_, err := c.Ingest(attemptCtx, env)
+		return err
+	}
+
+	// First attempt. On transport-level failure (no HTTPError —
+	// the daemon never answered: timeout, EOF, connection refused)
+	// retry once. Since the 6bd20e5 fix the daemon's enqueue runs
+	// on its own decoupled ingestEnqueueBudget=10s, so a hook that
+	// gave up at the client deadline (default 5s) commonly times
+	// out *while the daemon is still committing the row*. The
+	// retry then hits UNIQUE(event_id) on ingest_pending and gets
+	// a clean 200 with deduped=true — turning what used to be a
+	// phantom "event_dropped" + outage banner into a quiet success.
+	//
+	// Skipped when:
+	//   - The error is an *HTTPError (the daemon answered, including
+	//     503 queue-full and any 4xx validation failure). Retrying
+	//     wouldn't change the outcome and 503 retries actively make
+	//     the backlog worse.
+	//   - parentCtx is already canceled (the user hit ^C). Retrying
+	//     after the user asked the agent to stop defies intent.
+	err = postOnce()
+	if err != nil {
+		var httpErr *apiclient.HTTPError
+		if !errors.As(err, &httpErr) && parentCtx.Err() == nil {
+			log.Info("ingest: retrying after transport error",
+				"event_id", env.EventID, "first_err", err)
+			err = postOnce()
+		}
+	}
+	if err != nil {
 		// "event_dropped" is the explicit, greppable key — the
 		// previous "post to aichronicles-api" wording buried the
 		// fact that the user has just lost an event. Per-line

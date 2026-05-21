@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -413,8 +414,11 @@ func TestCLI_IngestHangingDaemon_FlipsOutageFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunHook must not surface the timeout to the hook, got: %v", err)
 	}
-	// defaultHookTimeout is 5s; allow generous slack for slow CI.
-	if elapsed > 10*time.Second {
+	// defaultHookTimeout is 5s, and a transport-level failure
+	// triggers one retry — so a wedged daemon costs ~2× budget
+	// (one timeout per attempt). Bound at 12s = 2×5s + 2s slack
+	// for slow CI; well under any sane hook stall ceiling.
+	if elapsed > 12*time.Second {
 		t.Errorf("RunHook blocked for %v on a hanging daemon; the timeout did not trip", elapsed)
 	}
 	if !strings.Contains(stderr.String(), "event_dropped") {
@@ -538,5 +542,137 @@ func TestCLI_Ingest503QueueFull_FlipsOutageFlag(t *testing.T) {
 	if _, err := os.Stat(flag); err != nil {
 		t.Fatalf("503-queue-full must flip the outage flag at %s; got: %v",
 			flag, err)
+	}
+}
+
+// TestCLI_HookRetriesTransportFailureOnce pins the retry policy
+// for transport-level failures. The hook's first POST times out
+// against a daemon that's accepted-but-slow; without the retry,
+// this trips an "event_dropped" + outage notification even though
+// the daemon (post-6bd20e5) is still committing the row on its
+// decoupled 10s enqueue budget. A second POST sees the row land
+// via UNIQUE(event_id) and gets a clean 200 — the user sees no
+// drop and no outage banner.
+//
+// The fake daemon here is counter-based: attempt #1 hijacks the
+// conn and holds it past the client's timeout, attempt #2 returns
+// 200 immediately. The hook's [limits].ingest_timeout is dropped
+// to 100ms via a config.toml under XDG_CONFIG_HOME so the test
+// finishes in well under a second.
+func TestCLI_HookRetriesTransportFailureOnce(t *testing.T) {
+	isolateEnv(t)
+	// Tight ingest_timeout so attempt #1 times out fast.
+	configDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "aichronicles")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"),
+		[]byte("[limits]\ningest_timeout = \"100ms\"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	sockPath := filepath.Join(t.TempDir(), "sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	var attempts atomic.Int32
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := attempts.Add(1)
+		if n == 1 {
+			// Attempt #1: hijack the connection, hold past the
+			// client's 100ms deadline, then close without writing
+			// a response. From the client's perspective this is a
+			// transport-level timeout — exactly the loaded-box
+			// failure mode that used to falsely flip the outage
+			// flag.
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				t.Errorf("ResponseWriter is not a Hijacker")
+				return
+			}
+			conn, _, err := hj.Hijack()
+			if err != nil {
+				t.Errorf("hijack: %v", err)
+				return
+			}
+			time.Sleep(400 * time.Millisecond)
+			_ = conn.Close()
+			return
+		}
+		// Attempt #2: real 200 with a Deduped ack, as the daemon
+		// would return when the first attempt's row had already
+		// landed via UNIQUE(event_id).
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"event_id":"retry-1","session_id":"retry-1","deduped":true}`))
+	})
+	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = srv.Serve(ln) }()
+	defer func() { _ = srv.Close() }()
+
+	hook := []byte(`{"session_id":"retry-1","hook_event_name":"UserPromptSubmit","cwd":"/","prompt":"hi"}`)
+	var stderr bytes.Buffer
+	start := time.Now()
+	if err := cli.RunHook(t.Context(), bytes.NewReader(hook), &stderr, sockPath, ""); err != nil {
+		t.Fatalf("RunHook returned error: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	if got := attempts.Load(); got != 2 {
+		t.Errorf("expected exactly 2 POST attempts, got %d", got)
+	}
+	if strings.Contains(stderr.String(), "event_dropped") {
+		t.Errorf("retry-recovered ingest must NOT log event_dropped; stderr=%q", stderr.String())
+	}
+	flag := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "aichronicles", "outage.flag")
+	if _, err := os.Stat(flag); !os.IsNotExist(err) {
+		t.Errorf("retry-recovered ingest must NOT flip the outage flag; stat=%v", err)
+	}
+	// 1st attempt waits 100ms then times out; retry returns
+	// instantly. Cap at 2s as a slow-CI safety bound.
+	if elapsed > 2*time.Second {
+		t.Errorf("RunHook took %v; retry path is too slow", elapsed)
+	}
+}
+
+// TestCLI_HookDoesNotRetry503QueueFull pins the negative-space
+// half of the retry policy: an HTTP 503 from the daemon means the
+// queue is saturated, retrying is actively harmful (adds load to
+// an already-overwhelmed worker), and the operator still needs
+// the outage banner to see backpressure. The hook must POST
+// exactly once and let the original drop path run.
+func TestCLI_HookDoesNotRetry503QueueFull(t *testing.T) {
+	isolateEnv(t)
+	sockPath := filepath.Join(t.TempDir(), "sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	var attempts atomic.Int32
+	srv503 := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			attempts.Add(1)
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"title":"Ingest queue is full","status":503,"detail":"pending=10000 max=10000"}`))
+		}),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() { _ = srv503.Serve(ln) }()
+	defer func() { _ = srv503.Close() }()
+
+	hook := []byte(`{"session_id":"qf2","hook_event_name":"UserPromptSubmit","cwd":"/","prompt":"hi"}`)
+	var stderr bytes.Buffer
+	if err := cli.RunHook(t.Context(), bytes.NewReader(hook), &stderr, sockPath, ""); err != nil {
+		t.Fatalf("RunHook returned error: %v", err)
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Errorf("503 must NOT be retried; got %d POSTs, want 1", got)
+	}
+	if !strings.Contains(stderr.String(), "event_dropped") {
+		t.Errorf("expected stderr to log the dropped event, got %q", stderr.String())
 	}
 }
