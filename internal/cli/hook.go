@@ -24,23 +24,23 @@ import (
 // can never block a Claude hook for long when [limits].ingest_timeout
 // isn't set.
 //
-// History: this was 250ms, sized for a sub-millisecond UDS POST +
-// a tiny SQLite insert. The daemon's synchronous pipeline grew
-// (redact → re-marshal → 6 AFTER-INSERT triggers including two
-// FTS5 inserts) without the budget being revisited, so multi-MB
-// tool_result envelopes started missing the deadline structurally
-// — every large hook would silently lose its event. 2s is the
-// stopgap: enough headroom that a 5-10 MB envelope makes it
-// through on a healthy system, while still bounding the worst-
-// case hook stall in front of the user.
+// History: 250ms → 2s → 5s. The 250ms default was sized for a sub-
+// millisecond UDS POST + a tiny SQLite insert; the daemon's
+// synchronous pipeline outgrew it and large hooks silently lost
+// events. The 2s stopgap was sized for a healthy box; under
+// real-world CPU/IO contention (e.g. a parallel build, a heavy LLM
+// turn, a backed-up disk) the daemon's body-read + CAS + tiny tx
+// + commit can blow past 2s, the client cancels, and the hook
+// emits event_dropped — even though, since the 6bd20e5 fix, the
+// daemon's enqueue runs on its own decoupled ingestEnqueueBudget
+// (10s) and the row almost always still lands. 5s aligns the
+// CLI-side deadline closer to that internal budget so loaded-box
+// drops stop showing up as phantom outage notifications, while
+// still capping the worst-case hook stall in front of the user.
 //
-// The proper fix is two-phase ingest (the daemon writes raw bytes
-// in a tiny tx and returns 200 immediately, then a worker drains
-// the queue out-of-band); see internal/api/ingest_worker.go.
-// Once that ships and is enabled by default, this can drop back
-// toward 100-200ms. Until then, operators can still override per
-// machine via [limits].ingest_timeout.
-const defaultHookTimeout = 2 * time.Second
+// Operators on slower machines can override further via
+// [limits].ingest_timeout.
+const defaultHookTimeout = 5 * time.Second
 
 // defaultHookAgent is the agent slug hook uses when invoked
 // without --agent. Claude Code is the historical default and the

@@ -413,8 +413,8 @@ func TestCLI_IngestHangingDaemon_FlipsOutageFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunHook must not surface the timeout to the hook, got: %v", err)
 	}
-	// defaultHookTimeout is 2s; allow generous slack for slow CI.
-	if elapsed > 5*time.Second {
+	// defaultHookTimeout is 5s; allow generous slack for slow CI.
+	if elapsed > 10*time.Second {
 		t.Errorf("RunHook blocked for %v on a hanging daemon; the timeout did not trip", elapsed)
 	}
 	if !strings.Contains(stderr.String(), "event_dropped") {
@@ -446,7 +446,7 @@ func TestCLI_HookHonorsParentContextCancellation(t *testing.T) {
 	// TestCLI_IngestHangingDaemon_FlipsOutageFlag: accept the
 	// connection, then never read or respond. With Background()
 	// as parent the call would wait the full defaultHookTimeout
-	// (2s); with the parent ctx canceled, it should exit fast.
+	// (5s); with the parent ctx canceled, it should exit fast.
 	sockPath := filepath.Join(t.TempDir(), "sock")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
