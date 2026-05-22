@@ -541,7 +541,7 @@ vendor SDKs:
 | Forced tool | `tool_choice={type:"tool",name:...}` | `tool_choice={type:"function",function:{name:...}}` |
 | Strict schema | Inherent | `strict: true` on the function definition |
 | Retries | SDK `option.WithMaxRetries` | SDK `option.WithMaxRetries` |
-| Default model | `claude-sonnet-4-6` | `gpt-4o-mini` |
+| Default model | `claude-opus-4-7` | `gpt-4o-mini` |
 
 The adapters translate `llm.Request` ↔ SDK params on the way in,
 and SDK response ↔ `llm.Response` on the way out. Tool input

@@ -30,7 +30,7 @@ func TestProviderLabel(t *testing.T) {
 // TestResolveModelLabel covers the model-name resolver used by
 // command headers. flagModel wins when non-empty; otherwise the
 // per-provider default constant is surfaced so the user sees the
-// real model id (e.g. "claude-sonnet-4-6") rather than a generic
+// real model id (e.g. "claude-opus-4-7") rather than a generic
 // "(provider default)" placeholder.
 func TestResolveModelLabel(t *testing.T) {
 	t.Parallel()

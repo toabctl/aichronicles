@@ -24,9 +24,14 @@ import (
 const AnthropicEndpoint = "https://api.anthropic.com/v1/messages"
 
 // DefaultAnthropicModel is the identifier Block B features fall back
-// to when the user has not specified one. Kept conservative; callers
-// can override per-request via Request.Model.
-const DefaultAnthropicModel = "claude-sonnet-4-6"
+// to when the user has not specified one. Opus 4.7 is the most
+// capable Claude model currently available; aichronicles uses it
+// across the board (summarize, reflect, propose, challenge,
+// induction, search-summarize) for the best output quality on the
+// memory-extraction pipeline. Callers can still override per-request
+// via Request.Model — pass --model claude-sonnet-4-6 (or another id)
+// on the CLI to trade quality for cost on a specific run.
+const DefaultAnthropicModel = "claude-opus-4-7"
 
 // DefaultMaxRetries is the retry budget the SDK is configured with
 // when a caller leaves Anthropic.MaxRetries at zero. The SDK's own

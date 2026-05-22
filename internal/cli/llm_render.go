@@ -56,7 +56,7 @@ func providerLabel(cfg llm.Config) string {
 // expect to see in API requests for the given provider. When a
 // flag-supplied model is non-empty it wins; otherwise we pick up
 // the provider-specific default constant from internal/llm so the
-// command header shows the real model id ("claude-sonnet-4-6")
+// command header shows the real model id ("claude-opus-4-7")
 // rather than a generic "(provider default)" placeholder.
 //
 // The constants stay the source of truth — bump them in internal/llm
