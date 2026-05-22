@@ -245,14 +245,26 @@ func loadSessionsForList(ctx context.Context, s *Server, limit int, f sessionLis
 	out := make([]SessionRow, 0, len(digests.Sessions))
 	ids := make([]string, 0, len(digests.Sessions))
 	for _, d := range digests.Sessions {
+		// Resume one-liners use start_cwd because `claude --resume`
+		// indexes transcripts by session-start cwd (see the longer
+		// rationale on buildResumeCommandPtr). Fall back to the
+		// row's latest cwd when start_cwd is nil — matches the
+		// session-detail handler's same fallback so the two pages
+		// always agree on the rendered command.
+		resumeCwd := d.StartCwd
+		if resumeCwd == nil {
+			resumeCwd = d.Cwd
+		}
 		out = append(out, SessionRow{
-			ID:           d.ID,
-			ShortID:      preview.ShortID(d.ID),
-			LastActivity: relativeTime(effectiveTsPtr(d.StartedAtMs, d.EndedAtMs), now),
-			EventCount:   d.EventCount,
-			Cwd:          orDashPtr(d.Cwd),
-			SourceAgent:  d.SourceAgent,
-			FirstPrompt:  truncatePreviewString(derefOr(d.FirstPrompt, "")),
+			ID:                     d.ID,
+			ShortID:                preview.ShortID(d.ID),
+			LastActivity:           relativeTime(effectiveTsPtr(d.StartedAtMs, d.EndedAtMs), now),
+			EventCount:             d.EventCount,
+			Cwd:                    orDashPtr(d.Cwd),
+			SourceAgent:            d.SourceAgent,
+			FirstPrompt:            truncatePreviewString(derefOr(d.FirstPrompt, "")),
+			ResumeCommand:          buildResumeCommandPtr(d.SourceAgent, d.SourceSessionID, resumeCwd),
+			ResumeCommandDangerous: buildResumeCommandDangerousPtr(d.SourceAgent, d.SourceSessionID, resumeCwd),
 		})
 		ids = append(ids, d.ID)
 	}

@@ -554,6 +554,47 @@ func TestSessionsPage_LatestCellEmptyForSessionWithNoEvents(t *testing.T) {
 	}
 }
 
+// TestSessionsPage_RenderResumeIconButtons pins the contract the
+// sessions-list resume buttons rely on. For a claude-code row
+// both icons must render with the exact one-liner (cd + claude
+// --resume) and the --dangerously-skip-permissions variant. For a
+// gemini-cli row only the regular icon renders (the skip-perms
+// flag is Claude-Code-specific). Regression for a future template
+// edit that might silently drop the buttons or rebuild them
+// without start_cwd.
+func TestSessionsPage_RenderResumeIconButtons(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	seedSessionFull(t, st, "claude-code", "sess-cc", "claude prompt", "/work/cc", now)
+	seedSessionFull(t, st, "gemini-cli", "sess-gem", "gemini prompt", "/work/gem", now.Add(time.Hour))
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	_, body := fetch(t, base+"/")
+
+	// Claude-Code row: both icon buttons with the exact payload.
+	for _, want := range []string{
+		`data-resume-cmd="cd /work/cc &amp;&amp; claude --resume sess-cc"`,
+		`data-resume-cmd="cd /work/cc &amp;&amp; claude --resume sess-cc --dangerously-skip-permissions"`,
+		`resume-btn-icon`,
+		`resume-btn-dangerous`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q\n--- body ---\n%s", want, body)
+		}
+	}
+
+	// Gemini row: regular resume present, dangerous variant absent.
+	if !strings.Contains(body, `data-resume-cmd="cd /work/gem &amp;&amp; gemini --resume sess-gem"`) {
+		t.Errorf("body missing gemini resume button payload")
+	}
+	if strings.Contains(body, `gemini --resume sess-gem --dangerously-skip-permissions`) {
+		t.Errorf("gemini row must NOT render the --dangerously-skip-permissions variant")
+	}
+}
+
 func TestStaticAssets_Served(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)

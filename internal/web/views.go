@@ -97,6 +97,15 @@ type SessionRow struct {
 	// the session has no events yet — the template falls through
 	// to a muted placeholder in that case.
 	LatestEventHTML template.HTML
+
+	// ResumeCommand / ResumeCommandDangerous power the two icon
+	// buttons in the rightmost cell — same payload shape as the
+	// session detail page's larger buttons, just rendered smaller.
+	// Empty when SourceAgent is unknown / SourceSessionID missing
+	// (the template branches on emptiness and hides the button
+	// rather than copy "" into the user's terminal).
+	ResumeCommand          string
+	ResumeCommandDangerous string
 }
 
 // SessionDetail is the data shape the session detail template

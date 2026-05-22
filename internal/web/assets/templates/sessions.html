@@ -74,7 +74,21 @@
         <td class="latest"
             sse-swap="session-{{.ID}}"
             hx-swap="innerHTML">{{if .LatestEventHTML}}{{.LatestEventHTML}}{{else}}<span class="empty">—</span>{{end}}</td>
-        <td>{{if .HasSummary}}<span class="badge badge-summary"{{if .SummaryTooltip}} title="{{.SummaryTooltip}}"{{end}}>summary</span>{{end}}</td>
+        <td class="row-actions">
+          {{if .HasSummary}}<span class="badge badge-summary"{{if .SummaryTooltip}} title="{{.SummaryTooltip}}"{{end}}>summary</span>{{end}}
+          {{if .ResumeCommand}}
+          <button type="button"
+                  class="resume-btn resume-btn-icon"
+                  data-resume-cmd="{{.ResumeCommand}}"
+                  title="Copy `{{.ResumeCommand}}` to clipboard so you can paste it in a terminal to resume the agent">↻</button>
+          {{end}}
+          {{if .ResumeCommandDangerous}}
+          <button type="button"
+                  class="resume-btn resume-btn-icon resume-btn-dangerous"
+                  data-resume-cmd="{{.ResumeCommandDangerous}}"
+                  title="Copy `{{.ResumeCommandDangerous}}` to clipboard — resume with --dangerously-skip-permissions">⚡</button>
+          {{end}}
+        </td>
       </tr>
       {{end}}
     </tbody>

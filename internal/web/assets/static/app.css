@@ -272,6 +272,27 @@ tr.nav-row:focus-visible {
   color: #92400e;
 }
 
+/* Icon-only variant of .resume-btn for the sessions-list rightmost
+   cell. Tighter padding + larger glyph so the buttons read as
+   single-character icons (↻ / ⚡) next to the summary badge instead
+   of dominating the row. Tooltip carries the full command. The
+   "✓ copied" flash still wins via .resume-btn-copied. */
+.resume-btn.resume-btn-icon {
+  margin-left: 0.25rem;
+  padding: 0.05rem 0.35rem;
+  font-size: 0.85em;
+  line-height: 1;
+}
+
+/* Rightmost <td> on each sessions-list row — keeps the summary
+   badge and resume icons inline-aligned without wrapping under
+   each other on narrow viewports. white-space:nowrap mirrors the
+   cell's intent: it's a row of compact controls, not flowing
+   text. */
+td.row-actions {
+  white-space: nowrap;
+}
+
 /* Cached-summary topic shown inline below the first prompt on
    search results. Muted + italic so the prompt remains the primary
    signal in places that still surface both. */
