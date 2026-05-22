@@ -1040,7 +1040,13 @@ rearchitecture collapsed that into a single store-owning process.)</p>
 <td><code>aichronicles-api</code></td>
 <td>Long-running daemon</td>
 <td>systemd <code>--user</code> unit, socket-activated</td>
-<td>The single SQLite-handling process. Serves <code>/v1/*</code> JSON read+write API, <code>/v1/stream</code> SSE live activity, <code>/</code> web HTML (folded in once <code>internal/web</code> migration completes). Server-side redaction; the only point of "no unredacted bytes in storage" enforcement.</td>
+<td>The single SQLite-handling process. Serves <code>/v1/*</code> JSON read+write API and <code>/v1/stream</code> SSE live activity. Server-side redaction; the only point of "no unredacted bytes in storage" enforcement.</td>
+</tr>
+<tr>
+<td><code>aichronicles-web</code></td>
+<td>Long-running daemon</td>
+<td>systemd <code>--user</code> unit (<code>aichronicles-web.service</code>)</td>
+<td>Renders <code>/</code> web HTML. Reads via <code>internal/apiclient</code> against <code>aichronicles-api</code>'s UDS — separate process so a web-handler bug can't take down ingest.</td>
 </tr>
 <tr>
 <td><code>aichronicles hook</code></td>
@@ -1393,18 +1399,22 @@ internal/api naming clash).</p>
 </span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>internal/api         ──▶ internal/wire, internal/events, internal/store, internal/redact
 </span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>internal/apiclient   ──▶ internal/wire, internal/events
 </span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>internal/agents      ──▶ (no internal deps)
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>internal/mcp         ──▶ internal/apiclient, internal/events, internal/llm
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>                         (cross-process; reads via the api UDS)
-</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>internal/web         ──▶ internal/events, internal/store, internal/llm/prompts
-</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>                         (separate process; reads SQLite directly via WAL —
-</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>                          slated to migrate to apiclient like mcp did)
-</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>internal/store       ──▶ internal/events
-</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>internal/llm/prompts      ──▶ internal/events, internal/llm, internal/redact, internal/store
-</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>internal/llm              ──▶ internal/redact (egress scrub)
-</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>internal/events/sources/* ──▶ internal/events, internal/agents (slug only)
-</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>internal/wire              ──▶ (stdlib only)
-</span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>internal/events           ──▶ internal/redact (for ScannerRedactor adapter)
-</span><span id="__span-2-22"><a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>internal/redact           ──▶ (no aichronicles deps)
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>internal/mcp         ──▶ internal/apiclient, internal/wire, internal/llm,
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>                         internal/llm/prompts, internal/skills, internal/preview,
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>                         internal/timefmt
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>                         (cross-process; reads via the api UDS)
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>internal/web         ──▶ internal/apiclient, internal/wire, internal/preview,
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>                         internal/timefmt
+</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>                         (cross-process daemon — aichronicles-web.service —
+</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>                          fronting the api UDS; the previous &quot;reads SQLite
+</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>                          directly via WAL&quot; arrow was the pre-split design)
+</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>internal/store       ──▶ internal/events, internal/wire, internal/nullable, internal/redact
+</span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>internal/llm/prompts      ──▶ internal/events, internal/llm, internal/redact, internal/wire
+</span><span id="__span-2-22"><a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>internal/llm              ──▶ internal/redact (egress scrub)
+</span><span id="__span-2-23"><a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>internal/events/sources/* ──▶ internal/events, internal/agents (slug only)
+</span><span id="__span-2-24"><a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>internal/wire              ──▶ (stdlib only)
+</span><span id="__span-2-25"><a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>internal/events           ──▶ internal/redact (for ScannerRedactor adapter)
+</span><span id="__span-2-26"><a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>internal/redact           ──▶ (no aichronicles deps; enforced by depcheck)
 </span></code></pre></div>
 <p>Enforced rules:</p>
 <table>
@@ -1573,7 +1583,7 @@ vendor SDKs:</p>
 </tr>
 <tr>
 <td>Default model</td>
-<td><code>claude-sonnet-4-6</code></td>
+<td><code>claude-opus-4-7</code></td>
 <td><code>gpt-4o-mini</code></td>
 </tr>
 </tbody>
@@ -1600,9 +1610,14 @@ registers a set of read-only tools (<code>search_events</code>,
 <code>search_with_summary</code>, <code>get_skill_staleness</code>, <code>get_project_context</code>,
 <code>get_insights</code>, <code>list_skills</code>, <code>list_subagents</code>, <code>list_workflows</code>,
 <code>find_fact_subjects</code>).</p>
-<p>All tools read through <code>*store.Store</code> — no privileged writes. An
-MCP client that compromises its sandbox still only reads stored
-events, already scrubbed at ingest. Tool registration: <code>internal/mcp/tools_aichronicles.go</code>.</p>
+<p>All tools read through <code>internal/apiclient</code> against
+<code>aichronicles-api</code> over UDS — no privileged writes, no direct
+SQLite access from the MCP process. An MCP client that compromises
+its sandbox still only reads stored events, already scrubbed at
+ingest. Tool registration entry points: <code>internal/mcp/tools_apiclient.go</code>
+(<code>RegisterAichroniclesAPITools</code>, the bulk of the catalog),
+<code>internal/mcp/tools_analytics.go</code>, <code>internal/mcp/tools_aichronicles_llm.go</code>;
+helpers in <code>internal/mcp/tools_aichronicles.go</code>.</p>
 <p>We deliberately do not depend on an external MCP SDK. The
 protocol surface we use is small and stable, and self-contained
 matches the rest of the tree's tight dependency posture.</p>

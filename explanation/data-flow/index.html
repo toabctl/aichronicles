@@ -900,7 +900,7 @@ outage feels the way it does.</p>
 <tbody>
 <tr>
 <td>Claude Code / Gemini CLI hook fires</td>
-<td><code>aichronicles ingest</code> → daemon → <code>raw_envelopes</code> + <code>events</code> (+ FTS / extractions / sessions aggregates)</td>
+<td><code>aichronicles hook</code> → daemon → <code>raw_envelopes</code> + <code>events</code> (+ FTS / extractions / sessions aggregates)</td>
 <td>Every event (prompt, tool call, response, …)</td>
 </tr>
 <tr>
@@ -940,7 +940,7 @@ outage feels the way it does.</p>
 </tr>
 <tr>
 <td>MCP tool call from Claude Code (<code>search_events</code>, <code>find_episodes</code>, <code>get_summary</code>, …)</td>
-<td>Read-only SQL against the store; no writes</td>
+<td>Read-only HTTP through <code>internal/apiclient</code> against <code>aichronicles-api</code>'s UDS; no writes</td>
 <td>Per agent tool-use, while a session is active</td>
 </tr>
 </tbody>

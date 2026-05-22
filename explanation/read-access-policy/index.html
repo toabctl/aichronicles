@@ -628,15 +628,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#what-changes-if-the-unified-daemon-with-folded-web-design-ever" class="md-nav__link">
-    <span class="md-ellipsis">
-      What changes if the unified-daemon-with-folded-web design ever
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -664,8 +655,9 @@
 <p>Who is allowed to call into <code>internal/store</code> directly, and who must go
 through the wire (<code>internal/apiclient</code> → UDS → <code>internal/api</code>)?</p>
 <h2 id="the-rule">The rule<a class="headerlink" href="#the-rule" title="Permanent link">&para;</a></h2>
-<p><strong>In-process readers may share the <code>*store.Store</code> handle.
-Out-of-process readers MUST go through <code>internal/apiclient</code>.</strong></p>
+<p><strong>Only <code>aichronicles-api</code> is allowed to bind <code>internal/store</code>. Every
+other process — CLI, web, MCP — reads + writes through
+<code>internal/apiclient</code> against the daemon's UDS.</strong></p>
 <table>
 <thead>
 <tr>
@@ -682,13 +674,13 @@ Out-of-process readers MUST go through <code>internal/apiclient</code>.</strong>
 </tr>
 <tr>
 <td><code>internal/web</code></td>
-<td><code>aichronicles-api</code> daemon (folded in)</td>
-<td>direct <code>internal/store</code> (same handle, same process)</td>
+<td><code>aichronicles-web.service</code> daemon (separate process from api)</td>
+<td><code>internal/apiclient</code> only</td>
 </tr>
 <tr>
 <td><code>internal/cli</code></td>
 <td>per-command CLI (<code>aichronicles ...</code>)</td>
-<td><code>internal/apiclient</code> only</td>
+<td><code>internal/apiclient</code> for read paths; direct <code>internal/store</code> only for designated writer commands (induction, reflect, scrub, prune, backfill) that legitimately need exclusive store access</td>
 </tr>
 <tr>
 <td><code>internal/mcp</code></td>
@@ -714,29 +706,32 @@ running in a separate process either:</p>
 from it. Today every cross-process consumer reads through the
 daemon's HTTP-over-UDS surface and the daemon is the only SQLite
 opener.</p>
-<p>For same-process consumers (the web HTML surface mounted inside the
-daemon process), going through a UDS hop to its own process would
-add latency and a connection per page-load for zero benefit. Sharing
-the handle is correct.</p>
+<p>The previous version of this doc described an alternate design where
+<code>internal/web</code> ran inside the api daemon process and shared the
+<code>*store.Store</code> handle in-process. That design was reverted —
+<code>aichronicles-web</code> is now a separately-supervised systemd unit
+(<code>aichronicles-web.service</code>) that fronts the api's UDS. The
+blast-radius isolation (a web-handler bug can't take down ingest) was
+the load-bearing reason; the latency hit of the extra hop is
+negligible for the personal-use scale.</p>
 <h2 id="enforcement">Enforcement<a class="headerlink" href="#enforcement" title="Permanent link">&para;</a></h2>
 <p><code>tools/depcheck</code> enforces this rule mechanically:</p>
 <ul>
-<li><code>internal/cli</code> and <code>internal/mcp</code> must not call
+<li><code>internal/cli</code>, <code>internal/mcp</code>, and <code>internal/web</code> must not call
   <code>store.Load*|Save*|Insert*|Update*|Delete*|Has*|Last*|Query*|Vacuum*|Segment*</code>
   in non-test files. Test files are exempt because they spin up an
   in-process api server against a temp store — sharing the handle in
   a test is fine.</li>
-<li><code>internal/web</code> is INTENTIONALLY not subject to this rule.</li>
+<li>Several supplementary layering rules guard the dependency arrows:
+  <code>internal/store</code> must not import <code>internal/api</code>, <code>internal/apiclient</code>,
+  the orchestration layers, or <code>net/http</code>; <code>internal/redact</code> must not
+  import any sibling <code>internal/*</code>; <code>cmd/aichronicles</code> must not import
+  <code>internal/api</code>. Run <code>go run ./tools/depcheck</code> to verify the full set;
+  CI runs it on every PR.</li>
 </ul>
-<p>Run <code>go run ./tools/depcheck</code> to verify; CI runs it on every PR.</p>
-<h2 id="what-changes-if-the-unified-daemon-with-folded-web-design-ever">What changes if the unified-daemon-with-folded-web design ever<a class="headerlink" href="#what-changes-if-the-unified-daemon-with-folded-web-design-ever" title="Permanent link">&para;</a></h2>
-<p>splits</p>
-<p>If <code>aichronicles web</code> were to revert to a separately-supervised
-sibling process (the architectural follow-up flagged as HIGH #4 in
-arch_review_2026_05_13), <code>internal/web</code> would also fall under the
-"out-of-process" bucket and the depcheck rule would extend to cover
-it. Until then, the in-process share is the right choice.</p>
-<p>History: arch_review_2026_05_13 MEDIUM #5.</p>
+<p>History: arch_review_2026_05_13 MEDIUM #5 (cross-process migration),
+arch_review_2026_05_14 (web split + depcheck rule expansion),
+arch_review_2026_05_14_late (post-split doc refresh).</p>
 
 
 
