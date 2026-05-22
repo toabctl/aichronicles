@@ -718,3 +718,81 @@ func TestLoadSessionDigest_FindsSessionRegardlessOfAge(t *testing.T) {
 		t.Errorf("ID: got %s, want %s", got.ID, wantID)
 	}
 }
+
+// TestLoadSessionDigests_PopulateResumeFields pins the contract the
+// web sessions list relies on: every list-path digest loader
+// (plain recent + faceted) must surface start_cwd, source_agent,
+// and source_session_id so per-row Resume buttons can be rendered
+// without an N+1 fetch on /v1/sessions/{id}/start-cwd. Regression
+// for the post-sessions-list-resume-buttons feature where these
+// fields were silently dropped from the plain-recent SELECT and
+// rows came back unable to build a `claude --resume` command.
+func TestLoadSessionDigests_PopulateResumeFields(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	base := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+
+	// One event with a non-empty cwd so the migration-015 trigger
+	// records start_cwd. Source agent / id come straight from the
+	// envelope and are anchored on the sessions row by the migration-
+	// 001 trigger family.
+	env := &events.Envelope{
+		V:               1,
+		EventID:         uuid.Must(uuid.NewV7()).String(),
+		SourceAgent:     "claude-code",
+		SourceSessionID: "resume-fields",
+		Kind:            "user_prompt",
+		Role:            "user",
+		TsSource:        base,
+		Cwd:             "/work/foo",
+		Payload:         map[string]any{"i": 0},
+		Redaction:       &events.Redaction{Applied: true},
+	}
+	withTx(t, s, func(tx *sql.Tx) {
+		if _, _, err := IngestEnvelope(t.Context(), tx, env, []byte(`{"v":1}`), env.TsSource.UnixMilli()); err != nil {
+			t.Fatalf("seed ingest: %v", err)
+		}
+	})
+
+	wantID := events.DeriveSessionID("claude-code", "resume-fields")
+	wantCwd := "/work/foo"
+
+	check := func(t *testing.T, name string, got SessionDigestRow) {
+		t.Helper()
+		if got.ID != wantID {
+			t.Errorf("%s ID: got %s, want %s", name, got.ID, wantID)
+		}
+		if got.StartCwd == nil || *got.StartCwd != wantCwd {
+			t.Errorf("%s StartCwd: got %v, want %q", name, got.StartCwd, wantCwd)
+		}
+		if got.SourceAgent != "claude-code" {
+			t.Errorf("%s SourceAgent: got %q, want claude-code", name, got.SourceAgent)
+		}
+		if got.SourceSessionID != "resume-fields" {
+			t.Errorf("%s SourceSessionID: got %q, want resume-fields", name, got.SourceSessionID)
+		}
+	}
+
+	t.Run("recent", func(t *testing.T) {
+		rows, err := LoadRecentSessionDigests(t.Context(), s.DB(), 1, 10)
+		if err != nil {
+			t.Fatalf("LoadRecentSessionDigests: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("expected 1 row, got %d", len(rows))
+		}
+		check(t, "recent", rows[0])
+	})
+
+	t.Run("faceted", func(t *testing.T) {
+		rows, err := LoadSessionsForListFaceted(t.Context(), s.DB(),
+			SessionListFacets{SourceAgent: "claude-code"}, 1, 10)
+		if err != nil {
+			t.Fatalf("LoadSessionsForListFaceted: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("expected 1 row, got %d", len(rows))
+		}
+		check(t, "faceted", rows[0])
+	})
+}

@@ -22,12 +22,17 @@ type SessionDigest struct {
 	EventCount int `json:"event_count,omitempty"`
 	// SourceAgent / SourceSessionID identify the upstream agent
 	// (claude-code / gemini-cli / …) and its own session id.
-	// Populated by the detail endpoint (/v1/sessions/{id}); the
-	// list endpoint leaves them empty (omitempty) to keep the
-	// response slim. Consumed by the web's Resume button to
-	// render `claude --resume <id>` / `gemini --resume <id>`.
+	// Populated by both list and detail endpoints. Consumed by
+	// the web's Resume buttons to render `claude --resume <id>` /
+	// `gemini --resume <id>`.
 	SourceAgent     string `json:"source_agent,omitempty"`
 	SourceSessionID string `json:"source_session_id,omitempty"`
+	// StartCwd is the cwd captured on the session's first non-null
+	// event — what `claude --resume` keys on (not the latest Cwd).
+	// nil when no event captured a cwd. Populated by GET /v1/sessions
+	// so the web list can render Resume buttons without N+1 hits on
+	// GET /v1/sessions/{id}/start-cwd.
+	StartCwd *string `json:"start_cwd,omitempty"`
 }
 
 // SessionListRequest is the query-shape for GET /v1/sessions.

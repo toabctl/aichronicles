@@ -522,12 +522,20 @@ type SessionDigestRow struct {
 	Cwd           *string
 	FirstPrompt   *string
 	LatestSummary *string
+	// StartCwd is sessions.start_cwd — the cwd captured on the
+	// session's first non-null event. nil when no event captured a
+	// cwd. Distinct from Cwd (which reflects the *latest* event's
+	// cwd) because `claude --resume` indexes transcripts by start
+	// cwd, so resume one-liners must `cd` there regardless of where
+	// the session ended up. Populated by the list-path loaders
+	// (LoadRecentSessionDigests + LoadSessionsForListFaceted) so
+	// the web list can render per-row Resume buttons without N+1
+	// fetches against /v1/sessions/{id}/start-cwd.
+	StartCwd *string
 	// SourceAgent / SourceSessionID identify the upstream agent
 	// (claude-code / gemini-cli / …) and its native session id.
-	// Populated by LoadSessionDigest (the detail-path loader) and
-	// LoadSessionsForListFaceted (the faceted-list loader); plain
-	// LoadRecentSessionDigests leaves them empty since the list
-	// response can omit them.
+	// Populated by every list/detail digest loader; consumed by
+	// the web to render Resume buttons.
 	SourceAgent     string
 	SourceSessionID string
 	// EventCount is populated by the faceted-list loader (which
@@ -549,11 +557,12 @@ func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs int64, li
 		limit = 30
 	}
 	rows, err := db.QueryContext(ctx,
-		`SELECT s.id, s.started_at_ms, s.ended_at_ms, s.cwd,
+		`SELECT s.id, s.started_at_ms, s.ended_at_ms, s.cwd, s.start_cwd,
 			s.first_prompt_text AS first_prompt,
 			(SELECT body FROM llm_outputs
 				WHERE session_id = s.id AND kind = ?
-				ORDER BY created_at_ms DESC LIMIT 1) AS latest_summary
+				ORDER BY created_at_ms DESC LIMIT 1) AS latest_summary,
+			s.source_agent, s.source_session_id
 		FROM sessions s
 		WHERE `+EffectiveTsExpr+` >= ?
 		ORDER BY `+EffectiveTsExpr+` DESC
@@ -572,15 +581,18 @@ func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs int64, li
 			startedAtMs sql.NullInt64
 			endedAtMs   sql.NullInt64
 			cwd         sql.NullString
+			startCwd    sql.NullString
 			firstPrompt sql.NullString
 			latestSum   sql.NullString
 		)
-		if err := rows.Scan(&r.ID, &startedAtMs, &endedAtMs, &cwd, &firstPrompt, &latestSum); err != nil {
+		if err := rows.Scan(&r.ID, &startedAtMs, &endedAtMs, &cwd, &startCwd,
+			&firstPrompt, &latestSum, &r.SourceAgent, &r.SourceSessionID); err != nil {
 			return nil, fmt.Errorf("scan digest: %w", err)
 		}
 		r.StartedAtMs = nullable.Int64Ptr(startedAtMs)
 		r.EndedAtMs = nullable.Int64Ptr(endedAtMs)
 		r.Cwd = nullable.StringPtr(cwd)
+		r.StartCwd = nullable.StringPtr(startCwd)
 		r.FirstPrompt = nullable.StringPtr(firstPrompt)
 		r.LatestSummary = nullable.StringPtr(latestSum)
 		out = append(out, r)
@@ -627,7 +639,7 @@ func LoadSessionsForListFaceted(ctx context.Context, db *sql.DB, f SessionListFa
 	}
 	q := `
 		SELECT s.id, s.started_at_ms, s.ended_at_ms, s.event_count,
-		       s.cwd, s.first_prompt_text, s.summary_topic,
+		       s.cwd, s.start_cwd, s.first_prompt_text, s.summary_topic,
 		       s.source_agent, s.source_session_id
 		  FROM sessions s`
 	var conds []string
@@ -704,18 +716,20 @@ func LoadSessionsForListFaceted(ctx context.Context, db *sql.DB, f SessionListFa
 			startedAtMs     sql.NullInt64
 			endedAtMs       sql.NullInt64
 			cwd             sql.NullString
+			startCwd        sql.NullString
 			firstPrompt     sql.NullString
 			summaryTopic    sql.NullString
 			sourceAgent     string
 			sourceSessionID string
 		)
 		if err := rows.Scan(&row.ID, &startedAtMs, &endedAtMs, &row.EventCount,
-			&cwd, &firstPrompt, &summaryTopic, &sourceAgent, &sourceSessionID); err != nil {
+			&cwd, &startCwd, &firstPrompt, &summaryTopic, &sourceAgent, &sourceSessionID); err != nil {
 			return nil, fmt.Errorf("scan faceted session row: %w", err)
 		}
 		row.StartedAtMs = nullable.Int64Ptr(startedAtMs)
 		row.EndedAtMs = nullable.Int64Ptr(endedAtMs)
 		row.Cwd = nullable.StringPtr(cwd)
+		row.StartCwd = nullable.StringPtr(startCwd)
 		row.FirstPrompt = nullable.StringPtr(firstPrompt)
 		row.LatestSummary = nullable.StringPtr(summaryTopic)
 		row.SourceAgent = sourceAgent

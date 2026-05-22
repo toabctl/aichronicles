@@ -192,6 +192,7 @@ func sessionDigestRowToWire(row store.SessionDigestRow) wire.SessionDigest {
 		StartedAtMs:     row.StartedAtMs,
 		EndedAtMs:       row.EndedAtMs,
 		Cwd:             row.Cwd,
+		StartCwd:        row.StartCwd,
 		FirstPrompt:     row.FirstPrompt,
 		LatestSummary:   row.LatestSummary,
 		EventCount:      row.EventCount,
