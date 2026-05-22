@@ -25,7 +25,7 @@ aichronicles facts induce --session <id> [flags]
 ### Options
 
 ```
-      --force            bypass the cache and re-call the LLM
+      --force            bypass the llm_outputs cache and re-call the LLM
       --format string    output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help             help for induce
       --model string     LLM model id (default: provider's default)
