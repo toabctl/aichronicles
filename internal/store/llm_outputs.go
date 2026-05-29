@@ -218,6 +218,9 @@ type LLMOutputFilter struct {
 	// Limit caps the result set, newest-first by created_at_ms. A
 	// non-positive value uses DefaultLLMOutputsListLimit.
 	Limit int
+	// Offset skips this many rows before Limit — the OFFSET half of
+	// pagination. The `id DESC` tiebreaker keeps paging stable.
+	Offset int
 }
 
 // DefaultLLMOutputsListLimit is the cap applied when a caller passes
@@ -254,8 +257,8 @@ func LoadLLMOutputs(ctx context.Context, db *sql.DB, filter LLMOutputFilter) ([]
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
-	q += " ORDER BY created_at_ms DESC LIMIT ?"
-	args = append(args, limit)
+	q += " ORDER BY created_at_ms DESC, id DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, filter.Offset)
 
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {

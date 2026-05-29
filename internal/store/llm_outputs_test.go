@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -55,6 +56,58 @@ func TestLoadLLMOutputs_NewestFirstAcrossAllKinds(t *testing.T) {
 	for i, w := range wantOrder {
 		if got[i].Body != w {
 			t.Errorf("row %d: got body %q, want %q", i, got[i].Body, w)
+		}
+	}
+}
+
+func TestLoadLLMOutputs_OffsetPaginates(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	now := time.Now().UnixMilli()
+	const n = 5
+	withTx(t, s, func(tx *sql.Tx) {
+		for i := range n {
+			out := newOutput(LLMKindSummary, fmt.Sprintf("h%d", i), fmt.Sprintf("body-%d", i))
+			out.CreatedAtMs = now - int64(i*1000)
+			if _, _, err := SaveLLMOutput(t.Context(), tx, out); err != nil {
+				t.Fatalf("seed %d: %v", i, err)
+			}
+		}
+	})
+
+	full, err := LoadLLMOutputs(t.Context(), s.DB(), LLMOutputFilter{Limit: 100})
+	if err != nil {
+		t.Fatalf("full: %v", err)
+	}
+	if len(full) != n {
+		t.Fatalf("full: got %d want %d", len(full), n)
+	}
+
+	var paged []LLMOutput
+	seen := map[int64]bool{}
+	for off := 0; ; off += 2 {
+		page, err := LoadLLMOutputs(t.Context(), s.DB(), LLMOutputFilter{Limit: 2, Offset: off})
+		if err != nil {
+			t.Fatalf("offset %d: %v", off, err)
+		}
+		for _, o := range page {
+			if seen[o.ID] {
+				t.Fatalf("output id %d appeared twice across pages", o.ID)
+			}
+			seen[o.ID] = true
+		}
+		paged = append(paged, page...)
+		if len(page) < 2 {
+			break
+		}
+	}
+	if len(paged) != n {
+		t.Fatalf("paged total: got %d want %d", len(paged), n)
+	}
+	for i := range full {
+		if full[i].ID != paged[i].ID {
+			t.Errorf("order mismatch at %d", i)
 		}
 	}
 }

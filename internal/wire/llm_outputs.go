@@ -88,12 +88,13 @@ type SummariesBatchResponse struct {
 	Summaries map[string]LLMOutput `json:"summaries"`
 }
 
-// LLMOutputsListResponse is the body for GET /v1/llm-outputs/list
-// and GET /v1/sessions/{id}/llm-outputs. Wrapped in an object (not a
-// bare array) so future fields like pagination cursors don't break
-// existing clients.
+// LLMOutputsListResponse is the body for GET /v1/llm-outputs and
+// GET /v1/sessions/{id}/llm-outputs. NextCursor (via PageResponse)
+// pages the cross-session list; it stays empty for the per-session
+// sub-resource, which returns a session's outputs in full.
 type LLMOutputsListResponse struct {
 	Outputs []LLMOutput `json:"outputs"`
+	PageResponse
 }
 
 // LLMOutputLastCreatedAtResponse is the body for

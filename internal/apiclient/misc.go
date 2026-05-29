@@ -71,7 +71,7 @@ func (c *Client) LLMOutputsList(ctx context.Context, kind, sessionID string, lim
 	q.SetString("session_id", sessionID)
 	q.SetInt("limit", limit)
 	var out wire.LLMOutputsListResponse
-	if err := c.do(ctx, http.MethodGet, q.URL("/v1/llm-outputs/list"), nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/llm-outputs"), nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Outputs, nil
@@ -114,7 +114,7 @@ func (c *Client) LLMOutputByHash(ctx context.Context, kind, promptHash string) (
 	q.SetString("kind", kind)
 	q.SetString("prompt_hash", promptHash)
 	var out wire.LLMOutput
-	if err := c.do(ctx, http.MethodGet, q.URL("/v1/llm-outputs"), nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/llm-outputs/by-hash"), nil, &out); err != nil {
 		return wire.LLMOutput{}, err
 	}
 	return out, nil

@@ -980,7 +980,7 @@ func getProjectContextAPIHandler(c *apiclient.Client) ToolHandler {
 
 		// Section 4: recent workflows. Workflows ride inside
 		// kind=induction llm_outputs rows (Round 8); pull them via
-		// /v1/llm-outputs/list and filter for non-null body.workflow
+		// /v1/llm-outputs and filter for non-null body.workflow
 		// in the renderer.
 		wfs, err := c.LLMOutputsList(ctx, "induction", "", req.MaxPerSection*3)
 		if err != nil {

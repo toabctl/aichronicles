@@ -63,9 +63,9 @@ func TestHandleLLMOutput_RequiresKindAndHash(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)
 	for _, p := range []string{
-		"/v1/llm-outputs",
-		"/v1/llm-outputs?kind=summary",
-		"/v1/llm-outputs?prompt_hash=abc",
+		"/v1/llm-outputs/by-hash",
+		"/v1/llm-outputs/by-hash?kind=summary",
+		"/v1/llm-outputs/by-hash?prompt_hash=abc",
 	} {
 		rr := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, p, nil))
@@ -133,7 +133,7 @@ func TestHandleLLMOutputsList_WireShape(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/llm-outputs/list", nil))
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/llm-outputs", nil))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}

@@ -43,7 +43,7 @@ func (s *Server) handleSessionLLMOutputs(w http.ResponseWriter, r *http.Request)
 }
 
 // handleLLMOutputsList serves
-// GET /v1/llm-outputs/list?kind=&session_id=&since_ms=&limit=.
+// GET /v1/llm-outputs?kind=&session_id=&limit=&cursor=.
 // Filtered list of LLM outputs across sessions; used by MCP
 // list_workflows (kind=induction) and the digest CLI.
 func (s *Server) handleLLMOutputsList(w http.ResponseWriter, r *http.Request) {
@@ -52,11 +52,12 @@ func (s *Server) handleLLMOutputsList(w http.ResponseWriter, r *http.Request) {
 		Kind:      store.LLMOutputKind(q.Get("kind")),
 		SessionID: q.Get("session_id"),
 	}
-	limit, ok := parseLimitQuery(w, r, wire.DefaultPageLimit)
+	limit, offset, ok := parsePage(w, r)
 	if !ok {
 		return
 	}
 	filter.Limit = limit
+	filter.Offset = offset
 
 	rows, err := store.LoadLLMOutputs(r.Context(), s.store.DB(), filter)
 	if err != nil {
@@ -67,7 +68,9 @@ func (s *Server) handleLLMOutputsList(w http.ResponseWriter, r *http.Request) {
 	for _, o := range rows {
 		out = append(out, llmOutputToWire(o))
 	}
-	writeJSON(w, http.StatusOK, wire.LLMOutputsListResponse{Outputs: out})
+	resp := wire.LLMOutputsListResponse{Outputs: out}
+	resp.NextCursor = nextCursor(offset, limit, len(rows))
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleSummariesGet serves GET /v1/summaries?session_id=<id>.
@@ -117,7 +120,7 @@ func (s *Server) handleSummariesBatch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// handleLLMOutputGet serves GET /v1/llm-outputs?kind=&prompt_hash=.
+// handleLLMOutputGet serves GET /v1/llm-outputs/by-hash?kind=&prompt_hash=.
 // Used by callers that want to check the LLM-output cache by hash
 // before paying for a regeneration.
 func (s *Server) handleLLMOutputGet(w http.ResponseWriter, r *http.Request) {
