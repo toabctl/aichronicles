@@ -17,51 +17,24 @@ import (
 // optional filters AND'd together; the underlying SearchEvents
 // handles the FTS5 query parsing and snippet generation.
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-
-	query := q.Get("q")
-	if query == "" {
-		writeProblem(w, http.StatusBadRequest, "Missing q", "search query is required")
-		return
-	}
-
-	// store.SearchEvents expects an FTS5-syntax query; the user-
-	// facing form is plain words + optional "quoted phrases".
-	// Parse here so every consumer (CLI, MCP, web, third party)
-	// gets the same shape on the wire and sees ErrSyntax as a
-	// clean 400 instead of a generic 500 from SQLite.
-	ftsQuery, err := searchquery.ToFTS5(query)
-	if err != nil {
-		switch {
-		case errors.Is(err, searchquery.ErrEmpty):
-			writeProblem(w, http.StatusBadRequest, "Missing q", "search query is required")
-		case errors.Is(err, searchquery.ErrSyntax):
-			writeProblem(w, http.StatusBadRequest, "Invalid q", err.Error())
-		default:
-			writeProblem(w, http.StatusBadRequest, "Invalid q", err.Error())
-		}
+	req, ftsQuery, ok := parseSearchRequest(w, r)
+	if !ok {
 		return
 	}
 
 	opts := store.SearchEventOpts{
 		Query:             ftsQuery,
-		Kind:              q.Get("kind"),
-		SessionID:         q.Get("session_id"),
-		SubagentID:        q.Get("subagent_id"),
-		SourceAgent:       q.Get("source_agent"),
-		ToolName:          q.Get("tool_name"),
-		SkillName:         q.Get("skill_name"),
-		FilePathSubstring: q.Get("file_path_substring"),
-		WithFailures:      q.Get("with_failures") == "true",
-		NoDedup:           q.Get("no_dedup") == "true",
-	}
-	sinceMs, ok := parseInt64Query(w, r, "since_ms")
-	if !ok {
-		return
-	}
-	opts.SinceMs = sinceMs
-	if opts.Limit, ok = parseLimitQuery(w, r, 0); !ok {
-		return
+		Kind:              req.Kind,
+		SessionID:         req.SessionID,
+		SubagentID:        req.SubagentID,
+		SourceAgent:       req.SourceAgent,
+		ToolName:          req.ToolName,
+		SkillName:         req.SkillName,
+		FilePathSubstring: req.FilePathSubstring,
+		WithFailures:      req.WithFailures,
+		NoDedup:           req.NoDedup,
+		SinceMs:           req.SinceMs,
+		Limit:             req.Limit,
 	}
 
 	// A cursor pins the page position plus everything that must stay
@@ -70,8 +43,8 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// can't be broken mid-pagination. No cursor → first page: pin
 	// now-ms here so the value we put in NextCursor matches what the
 	// store scores against.
-	if raw := q.Get("cursor"); raw != "" {
-		cur, err := wire.DecodeSearchCursor(wire.Cursor(raw))
+	if req.Cursor != "" {
+		cur, err := wire.DecodeSearchCursor(req.Cursor)
 		if err != nil {
 			writeProblem(w, http.StatusBadRequest, "Invalid cursor", err.Error())
 			return
@@ -133,4 +106,56 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		out.NextCursor = next
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// parseSearchRequest decodes + validates the GET /v1/search query into
+// the canonical wire.SearchRequest (server mirror of
+// apiclient.Client.Search). q is required and must parse as FTS5 — a
+// 400 with the searchquery diagnostic is returned otherwise. Also
+// returns the FTS5-translated query the store expects, so the handler
+// doesn't re-parse: wire carries the raw q, the store wants FTS5.
+func parseSearchRequest(w http.ResponseWriter, r *http.Request) (wire.SearchRequest, string, bool) {
+	q := r.URL.Query()
+	query := q.Get("q")
+	if query == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing q", "search query is required")
+		return wire.SearchRequest{}, "", false
+	}
+	// store.SearchEvents expects an FTS5-syntax query; the user-facing
+	// form is plain words + optional "quoted phrases". Parse here so
+	// every consumer sees ErrSyntax as a clean 400 instead of a
+	// generic 500 from SQLite.
+	ftsQuery, err := searchquery.ToFTS5(query)
+	if err != nil {
+		switch {
+		case errors.Is(err, searchquery.ErrEmpty):
+			writeProblem(w, http.StatusBadRequest, "Missing q", "search query is required")
+		default:
+			writeProblem(w, http.StatusBadRequest, "Invalid q", err.Error())
+		}
+		return wire.SearchRequest{}, "", false
+	}
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return wire.SearchRequest{}, "", false
+	}
+	limit, ok := parseLimitQuery(w, r, 0)
+	if !ok {
+		return wire.SearchRequest{}, "", false
+	}
+	return wire.SearchRequest{
+		Q:                 query,
+		Kind:              q.Get("kind"),
+		SessionID:         q.Get("session_id"),
+		SubagentID:        q.Get("subagent_id"),
+		SourceAgent:       q.Get("source_agent"),
+		ToolName:          q.Get("tool_name"),
+		SkillName:         q.Get("skill_name"),
+		FilePathSubstring: q.Get("file_path_substring"),
+		SinceMs:           sinceMs,
+		WithFailures:      q.Get("with_failures") == "true",
+		NoDedup:           q.Get("no_dedup") == "true",
+		Limit:             limit,
+		Cursor:            wire.Cursor(q.Get("cursor")),
+	}, ftsQuery, true
 }
