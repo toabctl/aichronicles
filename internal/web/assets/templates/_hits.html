@@ -1,33 +1,62 @@
 {{define "hits"}}
 {{if .Error}}
 <p class="empty">{{.Error}}</p>
-{{else if .Hits}}
-<table>
-  {{if not .Compact}}
-  <thead>
-    <tr>
-      <th>Session</th>
-      <th>When</th>
-      <th>Kind</th>
-      <th>Snippet</th>
-    </tr>
-  </thead>
+{{else if .Compact}}
+  {{if .Hits}}
+  <table>
+    <tbody>
+      {{range .Hits}}
+      <tr class="nav-row" tabindex="0">
+        <td class="sid"><a href="/sessions/{{.SessionID}}">{{.ShortID}}</a></td>
+        <td class="ts">{{.When}}</td>
+        <td><span class="badge badge-{{.Kind}}">{{.Kind}}</span></td>
+        <td>{{.Snippet}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <p class="navsearch-seeall"><a href="/search?q={{.Query | urlquery}}">see all results in /search →</a></p>
+  {{else}}
+  <p class="empty">(no hits for that query)</p>
   {{end}}
-  <tbody>
-    {{range .Hits}}
-    <tr class="nav-row" tabindex="0">
-      <td class="sid"><a href="/sessions/{{.SessionID}}">{{.ShortID}}</a></td>
-      <td class="ts">{{.When}}</td>
-      <td><span class="badge badge-{{.Kind}}">{{.Kind}}</span></td>
-      <td>
-        {{.Snippet}}
-        {{if and .SummaryTopic (not $.Compact)}}<br><small class="topic">{{.SummaryTopic}}</small>{{end}}
-      </td>
-    </tr>
-    {{end}}
-  </tbody>
-</table>
-{{if .Compact}}<p class="navsearch-seeall"><a href="/search?q={{.Query | urlquery}}">see all results in /search →</a></p>{{end}}
+{{else if .Groups}}
+  {{range .Groups}}
+  <section class="search-group">
+    {{/* The header is the keyboard-nav unit for grouped results:
+         keynav.js focuses elements with class="nav-row" and Enter
+         clicks the first <a href> inside — here the session link.
+         Resume buttons are <button>s so Enter never triggers them. */}}
+    <header class="search-group-head nav-row" tabindex="0">
+      <span class="sid"><a href="/sessions/{{.SessionID}}">{{.ShortID}}</a></span>
+      {{if .SummaryTopic}}<small class="topic">{{.SummaryTopic}}</small>{{end}}
+      <span class="row-actions">
+        {{if .ResumeCommand}}
+        <button type="button"
+                class="resume-btn resume-btn-icon"
+                data-resume-cmd="{{.ResumeCommand}}"
+                title="Copy `{{.ResumeCommand}}` to clipboard so you can paste it in a terminal to resume the agent">↻</button>
+        {{end}}
+        {{if .ResumeCommandDangerous}}
+        <button type="button"
+                class="resume-btn resume-btn-icon resume-btn-dangerous"
+                data-resume-cmd="{{.ResumeCommandDangerous}}"
+                title="Copy `{{.ResumeCommandDangerous}}` to clipboard — resume with --dangerously-skip-permissions">⚡</button>
+        {{end}}
+      </span>
+    </header>
+    <table>
+      <tbody>
+        {{range .Hits}}
+        <tr>
+          <td class="ts">{{.When}}</td>
+          <td><span class="badge badge-{{.Kind}}">{{.Kind}}</span></td>
+          <td>{{.Snippet}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </section>
+  {{end}}
 {{else}}
 <p class="empty">(no hits for that query)</p>
 {{end}}

@@ -406,6 +406,54 @@ func TestSearchHits_CompactModeOmitsSummaryTopic(t *testing.T) {
 	}
 }
 
+func TestSearchHits_FullModeGroupsBySessionWithResumeButtons(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+
+	// One claude-code session with TWO matching events (so we can
+	// prove they collapse under a single group header) and one
+	// gemini-cli session with one match.
+	seedSessionFull(t, st, "claude-code", "sess-grp-cc", "grpmarker alpha event", "/work/cc", now)
+	seedSessionFull(t, st, "claude-code", "sess-grp-cc", "grpmarker beta event", "/work/cc", now.Add(time.Minute))
+	seedSessionFull(t, st, "gemini-cli", "sess-grp-gem", "grpmarker gamma event", "/work/gem", now.Add(time.Hour))
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	_, body := fetch(t, base+"/search/hits?"+url.Values{"q": {"grpmarker"}}.Encode())
+
+	// Two sessions → two group sections, each with one session link.
+	if n := strings.Count(body, `class="search-group"`); n != 2 {
+		t.Errorf("expected 2 session groups, got %d:\n%s", n, body)
+	}
+	if n := strings.Count(body, `<a href="/sessions/`); n != 2 {
+		t.Errorf("expected 1 session link per group (2 total), got %d", n)
+	}
+	// Both claude-code events live under the same group: three <tr>
+	// across both groups' bodies (2 cc + 1 gemini).
+	if n := strings.Count(body, "<tr>"); n != 3 {
+		t.Errorf("expected 3 hit rows total, got %d", n)
+	}
+
+	// Claude-code group: both resume buttons with the exact payload.
+	for _, want := range []string{
+		`data-resume-cmd="cd /work/cc &amp;&amp; claude --resume sess-grp-cc"`,
+		`data-resume-cmd="cd /work/cc &amp;&amp; claude --resume sess-grp-cc --dangerously-skip-permissions"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q\n--- body ---\n%s", want, body)
+		}
+	}
+	// Gemini group: regular resume present, dangerous variant absent.
+	if !strings.Contains(body, `data-resume-cmd="cd /work/gem &amp;&amp; gemini --resume sess-grp-gem"`) {
+		t.Errorf("body missing gemini resume button payload:\n%s", body)
+	}
+	if strings.Contains(body, `gemini --resume sess-grp-gem --dangerously-skip-permissions`) {
+		t.Errorf("gemini group must NOT render the --dangerously-skip-permissions variant")
+	}
+}
+
 func TestUniqueSessionIDs(t *testing.T) {
 	t.Parallel()
 	hits := []SearchHitRow{

@@ -134,43 +134,86 @@ func buildSearchHits(r *http.Request, s *Server, q, kind, since string, compact 
 	if err != nil {
 		return SearchHits{Error: "search failed: " + err.Error(), Compact: compact, Query: q}
 	}
-	hits := resp.Hits
-
-	out := SearchHits{
-		Hits:    make([]SearchHitRow, 0, len(hits)),
-		Compact: compact,
-		Query:   q,
-	}
-	for _, h := range hits {
-		row := SearchHitRow{
+	rows := make([]SearchHitRow, 0, len(resp.Hits))
+	for _, h := range resp.Hits {
+		rows = append(rows, SearchHitRow{
 			SessionID: h.SessionID,
 			ShortID:   preview.ShortID(h.SessionID),
 			When:      relativeTime(h.TsSourceMs, now),
 			Kind:      h.Kind,
 			Snippet:   pickHitSnippet(h),
-		}
-		out.Hits = append(out.Hits, row)
+		})
 	}
 
-	// Annotate each row with its session's cached summary topic so
-	// the user can see "this hit is from a session about X". Skipped
-	// in compact mode — the popover stays dense, one line per row.
-	if !compact && len(out.Hits) > 0 {
-		ids := uniqueSessionIDs(out.Hits)
-		summaries, err := s.api.SummariesBatch(r.Context(), ids)
-		if err == nil {
-			for i := range out.Hits {
-				if sm, ok := summaries[out.Hits[i].SessionID]; ok {
-					out.Hits[i].SummaryTopic = parseSummaryTopic(sm.Body)
-				}
-			}
-		}
-		// Soft-fail on summary lookup: render hits without the topic
-		// rather than hide a working search behind an annotation
-		// failure. The session detail page will surface the
-		// underlying error if it persists.
+	// Compact (nav-bar popover) stays a flat, dense list: no
+	// grouping, no per-session resume buttons, no topic annotation.
+	if compact {
+		return SearchHits{Hits: rows, Compact: true, Query: q}
 	}
+
+	// Full page: group the matches by session and decorate each
+	// group header with the session's cached summary topic and
+	// resume one-liners. uniqueSessionIDs preserves the hits' rank
+	// order, so the strongest-matching session's group renders first.
+	out := SearchHits{Query: q}
+	if len(rows) == 0 {
+		return out
+	}
+	ids := uniqueSessionIDs(rows)
+	out.Groups = buildSearchSessionGroups(r, s, ids, rows)
 	return out
+}
+
+// buildSearchSessionGroups folds the flat hit rows into per-session
+// groups in the supplied id order, attaching each session's summary
+// topic and resume one-liners to the group header.
+//
+// Both the summary and digest lookups soft-fail: a working search
+// must not vanish because an annotation (topic) or a resume one-liner
+// couldn't be resolved. On error the groups simply render without
+// that decoration; the session detail page surfaces any persistent
+// underlying error.
+func buildSearchSessionGroups(r *http.Request, s *Server, ids []string, rows []SearchHitRow) []SearchSessionGroup {
+	topics := map[string]string{}
+	if summaries, err := s.api.SummariesBatch(r.Context(), ids); err == nil {
+		for id, sm := range summaries {
+			topics[id] = parseSummaryTopic(sm.Body)
+		}
+	}
+	digests, err := s.api.SessionDigestsByIDs(r.Context(), ids)
+	if err != nil {
+		digests = nil
+	}
+
+	groupByID := make(map[string]*SearchSessionGroup, len(ids))
+	groups := make([]SearchSessionGroup, len(ids))
+	for i, id := range ids {
+		groups[i] = SearchSessionGroup{
+			SessionID:    id,
+			ShortID:      preview.ShortID(id),
+			SummaryTopic: topics[id],
+		}
+		if d, ok := digests[id]; ok {
+			// Resume one-liners cd into start_cwd because
+			// `claude --resume` indexes transcripts by session-start
+			// cwd; fall back to the latest cwd when start_cwd is nil.
+			// Same fallback the sessions list + detail page use, so
+			// all three render the identical command.
+			resumeCwd := d.StartCwd
+			if resumeCwd == nil {
+				resumeCwd = d.Cwd
+			}
+			groups[i].ResumeCommand = buildResumeCommandPtr(d.SourceAgent, d.SourceSessionID, resumeCwd)
+			groups[i].ResumeCommandDangerous = buildResumeCommandDangerousPtr(d.SourceAgent, d.SourceSessionID, resumeCwd)
+		}
+		groupByID[id] = &groups[i]
+	}
+	for _, row := range rows {
+		if g := groupByID[row.SessionID]; g != nil {
+			g.Hits = append(g.Hits, row)
+		}
+	}
+	return groups
 }
 
 // uniqueSessionIDs returns the set of distinct session IDs across

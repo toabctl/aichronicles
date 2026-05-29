@@ -551,26 +551,45 @@ type SearchPage struct {
 
 // SearchHits is the shape the /search/hits fragment template
 // consumes. Either Error is non-empty (parse failure, query is
-// empty) and the template renders it as a muted line, or Hits
-// holds the matching rows. Both empty == empty-state line.
+// empty) and the template renders it as a muted line, or the result
+// rows render. Everything empty == empty-state line.
 //
-// Compact is set when the fragment is rendered for the nav-bar
-// popover: row count is capped tighter and the template appends a
-// "see all in /search" link that re-runs the query in the full
-// search page. Query is echoed back so that link can carry it.
+// The result is carried two ways depending on mode:
+//   - Compact (nav-bar popover): a flat, dense list in Hits, one
+//     row per match, plus a "see all in /search" link. Query is
+//     echoed back so that link can carry it.
+//   - Full /search page: matches grouped by session in Groups, each
+//     group decorated with the session's resume one-liners and
+//     summary topic on its header.
 type SearchHits struct {
 	Hits    []SearchHitRow
+	Groups  []SearchSessionGroup
 	Error   string
 	Compact bool
 	Query   string
 }
 
+// SearchSessionGroup bundles every hit belonging to one session on
+// the full search page. Resume is inherently per-session
+// (`cd <start_cwd> && claude --resume <id>`), so the one-liners and
+// the cached summary topic live on the group header rather than
+// being repeated on each hit row. ResumeCommand* are empty when the
+// session's source agent / id can't produce a safe command — the
+// template hides the button rather than copy "" into a terminal.
+type SearchSessionGroup struct {
+	SessionID              string // full UUID for the /sessions/{id} link
+	ShortID                string
+	SummaryTopic           string
+	ResumeCommand          string
+	ResumeCommandDangerous string
+	Hits                   []SearchHitRow
+}
+
 // SearchHitRow is one matching event for the search fragment.
 type SearchHitRow struct {
-	SessionID    string // full UUID for the /sessions/{id} link
-	ShortID      string
-	When         string // relative time
-	Kind         string
-	Snippet      string // SQL snippet() output, falls back to truncated content
-	SummaryTopic string // parsed `topic` field from the session's summary; empty if none
+	SessionID string // full UUID for the /sessions/{id} link (compact mode)
+	ShortID   string
+	When      string // relative time
+	Kind      string
+	Snippet   string // SQL snippet() output, falls back to truncated content
 }

@@ -301,6 +301,44 @@ td.row-actions {
   font-style: italic;
 }
 
+/* Search results grouped by session. Each <section.search-group> is
+   one session: a header (short id + summary topic + resume buttons)
+   above a table of that session's matching events. The header is the
+   keyboard-nav unit — Enter opens the session (see keynav.js). */
+.search-group {
+  margin-bottom: 1.25rem;
+}
+.search-group-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.2rem 0;
+  margin-bottom: 0.25rem;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  cursor: pointer;
+}
+.search-group-head .sid {
+  font-weight: 600;
+}
+.search-group-head .row-actions {
+  /* Push the resume buttons to the right edge of the header so they
+     line up down the page regardless of topic length. */
+  margin-left: auto;
+  white-space: nowrap;
+}
+/* Mirror tr.nav-row's keyboard focus ring on the non-tr header. */
+.search-group-head.nav-row:focus-visible {
+  outline: 2px solid var(--pico-primary);
+  outline-offset: 2px;
+  background: var(--pico-secondary-background);
+}
+/* The per-session table is tight against its header — drop Pico's
+   default bottom margin; the section's own margin spaces groups. */
+.search-group table {
+  margin-bottom: 0;
+}
+
 /* Sessions-list row preview. Three styles by kind:
    - "topic" (cached summary's topic — the strongest signal)
    - "prompt" (substantive first user_prompt as fallback)
