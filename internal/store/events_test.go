@@ -489,6 +489,65 @@ func TestLoadLatestEventsIndexedByID_OneSessionInLargeCohort(t *testing.T) {
 	}
 }
 
+func TestLoadSessionDigestsByIDs_ReturnsOnlyRequested(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	base := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	seedEvents(t, s, "sess-A", 2, base)
+	seedEvents(t, s, "sess-B", 1, base.Add(time.Hour))
+	seedEvents(t, s, "sess-C", 1, base.Add(2*time.Hour))
+
+	idA := events.DeriveSessionID("claude-code", "sess-A")
+	idB := events.DeriveSessionID("claude-code", "sess-B")
+	idMissing := events.DeriveSessionID("claude-code", "never-seen")
+
+	got, err := LoadSessionDigestsByIDs(t.Context(), s.DB(),
+		[]string{idA, idB, idMissing})
+	if err != nil {
+		t.Fatalf("LoadSessionDigestsByIDs: %v", err)
+	}
+
+	// Only the two seeded ids come back; the unseeded id and the
+	// unrequested sess-C are both absent.
+	if len(got) != 2 {
+		t.Fatalf("entry count: got %d, want 2", len(got))
+	}
+	for _, want := range []string{idA, idB} {
+		row, ok := got[want]
+		if !ok {
+			t.Fatalf("missing digest for %s", want)
+		}
+		// Resume-relevant fields the web search page consumes must be
+		// populated from the ingested envelope.
+		if row.SourceAgent != "claude-code" {
+			t.Errorf("%s SourceAgent: got %q, want claude-code", want, row.SourceAgent)
+		}
+		if row.SourceSessionID == "" {
+			t.Errorf("%s SourceSessionID is empty", want)
+		}
+	}
+	if _, ok := got[idMissing]; ok {
+		t.Error("unseeded id should be absent from map")
+	}
+	if _, ok := got[events.DeriveSessionID("claude-code", "sess-C")]; ok {
+		t.Error("unrequested sess-C should be absent from map")
+	}
+}
+
+func TestLoadSessionDigestsByIDs_EmptyInputReturnsEmptyMap(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+
+	got, err := LoadSessionDigestsByIDs(t.Context(), s.DB(), nil)
+	if err != nil {
+		t.Fatalf("LoadSessionDigestsByIDs: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty map, got %d entries", len(got))
+	}
+}
+
 func TestLoadSessionsMissingSummary_ExcludesSessionsWithSummary(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)

@@ -600,6 +600,69 @@ func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs int64, li
 	return out, rows.Err()
 }
 
+// LoadSessionDigestsByIDs returns the session digests for exactly
+// the supplied ids, keyed by id, regardless of recency. Mirrors
+// LoadRecentSessionDigests' projection (start_cwd, source_agent,
+// source_session_id, …) so callers get the same resume-relevant
+// fields, but selects by an IN-clause instead of a time window.
+//
+// The web search page is the primary consumer: it has a handful of
+// distinct session ids from the hit rows and wants their resume
+// one-liners in a single round-trip (the alternative — one
+// /v1/sessions/{id} per session — is N+1). Missing ids are simply
+// absent from the map; empty input returns an empty map and no
+// query.
+func LoadSessionDigestsByIDs(ctx context.Context, db *sql.DB, ids []string) (map[string]SessionDigestRow, error) {
+	if len(ids) == 0 {
+		return map[string]SessionDigestRow{}, nil
+	}
+
+	placeholders, args := inPlaceholders(ids)
+	// kind arg for the correlated latest_summary subquery precedes
+	// the IN-clause args in the SQL, so prepend it.
+	args = append([]any{string(LLMKindSummary)}, args...)
+
+	q := `SELECT s.id, s.started_at_ms, s.ended_at_ms, s.cwd, s.start_cwd,
+			s.first_prompt_text AS first_prompt,
+			(SELECT body FROM llm_outputs
+				WHERE session_id = s.id AND kind = ?
+				ORDER BY created_at_ms DESC LIMIT 1) AS latest_summary,
+			s.source_agent, s.source_session_id
+		FROM sessions s
+		WHERE s.id IN (` + placeholders + `)`
+
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query session digests by ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make(map[string]SessionDigestRow, len(ids))
+	for rows.Next() {
+		var (
+			r           SessionDigestRow
+			startedAtMs sql.NullInt64
+			endedAtMs   sql.NullInt64
+			cwd         sql.NullString
+			startCwd    sql.NullString
+			firstPrompt sql.NullString
+			latestSum   sql.NullString
+		)
+		if err := rows.Scan(&r.ID, &startedAtMs, &endedAtMs, &cwd, &startCwd,
+			&firstPrompt, &latestSum, &r.SourceAgent, &r.SourceSessionID); err != nil {
+			return nil, fmt.Errorf("scan digest: %w", err)
+		}
+		r.StartedAtMs = nullable.Int64Ptr(startedAtMs)
+		r.EndedAtMs = nullable.Int64Ptr(endedAtMs)
+		r.Cwd = nullable.StringPtr(cwd)
+		r.StartCwd = nullable.StringPtr(startCwd)
+		r.FirstPrompt = nullable.StringPtr(firstPrompt)
+		r.LatestSummary = nullable.StringPtr(latestSum)
+		out[r.ID] = r
+	}
+	return out, rows.Err()
+}
+
 // SessionListFacets bundles the faceted-filter knobs the web's
 // sessions page exposes. Empty / false fields disable each facet
 // independently; AND-combined when more than one is set.
