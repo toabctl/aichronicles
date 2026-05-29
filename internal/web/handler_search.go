@@ -26,6 +26,12 @@ const searchCompactLimit = 8
 // htmx-driven input and an empty hits container. The hits
 // fragment populates the container as the user types.
 //
+// A ?q= on the URL seeds the input's value so direct navigations
+// (the nav-bar popover's "see all results" link, a shared or
+// bookmarked search) land with the term already filled in; the
+// template's `load` trigger then fetches the hits fragment on page
+// load instead of waiting for a keystroke.
+//
 // Faceted filters arriving on the URL (?agent=, ?tool=, …) are
 // surfaced as removable chips above the input AND seeded into
 // hidden form fields so each htmx GET to /search/hits carries
@@ -34,6 +40,7 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 	facets := readSessionListFilters(r)
 	page := SearchPage{
 		Title:              "Search",
+		InitialQuery:       r.URL.Query().Get("q"),
 		ActiveAgent:        facets.Agent,
 		ActiveTool:         facets.Tool,
 		ActiveSkill:        facets.Skill,

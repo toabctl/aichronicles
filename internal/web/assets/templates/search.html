@@ -24,11 +24,12 @@
   <div role="search">
     <input type="search"
            name="q"
+           value="{{.InitialQuery}}"
            placeholder="search captured events…"
            aria-label="Search captured events"
            autofocus
            hx-get="/search/hits"
-           hx-trigger="input changed delay:200ms, search"
+           hx-trigger="input changed delay:200ms, search{{if .InitialQuery}}, load{{end}}"
            hx-target="#hits"
            hx-include="closest form">
   </div>

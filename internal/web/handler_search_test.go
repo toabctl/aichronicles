@@ -32,6 +32,49 @@ func TestSearchPage_RendersForm(t *testing.T) {
 	}
 }
 
+func TestSearchPage_SeedsInitialQueryFromURL(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	status, body := fetch(t, base+"/search?"+url.Values{"q": {"openstack"}}.Encode())
+	if status != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", status)
+	}
+	// The input must carry the term so the page lands pre-filled…
+	if !strings.Contains(body, `value="openstack"`) {
+		t.Errorf("expected input seeded with the query value:\n%s", body)
+	}
+	// …and gain a `load` trigger so htmx fetches the hits fragment on
+	// page load instead of waiting for a keystroke. Without this the
+	// page would just show the empty-state placeholder.
+	if !strings.Contains(body, ", load") {
+		t.Errorf("expected a load trigger when ?q= is present:\n%s", body)
+	}
+}
+
+func TestSearchPage_NoLoadTriggerWithoutQuery(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	// Without ?q= the page is the plain initial state: no load
+	// trigger (which would fire a pointless empty-query fetch) and an
+	// empty value attribute.
+	status, body := fetch(t, base+"/search")
+	if status != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", status)
+	}
+	if strings.Contains(body, ", load") {
+		t.Errorf("did not expect a load trigger without ?q=:\n%s", body)
+	}
+	if !strings.Contains(body, `value=""`) {
+		t.Errorf("expected an empty input value without ?q=:\n%s", body)
+	}
+}
+
 func TestSearchHits_EmptyQueryRendersEmptyState(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)

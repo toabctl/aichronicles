@@ -528,6 +528,13 @@ type ProposeEvidenceRow struct {
 // flow through to /search/hits via the form's hidden inputs.
 type SearchPage struct {
 	Title string
+	// InitialQuery seeds the search input's value from ?q= on the
+	// URL so a direct navigation (e.g. the nav-bar popover's "see
+	// all results" link, or a bookmarked/shared search) lands with
+	// the term already typed. When non-empty the template adds an
+	// htmx `load` trigger so the hits fragment fetches on page load
+	// rather than waiting for a keystroke.
+	InitialQuery string
 	// Active filter values seeded into the form so the htmx
 	// fragment receives them on every keystroke. Empty when no
 	// filter is set.
