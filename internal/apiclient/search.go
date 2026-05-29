@@ -23,6 +23,7 @@ func (c *Client) Search(ctx context.Context, req wire.SearchRequest) (wire.Searc
 	q.SetBool("no_dedup", req.NoDedup)
 	q.SetInt64("since_ms", req.SinceMs)
 	q.SetInt("limit", req.Limit)
+	q.SetString("cursor", string(req.Cursor))
 
 	var out wire.SearchResponse
 	if err := c.do(ctx, http.MethodGet, q.URL("/v1/search"), nil, &out); err != nil {
