@@ -21,7 +21,8 @@ type FactSubjectsResponse struct {
 }
 
 // FactsResponse is the body for /v1/facts (?subject=...) and
-// /v1/facts/recent.
+// /v1/facts/recent. NextCursor (via PageResponse) pages forward.
 type FactsResponse struct {
 	Facts []SemanticFact `json:"facts"`
+	PageResponse
 }

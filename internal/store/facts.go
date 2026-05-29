@@ -139,7 +139,7 @@ RETURNING id`
 // Empty result is fine: a fresh project simply has no facts asserted
 // yet. Callers render an empty-state message rather than treating it
 // as an error.
-func LoadFactsForSubject(ctx context.Context, db *sql.DB, subject string, limit int) ([]SemanticFact, error) {
+func LoadFactsForSubject(ctx context.Context, db *sql.DB, subject string, limit, offset int) ([]SemanticFact, error) {
 	if subject == "" {
 		return nil, errors.New("LoadFactsForSubject: subject is required")
 	}
@@ -150,9 +150,9 @@ func LoadFactsForSubject(ctx context.Context, db *sql.DB, subject string, limit 
 		`SELECT `+semanticFactColumns+`
 		   FROM semantic_facts
 		  WHERE subject = ?
-		  ORDER BY predicate ASC, asserted_at_ms DESC
-		  LIMIT ?`,
-		subject, limit,
+		  ORDER BY predicate ASC, asserted_at_ms DESC, id DESC
+		  LIMIT ? OFFSET ?`,
+		subject, limit, offset,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query semantic_facts: %w", err)
@@ -166,16 +166,16 @@ func LoadFactsForSubject(ctx context.Context, db *sql.DB, subject string, limit 
 // the introspection UI to scan the corpus.
 //
 // limit ≤0 falls back to 50.
-func LoadRecentFacts(ctx context.Context, db *sql.DB, limit int) ([]SemanticFact, error) {
+func LoadRecentFacts(ctx context.Context, db *sql.DB, limit, offset int) ([]SemanticFact, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	rows, err := db.QueryContext(ctx,
 		`SELECT `+semanticFactColumns+`
 		   FROM semantic_facts
-		  ORDER BY asserted_at_ms DESC
-		  LIMIT ?`,
-		limit,
+		  ORDER BY asserted_at_ms DESC, id DESC
+		  LIMIT ? OFFSET ?`,
+		limit, offset,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query recent facts: %w", err)

@@ -46,16 +46,16 @@ func (s *Server) handleFactsSubjects(w http.ResponseWriter, r *http.Request) {
 // GET /v1/facts (latter returns recent facts across all subjects).
 func (s *Server) handleFactsList(w http.ResponseWriter, r *http.Request) {
 	subject := r.URL.Query().Get("subject")
-	limit, ok := parseLimitQuery(w, r, wire.DefaultPageLimit)
+	limit, offset, ok := parsePage(w, r)
 	if !ok {
 		return
 	}
 	var rows []store.SemanticFact
 	var err error
 	if subject != "" {
-		rows, err = store.LoadFactsForSubject(r.Context(), s.store.DB(), subject, limit)
+		rows, err = store.LoadFactsForSubject(r.Context(), s.store.DB(), subject, limit, offset)
 	} else {
-		rows, err = store.LoadRecentFacts(r.Context(), s.store.DB(), limit)
+		rows, err = store.LoadRecentFacts(r.Context(), s.store.DB(), limit, offset)
 	}
 	if err != nil {
 		s.storeError(w, "LoadFacts", err)
@@ -75,5 +75,6 @@ func (s *Server) handleFactsList(w http.ResponseWriter, r *http.Request) {
 			AssertedAtMs:      f.AssertedAtMs,
 		})
 	}
+	out.NextCursor = nextCursor(offset, limit, len(rows))
 	writeJSON(w, http.StatusOK, out)
 }

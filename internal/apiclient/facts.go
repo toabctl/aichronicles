@@ -21,10 +21,11 @@ func (c *Client) FactSubjects(ctx context.Context, contains string, limit int) (
 
 // Facts queries GET /v1/facts?subject=&limit=. Empty subject
 // returns recent facts across all subjects.
-func (c *Client) Facts(ctx context.Context, subject string, limit int) (wire.FactsResponse, error) {
+func (c *Client) Facts(ctx context.Context, subject string, limit int, cursor wire.Cursor) (wire.FactsResponse, error) {
 	var q qparams
 	q.SetString("subject", subject)
 	q.SetInt("limit", limit)
+	q.SetString("cursor", string(cursor))
 	var out wire.FactsResponse
 	if err := c.do(ctx, http.MethodGet, q.URL("/v1/facts"), nil, &out); err != nil {
 		return wire.FactsResponse{}, err

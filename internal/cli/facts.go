@@ -166,7 +166,7 @@ func newFactsShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resp, err := c.Facts(cmd.Context(), subject, limit)
+			resp, err := c.Facts(cmd.Context(), subject, limit, "")
 			if err != nil {
 				return fmt.Errorf("load facts: %w", err)
 			}

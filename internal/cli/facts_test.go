@@ -80,7 +80,7 @@ func TestRunFactsForSession_PersistsFactsIntoSemanticFacts(t *testing.T) {
 		t.Fatalf("expected llm_outputs row of kind=facts, got %+v", row)
 	}
 
-	facts, err := store.LoadFactsForSubject(t.Context(), s.DB(), "/work/systemd", 0)
+	facts, err := store.LoadFactsForSubject(t.Context(), s.DB(), "/work/systemd", 0, 0)
 	if err != nil {
 		t.Fatalf("LoadFactsForSubject: %v", err)
 	}
@@ -165,14 +165,14 @@ func TestRunFactsForSession_DropsFactsKeyedToWrongCwd(t *testing.T) {
 	}
 
 	// Only the cwd-anchored fact lands in semantic_facts.
-	systemd, err := store.LoadFactsForSubject(t.Context(), s.DB(), "/work/systemd", 0)
+	systemd, err := store.LoadFactsForSubject(t.Context(), s.DB(), "/work/systemd", 0, 0)
 	if err != nil {
 		t.Fatalf("LoadFactsForSubject: %v", err)
 	}
 	if len(systemd) != 1 {
 		t.Errorf("expected 1 fact for /work/systemd, got %d", len(systemd))
 	}
-	other, err := store.LoadFactsForSubject(t.Context(), s.DB(), "/other/project", 0)
+	other, err := store.LoadFactsForSubject(t.Context(), s.DB(), "/other/project", 0, 0)
 	if err != nil {
 		t.Fatalf("LoadFactsForSubject /other: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestRunFactsForSession_DropsParaphrasedQuote(t *testing.T) {
 		t.Fatalf("RunFactsForSession: %v", err)
 	}
 
-	facts, err := store.LoadFactsForSubject(t.Context(), s.DB(), "/work/systemd", 0)
+	facts, err := store.LoadFactsForSubject(t.Context(), s.DB(), "/work/systemd", 0, 0)
 	if err != nil {
 		t.Fatalf("LoadFactsForSubject: %v", err)
 	}

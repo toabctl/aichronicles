@@ -2,10 +2,67 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestLoadRecentFacts_OffsetPaginates(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+	loID := mkFactsRow(t, s, 1_700_000_000_000)
+
+	const n = 5
+	for i := range n {
+		if _, err := SaveSemanticFact(ctx, s.DB(), SemanticFact{
+			SourceLLMOutputID: loID,
+			Subject:           fmt.Sprintf("/proj/%d", i),
+			Predicate:         "primary_language",
+			Object:            "Go",
+			Confidence:        1.0,
+			AssertedAtMs:      int64(1_700_000_000_000 + i*1000),
+		}); err != nil {
+			t.Fatalf("save %d: %v", i, err)
+		}
+	}
+
+	full, err := LoadRecentFacts(ctx, s.DB(), 100, 0)
+	if err != nil {
+		t.Fatalf("full: %v", err)
+	}
+	if len(full) != n {
+		t.Fatalf("full: got %d want %d", len(full), n)
+	}
+
+	var paged []SemanticFact
+	seen := map[int64]bool{}
+	for off := 0; ; off += 2 {
+		page, err := LoadRecentFacts(ctx, s.DB(), 2, off)
+		if err != nil {
+			t.Fatalf("offset %d: %v", off, err)
+		}
+		for _, f := range page {
+			if seen[f.ID] {
+				t.Fatalf("fact id %d appeared twice across pages", f.ID)
+			}
+			seen[f.ID] = true
+		}
+		paged = append(paged, page...)
+		if len(page) < 2 {
+			break
+		}
+	}
+	if len(paged) != n {
+		t.Fatalf("paged total: got %d want %d", len(paged), n)
+	}
+	for i := range full {
+		if full[i].ID != paged[i].ID {
+			t.Errorf("order mismatch at %d", i)
+		}
+	}
+}
 
 // mkFactsRow seeds a minimal llm_outputs row of kind=facts so a
 // SemanticFact's source_llm_output_id FK is satisfied.
@@ -38,7 +95,7 @@ func TestSaveSemanticFact_Roundtrip(t *testing.T) {
 		t.Fatal("expected non-zero row id")
 	}
 
-	got, err := LoadFactsForSubject(ctx, s.DB(), "/work/aichronicles", 0)
+	got, err := LoadFactsForSubject(ctx, s.DB(), "/work/aichronicles", 0, 0)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -125,7 +182,7 @@ func TestSaveSemanticFact_RepeatTripleUpdatesInPlace(t *testing.T) {
 		t.Errorf("re-assertion should reuse the row id: got %d, want %d", id2, id1)
 	}
 
-	got, err := LoadFactsForSubject(ctx, s.DB(), "/work/proj", 0)
+	got, err := LoadFactsForSubject(ctx, s.DB(), "/work/proj", 0, 0)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -159,7 +216,7 @@ func TestSaveSemanticFact_ConflictingObjectsCoexist(t *testing.T) {
 		}
 	}
 
-	got, err := LoadFactsForSubject(ctx, s.DB(), "/work/proj", 0)
+	got, err := LoadFactsForSubject(ctx, s.DB(), "/work/proj", 0, 0)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -200,7 +257,7 @@ func TestSaveSemanticFact_EvidenceCascadesOnSessionDelete(t *testing.T) {
 		t.Fatalf("delete session: %v", err)
 	}
 
-	got, err := LoadFactsForSubject(ctx, s.DB(), "/work/proj", 0)
+	got, err := LoadFactsForSubject(ctx, s.DB(), "/work/proj", 0, 0)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -284,7 +341,7 @@ func TestSaveSemanticFact_LLMOutputDeleteCascadesFact(t *testing.T) {
 		t.Fatalf("delete llm_output: %v", err)
 	}
 
-	got, err := LoadFactsForSubject(ctx, s.DB(), "/work/proj", 0)
+	got, err := LoadFactsForSubject(ctx, s.DB(), "/work/proj", 0, 0)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -324,7 +381,7 @@ func TestLoadFactsForSubject_OrdersByPredicateThenAsserted(t *testing.T) {
 		}
 	}
 
-	got, err := LoadFactsForSubject(ctx, s.DB(), "/work/proj", 0)
+	got, err := LoadFactsForSubject(ctx, s.DB(), "/work/proj", 0, 0)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -366,7 +423,7 @@ func TestLoadRecentFacts_OrdersByAssertedDesc(t *testing.T) {
 			t.Fatalf("save %s: %v", sub, err)
 		}
 	}
-	got, err := LoadRecentFacts(ctx, s.DB(), 0)
+	got, err := LoadRecentFacts(ctx, s.DB(), 0, 0)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -475,7 +532,7 @@ func TestLoadDistinctFactSubjects_EmptyTable(t *testing.T) {
 func TestLoadFactsForSubject_RejectsEmptySubject(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
-	if _, err := LoadFactsForSubject(context.Background(), s.DB(), "", 0); err == nil {
+	if _, err := LoadFactsForSubject(context.Background(), s.DB(), "", 0, 0); err == nil {
 		t.Errorf("expected error for empty subject")
 	}
 }

@@ -169,7 +169,7 @@ func getFactsForSubjectAPIHandler(c *apiclient.Client) ToolHandler {
 			return TextError("get_facts_for_subject: subject is required"), nil
 		}
 		req.Limit = clampLimit(req.Limit, 50, 200)
-		resp, err := c.Facts(ctx, req.Subject, req.Limit)
+		resp, err := c.Facts(ctx, req.Subject, req.Limit, "")
 		if r, e := mapAPIError("get_facts_for_subject: load:", err); r != nil || e != nil {
 			return r, e
 		}
@@ -972,7 +972,7 @@ func getProjectContextAPIHandler(c *apiclient.Client) ToolHandler {
 
 		// Section 3: typed semantic facts. Subject is the cwd
 		// verbatim (the v1 fact-subject convention).
-		fresp, err := c.Facts(ctx, req.Cwd, req.MaxPerSection*4)
+		fresp, err := c.Facts(ctx, req.Cwd, req.MaxPerSection*4, "")
 		if err != nil {
 			return nil, &Error{Code: InternalError, Message: "get_project_context: facts: " + err.Error()}
 		}
