@@ -218,9 +218,9 @@ func (s *Server) handleSkillCandidatesEffectiveness(w http.ResponseWriter, r *ht
 		s.storeError(w, "LoadSkillCandidateEffectiveness", err)
 		return
 	}
-	out := wire.SkillCandidateEffectivenessResponse{Rows: make([]wire.SkillCandidateEffectiveness, 0, len(rows))}
+	out := wire.SkillCandidateEffectivenessResponse{Candidates: make([]wire.SkillCandidateEffectiveness, 0, len(rows))}
 	for _, row := range rows {
-		out.Rows = append(out.Rows, wire.SkillCandidateEffectiveness{
+		out.Candidates = append(out.Candidates, wire.SkillCandidateEffectiveness{
 			CandidateID:      row.CandidateID,
 			LLMOutputID:      row.LLMOutputID,
 			SkillName:        row.SkillName,

@@ -51,7 +51,7 @@ func TestRenderUsage_EmptyStorePrintsPlaceholder(t *testing.T) {
 func TestRenderUsage_TableWithoutPricesShowsHint(t *testing.T) {
 	t.Parallel()
 	resp := wire.UsageResponse{
-		Rows: []wire.UsageRow{
+		Days: []wire.UsageRow{
 			{Day: "2026-04-28", Kind: "summary", Model: "claude-sonnet-4-6",
 				InputTokens: 12_345, OutputTokens: 6_789, RowCount: 3},
 		},
@@ -76,7 +76,7 @@ func TestRenderUsage_TableWithoutPricesShowsHint(t *testing.T) {
 func TestRenderUsage_TableWithPricesShowsCost(t *testing.T) {
 	t.Parallel()
 	resp := wire.UsageResponse{
-		Rows: []wire.UsageRow{
+		Days: []wire.UsageRow{
 			{Day: "2026-04-28", Kind: "summary", Model: "claude-sonnet-4-6",
 				InputTokens: 1_000_000, OutputTokens: 500_000, RowCount: 1},
 		},
@@ -102,7 +102,7 @@ func TestRenderUsage_TableWithPricesShowsCost(t *testing.T) {
 func TestRenderUsage_JSONIncludesCostWhenKnown(t *testing.T) {
 	t.Parallel()
 	resp := wire.UsageResponse{
-		Rows: []wire.UsageRow{
+		Days: []wire.UsageRow{
 			{Day: "2026-04-28", Kind: "summary", Model: "claude-sonnet-4-6",
 				InputTokens: 1_000_000, OutputTokens: 500_000, RowCount: 1},
 			{Day: "2026-04-28", Kind: "reflect", Model: "unknown-model",

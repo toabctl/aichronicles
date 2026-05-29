@@ -75,7 +75,7 @@ func loadProposalLifecycle(ctx context.Context, s *Server, page *ProposePage, no
 	if err != nil {
 		return fmt.Errorf("added: %w", err)
 	}
-	for _, e := range addedResp.Rows {
+	for _, e := range addedResp.Candidates {
 		row := ProposalRow{
 			SkillName:        e.SkillName,
 			ProposedAgo:      relativeTime(e.ProposedAtMs, now),

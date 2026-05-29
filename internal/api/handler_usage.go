@@ -30,7 +30,7 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	totals := store.SumTokenUsage(rows)
 
 	out := wire.UsageResponse{
-		Rows: make([]wire.UsageRow, 0, len(rows)),
+		Days: make([]wire.UsageRow, 0, len(rows)),
 		Totals: wire.UsageTotals{
 			InputTokens:  totals.InputTokens,
 			OutputTokens: totals.OutputTokens,
@@ -38,7 +38,7 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	for _, r := range rows {
-		out.Rows = append(out.Rows, wire.UsageRow{
+		out.Days = append(out.Days, wire.UsageRow{
 			Day:          r.Day,
 			Kind:         r.Kind,
 			Model:        r.Model,

@@ -162,12 +162,12 @@ func renderUsage(out io.Writer, resp wire.UsageResponse, prices pricing.Prices, 
 func renderUsageJSON(out io.Writer, resp wire.UsageResponse, prices pricing.Prices, windowDays int) error {
 	report := UsageReportJSON{
 		WindowDays: windowDays,
-		Rows:       make([]UsageRowJSON, 0, len(resp.Rows)),
+		Rows:       make([]UsageRowJSON, 0, len(resp.Days)),
 		Totals:     resp.Totals,
 	}
 	var totalCost float64
 	var anyCost bool
-	for _, r := range resp.Rows {
+	for _, r := range resp.Days {
 		jr := UsageRowJSON{
 			Day:          r.Day,
 			Kind:         r.Kind,
@@ -191,7 +191,7 @@ func renderUsageJSON(out io.Writer, resp wire.UsageResponse, prices pricing.Pric
 }
 
 func renderUsageTable(out io.Writer, resp wire.UsageResponse, prices pricing.Prices, window time.Duration) error {
-	rows := resp.Rows
+	rows := resp.Days
 	totals := resp.Totals
 	if len(rows) == 0 {
 		_, err := fmt.Fprintf(out, "(no LLM calls in the last %s)\n", humanDuration(window))

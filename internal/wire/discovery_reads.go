@@ -147,7 +147,10 @@ type SkillCandidateEffectivenessRequest struct {
 // SkillCandidateEffectivenessResponse is the body for
 // /v1/skill-candidates/effectiveness.
 type SkillCandidateEffectivenessResponse struct {
-	Rows []SkillCandidateEffectiveness `json:"rows"`
+	// Candidates: one effectiveness row per added skill candidate.
+	// Named for the entity (matching the skill-candidate family's
+	// "candidates" wrappers) rather than a generic "rows".
+	Candidates []SkillCandidateEffectiveness `json:"candidates"`
 }
 
 // PendingSkillCandidatesResponse is the body for

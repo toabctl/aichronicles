@@ -73,7 +73,7 @@ func (s *Server) usageHandler(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("usage: prices file unreadable, hiding COST column", "err", perr)
 	}
 
-	page := buildUsagePage(resp.Rows, resp.Totals, prices, days, now)
+	page := buildUsagePage(resp.Days, resp.Totals, prices, days, now)
 	s.render(w, r, "usage", page)
 }
 

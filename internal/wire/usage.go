@@ -32,6 +32,9 @@ type UsageRequest struct {
 // not on the wire — pricing is a client-side concern (the api
 // doesn't ship a price list and shouldn't carry one).
 type UsageResponse struct {
-	Rows   []UsageRow  `json:"rows"`
+	// Days is one row per (day, kind, model) bucket — the wire field
+	// is named for what a row is, matching the entity-named wrappers
+	// elsewhere (sessions, facts, …) rather than a generic "rows".
+	Days   []UsageRow  `json:"days"`
 	Totals UsageTotals `json:"totals"`
 }

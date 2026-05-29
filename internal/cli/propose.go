@@ -324,9 +324,9 @@ func loadPriorProposalsForPrompt(ctx context.Context, c *apiclient.Client, since
 	// Build one map keyed by skill_name; on a clash, the added
 	// row wins (the lifecycle moved forward, the pending entry
 	// is now stale).
-	out := make([]prompts.PriorProposal, 0, len(addedResp.Rows)+len(pendingResp.Candidates))
-	seen := make(map[string]struct{}, len(addedResp.Rows)+len(pendingResp.Candidates))
-	for _, e := range addedResp.Rows {
+	out := make([]prompts.PriorProposal, 0, len(addedResp.Candidates)+len(pendingResp.Candidates))
+	seen := make(map[string]struct{}, len(addedResp.Candidates)+len(pendingResp.Candidates))
+	for _, e := range addedResp.Candidates {
 		if _, dup := seen[e.SkillName]; dup {
 			continue
 		}
