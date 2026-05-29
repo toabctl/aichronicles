@@ -49,12 +49,14 @@ type SearchRequest struct {
 
 // SearchResponse is the body shape for GET /v1/search.
 //
-// Pagination is a snapshot as-of the first page: the cursor pins the
-// as-of timestamp and the FTS fallback stage, so paging never skips,
-// duplicates, or mixes corpora — but rows ingested mid-pagination
-// surface only on a fresh search (empty cursor). NextCursor is empty
-// when there are no more pages; clients stop on that signal, not on
-// len(Hits).
+// Pagination uses an offset cursor that pins the relevance as-of
+// timestamp and the FTS fallback stage, so the row ORDER is identical
+// on every page and pages never mix result corpora. As with any
+// offset pagination, rows ingested or removed between page fetches
+// can shift the window (a boundary row may repeat or be missed) —
+// fine for an interactive refine-as-you-go search, not a
+// consistent-snapshot bulk export. NextCursor is empty when there are
+// no more pages; clients stop on that signal, not on len(Hits).
 type SearchResponse struct {
 	Hits       []SearchHit `json:"hits"`
 	NextCursor Cursor      `json:"next_cursor,omitempty"`

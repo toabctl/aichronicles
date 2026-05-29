@@ -18,8 +18,8 @@ import (
 //     stage, so a deep page that runs off the end of the locked stage
 //     returns nothing rather than falling through to the next corpus.
 //   - Now pins the as-of timestamp the recency-boosted relevance
-//     order is computed against, so the ordering is identical on
-//     every page (a pagination is a snapshot as-of its first page).
+//     order is computed against, so rows don't reorder as the clock
+//     advances between page fetches.
 //   - Ord / Dedup pin the order mode and dedup flag.
 //
 // q and the filters are NOT carried here — the client re-sends them
