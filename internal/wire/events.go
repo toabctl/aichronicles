@@ -29,8 +29,12 @@ type Event struct {
 //
 // Limit honors the same DefaultPageLimit / MaxPageLimit semantics
 // as PageRequest, but events use a typed cursor (int64 ingest_seq)
-// rather than the opaque pagination cursor — clients of /v1/events
-// already understand the watermark and use it for SSE catch-up.
+// rather than the opaque PageCursor the browse-list endpoints share.
+// This is a deliberate exception, not drift: /v1/events is a
+// resumable live-tail stream (SSE catch-up keys off the ingest_seq
+// watermark), a forward-only stream cursor — semantically distinct
+// from offset paging through a result set, where a stable watermark
+// column doesn't exist.
 type EventListRequest struct {
 	SessionID string `json:"session_id,omitempty"`
 	SinceSeq  int64  `json:"since_seq,omitempty"`
