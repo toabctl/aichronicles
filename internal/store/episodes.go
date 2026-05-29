@@ -232,6 +232,7 @@ type FindEpisodesOpts struct {
 	QueryContains string
 	SinceMs       int64
 	Limit         int
+	Offset        int
 }
 
 // DefaultFindEpisodesLimit caps a FindEpisodes call when the
@@ -273,18 +274,19 @@ func FindEpisodes(ctx context.Context, db *sql.DB, opts FindEpisodesOpts) ([]eve
 		// sides for case-insensitive match.
 		args = append(args, "%"+strings.ToLower(q)+"%")
 	}
-	args = append(args, limit)
+	args = append(args, limit, opts.Offset)
 
 	// `, id DESC` is the tiebreaker for ms-collisions. Episodes
 	// with identical ended_at_ms (single-event episodes pinned to
 	// the same wall clock, or seeded fixtures with hardcoded ts)
 	// would otherwise return in engine-defined order — visible as
-	// flaky pagination and non-deterministic LIMIT'd recall.
+	// flaky pagination and non-deterministic LIMIT'd recall. It also
+	// makes OFFSET paging stable.
 	q := `SELECT ` + episodeColumns + `
 	        FROM episodes
 	       WHERE 1=1` + filter.String() + `
 	       ORDER BY ended_at_ms DESC, id DESC
-	       LIMIT ?`
+	       LIMIT ? OFFSET ?`
 
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {

@@ -24,11 +24,12 @@ func (s *Server) handleEpisodesList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	opts.SinceMs = sinceMs
-	limit, ok := parseLimitQuery(w, r, 0)
+	limit, offset, ok := parsePage(w, r)
 	if !ok {
 		return
 	}
 	opts.Limit = limit
+	opts.Offset = offset
 
 	rows, err := store.FindEpisodes(r.Context(), s.store.DB(), opts)
 	if err != nil {
@@ -39,6 +40,7 @@ func (s *Server) handleEpisodesList(w http.ResponseWriter, r *http.Request) {
 	for _, e := range rows {
 		out.Episodes = append(out.Episodes, episodeToWire(e))
 	}
+	out.NextCursor = nextCursor(offset, limit, len(rows))
 	writeJSON(w, http.StatusOK, out)
 }
 

@@ -15,6 +15,7 @@ func (c *Client) Episodes(ctx context.Context, req wire.EpisodeListRequest) (wir
 	q.SetString("query_contains", req.QueryContains)
 	q.SetInt64("since_ms", req.SinceMs)
 	q.SetInt("limit", req.Limit)
+	q.SetString("cursor", string(req.Cursor))
 	var out wire.EpisodeListResponse
 	if err := c.do(ctx, http.MethodGet, q.URL("/v1/episodes"), nil, &out); err != nil {
 		return wire.EpisodeListResponse{}, err

@@ -29,9 +29,12 @@ type EpisodeListRequest struct {
 	QueryContains string `json:"query_contains,omitempty"`
 	SinceMs       int64  `json:"since_ms,omitempty"`
 	Limit         int    `json:"limit,omitempty"`
+	// Cursor pages forward through a previous response's NextCursor.
+	Cursor Cursor `json:"cursor,omitempty"`
 }
 
 // EpisodeListResponse is the body shape for GET /v1/episodes.
 type EpisodeListResponse struct {
 	Episodes []Episode `json:"episodes"`
+	PageResponse
 }

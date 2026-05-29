@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -358,6 +359,53 @@ func TestFindEpisodes_TiebreakerOnEndedAt(t *testing.T) {
 		if hits[0].IntentSummary != "later insert" {
 			t.Errorf("iter %d: tiebreaker violated; first.intent=%q (want %q)",
 				i, hits[0].IntentSummary, "later insert")
+		}
+	}
+}
+
+func TestFindEpisodes_OffsetPaginates(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+
+	const n = 5
+	for i := range n {
+		seedEpisodeRow(t, s, mkUUIDLikeID(t, "pageep", i), 1,
+			int64(1000+i), int64(2000+i), "/repo/p", fmt.Sprintf("episode %d", i))
+	}
+
+	full, err := FindEpisodes(ctx, s.DB(), FindEpisodesOpts{Limit: 100})
+	if err != nil {
+		t.Fatalf("full: %v", err)
+	}
+	if len(full) != n {
+		t.Fatalf("full: got %d, want %d", len(full), n)
+	}
+
+	var paged []events.Episode
+	seen := map[int64]bool{}
+	for off := 0; ; off += 2 {
+		page, err := FindEpisodes(ctx, s.DB(), FindEpisodesOpts{Limit: 2, Offset: off})
+		if err != nil {
+			t.Fatalf("offset %d: %v", off, err)
+		}
+		for _, e := range page {
+			if seen[e.ID] {
+				t.Fatalf("episode id %d appeared twice across pages", e.ID)
+			}
+			seen[e.ID] = true
+		}
+		paged = append(paged, page...)
+		if len(page) < 2 {
+			break
+		}
+	}
+	if len(paged) != n {
+		t.Fatalf("paged total: got %d, want %d", len(paged), n)
+	}
+	for i := range full {
+		if full[i].ID != paged[i].ID {
+			t.Errorf("order mismatch at %d: full=%d paged=%d", i, full[i].ID, paged[i].ID)
 		}
 	}
 }
