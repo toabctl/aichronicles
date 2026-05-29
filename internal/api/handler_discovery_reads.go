@@ -16,17 +16,12 @@ import (
 // handleSessionsMissingSummary serves
 // GET /v1/sessions/missing-summary?since_ms=&cwd=&agent=&limit=.
 func (s *Server) handleSessionsMissingSummary(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	sinceMs, ok := parseInt64Query(w, r, "since_ms")
-	if !ok {
-		return
-	}
-	limit, ok := parsePositiveIntQuery(w, r, "limit", 200)
+	req, ok := parseSessionsMissingSummaryRequest(w, r)
 	if !ok {
 		return
 	}
 	rows, err := store.LoadSessionsMissingSummary(r.Context(), s.store.DB(),
-		sinceMs, store.SessionFilter{Cwd: q.Get("cwd"), Agent: q.Get("agent")}, limit)
+		req.SinceMs, store.SessionFilter{Cwd: req.Cwd, Agent: req.Agent}, req.Limit)
 	if err != nil {
 		s.storeError(w, "LoadSessionsMissingSummary", err)
 		return
@@ -41,24 +36,12 @@ func (s *Server) handleSessionsMissingSummary(w http.ResponseWriter, r *http.Req
 // handleSessionsNeedingSegmentation serves
 // GET /v1/sessions/needing-segmentation?idle_cutoff_ms=&idle_ms=&min_events=&limit=.
 func (s *Server) handleSessionsNeedingSegmentation(w http.ResponseWriter, r *http.Request) {
-	idleCutoff, ok := parseInt64Query(w, r, "idle_cutoff_ms")
-	if !ok {
-		return
-	}
-	idleMs, ok := parseInt64Query(w, r, "idle_ms")
-	if !ok {
-		return
-	}
-	minEvents, ok := parseNonNegativeIntQuery(w, r, "min_events", 0)
-	if !ok {
-		return
-	}
-	limit, ok := parseNonNegativeIntQuery(w, r, "limit", 0)
+	req, ok := parseSessionsNeedingSegmentationRequest(w, r)
 	if !ok {
 		return
 	}
 	ids, err := store.LoadSessionsNeedingSegmentation(r.Context(), s.store.DB(),
-		idleCutoff, idleMs, minEvents, limit)
+		req.IdleCutoffMs, req.IdleMs, req.MinEvents, req.Limit)
 	if err != nil {
 		s.storeError(w, "LoadSessionsNeedingSegmentation", err)
 		return
@@ -94,24 +77,12 @@ func (s *Server) handleSessionsForCompletion(w http.ResponseWriter, r *http.Requ
 
 // handleInductionCandidates serves GET /v1/induction/candidates.
 func (s *Server) handleInductionCandidates(w http.ResponseWriter, r *http.Request) {
-	nowMs, ok := parseInt64Query(w, r, "now_ms")
-	if !ok {
-		return
-	}
-	idleMs, ok := parseInt64Query(w, r, "idle_threshold_ms")
-	if !ok {
-		return
-	}
-	minEvents, ok := parseNonNegativeIntQuery(w, r, "min_events", 0)
-	if !ok {
-		return
-	}
-	limit, ok := parseNonNegativeIntQuery(w, r, "limit", 0)
+	req, ok := parseInductionCandidatesRequest(w, r)
 	if !ok {
 		return
 	}
 	rows, err := store.LoadInductionCandidates(r.Context(), s.store.DB(),
-		nowMs, idleMs, minEvents, limit)
+		req.NowMs, req.IdleThresholdMs, req.MinEvents, req.Limit)
 	if err != nil {
 		s.storeError(w, "LoadInductionCandidates", err)
 		return
@@ -162,25 +133,11 @@ func (s *Server) handleFailureShapes(w http.ResponseWriter, r *http.Request) {
 
 // handleSkillFailures serves GET /v1/skills/failures?skill=&since_ms=&window_ms=&limit=.
 func (s *Server) handleSkillFailures(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	skill := q.Get("skill")
-	if skill == "" {
-		writeProblem(w, http.StatusBadRequest, "Missing skill", "")
-		return
-	}
-	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	req, ok := parseSkillFailuresRequest(w, r)
 	if !ok {
 		return
 	}
-	windowMs, ok := parseInt64Query(w, r, "window_ms")
-	if !ok {
-		return
-	}
-	limit, oklimit := parseNonNegativeIntQuery(w, r, "limit", 0)
-	if !oklimit {
-		return
-	}
-	rows, err := store.LoadSkillFailures(r.Context(), s.store.DB(), skill, sinceMs, windowMs, limit)
+	rows, err := store.LoadSkillFailures(r.Context(), s.store.DB(), req.Skill, req.SinceMs, req.WindowMs, req.Limit)
 	if err != nil {
 		s.storeError(w, "LoadSkillFailures", err)
 		return
@@ -201,19 +158,11 @@ func (s *Server) handleSkillFailures(w http.ResponseWriter, r *http.Request) {
 // handleSkillCandidatesEffectiveness serves
 // GET /v1/skill-candidates/effectiveness?since_ms=&window_ms=&limit=.
 func (s *Server) handleSkillCandidatesEffectiveness(w http.ResponseWriter, r *http.Request) {
-	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	req, ok := parseSkillCandidateEffectivenessRequest(w, r)
 	if !ok {
 		return
 	}
-	windowMs, ok := parseInt64Query(w, r, "window_ms")
-	if !ok {
-		return
-	}
-	limit, ok := parseNonNegativeIntQuery(w, r, "limit", 0)
-	if !ok {
-		return
-	}
-	rows, err := store.LoadSkillCandidateEffectiveness(r.Context(), s.store.DB(), sinceMs, windowMs, limit)
+	rows, err := store.LoadSkillCandidateEffectiveness(r.Context(), s.store.DB(), req.SinceMs, req.WindowMs, req.Limit)
 	if err != nil {
 		s.storeError(w, "LoadSkillCandidateEffectiveness", err)
 		return
@@ -430,4 +379,110 @@ func (s *Server) handleIngestStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// parseSessionsMissingSummaryRequest decodes the
+// GET /v1/sessions/missing-summary query into its wire request.
+func parseSessionsMissingSummaryRequest(w http.ResponseWriter, r *http.Request) (wire.SessionsMissingSummaryRequest, bool) {
+	q := r.URL.Query()
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return wire.SessionsMissingSummaryRequest{}, false
+	}
+	limit, ok := parsePositiveIntQuery(w, r, "limit", 200)
+	if !ok {
+		return wire.SessionsMissingSummaryRequest{}, false
+	}
+	return wire.SessionsMissingSummaryRequest{
+		SinceMs: sinceMs, Cwd: q.Get("cwd"), Agent: q.Get("agent"), Limit: limit,
+	}, true
+}
+
+// parseSessionsNeedingSegmentationRequest decodes the
+// GET /v1/sessions/needing-segmentation query into its wire request.
+func parseSessionsNeedingSegmentationRequest(w http.ResponseWriter, r *http.Request) (wire.SessionsNeedingSegmentationRequest, bool) {
+	idleCutoff, ok := parseInt64Query(w, r, "idle_cutoff_ms")
+	if !ok {
+		return wire.SessionsNeedingSegmentationRequest{}, false
+	}
+	idleMs, ok := parseInt64Query(w, r, "idle_ms")
+	if !ok {
+		return wire.SessionsNeedingSegmentationRequest{}, false
+	}
+	minEvents, ok := parseNonNegativeIntQuery(w, r, "min_events", 0)
+	if !ok {
+		return wire.SessionsNeedingSegmentationRequest{}, false
+	}
+	limit, ok := parseNonNegativeIntQuery(w, r, "limit", 0)
+	if !ok {
+		return wire.SessionsNeedingSegmentationRequest{}, false
+	}
+	return wire.SessionsNeedingSegmentationRequest{
+		IdleCutoffMs: idleCutoff, IdleMs: idleMs, MinEvents: minEvents, Limit: limit,
+	}, true
+}
+
+// parseInductionCandidatesRequest decodes the
+// GET /v1/induction/candidates query into its wire request.
+func parseInductionCandidatesRequest(w http.ResponseWriter, r *http.Request) (wire.InductionCandidatesRequest, bool) {
+	nowMs, ok := parseInt64Query(w, r, "now_ms")
+	if !ok {
+		return wire.InductionCandidatesRequest{}, false
+	}
+	idleMs, ok := parseInt64Query(w, r, "idle_threshold_ms")
+	if !ok {
+		return wire.InductionCandidatesRequest{}, false
+	}
+	minEvents, ok := parseNonNegativeIntQuery(w, r, "min_events", 0)
+	if !ok {
+		return wire.InductionCandidatesRequest{}, false
+	}
+	limit, ok := parseNonNegativeIntQuery(w, r, "limit", 0)
+	if !ok {
+		return wire.InductionCandidatesRequest{}, false
+	}
+	return wire.InductionCandidatesRequest{
+		NowMs: nowMs, IdleThresholdMs: idleMs, MinEvents: minEvents, Limit: limit,
+	}, true
+}
+
+// parseSkillFailuresRequest decodes the GET /v1/skills/failures query
+// into its wire request. Skill is required (400 when empty).
+func parseSkillFailuresRequest(w http.ResponseWriter, r *http.Request) (wire.SkillFailuresRequest, bool) {
+	skill := r.URL.Query().Get("skill")
+	if skill == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing skill", "")
+		return wire.SkillFailuresRequest{}, false
+	}
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return wire.SkillFailuresRequest{}, false
+	}
+	windowMs, ok := parseInt64Query(w, r, "window_ms")
+	if !ok {
+		return wire.SkillFailuresRequest{}, false
+	}
+	limit, ok := parseNonNegativeIntQuery(w, r, "limit", 0)
+	if !ok {
+		return wire.SkillFailuresRequest{}, false
+	}
+	return wire.SkillFailuresRequest{Skill: skill, SinceMs: sinceMs, WindowMs: windowMs, Limit: limit}, true
+}
+
+// parseSkillCandidateEffectivenessRequest decodes the
+// GET /v1/skill-candidates/effectiveness query into its wire request.
+func parseSkillCandidateEffectivenessRequest(w http.ResponseWriter, r *http.Request) (wire.SkillCandidateEffectivenessRequest, bool) {
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return wire.SkillCandidateEffectivenessRequest{}, false
+	}
+	windowMs, ok := parseInt64Query(w, r, "window_ms")
+	if !ok {
+		return wire.SkillCandidateEffectivenessRequest{}, false
+	}
+	limit, ok := parseNonNegativeIntQuery(w, r, "limit", 0)
+	if !ok {
+		return wire.SkillCandidateEffectivenessRequest{}, false
+	}
+	return wire.SkillCandidateEffectivenessRequest{SinceMs: sinceMs, WindowMs: windowMs, Limit: limit}, true
 }
