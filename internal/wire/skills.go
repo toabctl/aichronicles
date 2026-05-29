@@ -61,11 +61,6 @@ type InvokedSkill struct {
 	Count int    `json:"count"`
 }
 
-// InvokedSkillsRequest is the query-shape for GET /v1/skills/invoked.
-type InvokedSkillsRequest struct {
-	SinceMs int64 `json:"since_ms,omitempty"`
-}
-
 // InvokedSkillsResponse is the body for /v1/skills/invoked.
 type InvokedSkillsResponse struct {
 	Skills []InvokedSkill `json:"skills"`
@@ -83,14 +78,6 @@ type InstalledSkill struct {
 	// "project:<abs-path>" for project-local installs, "plugin:<id>"
 	// for plugin-provided. Renderers group rows by this prefix.
 	Source string `json:"source"`
-}
-
-// InstalledSkillsRequest is the query-shape for
-// GET /v1/skills/installed. SinceMs scopes which session cwds the
-// daemon walks for project-local discovery (older sessions are
-// ignored so a long-running install doesn't pile up dead roots).
-type InstalledSkillsRequest struct {
-	SinceMs int64 `json:"since_ms,omitempty"`
 }
 
 // InstalledSkillsResponse is the body for /v1/skills/installed.
