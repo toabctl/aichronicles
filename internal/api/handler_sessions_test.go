@@ -91,6 +91,49 @@ func TestHandleSessionsGet_Found(t *testing.T) {
 	}
 }
 
+func TestHandleSessionDigests_BySessionIDs(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+
+	// Ingest two distinct sessions; we'll request one plus an
+	// unknown id and expect only the real one back.
+	for _, key := range []string{"sess-dig-A", "sess-dig-B"} {
+		env := validEnvelope(t)
+		env.SourceSessionID = key
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr,
+			httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(mustJSON(t, env))))
+		if rr.Code != http.StatusOK && rr.Code != http.StatusAccepted {
+			t.Fatalf("ingest %s: status=%d body=%s", key, rr.Code, rr.Body.String())
+		}
+	}
+
+	idA := events.DeriveSessionID("claude-code", "sess-dig-A")
+	idGhost := events.DeriveSessionID("claude-code", "sess-dig-ghost")
+
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr,
+		httptest.NewRequest(http.MethodGet, "/v1/sessions/digests?session_ids="+idA+","+idGhost, nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s, want 200", rr.Code, rr.Body.String())
+	}
+	var out wire.SessionDigestsResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// session_ids mode returns exactly the known requested id —
+	// sess-dig-B was never asked for, the ghost id doesn't exist.
+	if len(out.Digests) != 1 {
+		t.Fatalf("digest count: got %d, want 1; body=%s", len(out.Digests), rr.Body.String())
+	}
+	if out.Digests[0].ID != idA {
+		t.Errorf("ID: got %q, want %q", out.Digests[0].ID, idA)
+	}
+	if out.Digests[0].SourceSessionID != "sess-dig-A" {
+		t.Errorf("SourceSessionID: got %q, want sess-dig-A", out.Digests[0].SourceSessionID)
+	}
+}
+
 // TestHandleSessionStartCwd_NullForUnknownSession covers the
 // "no recorded cwd" branch: an unknown id returns 200 with cwd:null,
 // not 404. Documented contract — see handler_session_reads.go.

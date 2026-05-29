@@ -216,11 +216,34 @@ func (s *Server) handleSessionLinks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// handleSessionDigests serves GET /v1/sessions/digests?since_ms=&limit=.
-// Returns the LoadRecentSessionDigests result — every session with
-// its summary topic + first prompt + cwd, used by reflect/propose
-// to build a window of cross-session input.
+// handleSessionDigests serves GET /v1/sessions/digests. Two modes,
+// distinguished by the query:
+//
+//   - ?session_ids=id1,id2,…  → digests for exactly those ids
+//     (LoadSessionDigestsByIDs), order unspecified. The web search
+//     page uses this to resolve resume one-liners for its hits.
+//   - ?since_ms=&limit=       → the recency window
+//     (LoadRecentSessionDigests), newest first. Used by
+//     reflect/propose to build a window of cross-session input.
+//
+// session_ids takes precedence when present; since_ms/limit are
+// ignored in that mode (the id set already bounds the result).
 func (s *Server) handleSessionDigests(w http.ResponseWriter, r *http.Request) {
+	if raw := r.URL.Query().Get("session_ids"); raw != "" {
+		ids := parseSessionIDsQuery(raw)
+		rows, err := store.LoadSessionDigestsByIDs(r.Context(), s.store.DB(), ids)
+		if err != nil {
+			s.storeError(w, "LoadSessionDigestsByIDs", err)
+			return
+		}
+		out := wire.SessionDigestsResponse{Digests: make([]wire.SessionDigest, 0, len(rows))}
+		for _, row := range rows {
+			out.Digests = append(out.Digests, sessionDigestRowToWire(row))
+		}
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+
 	sinceMs, ok := parseInt64Query(w, r, "since_ms")
 	if !ok {
 		return

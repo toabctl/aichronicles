@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -74,4 +75,26 @@ func (c *Client) SessionDigests(ctx context.Context, sinceMs int64, limit int) (
 		return wire.SessionDigestsResponse{}, err
 	}
 	return out, nil
+}
+
+// SessionDigestsByIDs queries GET
+// /v1/sessions/digests?session_ids=id1,id2,… and returns the
+// digests keyed by session id. Sessions not found are simply absent
+// from the map. An empty ids slice skips the call and returns an
+// empty map — the caller has nothing to resolve.
+func (c *Client) SessionDigestsByIDs(ctx context.Context, ids []string) (map[string]wire.SessionDigest, error) {
+	if len(ids) == 0 {
+		return map[string]wire.SessionDigest{}, nil
+	}
+	var q qparams
+	q.SetString("session_ids", strings.Join(ids, ","))
+	var out wire.SessionDigestsResponse
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/sessions/digests"), nil, &out); err != nil {
+		return nil, err
+	}
+	byID := make(map[string]wire.SessionDigest, len(out.Digests))
+	for _, d := range out.Digests {
+		byID[d.ID] = d
+	}
+	return byID, nil
 }
