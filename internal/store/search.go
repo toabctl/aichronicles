@@ -190,6 +190,13 @@ const (
 	StageExtractions = "extractions"
 )
 
+// DefaultSearchLimit is the page size SearchEvents applies when
+// SearchEventOpts.Limit is unset (<= 0). Exported so the api handler
+// resolves the same effective limit it passes — the NextCursor "last
+// page" test (len(hits) < limit) must compare against the value the
+// store actually used.
+const DefaultSearchLimit = 20
+
 // SearchEvents runs an FTS5 MATCH against events_fts and returns the
 // matching rows.
 //
@@ -396,7 +403,7 @@ func buildSearchSQL(opts SearchEventOpts, index string) (string, []any) {
 
 	limit := opts.Limit
 	if limit <= 0 {
-		limit = 20
+		limit = DefaultSearchLimit
 	}
 
 	// snippet() centers on the matched terms, ≤ snippetTokens tokens,
@@ -496,7 +503,7 @@ func searchExtractions(ctx context.Context, db *sql.DB, opts SearchEventOpts) ([
 
 	limit := opts.Limit
 	if limit <= 0 {
-		limit = 20
+		limit = DefaultSearchLimit
 	}
 
 	var order string
