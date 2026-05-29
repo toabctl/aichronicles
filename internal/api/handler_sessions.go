@@ -34,7 +34,7 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 		sinceMs = time.Now().Add(-defaultSessionListWindow).UnixMilli()
 	}
 
-	limit, ok := parseLimitQuery(w, r, wire.DefaultPageLimit)
+	limit, offset, ok := parsePage(w, r)
 	if !ok {
 		return
 	}
@@ -54,32 +54,27 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 	// supports faceted EXISTS clauses + event_count + first_prompt.
 	// The plain LoadRecentSessionDigests path stays the default for
 	// the unfiltered case (the cheapest read).
+	var rows []store.SessionDigestRow
+	var err error
 	if facets.Any() {
-		rows, err := store.LoadSessionsForListFaceted(r.Context(), s.store.DB(), facets, sinceMs, limit)
+		rows, err = store.LoadSessionsForListFaceted(r.Context(), s.store.DB(), facets, sinceMs, limit, offset)
 		if err != nil {
 			s.storeError(w, "LoadSessionsForListFaceted", err)
 			return
 		}
-		out := wire.SessionListResponse{Sessions: make([]wire.SessionDigest, 0, len(rows))}
-		for _, row := range rows {
-			out.Sessions = append(out.Sessions, sessionDigestRowToWire(row))
+	} else {
+		rows, err = store.LoadRecentSessionDigests(r.Context(), s.store.DB(), sinceMs, limit, offset)
+		if err != nil {
+			s.storeError(w, "LoadRecentSessionDigests", err)
+			return
 		}
-		writeJSON(w, http.StatusOK, out)
-		return
 	}
 
-	rows, err := store.LoadRecentSessionDigests(r.Context(), s.store.DB(), sinceMs, limit)
-	if err != nil {
-		s.storeError(w, "LoadRecentSessionDigests", err)
-		return
-	}
-
-	out := wire.SessionListResponse{
-		Sessions: make([]wire.SessionDigest, 0, len(rows)),
-	}
+	out := wire.SessionListResponse{Sessions: make([]wire.SessionDigest, 0, len(rows))}
 	for _, row := range rows {
 		out.Sessions = append(out.Sessions, sessionDigestRowToWire(row))
 	}
+	out.NextCursor = nextCursor(offset, limit, len(rows))
 	writeJSON(w, http.StatusOK, out)
 }
 

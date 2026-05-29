@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -27,6 +28,59 @@ func TestHandleSessionsList_Empty(t *testing.T) {
 	// Empty slice must encode as []; catches nil-vs-empty regression.
 	if !contains(rr.Body.String(), `"sessions":[]`) {
 		t.Errorf("expected sessions:[]; got %s", rr.Body.String())
+	}
+}
+
+func TestHandleSessionsList_CursorPaginates(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	const n = 5
+	for i := range n {
+		env := validEnvelope(t)
+		env.SourceSessionID = fmt.Sprintf("sess-page-%d", i)
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr,
+			httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(mustJSON(t, env))))
+		if rr.Code != http.StatusOK && rr.Code != http.StatusAccepted {
+			t.Fatalf("ingest %d: %d %s", i, rr.Code, rr.Body.String())
+		}
+	}
+
+	seen := map[string]bool{}
+	total, pages := 0, 0
+	cursor := ""
+	for {
+		url := "/v1/sessions?limit=2"
+		if cursor != "" {
+			url += "&cursor=" + cursor
+		}
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, url, nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("page %d: status=%d body=%s", pages, rr.Code, rr.Body.String())
+		}
+		var out wire.SessionListResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		for _, sdg := range out.Sessions {
+			if seen[sdg.ID] {
+				t.Fatalf("session %s appeared on two pages (overlap)", sdg.ID)
+			}
+			seen[sdg.ID] = true
+		}
+		total += len(out.Sessions)
+		pages++
+		if pages > 10 {
+			t.Fatal("cursor never terminated")
+		}
+		if out.NextCursor == "" {
+			break
+		}
+		cursor = string(out.NextCursor)
+	}
+	if total != n {
+		t.Fatalf("paged total: got %d, want %d", total, n)
 	}
 }
 

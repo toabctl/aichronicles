@@ -47,6 +47,9 @@ type SessionListRequest struct {
 	// means "any cwd" (the default).
 	Cwd   string `json:"cwd,omitempty"`
 	Limit int    `json:"limit,omitempty"`
+	// Cursor pages forward through a previous response's NextCursor
+	// (opaque offset cursor). Empty = first page.
+	Cursor Cursor `json:"cursor,omitempty"`
 
 	// Facet filters — every field empty means "no filter for this
 	// dimension". Used by the web's session-list page; the MCP
@@ -78,8 +81,11 @@ type SessionListRequest struct {
 }
 
 // SessionListResponse is the body shape for GET /v1/sessions.
+// NextCursor (via PageResponse) is set when more sessions remain;
+// empty on the last page.
 type SessionListResponse struct {
 	Sessions []SessionDigest `json:"sessions"`
+	PageResponse
 }
 
 // SourceAgentsResponse is the body for GET /v1/sessions/source-agents.

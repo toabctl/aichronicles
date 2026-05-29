@@ -833,7 +833,7 @@ func TestLoadSessionDigests_PopulateResumeFields(t *testing.T) {
 	}
 
 	t.Run("recent", func(t *testing.T) {
-		rows, err := LoadRecentSessionDigests(t.Context(), s.DB(), 1, 10)
+		rows, err := LoadRecentSessionDigests(t.Context(), s.DB(), 1, 10, 0)
 		if err != nil {
 			t.Fatalf("LoadRecentSessionDigests: %v", err)
 		}
@@ -845,7 +845,7 @@ func TestLoadSessionDigests_PopulateResumeFields(t *testing.T) {
 
 	t.Run("faceted", func(t *testing.T) {
 		rows, err := LoadSessionsForListFaceted(t.Context(), s.DB(),
-			SessionListFacets{SourceAgent: "claude-code"}, 1, 10)
+			SessionListFacets{SourceAgent: "claude-code"}, 1, 10, 0)
 		if err != nil {
 			t.Fatalf("LoadSessionsForListFaceted: %v", err)
 		}

@@ -252,7 +252,9 @@ func (s *Server) handleSessionDigests(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := store.LoadRecentSessionDigests(r.Context(), s.store.DB(), sinceMs, limit)
+	// Pipeline reader (reflect/propose window): single-shot, no
+	// cursor — offset 0.
+	rows, err := store.LoadRecentSessionDigests(r.Context(), s.store.DB(), sinceMs, limit, 0)
 	if err != nil {
 		s.storeError(w, "LoadRecentSessionDigests", err)
 		return

@@ -552,7 +552,7 @@ type SessionDigestRow struct {
 // Both subqueries (first_prompt, latest_summary) are correlated;
 // at thousand-session scale the cost is negligible. If that ever
 // becomes the slow spot, materialize them into columns.
-func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs int64, limit int) ([]SessionDigestRow, error) {
+func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs int64, limit, offset int) ([]SessionDigestRow, error) {
 	if limit <= 0 {
 		limit = 30
 	}
@@ -565,9 +565,9 @@ func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs int64, li
 			s.source_agent, s.source_session_id
 		FROM sessions s
 		WHERE `+EffectiveTsExpr+` >= ?
-		ORDER BY `+EffectiveTsExpr+` DESC
-		LIMIT ?`,
-		string(LLMKindSummary), sinceMs, limit,
+		ORDER BY `+EffectiveTsExpr+` DESC, s.id DESC
+		LIMIT ? OFFSET ?`,
+		string(LLMKindSummary), sinceMs, limit, offset,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query session digests: %w", err)
@@ -696,7 +696,7 @@ func (f SessionListFacets) Any() bool {
 //
 // Result is ordered by EffectiveTsExpr DESC (newest first), capped
 // at limit. limit ≤0 falls back to defaultSessionsForListLimit.
-func LoadSessionsForListFaceted(ctx context.Context, db *sql.DB, f SessionListFacets, sinceMs int64, limit int) ([]SessionDigestRow, error) {
+func LoadSessionsForListFaceted(ctx context.Context, db *sql.DB, f SessionListFacets, sinceMs int64, limit, offset int) ([]SessionDigestRow, error) {
 	if limit <= 0 {
 		limit = defaultSessionsForListLimit
 	}
@@ -763,8 +763,8 @@ func LoadSessionsForListFaceted(ctx context.Context, db *sql.DB, f SessionListFa
 	if len(conds) > 0 {
 		q += " WHERE " + strings.Join(conds, " AND ")
 	}
-	q += " ORDER BY " + EffectiveTsExpr + " DESC LIMIT ?"
-	args = append(args, limit)
+	q += " ORDER BY " + EffectiveTsExpr + " DESC, s.id DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
 
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {

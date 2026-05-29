@@ -21,6 +21,7 @@ func (c *Client) Sessions(ctx context.Context, req wire.SessionListRequest) (wir
 	q.SetString("file_path_substring", req.FilePathSubstring)
 	q.SetBool("with_failures", req.WithFailures)
 	q.SetBool("without_summary", req.WithoutSummary)
+	q.SetString("cursor", string(req.Cursor))
 
 	var out wire.SessionListResponse
 	if err := c.do(ctx, http.MethodGet, q.URL("/v1/sessions"), nil, &out); err != nil {
