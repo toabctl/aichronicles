@@ -63,17 +63,18 @@ func (s *Server) searchHitsHandler(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	kind := r.URL.Query().Get("kind")
 	since := r.URL.Query().Get("since")
+	cursor := r.URL.Query().Get("cursor")
 	compact := r.URL.Query().Get("compact") == "1"
 	facets := readSessionListFilters(r)
 
-	view := buildSearchHits(r, s, q, kind, since, compact, facets, s.now())
+	view := buildSearchHits(r, s, q, kind, since, cursor, compact, facets, s.now())
 	s.renderFragment(w, "hits", view)
 }
 
 // buildSearchHits performs the search and shapes the result for
 // the hits fragment. Extracted from the handler so tests can
 // drive it directly without going through the HTTP layer.
-func buildSearchHits(r *http.Request, s *Server, q, kind, since string, compact bool, facets sessionListFilters, now time.Time) SearchHits {
+func buildSearchHits(r *http.Request, s *Server, q, kind, since, cursor string, compact bool, facets sessionListFilters, now time.Time) SearchHits {
 	if q == "" {
 		// Empty query is the page's initial state — render an
 		// empty Hits with no Error so the template falls through
@@ -105,6 +106,7 @@ func buildSearchHits(r *http.Request, s *Server, q, kind, since string, compact 
 		Q:                 q,
 		Kind:              kind,
 		Limit:             limit,
+		Cursor:            wire.Cursor(cursor),
 		SourceAgent:       facets.Agent,
 		ToolName:          facets.Tool,
 		SkillName:         facets.Skill,
@@ -145,35 +147,35 @@ func buildSearchHits(r *http.Request, s *Server, q, kind, since string, compact 
 		})
 	}
 
-	// Compact (nav-bar popover) stays a flat, dense list: no
-	// grouping, no per-session resume buttons, no topic annotation.
+	// Compact (nav-bar popover) stays a flat, dense list: no per-session
+	// resume buttons, no topic annotation, no pagination cursor.
 	if compact {
 		return SearchHits{Hits: rows, Compact: true, Query: q}
 	}
 
-	// Full page: group the matches by session and decorate each
-	// group header with the session's cached summary topic and
-	// resume one-liners. uniqueSessionIDs preserves the hits' rank
-	// order, so the strongest-matching session's group renders first.
-	out := SearchHits{Query: q}
-	if len(rows) == 0 {
-		return out
+	// Full page: a flat, data-attributed fragment. Decorate each row
+	// with its session's summary topic + resume one-liners (the client
+	// groups by session and builds the headers from these), and pass
+	// the API's NextCursor through to the "load more" control.
+	out := SearchHits{Hits: rows, Query: q, NextCursor: string(resp.NextCursor)}
+	if len(rows) > 0 {
+		decorateRowsWithSessionData(r, s, out.Hits)
 	}
-	ids := uniqueSessionIDs(rows)
-	out.Groups = buildSearchSessionGroups(r, s, ids, rows)
 	return out
 }
 
-// buildSearchSessionGroups folds the flat hit rows into per-session
-// groups in the supplied id order, attaching each session's summary
-// topic and resume one-liners to the group header.
+// decorateRowsWithSessionData fills the per-session SummaryTopic and
+// resume one-liners on every row, in place, so the client-side grouper
+// can build each session header without another round-trip. Looks up
+// the distinct sessions once via the batch endpoints.
 //
-// Both the summary and digest lookups soft-fail: a working search
-// must not vanish because an annotation (topic) or a resume one-liner
-// couldn't be resolved. On error the groups simply render without
-// that decoration; the session detail page surfaces any persistent
-// underlying error.
-func buildSearchSessionGroups(r *http.Request, s *Server, ids []string, rows []SearchHitRow) []SearchSessionGroup {
+// Both lookups soft-fail: a working search must not vanish because an
+// annotation (topic) or a resume one-liner couldn't be resolved. On
+// error the rows simply render without that decoration; the session
+// detail page surfaces any persistent underlying error.
+func decorateRowsWithSessionData(r *http.Request, s *Server, rows []SearchHitRow) {
+	ids := uniqueSessionIDs(rows)
+
 	topics := map[string]string{}
 	if summaries, err := s.api.SummariesBatch(r.Context(), ids); err == nil {
 		for id, sm := range summaries {
@@ -185,14 +187,12 @@ func buildSearchSessionGroups(r *http.Request, s *Server, ids []string, rows []S
 		digests = nil
 	}
 
-	groupByID := make(map[string]*SearchSessionGroup, len(ids))
-	groups := make([]SearchSessionGroup, len(ids))
-	for i, id := range ids {
-		groups[i] = SearchSessionGroup{
-			SessionID:    id,
-			ShortID:      preview.ShortID(id),
-			SummaryTopic: topics[id],
-		}
+	type sessionMeta struct {
+		topic, resume, resumeDangerous string
+	}
+	meta := make(map[string]sessionMeta, len(ids))
+	for _, id := range ids {
+		m := sessionMeta{topic: topics[id]}
 		if d, ok := digests[id]; ok {
 			// Resume one-liners cd into start_cwd because
 			// `claude --resume` indexes transcripts by session-start
@@ -203,17 +203,17 @@ func buildSearchSessionGroups(r *http.Request, s *Server, ids []string, rows []S
 			if resumeCwd == nil {
 				resumeCwd = d.Cwd
 			}
-			groups[i].ResumeCommand = buildResumeCommandPtr(d.SourceAgent, d.SourceSessionID, resumeCwd)
-			groups[i].ResumeCommandDangerous = buildResumeCommandDangerousPtr(d.SourceAgent, d.SourceSessionID, resumeCwd)
+			m.resume = buildResumeCommandPtr(d.SourceAgent, d.SourceSessionID, resumeCwd)
+			m.resumeDangerous = buildResumeCommandDangerousPtr(d.SourceAgent, d.SourceSessionID, resumeCwd)
 		}
-		groupByID[id] = &groups[i]
+		meta[id] = m
 	}
-	for _, row := range rows {
-		if g := groupByID[row.SessionID]; g != nil {
-			g.Hits = append(g.Hits, row)
-		}
+	for i := range rows {
+		m := meta[rows[i].SessionID]
+		rows[i].SummaryTopic = m.topic
+		rows[i].ResumeCommand = m.resume
+		rows[i].ResumeCommandDangerous = m.resumeDangerous
 	}
-	return groups
 }
 
 // uniqueSessionIDs returns the set of distinct session IDs across

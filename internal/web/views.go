@@ -550,46 +550,42 @@ type SearchPage struct {
 }
 
 // SearchHits is the shape the /search/hits fragment template
-// consumes. Either Error is non-empty (parse failure, query is
-// empty) and the template renders it as a muted line, or the result
-// rows render. Everything empty == empty-state line.
+// consumes. Both modes render a flat list of Hits (no server-side
+// grouping); Error / no-Hits drive the empty-state line.
 //
-// The result is carried two ways depending on mode:
-//   - Compact (nav-bar popover): a flat, dense list in Hits, one
-//     row per match, plus a "see all in /search" link. Query is
-//     echoed back so that link can carry it.
-//   - Full /search page: matches grouped by session in Groups, each
-//     group decorated with the session's resume one-liners and
-//     summary topic on its header.
+//   - Compact (nav-bar popover): a dense table, one row per match,
+//     plus a "see all in /search" link. Query is echoed so that link
+//     can carry it.
+//   - Full /search page: a flat, data-attributed fragment that
+//     search-group.js reads to render the by-session grouping, the
+//     per-session cap + expander, and the "load more" control on the
+//     client. NextCursor feeds that load-more control.
 type SearchHits struct {
 	Hits    []SearchHitRow
-	Groups  []SearchSessionGroup
 	Error   string
 	Compact bool
 	Query   string
-}
-
-// SearchSessionGroup bundles every hit belonging to one session on
-// the full search page. Resume is inherently per-session
-// (`cd <start_cwd> && claude --resume <id>`), so the one-liners and
-// the cached summary topic live on the group header rather than
-// being repeated on each hit row. ResumeCommand* are empty when the
-// session's source agent / id can't produce a safe command — the
-// template hides the button rather than copy "" into a terminal.
-type SearchSessionGroup struct {
-	SessionID              string // full UUID for the /sessions/{id} link
-	ShortID                string
-	SummaryTopic           string
-	ResumeCommand          string
-	ResumeCommandDangerous string
-	Hits                   []SearchHitRow
+	// NextCursor is the opaque pagination cursor for the next page,
+	// set in full mode when the API reports more results. The
+	// client's "load more" control passes it back. Empty == no more
+	// pages.
+	NextCursor string
 }
 
 // SearchHitRow is one matching event for the search fragment.
 type SearchHitRow struct {
-	SessionID string // full UUID for the /sessions/{id} link (compact mode)
+	SessionID string // full UUID for the /sessions/{id} link
 	ShortID   string
 	When      string // relative time
 	Kind      string
 	Snippet   string // SQL snippet() output, falls back to truncated content
+
+	// Per-session fields, denormalised onto every row of a session so
+	// the client-side grouper builds each session's header (topic +
+	// resume one-liners) without a second fetch. ResumeCommand* are
+	// empty when the agent/id can't produce a safe command (the client
+	// then omits that button). All empty in compact mode.
+	SummaryTopic           string
+	ResumeCommand          string
+	ResumeCommandDangerous string
 }

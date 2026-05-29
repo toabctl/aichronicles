@@ -22,6 +22,11 @@
        input keeps a11y semantics without spreading the filters
        sideways. */}}
   <div role="search">
+    {{/* htmx swaps each page of raw, data-only result rows into the
+         hidden #hits-raw sink; search-group.js then renders the
+         grouped, capped, paginated view into the visible #hits. A new
+         query replaces #hits-raw (innerHTML); "load more" appends to
+         it (handled in JS). */}}
     <input type="search"
            name="q"
            value="{{.InitialQuery}}"
@@ -30,7 +35,7 @@
            autofocus
            hx-get="/search/hits"
            hx-trigger="input changed delay:200ms, search{{if .InitialQuery}}, load{{end}}"
-           hx-target="#hits"
+           hx-target="#hits-raw"
            hx-include="closest form">
   </div>
   {{/* Hidden inputs carry active filters into every htmx GET via
@@ -61,7 +66,11 @@
   </details>
 </form>
 
-<div id="hits">
+{{/* Hidden sink: htmx swaps raw data-only fragments here; the form's
+     hx-include carries q + filters on every page request. */}}
+<div id="hits-raw" hidden></div>
+{{/* Visible results: rendered by search-group.js from #hits-raw. */}}
+<div id="hits" data-search-results>
   <p class="empty">(start typing — results appear here as you go)</p>
 </div>
 {{end}}

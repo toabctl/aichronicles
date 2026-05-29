@@ -85,10 +85,13 @@ func TestSearchHits_EmptyQueryRendersEmptyState(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("status: got %d, want 200", status)
 	}
-	// Empty query → empty SearchHits → template falls through to
-	// the empty-state line (no error, no rows).
-	if !strings.Contains(body, "(no hits for that query)") {
-		t.Errorf("expected empty-hits line:\n%s", body)
+	// Empty query → full-mode fragment marks data-empty so the client
+	// renders the placeholder; no .search-hit rows.
+	if !strings.Contains(body, `data-empty="1"`) {
+		t.Errorf("expected data-empty marker:\n%s", body)
+	}
+	if strings.Contains(body, "search-hit") {
+		t.Errorf("empty query must produce no hit rows:\n%s", body)
 	}
 }
 
@@ -111,8 +114,10 @@ func TestSearchHits_BareTokenMatchesByPrefix(t *testing.T) {
 	if !strings.Contains(body, "jsonl") {
 		t.Errorf("expected snippet to contain `jsonl`:\n%s", body)
 	}
-	if !strings.Contains(body, `<a href="/sessions/`) {
-		t.Errorf("hit row should link to session detail:\n%s", body)
+	// Full-mode fragment is data-only; the client builds the session
+	// link from data-session-id.
+	if !strings.Contains(body, `data-session-id="`) {
+		t.Errorf("hit row should carry its session id:\n%s", body)
 	}
 }
 
@@ -165,8 +170,11 @@ func TestSearchHits_KindFilterNarrows(t *testing.T) {
 		"q":    {"shared"},
 		"kind": {"tool_use"},
 	}.Encode())
-	if !strings.Contains(missBody, "(no hits for that query)") {
+	if !strings.Contains(missBody, `data-empty="1"`) {
 		t.Errorf("kind=tool_use should miss the user_prompt-only seed:\n%s", missBody)
+	}
+	if strings.Contains(missBody, "search-hit") {
+		t.Errorf("a missed query must produce no hit rows:\n%s", missBody)
 	}
 }
 
@@ -265,11 +273,12 @@ func TestSearchHits_CompactCapsRowsAndAddsSeeAllLink(t *testing.T) {
 		t.Errorf("compact mode missing see-all link with original query:\n%s", compactBody)
 	}
 
-	// Default (non-compact) mode returns the full set, no see-all link.
+	// Default (non-compact) mode returns the full set as flat
+	// data-only rows (the client groups them), no see-all link.
 	_, fullBody := fetch(t, base+"/search/hits?"+url.Values{
 		"q": {"compactmarker"},
 	}.Encode())
-	rowCountFull := strings.Count(fullBody, `<a href="/sessions/`)
+	rowCountFull := strings.Count(fullBody, `data-session-id="`)
 	if rowCountFull != 12 {
 		t.Errorf("non-compact mode: got %d rows, want 12", rowCountFull)
 	}
@@ -353,15 +362,13 @@ func TestSearchHits_FullModeShowsSummaryTopic(t *testing.T) {
 	base, stop := startTestServer(t, st)
 	defer stop()
 
-	// Full search-page mode — topic line should appear under the snippet.
+	// Full mode carries the session's topic as a row data attribute;
+	// the client renders it on the group header.
 	_, fullBody := fetch(t, base+"/search/hits?"+url.Values{
 		"q": {"topicquery"},
 	}.Encode())
-	if !strings.Contains(fullBody, "Investigate the topicquery edge case") {
-		t.Errorf("full mode: expected topic line to render:\n%s", fullBody)
-	}
-	if !strings.Contains(fullBody, `<small class="topic">`) {
-		t.Errorf("full mode: expected <small class=\"topic\"> wrapper:\n%s", fullBody)
+	if !strings.Contains(fullBody, `data-topic="Investigate the topicquery edge case"`) {
+		t.Errorf("full mode: expected data-topic on the hit row:\n%s", fullBody)
 	}
 }
 
@@ -406,51 +413,55 @@ func TestSearchHits_CompactModeOmitsSummaryTopic(t *testing.T) {
 	}
 }
 
-func TestSearchHits_FullModeGroupsBySessionWithResumeButtons(t *testing.T) {
+// TestSearchHits_FullModeCarriesPerSessionResumeData verifies the
+// full-mode fragment denormalises each session's resume one-liners
+// onto every one of its rows, so the client-side grouper can build
+// the per-session header without another fetch. (The grouping,
+// 3-per-session cap, and expander themselves live in search-group.js
+// and aren't exercised by the Go HTTP tests.)
+func TestSearchHits_FullModeCarriesPerSessionResumeData(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)
 	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
 
-	// One claude-code session with TWO matching events (so we can
-	// prove they collapse under a single group header) and one
-	// gemini-cli session with one match.
-	seedSessionFull(t, st, "claude-code", "sess-grp-cc", "grpmarker alpha event", "/work/cc", now)
+	// One claude-code session with TWO matching events (both rows must
+	// carry the same resume data) and one gemini-cli session.
+	ccID := seedSessionFull(t, st, "claude-code", "sess-grp-cc", "grpmarker alpha event", "/work/cc", now)
 	seedSessionFull(t, st, "claude-code", "sess-grp-cc", "grpmarker beta event", "/work/cc", now.Add(time.Minute))
-	seedSessionFull(t, st, "gemini-cli", "sess-grp-gem", "grpmarker gamma event", "/work/gem", now.Add(time.Hour))
+	gemID := seedSessionFull(t, st, "gemini-cli", "sess-grp-gem", "grpmarker gamma event", "/work/gem", now.Add(time.Hour))
 
 	base, stop := startTestServer(t, st)
 	defer stop()
 
 	_, body := fetch(t, base+"/search/hits?"+url.Values{"q": {"grpmarker"}}.Encode())
 
-	// Two sessions → two group sections, each with one session link.
-	if n := strings.Count(body, `class="search-group"`); n != 2 {
-		t.Errorf("expected 2 session groups, got %d:\n%s", n, body)
+	// Three flat rows: two for the cc session, one for gemini.
+	if n := strings.Count(body, `data-session-id="`); n != 3 {
+		t.Errorf("expected 3 hit rows, got %d:\n%s", n, body)
 	}
-	if n := strings.Count(body, `<a href="/sessions/`); n != 2 {
-		t.Errorf("expected 1 session link per group (2 total), got %d", n)
+	if n := strings.Count(body, `data-session-id="`+ccID+`"`); n != 2 {
+		t.Errorf("expected 2 rows for the cc session, got %d", n)
 	}
-	// Both claude-code events live under the same group: three <tr>
-	// across both groups' bodies (2 cc + 1 gemini).
-	if n := strings.Count(body, "<tr>"); n != 3 {
-		t.Errorf("expected 3 hit rows total, got %d", n)
+	if n := strings.Count(body, `data-session-id="`+gemID+`"`); n != 1 {
+		t.Errorf("expected 1 row for the gemini session, got %d", n)
 	}
 
-	// Claude-code group: both resume buttons with the exact payload.
+	// claude-code rows carry both resume one-liners with the exact
+	// payloads.
 	for _, want := range []string{
 		`data-resume-cmd="cd /work/cc &amp;&amp; claude --resume sess-grp-cc"`,
-		`data-resume-cmd="cd /work/cc &amp;&amp; claude --resume sess-grp-cc --dangerously-skip-permissions"`,
+		`data-resume-cmd-dangerous="cd /work/cc &amp;&amp; claude --resume sess-grp-cc --dangerously-skip-permissions"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q\n--- body ---\n%s", want, body)
 		}
 	}
-	// Gemini group: regular resume present, dangerous variant absent.
+	// gemini row carries the regular resume but no dangerous variant.
 	if !strings.Contains(body, `data-resume-cmd="cd /work/gem &amp;&amp; gemini --resume sess-grp-gem"`) {
-		t.Errorf("body missing gemini resume button payload:\n%s", body)
+		t.Errorf("body missing gemini resume payload:\n%s", body)
 	}
 	if strings.Contains(body, `gemini --resume sess-grp-gem --dangerously-skip-permissions`) {
-		t.Errorf("gemini group must NOT render the --dangerously-skip-permissions variant")
+		t.Errorf("gemini must NOT carry the --dangerously-skip-permissions variant")
 	}
 }
 

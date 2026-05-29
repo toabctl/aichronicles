@@ -339,6 +339,36 @@ td.row-actions {
   margin-bottom: 0;
 }
 
+/* Hidden sink holding the raw, data-only result fragments that
+   search-group.js reads. Belt-and-suspenders with the `hidden`
+   attribute in case a stylesheet resets it. */
+#hits-raw,
+.search-hit {
+  display: none;
+}
+
+/* Per-session "N more in this session" expander. Muted summary so the
+   inline matches stay the primary signal; the revealed table sits
+   flush like the inline one. */
+.search-more {
+  margin-top: 0.15rem;
+}
+.search-more > summary {
+  font-size: 0.85em;
+  color: var(--pico-muted-color);
+  cursor: pointer;
+}
+.search-more table {
+  margin-bottom: 0;
+}
+
+/* "Load more" pager button — reuses the resume-btn chrome but sits on
+   its own line, centered under the last group. */
+.search-loadmore {
+  display: block;
+  margin: 1rem auto 0;
+}
+
 /* Sessions-list row preview. Three styles by kind:
    - "topic" (cached summary's topic — the strongest signal)
    - "prompt" (substantive first user_prompt as fallback)

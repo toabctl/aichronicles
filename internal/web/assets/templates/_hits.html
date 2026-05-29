@@ -1,8 +1,9 @@
 {{define "hits"}}
-{{if .Error}}
-<p class="empty">{{.Error}}</p>
-{{else if .Compact}}
-  {{if .Hits}}
+{{if .Compact}}
+  {{/* Nav-bar popover: server-rendered flat table, no client grouping. */}}
+  {{if .Error}}
+  <p class="empty">{{.Error}}</p>
+  {{else if .Hits}}
   <table>
     <tbody>
       {{range .Hits}}
@@ -19,45 +20,34 @@
   {{else}}
   <p class="empty">(no hits for that query)</p>
   {{end}}
-{{else if .Groups}}
-  {{range .Groups}}
-  <section class="search-group">
-    {{/* The header is the keyboard-nav unit for grouped results:
-         keynav.js focuses elements with class="nav-row" and Enter
-         clicks the first <a href> inside — here the session link.
-         Resume buttons are <button>s so Enter never triggers them. */}}
-    <header class="search-group-head nav-row" tabindex="0">
-      <span class="sid"><a href="/sessions/{{.SessionID}}">{{.ShortID}}</a></span>
-      {{if .SummaryTopic}}<small class="topic">{{.SummaryTopic}}</small>{{end}}
-      <span class="row-actions">
-        {{if .ResumeCommand}}
-        <button type="button"
-                class="resume-btn resume-btn-icon"
-                data-resume-cmd="{{.ResumeCommand}}"
-                title="Copy `{{.ResumeCommand}}` to clipboard so you can paste it in a terminal to resume the agent">↻</button>
-        {{end}}
-        {{if .ResumeCommandDangerous}}
-        <button type="button"
-                class="resume-btn resume-btn-icon resume-btn-dangerous"
-                data-resume-cmd="{{.ResumeCommandDangerous}}"
-                title="Copy `{{.ResumeCommandDangerous}}` to clipboard — resume with --dangerously-skip-permissions">⚡</button>
-        {{end}}
-      </span>
-    </header>
-    <table>
-      <tbody>
-        {{range .Hits}}
-        <tr>
-          <td class="ts">{{.When}}</td>
-          <td><span class="badge badge-{{.Kind}}">{{.Kind}}</span></td>
-          <td>{{.Snippet}}</td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-  </section>
-  {{end}}
 {{else}}
-<p class="empty">(no hits for that query)</p>
+  {{/* Full /search page: a flat, DATA-only fragment. search-group.js
+       reads these rows out of the hidden #hits-raw sink and renders
+       the by-session grouping, the per-session cap + expander, and the
+       "load more" control into the visible #hits. Rendering data (not
+       layout) keeps grouping + pagination on the client while the
+       server stays a clean paginated search API.
+
+       Per-session topic / resume one-liners are denormalised onto
+       every row so the grouper builds each header without a second
+       fetch. data-empty / data-error / data-next-cursor carry the
+       fragment's state and the next page token. */}}
+  <div class="search-results"
+       data-query="{{.Query}}"
+       {{if .Error}}data-error="{{.Error}}"{{end}}
+       {{if .NextCursor}}data-next-cursor="{{.NextCursor}}"{{end}}
+       {{if and (not .Hits) (not .Error)}}data-empty="1"{{end}}>
+    {{range .Hits}}
+    <div class="search-hit"
+         data-session-id="{{.SessionID}}"
+         data-short-id="{{.ShortID}}"
+         data-topic="{{.SummaryTopic}}"
+         data-resume-cmd="{{.ResumeCommand}}"
+         data-resume-cmd-dangerous="{{.ResumeCommandDangerous}}"
+         data-when="{{.When}}"
+         data-kind="{{.Kind}}"
+         data-snippet="{{.Snippet}}"></div>
+    {{end}}
+  </div>
 {{end}}
 {{end}}
