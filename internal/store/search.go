@@ -92,6 +92,22 @@ type SearchEventOpts struct {
 	NoDedup    bool
 	Order      SearchOrder
 
+	// Offset skips this many result rows before the Limit window —
+	// the OFFSET half of pagination. Applied on the OUTER query
+	// (after dedup), with a unique rowid tiebreaker on every ORDER BY
+	// so paging never skips or duplicates a row. Zero for the first
+	// page.
+	Offset int
+
+	// Stage locks which FTS fallback stage to query (StagePrimary /
+	// StageTrigram / StageExtractions). Empty selects the stage the
+	// normal way — try primary, then trigram, then extractions, first
+	// non-empty wins — and SearchEventsPaged reports which one it
+	// picked so the cursor can pin it. A non-empty Stage queries ONLY
+	// that stage with no fallback, so a deep page that runs off the
+	// end returns nothing instead of leaking the next corpus's rows.
+	Stage string
+
 	// SourceAgent narrows to events whose source_agent matches
 	// (exact). Useful for "what did I ask Claude vs Gemini about
 	// this week" queries.
@@ -163,6 +179,17 @@ const (
 	indexExtractions = "extractions_fts"
 )
 
+// Stage identifiers for the FTS fallback stage a search resolved to.
+// Carried in the pagination cursor (SearchEventOpts.Stage) so every
+// page of one pagination queries the same corpus. Values are stable
+// wire-visible strings — do not renumber/rename without a cursor
+// version bump.
+const (
+	StagePrimary     = "primary"
+	StageTrigram     = "trigram"
+	StageExtractions = "extractions"
+)
+
 // SearchEvents runs an FTS5 MATCH against events_fts and returns the
 // matching rows.
 //
@@ -183,27 +210,76 @@ const (
 // (newest first); future commits will replace both with a blended
 // score, but the parameter stays so callers can opt in or out.
 func SearchEvents(ctx context.Context, db *sql.DB, opts SearchEventOpts) ([]SearchEventHit, error) {
+	hits, _, err := SearchEventsPaged(ctx, db, opts)
+	return hits, err
+}
+
+// SearchEventsPaged is SearchEvents with pagination support. It
+// returns the matching rows AND the FTS stage they came from, so a
+// caller building a pagination cursor can pin the stage for every
+// subsequent page.
+//
+// Stage selection:
+//   - opts.Stage == "": first-page behaviour. Probe each stage in
+//     order (primary → trigram → extractions) with a LIMIT-1 / OFFSET-0
+//     existence check, lock the first stage that has any match, then
+//     run the real Limit/Offset query against ONLY that stage. The
+//     probe ignores opts.Offset on purpose: a deep offset must not
+//     make a non-empty stage look empty and fall through to the next
+//     corpus.
+//   - opts.Stage != "": query ONLY that stage with no fallback. An
+//     empty page just means the locked stage is exhausted (end of
+//     results), never a fall-through to a different corpus.
+//
+// When nothing matches in any stage, the returned stage is
+// StagePrimary (arbitrary — the empty result yields no next page).
+func SearchEventsPaged(ctx context.Context, db *sql.DB, opts SearchEventOpts) ([]SearchEventHit, string, error) {
 	if strings.TrimSpace(opts.Query) == "" {
-		return nil, fmt.Errorf("SearchEvents: query is required")
+		return nil, "", fmt.Errorf("SearchEvents: query is required")
 	}
 	if opts.NowMs == 0 {
 		opts.NowMs = time.Now().UnixMilli()
 	}
-	hits, err := searchAgainst(ctx, db, opts, indexPrimary)
-	if err != nil {
-		return nil, err
+
+	if opts.Stage != "" {
+		hits, err := runSearchStage(ctx, db, opts, opts.Stage)
+		return hits, opts.Stage, err
 	}
-	if len(hits) > 0 {
-		return hits, nil
+
+	for _, stage := range []string{StagePrimary, StageTrigram, StageExtractions} {
+		probe := opts
+		probe.Limit = 1
+		probe.Offset = 0
+		found, err := runSearchStage(ctx, db, probe, stage)
+		if err != nil {
+			return nil, "", err
+		}
+		if len(found) == 0 {
+			continue
+		}
+		hits, err := runSearchStage(ctx, db, opts, stage)
+		if err != nil {
+			return nil, "", err
+		}
+		return hits, stage, nil
 	}
-	hits, err = searchAgainst(ctx, db, opts, indexTrigram)
-	if err != nil {
-		return nil, err
+	return nil, StagePrimary, nil
+}
+
+// runSearchStage executes one named FTS stage. Centralises the
+// stage→builder mapping so SearchEventsPaged's probe and real-query
+// paths can't drift.
+func runSearchStage(ctx context.Context, db *sql.DB, opts SearchEventOpts, stage string) ([]SearchEventHit, error) {
+	switch stage {
+	case StagePrimary:
+		return searchAgainst(ctx, db, opts, indexPrimary)
+	case StageTrigram:
+		return searchAgainst(ctx, db, opts, indexTrigram)
+	case StageExtractions:
+		return searchExtractions(ctx, db, opts)
+	default:
+		return nil, fmt.Errorf("SearchEvents: unknown stage %q", stage)
 	}
-	if len(hits) > 0 {
-		return hits, nil
-	}
-	return searchExtractions(ctx, db, opts)
 }
 
 // searchAgainst executes the search SQL against the named FTS5 table.
@@ -351,8 +427,8 @@ func buildSearchSQL(opts SearchEventOpts, index string) (string, []any) {
 				` + snippetExpr + ` AS snip
 			FROM ` + index + ` f JOIN events e ON e.rowid = f.rowid
 			WHERE ` + index + ` MATCH ?` + filter.String() + `
-			ORDER BY ` + order + ` LIMIT ?`
-		args = append(args, limit)
+			ORDER BY ` + order + `, e.rowid DESC LIMIT ? OFFSET ?`
+		args = append(args, limit, opts.Offset)
 		return sqlText, args
 	}
 
@@ -392,14 +468,14 @@ func buildSearchSQL(opts SearchEventOpts, index string) (string, []any) {
 		SELECT session_id, kind, cwd, ts_source_ms, content_text, snip
 		FROM ranked
 		WHERE rn = 1
-		ORDER BY ` + order + `
-		LIMIT ?`
+		ORDER BY ` + order + `, rowid DESC
+		LIMIT ? OFFSET ?`
 	if opts.Order != OrderRecency {
 		// Boosted formula has a `?` for now_ms; matches the position
 		// in the SELECT clause's ORDER BY.
 		args = append(args, opts.NowMs)
 	}
-	args = append(args, limit)
+	args = append(args, limit, opts.Offset)
 	return sqlText, args
 }
 
@@ -448,13 +524,13 @@ func searchExtractions(ctx context.Context, db *sql.DB, opts SearchEventOpts) ([
 		FROM event_picked ep
 		JOIN events e ON e.event_id = ep.event_id
 		WHERE ep.rn = 1` + filter.String() + `
-		ORDER BY ` + order + `
-		LIMIT ?`
+		ORDER BY ` + order + `, e.rowid DESC
+		LIMIT ? OFFSET ?`
 
 	if opts.Order != OrderRecency {
 		args = append(args, opts.NowMs)
 	}
-	args = append(args, limit)
+	args = append(args, limit, opts.Offset)
 
 	rows, err := db.QueryContext(ctx, sqlText, args...)
 	if err != nil {

@@ -2,6 +2,8 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +12,53 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/events"
 )
+
+// sessIDsOf projects the session ids out of a hit slice, preserving
+// order — used to compare paged output against a single-shot fetch.
+func sessIDsOf(hits []SearchEventHit) []string {
+	out := make([]string, len(hits))
+	for i, h := range hits {
+		out[i] = h.SessionID
+	}
+	return out
+}
+
+// pageAll drives SearchEventsPaged page-by-page with the given page
+// size, locking the stage reported by page 1, and returns every row
+// in order plus an error if any session id appears on two pages
+// (an overlap bug). It stops on the first short page (< limit).
+func pageAll(t *testing.T, s *Store, base SearchEventOpts, pageSize int) []SearchEventHit {
+	t.Helper()
+	var all []SearchEventHit
+	seen := map[string]bool{}
+	offset := 0
+	stage := ""
+	for {
+		o := base
+		o.Limit = pageSize
+		o.Offset = offset
+		o.Stage = stage
+		page, st, err := SearchEventsPaged(t.Context(), s.DB(), o)
+		if err != nil {
+			t.Fatalf("SearchEventsPaged(offset=%d): %v", offset, err)
+		}
+		if stage == "" {
+			stage = st // lock the stage page 1 selected
+		}
+		for _, h := range page {
+			if seen[h.SessionID] {
+				t.Fatalf("session %s appeared on two pages (overlap)", h.SessionID)
+			}
+			seen[h.SessionID] = true
+		}
+		all = append(all, page...)
+		if len(page) < pageSize {
+			break
+		}
+		offset += len(page)
+	}
+	return all
+}
 
 // contains is a one-letter alias for strings.Contains, kept to
 // shorten the per-row assertions in the table-driven tests above.
@@ -1000,4 +1049,243 @@ func TestSearchEvents_FacetsCombineWithAND(t *testing.T) {
 	if len(hits) != 1 || hits[0].SessionID != gemSession {
 		t.Errorf("--agent narrowed wrong, got %+v", hits)
 	}
+}
+
+// TestSearchEventsPaged_NoOverlapNoSkip proves that paging through a
+// result set with a small page size yields exactly the same rows, in
+// the same order, as a single large fetch — no row skipped, none
+// duplicated across page boundaries.
+func TestSearchEventsPaged_NoOverlapNoSkip(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	const n = 7
+	for i := range n {
+		ingestForSearch(t, s, fmt.Sprintf("sess-pg-%d", i), "user_prompt",
+			fmt.Sprintf("pagetoken row %d body", i), "hook",
+			now.Add(time.Duration(i)*time.Minute))
+	}
+	base := SearchEventOpts{Query: "pagetoken", NowMs: now.UnixMilli()}
+
+	full, _, err := SearchEventsPaged(t.Context(), s.DB(), withLimit(base, 100))
+	if err != nil {
+		t.Fatalf("reference fetch: %v", err)
+	}
+	if len(full) != n {
+		t.Fatalf("reference fetch: got %d rows, want %d", len(full), n)
+	}
+
+	paged := pageAll(t, s, base, 3) // 3 + 3 + 1
+	if len(paged) != n {
+		t.Fatalf("paged total: got %d rows, want %d", len(paged), n)
+	}
+	if !reflect.DeepEqual(sessIDsOf(full), sessIDsOf(paged)) {
+		t.Errorf("paged order != single-shot order\n full=%v\npaged=%v",
+			sessIDsOf(full), sessIDsOf(paged))
+	}
+}
+
+// TestSearchEventsPaged_DeterministicUnderTies seeds rows that all
+// share the same ts_source_ms (so the recency order ties) and proves
+// the rowid tiebreaker yields a strict, stable total order: repeated
+// fetches match, and paging never drops or repeats a tied row.
+func TestSearchEventsPaged_DeterministicUnderTies(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	const n = 5
+	for i := range n {
+		// Same ts for every row → ts_source_ms DESC ties; only the
+		// rowid tiebreaker can order them.
+		ingestForSearch(t, s, fmt.Sprintf("sess-tie-%d", i), "user_prompt",
+			fmt.Sprintf("tietoken %d", i), "hook", now)
+	}
+	base := SearchEventOpts{Query: "tietoken", Order: OrderRecency, NowMs: now.UnixMilli()}
+
+	full1, _, err := SearchEventsPaged(t.Context(), s.DB(), withLimit(base, 100))
+	if err != nil {
+		t.Fatalf("fetch 1: %v", err)
+	}
+	full2, _, err := SearchEventsPaged(t.Context(), s.DB(), withLimit(base, 100))
+	if err != nil {
+		t.Fatalf("fetch 2: %v", err)
+	}
+	if !reflect.DeepEqual(sessIDsOf(full1), sessIDsOf(full2)) {
+		t.Fatalf("non-deterministic order under ties:\n%v\n%v",
+			sessIDsOf(full1), sessIDsOf(full2))
+	}
+	paged := pageAll(t, s, base, 2) // 2 + 2 + 1
+	if !reflect.DeepEqual(sessIDsOf(full1), sessIDsOf(paged)) {
+		t.Errorf("paged order != single-shot under ties\n full=%v\npaged=%v",
+			sessIDsOf(full1), sessIDsOf(paged))
+	}
+}
+
+// TestSearchEventsPaged_StageLockedPreventsFallThrough is the core
+// correctness test. The query "mongo" matches two whole-word rows on
+// the primary index; the same query would also match the two
+// "mongoDB" rows via the trigram index. Once page 1 locks the primary
+// stage, a page past the end of the primary results must return
+// nothing — never fall through and leak the trigram corpus.
+func TestSearchEventsPaged_StageLockedPreventsFallThrough(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	ingestForSearch(t, s, "sess-m-a", "user_prompt", "i love mongo", "hook", now)
+	ingestForSearch(t, s, "sess-m-b", "user_prompt", "mongo rocks", "hook", now.Add(time.Second))
+	ingestForSearch(t, s, "sess-db-a", "user_prompt", "deploying mongoDB", "hook", now.Add(2*time.Second))
+	ingestForSearch(t, s, "sess-db-b", "user_prompt", "mongoDB cluster", "hook", now.Add(3*time.Second))
+
+	p1, stage, err := SearchEventsPaged(t.Context(), s.DB(),
+		SearchEventOpts{Query: "mongo", Limit: 2, NowMs: now.UnixMilli()})
+	if err != nil {
+		t.Fatalf("page 1: %v", err)
+	}
+	if stage != StagePrimary {
+		t.Fatalf("page 1 stage: got %q, want %q", stage, StagePrimary)
+	}
+	if len(p1) != 2 {
+		t.Fatalf("page 1: got %d rows, want 2 (whole-word mongo)", len(p1))
+	}
+	for _, h := range p1 {
+		if contains(derefStr(h.Content), "mongoDB") {
+			t.Errorf("page 1 leaked a trigram-only row: %q", derefStr(h.Content))
+		}
+	}
+
+	// Locked-primary page past the end: must be empty, NOT the mongoDB
+	// rows that the trigram fallback would have returned.
+	p2, _, err := SearchEventsPaged(t.Context(), s.DB(),
+		SearchEventOpts{Query: "mongo", Limit: 2, Offset: 2, Stage: StagePrimary, NowMs: now.UnixMilli()})
+	if err != nil {
+		t.Fatalf("page 2: %v", err)
+	}
+	if len(p2) != 0 {
+		t.Fatalf("locked-primary page past end leaked %d rows (fell through to trigram?)", len(p2))
+	}
+}
+
+// TestSearchEventsPaged_ProbeIgnoresRequestedOffset proves the
+// first-page stage probe checks each stage at offset 0, so a large
+// requested offset can't make a non-empty stage look empty and flip
+// the locked stage to the next corpus.
+func TestSearchEventsPaged_ProbeIgnoresRequestedOffset(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	ingestForSearch(t, s, "sess-m-a", "user_prompt", "i love mongo", "hook", now)
+	ingestForSearch(t, s, "sess-m-b", "user_prompt", "mongo rocks", "hook", now.Add(time.Second))
+	ingestForSearch(t, s, "sess-db-a", "user_prompt", "deploying mongoDB", "hook", now.Add(2*time.Second))
+
+	// Stage unset + a deep offset. The probe must still lock primary
+	// (it has matches at offset 0); the real query then runs primary
+	// at the deep offset and returns nothing — but the STAGE proves we
+	// didn't fall through to trigram.
+	hits, stage, err := SearchEventsPaged(t.Context(), s.DB(),
+		SearchEventOpts{Query: "mongo", Limit: 50, Offset: 1000, NowMs: now.UnixMilli()})
+	if err != nil {
+		t.Fatalf("SearchEventsPaged: %v", err)
+	}
+	if stage != StagePrimary {
+		t.Fatalf("probe was fooled by offset: stage=%q, want %q", stage, StagePrimary)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("offset 1000 should be past end, got %d rows", len(hits))
+	}
+}
+
+// TestSearchEventsPaged_FiltersReappliedAcrossPages confirms a filter
+// (here SinceMs) holds on every page, and paging the filtered set has
+// no skip or overlap.
+func TestSearchEventsPaged_FiltersReappliedAcrossPages(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	cutoff := now.Add(10 * time.Minute)
+	ingestForSearch(t, s, "sess-old-0", "user_prompt", "filtertoken old0", "hook", now)
+	ingestForSearch(t, s, "sess-old-1", "user_prompt", "filtertoken old1", "hook", now.Add(time.Minute))
+	for i := range 3 {
+		ingestForSearch(t, s, fmt.Sprintf("sess-new-%d", i), "user_prompt",
+			fmt.Sprintf("filtertoken new%d", i), "hook",
+			cutoff.Add(time.Duration(i+1)*time.Minute))
+	}
+	base := SearchEventOpts{
+		Query:   "filtertoken",
+		SinceMs: cutoff.UnixMilli(),
+		NowMs:   cutoff.Add(time.Hour).UnixMilli(),
+	}
+
+	paged := pageAll(t, s, base, 2) // 2 + 1, only the 3 post-cutoff rows
+	if len(paged) != 3 {
+		t.Fatalf("filtered paging: got %d rows, want 3", len(paged))
+	}
+	for _, h := range paged {
+		if h.TsSourceMs < cutoff.UnixMilli() {
+			t.Errorf("row older than cutoff slipped through: ts=%d cutoff=%d",
+				h.TsSourceMs, cutoff.UnixMilli())
+		}
+	}
+}
+
+// TestSearchEventsPaged_DedupAcrossPageBoundary seeds several turns
+// that each have a hook + transcript-import duplicate and proves the
+// dedup (applied before LIMIT/OFFSET) holds across page boundaries:
+// each logical turn appears exactly once over all pages.
+func TestSearchEventsPaged_DedupAcrossPageBoundary(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	const turns = 4
+	for i := range turns {
+		content := fmt.Sprintf("duptoken turn %d", i)
+		ts := now.Add(time.Duration(i) * time.Minute)
+		ingestForSearch(t, s, "sess-dup", "user_prompt", content, "hook", ts)
+		ingestForSearch(t, s, "sess-dup", "user_prompt", content, "import", ts.Add(50*time.Millisecond))
+	}
+	base := SearchEventOpts{Query: "duptoken", NowMs: now.UnixMilli()}
+
+	// All hits share one session id, so pageAll's per-session overlap
+	// guard can't be used here — page manually and dedup on content.
+	var got []SearchEventHit
+	offset, stage := 0, ""
+	for {
+		o := base
+		o.Limit = 2
+		o.Offset = offset
+		o.Stage = stage
+		page, st, err := SearchEventsPaged(t.Context(), s.DB(), o)
+		if err != nil {
+			t.Fatalf("page offset=%d: %v", offset, err)
+		}
+		if stage == "" {
+			stage = st
+		}
+		got = append(got, page...)
+		if len(page) < 2 {
+			break
+		}
+		offset += len(page)
+	}
+	if len(got) != turns {
+		t.Fatalf("dedup across pages: got %d rows, want %d (one per turn)", len(got), turns)
+	}
+	seen := map[string]bool{}
+	for _, h := range got {
+		c := derefStr(h.Content)
+		if seen[c] {
+			t.Errorf("turn %q appeared more than once across pages", c)
+		}
+		seen[c] = true
+		// Dedup must keep the hook row (ts at :00.000), not the import.
+		if h.TsSourceMs%1000 != 0 {
+			t.Errorf("dedup kept import row for %q (ts=%d)", c, h.TsSourceMs)
+		}
+	}
+}
+
+// withLimit returns a copy of opts with Limit set — keeps the paging
+// tests terse without mutating shared base structs.
+func withLimit(opts SearchEventOpts, limit int) SearchEventOpts {
+	opts.Limit = limit
+	return opts
 }
