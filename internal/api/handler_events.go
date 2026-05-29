@@ -19,21 +19,12 @@ import (
 // Response body is an wire.EventListResponse — a slice of
 // wire.Event plus the current LatestSeq watermark.
 func (s *Server) handleEventsList(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-
-	sessionID := q.Get("session_id")
-
-	sinceSeq, ok := parseInt64Query(w, r, "since_seq")
+	req, ok := parseEventListRequest(w, r)
 	if !ok {
 		return
 	}
 
-	limit, ok := parseLimitQuery(w, r, wire.DefaultPageLimit)
-	if !ok {
-		return
-	}
-
-	rows, err := store.LoadEventsSinceSeq(r.Context(), s.store.DB(), sinceSeq, sessionID, limit)
+	rows, err := store.LoadEventsSinceSeq(r.Context(), s.store.DB(), req.SinceSeq, req.SessionID, req.Limit)
 	if err != nil {
 		s.storeError(w, "LoadEventsSinceSeq", err)
 		return
@@ -53,6 +44,26 @@ func (s *Server) handleEventsList(w http.ResponseWriter, r *http.Request) {
 		out.Events = append(out.Events, liveEventToWire(e))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// parseEventListRequest decodes + validates the GET /v1/events query
+// into wire.EventListRequest (server mirror of
+// apiclient.Client.Events). Events page via the typed since_seq
+// watermark, not the opaque page cursor — so there is no offset.
+func parseEventListRequest(w http.ResponseWriter, r *http.Request) (wire.EventListRequest, bool) {
+	sinceSeq, ok := parseInt64Query(w, r, "since_seq")
+	if !ok {
+		return wire.EventListRequest{}, false
+	}
+	limit, ok := parseLimitQuery(w, r, wire.DefaultPageLimit)
+	if !ok {
+		return wire.EventListRequest{}, false
+	}
+	return wire.EventListRequest{
+		SessionID: r.URL.Query().Get("session_id"),
+		SinceSeq:  sinceSeq,
+		Limit:     limit,
+	}, true
 }
 
 // handleEventsLatestBatch serves GET /v1/events/latest?session_ids=id1,id2.

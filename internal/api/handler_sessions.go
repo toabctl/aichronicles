@@ -24,30 +24,20 @@ const defaultSessionListWindow = 30 * 24 * time.Hour
 //     applies a 30-day default.
 //   - limit:    page size, capped at MaxPageLimit.
 func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-
-	sinceMs, ok := parseInt64Query(w, r, "since_ms")
-	if !ok {
-		return
-	}
-	if q.Get("since_ms") == "" {
-		sinceMs = time.Now().Add(-defaultSessionListWindow).UnixMilli()
-	}
-
-	limit, offset, ok := parsePage(w, r)
+	req, offset, ok := parseSessionListRequest(w, r)
 	if !ok {
 		return
 	}
 
 	facets := store.SessionListFacets{
-		Cwd:               q.Get("cwd"),
-		SourceAgent:       q.Get("source_agent"),
-		Project:           q.Get("project"),
-		ToolName:          q.Get("tool_name"),
-		SkillName:         q.Get("skill_name"),
-		FilePathSubstring: q.Get("file_path_substring"),
-		WithFailures:      q.Get("with_failures") == "true",
-		WithoutSummary:    q.Get("without_summary") == "true",
+		Cwd:               req.Cwd,
+		SourceAgent:       req.SourceAgent,
+		Project:           req.Project,
+		ToolName:          req.ToolName,
+		SkillName:         req.SkillName,
+		FilePathSubstring: req.FilePathSubstring,
+		WithFailures:      req.WithFailures,
+		WithoutSummary:    req.WithoutSummary,
 	}
 
 	// When any filter is set we run the rich list query that
@@ -57,13 +47,13 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 	var rows []store.SessionDigestRow
 	var err error
 	if facets.Any() {
-		rows, err = store.LoadSessionsForListFaceted(r.Context(), s.store.DB(), facets, sinceMs, limit, offset)
+		rows, err = store.LoadSessionsForListFaceted(r.Context(), s.store.DB(), facets, req.SinceMs, req.Limit, offset)
 		if err != nil {
 			s.storeError(w, "LoadSessionsForListFaceted", err)
 			return
 		}
 	} else {
-		rows, err = store.LoadRecentSessionDigests(r.Context(), s.store.DB(), sinceMs, limit, offset)
+		rows, err = store.LoadRecentSessionDigests(r.Context(), s.store.DB(), req.SinceMs, req.Limit, offset)
 		if err != nil {
 			s.storeError(w, "LoadRecentSessionDigests", err)
 			return
@@ -74,8 +64,43 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		out.Sessions = append(out.Sessions, sessionDigestRowToWire(row))
 	}
-	out.NextCursor = nextCursor(offset, limit, len(rows))
+	out.NextCursor = nextCursor(offset, req.Limit, len(rows))
 	writeJSON(w, http.StatusOK, out)
+}
+
+// parseSessionListRequest decodes + validates the GET /v1/sessions
+// query into the canonical wire.SessionListRequest (the server mirror
+// of apiclient.Client.Sessions, which builds the same query from the
+// same struct). Returns the request, the decoded page offset (cursor
+// is opaque on the wire; offset is its decoded form), and ok=false
+// after a 400 has been written. SinceMs defaults to a 30-day window
+// when the client omits it.
+func parseSessionListRequest(w http.ResponseWriter, r *http.Request) (wire.SessionListRequest, int, bool) {
+	q := r.URL.Query()
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return wire.SessionListRequest{}, 0, false
+	}
+	if q.Get("since_ms") == "" {
+		sinceMs = time.Now().Add(-defaultSessionListWindow).UnixMilli()
+	}
+	limit, offset, ok := parsePage(w, r)
+	if !ok {
+		return wire.SessionListRequest{}, 0, false
+	}
+	return wire.SessionListRequest{
+		SinceMs:           sinceMs,
+		Cwd:               q.Get("cwd"),
+		Limit:             limit,
+		Cursor:            wire.Cursor(q.Get("cursor")),
+		SourceAgent:       q.Get("source_agent"),
+		Project:           q.Get("project"),
+		ToolName:          q.Get("tool_name"),
+		SkillName:         q.Get("skill_name"),
+		FilePathSubstring: q.Get("file_path_substring"),
+		WithFailures:      q.Get("with_failures") == "true",
+		WithoutSummary:    q.Get("without_summary") == "true",
+	}, offset, true
 }
 
 // handleSessionsGet serves GET /v1/sessions/{id}.
