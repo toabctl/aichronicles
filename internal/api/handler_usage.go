@@ -21,8 +21,9 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	req := wire.UsageRequest{SinceMs: sinceMs}
 
-	rows, err := store.LoadTokenUsage(r.Context(), s.store.DB(), sinceMs)
+	rows, err := store.LoadTokenUsage(r.Context(), s.store.DB(), req.SinceMs)
 	if err != nil {
 		s.storeError(w, "LoadTokenUsage", err)
 		return

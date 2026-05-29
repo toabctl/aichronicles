@@ -37,23 +37,12 @@ const auditMaxRowsCeiling = 5000
 // catch right now" check. Raw secret bytes never leave the server —
 // the snippet field always carries the marker form.
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
-	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	req, ok := parseAuditRequest(w, r)
 	if !ok {
 		return
-	}
-	limit, ok := parseNonNegativeIntQuery(w, r, "limit", 0)
-	if !ok {
-		return
-	}
-	// Clamp to the server-side ceiling. 0 ("missing") means "use the
-	// ceiling"; anything above the ceiling silently clamps so an
-	// operator passing limit=99999 doesn't strand the whole daemon
-	// in a redact-everything pass.
-	if limit <= 0 || limit > auditMaxRowsCeiling {
-		limit = auditMaxRowsCeiling
 	}
 
-	sqlText, args := buildAuditQuery(sinceMs, limit)
+	sqlText, args := buildAuditQuery(req.SinceMs, req.Limit)
 	rows, err := s.store.DB().QueryContext(r.Context(), sqlText, args...)
 	if err != nil {
 		s.storeError(w, "audit query", err)
@@ -106,6 +95,27 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// parseAuditRequest decodes + validates the GET /v1/audit query into
+// wire.AuditRequest (server mirror of apiclient.Client.Audit). The
+// Limit returned is already clamped to the server-side ceiling: 0
+// ("missing") means "use the ceiling", and anything above it clamps
+// down so an operator passing limit=99999 doesn't strand the daemon
+// in a redact-everything pass.
+func parseAuditRequest(w http.ResponseWriter, r *http.Request) (wire.AuditRequest, bool) {
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return wire.AuditRequest{}, false
+	}
+	limit, ok := parseNonNegativeIntQuery(w, r, "limit", 0)
+	if !ok {
+		return wire.AuditRequest{}, false
+	}
+	if limit <= 0 || limit > auditMaxRowsCeiling {
+		limit = auditMaxRowsCeiling
+	}
+	return wire.AuditRequest{SinceMs: sinceMs, Limit: limit}, true
 }
 
 // buildAuditQuery composes the audit scan query: every event with

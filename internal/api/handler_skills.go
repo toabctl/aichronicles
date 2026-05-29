@@ -12,24 +12,13 @@ import (
 // optional since_ms / window_ms / max_skills / max_examples
 // filters. Backed by store.LoadSkillStaleness.
 func (s *Server) handleSkillsStaleness(w http.ResponseWriter, r *http.Request) {
-	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	req, ok := parseSkillStalenessRequest(w, r)
 	if !ok {
 		return
 	}
-	windowMs, ok := parseInt64Query(w, r, "window_ms")
-	if !ok {
-		return
-	}
+	lim := store.SkillStalenessLimits{MaxSkills: req.MaxSkills, MaxExamples: req.MaxExamples}
 
-	lim := store.SkillStalenessLimits{}
-	if lim.MaxSkills, ok = parsePositiveIntQuery(w, r, "max_skills", 0); !ok {
-		return
-	}
-	if lim.MaxExamples, ok = parsePositiveIntQuery(w, r, "max_examples", 0); !ok {
-		return
-	}
-
-	rows, err := store.LoadSkillStaleness(r.Context(), s.store.DB(), sinceMs, windowMs, lim)
+	rows, err := store.LoadSkillStaleness(r.Context(), s.store.DB(), req.SinceMs, req.WindowMs, lim)
 	if err != nil {
 		s.storeError(w, "LoadSkillStaleness", err)
 		return
@@ -56,21 +45,13 @@ func (s *Server) handleSkillsStaleness(w http.ResponseWriter, r *http.Request) {
 // callers can render the full distribution. Backed by
 // store.LoadSkillImpact.
 func (s *Server) handleSkillsImpact(w http.ResponseWriter, r *http.Request) {
-	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	req, ok := parseSkillImpactRequest(w, r)
 	if !ok {
 		return
 	}
-	windowMs, ok := parseInt64Query(w, r, "window_ms")
-	if !ok {
-		return
-	}
+	lim := store.SkillImpactLimits{MaxSkills: req.MaxSkills}
 
-	lim := store.SkillImpactLimits{}
-	if lim.MaxSkills, ok = parsePositiveIntQuery(w, r, "max_skills", 0); !ok {
-		return
-	}
-
-	rows, err := store.LoadSkillImpact(r.Context(), s.store.DB(), sinceMs, windowMs, lim)
+	rows, err := store.LoadSkillImpact(r.Context(), s.store.DB(), req.SinceMs, req.WindowMs, lim)
 	if err != nil {
 		s.storeError(w, "LoadSkillImpact", err)
 		return
@@ -87,6 +68,51 @@ func (s *Server) handleSkillsImpact(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// parseSkillStalenessRequest decodes + validates the
+// GET /v1/skills/staleness query into wire.SkillStalenessRequest
+// (server mirror of apiclient.Client.SkillStaleness).
+func parseSkillStalenessRequest(w http.ResponseWriter, r *http.Request) (wire.SkillStalenessRequest, bool) {
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return wire.SkillStalenessRequest{}, false
+	}
+	windowMs, ok := parseInt64Query(w, r, "window_ms")
+	if !ok {
+		return wire.SkillStalenessRequest{}, false
+	}
+	maxSkills, ok := parsePositiveIntQuery(w, r, "max_skills", 0)
+	if !ok {
+		return wire.SkillStalenessRequest{}, false
+	}
+	maxExamples, ok := parsePositiveIntQuery(w, r, "max_examples", 0)
+	if !ok {
+		return wire.SkillStalenessRequest{}, false
+	}
+	return wire.SkillStalenessRequest{
+		SinceMs: sinceMs, WindowMs: windowMs,
+		MaxSkills: maxSkills, MaxExamples: maxExamples,
+	}, true
+}
+
+// parseSkillImpactRequest decodes + validates the GET /v1/skills/impact
+// query into wire.SkillImpactRequest (server mirror of
+// apiclient.Client.SkillImpact).
+func parseSkillImpactRequest(w http.ResponseWriter, r *http.Request) (wire.SkillImpactRequest, bool) {
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return wire.SkillImpactRequest{}, false
+	}
+	windowMs, ok := parseInt64Query(w, r, "window_ms")
+	if !ok {
+		return wire.SkillImpactRequest{}, false
+	}
+	maxSkills, ok := parsePositiveIntQuery(w, r, "max_skills", 0)
+	if !ok {
+		return wire.SkillImpactRequest{}, false
+	}
+	return wire.SkillImpactRequest{SinceMs: sinceMs, WindowMs: windowMs, MaxSkills: maxSkills}, true
 }
 
 // handleSkillsInstalled serves GET /v1/skills/installed: every
