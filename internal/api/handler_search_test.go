@@ -188,7 +188,7 @@ func TestHandleSearch_OffsetTooDeepIs400(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)
 	deep, err := wire.EncodeSearchCursor(wire.SearchCursor{
-		Off: wire.MaxSearchOffset, Stage: "primary", Now: 1,
+		Off: wire.MaxOffset, Stage: "primary", Now: 1,
 	})
 	if err != nil {
 		t.Fatalf("encode cursor: %v", err)

@@ -60,3 +60,42 @@ func DecodeSearchCursor(c Cursor) (SearchCursor, error) {
 	}
 	return out, nil
 }
+
+// PageCursor is the decoded payload of a generic list-endpoint
+// pagination Cursor: just the next-page offset. Browse lists order by
+// a plain column plus a unique tiebreaker (id / rowid), so unlike
+// SearchCursor there is nothing query-specific to pin — the offset is
+// the whole state.
+//
+// As with any offset pagination, rows inserted or removed between
+// page fetches can shift the window (a boundary row may repeat or be
+// missed). That's acceptable for interactive browsing; the cap at
+// MaxOffset bounds the re-scan cost.
+type PageCursor struct {
+	Off int `json:"o"`
+}
+
+// EncodePageCursor renders a PageCursor as an opaque Cursor
+// (base64url-no-padding over its JSON), mirroring EncodeSearchCursor.
+func EncodePageCursor(c PageCursor) (Cursor, error) {
+	b, err := json.Marshal(c)
+	if err != nil {
+		return "", fmt.Errorf("encode page cursor: %w", err)
+	}
+	return Cursor(base64.RawURLEncoding.EncodeToString(b)), nil
+}
+
+// DecodePageCursor parses an opaque Cursor back into a PageCursor.
+// Returns an error for malformed input (bad base64 or bad JSON) so
+// the handler can reply 400 rather than paging from a corrupt offset.
+func DecodePageCursor(c Cursor) (PageCursor, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(string(c))
+	if err != nil {
+		return PageCursor{}, fmt.Errorf("decode page cursor: %w", err)
+	}
+	var out PageCursor
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return PageCursor{}, fmt.Errorf("decode page cursor: %w", err)
+	}
+	return out, nil
+}

@@ -37,11 +37,13 @@ const MaxPageLimit = 1000
 // that want a different default override at handler time.
 const DefaultPageLimit = 50
 
-// MaxSearchOffset bounds how deep offset-based search pagination may
-// go (offset + limit). OFFSET on the dedup CTE re-scans O(offset)
+// MaxOffset bounds how deep offset-based pagination may go
+// (offset + limit) on any list endpoint. OFFSET re-scans O(offset)
 // rows per page, so an unbounded offset would let a client force
-// arbitrarily expensive scans. Search is a refine-as-you-go UI, not
-// a deep-paging bulk export — 10k results is far past any realistic
-// browse depth. The keyset-pagination upgrade path is impossible
-// against a live recency-boosted relevance score, so the cap stays.
-const MaxSearchOffset = 10_000
+// arbitrarily expensive scans. These are refine-as-you-go browse
+// lists, not deep-paging bulk exports — 10k results is far past any
+// realistic browse depth. Keyset pagination is the upgrade path if
+// deep paging ever becomes a real need (it's impossible against
+// search's live recency-boosted score, which is why offset is the
+// floor here).
+const MaxOffset = 10_000

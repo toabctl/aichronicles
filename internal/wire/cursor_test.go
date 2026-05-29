@@ -39,6 +39,40 @@ func TestSearchCursor_ZeroValueRoundTrips(t *testing.T) {
 	}
 }
 
+func TestPageCursor_RoundTrip(t *testing.T) {
+	t.Parallel()
+	in := PageCursor{Off: 250}
+	enc, err := EncodePageCursor(in)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if enc == "" {
+		t.Fatal("encoded cursor is empty")
+	}
+	got, err := DecodePageCursor(enc)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got != in {
+		t.Errorf("round-trip mismatch: got %+v, want %+v", got, in)
+	}
+}
+
+func TestDecodePageCursor_Malformed(t *testing.T) {
+	t.Parallel()
+	for name, c := range map[string]Cursor{
+		"not base64":   Cursor("!!! not base64 !!!"),
+		"empty string": Cursor(""),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := DecodePageCursor(c); err == nil {
+				t.Errorf("expected error decoding %q", c)
+			}
+		})
+	}
+}
+
 func TestDecodeSearchCursor_Malformed(t *testing.T) {
 	t.Parallel()
 	// Well-formed base64url whose decoded bytes are not valid JSON.

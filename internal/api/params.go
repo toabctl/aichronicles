@@ -33,6 +33,23 @@ func parseInt64Query(w http.ResponseWriter, r *http.Request, name string) (int64
 	return n, true
 }
 
+// Three int-query helpers exist because "limit" means three
+// different things across the API; keep them distinct so each
+// parameter has exactly one meaning:
+//
+//   - parseLimitQuery       page size: 0/negative → 400, capped at
+//                           MaxPageLimit. The ONLY thing browse-list
+//                           endpoints parse `limit` with (via
+//                           parsePage), so `limit` on a paginated
+//                           list is always a page size.
+//   - parsePositiveIntQuery uncapped top-N knob (top_tools,
+//                           max_skills, …): 0/negative → 400. NOT a
+//                           page size — a different parameter name.
+//   - parseNonNegativeIntQuery sweeper/discovery cap where 0 means
+//                           "no LIMIT clause" (fetch all). Used by the
+//                           internal reflect/propose/induction
+//                           pipeline, never by browse pagination.
+
 // parseLimitQuery reads the optional "limit" query parameter,
 // capped at wire.MaxPageLimit. Returns (def, true) when missing,
 // (n, true) when valid (capped at MaxPageLimit), or (0, false)
@@ -56,6 +73,50 @@ func parseLimitQuery(w http.ResponseWriter, r *http.Request, def int) (int, bool
 		return wire.MaxPageLimit, true
 	}
 	return n, true
+}
+
+// parsePage is the shared pagination prologue for browse-list
+// endpoints: it resolves the page size (limit, default
+// wire.DefaultPageLimit, capped at MaxPageLimit) and the offset
+// carried in an opaque ?cursor=. A malformed cursor or an
+// offset+limit deeper than wire.MaxOffset is a 400. Returns
+// (limit, offset, true) on success; callers must return immediately
+// when ok is false (the problem response is already written).
+//
+// One mechanism for every paginated list: pass offset to the store
+// query and feed (offset, limit, len(results)) to nextCursor.
+func parsePage(w http.ResponseWriter, r *http.Request) (limit, offset int, ok bool) {
+	limit, ok = parseLimitQuery(w, r, wire.DefaultPageLimit)
+	if !ok {
+		return 0, 0, false
+	}
+	if raw := r.URL.Query().Get("cursor"); raw != "" {
+		cur, err := wire.DecodePageCursor(wire.Cursor(raw))
+		if err != nil {
+			writeProblem(w, http.StatusBadRequest, "Invalid cursor", err.Error())
+			return 0, 0, false
+		}
+		offset = cur.Off
+	}
+	if offset < 0 || offset+limit > wire.MaxOffset {
+		writeProblem(w, http.StatusBadRequest, "Offset too deep",
+			fmt.Sprintf("pagination is limited to %d results", wire.MaxOffset))
+		return 0, 0, false
+	}
+	return limit, offset, true
+}
+
+// nextCursor builds the NextCursor for a page response: empty when
+// the page came back short (fewer than limit rows ⇒ last page — the
+// single stop signal), otherwise an opaque cursor pointing at the row
+// after this page. Encoding a single-int payload can't fail, so the
+// error is intentionally dropped.
+func nextCursor(offset, limit, returned int) wire.Cursor {
+	if returned < limit {
+		return ""
+	}
+	c, _ := wire.EncodePageCursor(wire.PageCursor{Off: offset + returned})
+	return c
 }
 
 // parsePositiveIntQuery reads an optional positive int query

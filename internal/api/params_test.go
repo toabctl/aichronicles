@@ -7,7 +7,78 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/toabctl/aichronicles/internal/wire"
 )
+
+func TestParsePage(t *testing.T) {
+	t.Parallel()
+
+	mustCursor := func(off int) string {
+		c, err := wire.EncodePageCursor(wire.PageCursor{Off: off})
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		return string(c)
+	}
+
+	tests := []struct {
+		name       string
+		query      string
+		wantLimit  int
+		wantOffset int
+		wantOK     bool
+	}{
+		{name: "defaults", query: "", wantLimit: wire.DefaultPageLimit, wantOffset: 0, wantOK: true},
+		{name: "explicit limit", query: "limit=5", wantLimit: 5, wantOffset: 0, wantOK: true},
+		{name: "cursor sets offset", query: "limit=5&cursor=" + mustCursor(15), wantLimit: 5, wantOffset: 15, wantOK: true},
+		{name: "limit over cap clamps", query: "limit=999999", wantLimit: wire.MaxPageLimit, wantOffset: 0, wantOK: true},
+		{name: "bad limit 400", query: "limit=0", wantOK: false},
+		{name: "malformed cursor 400", query: "cursor=%21%21not-base64", wantOK: false},
+		{name: "too deep 400", query: "limit=10&cursor=" + mustCursor(wire.MaxOffset), wantOK: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rr := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodGet, "/x?"+tc.query, nil)
+			limit, offset, ok := parsePage(rr, r)
+			if ok != tc.wantOK {
+				t.Fatalf("ok: got %v, want %v (status=%d)", ok, tc.wantOK, rr.Code)
+			}
+			if !ok {
+				if rr.Code != http.StatusBadRequest {
+					t.Errorf("expected 400, got %d", rr.Code)
+				}
+				return
+			}
+			if limit != tc.wantLimit || offset != tc.wantOffset {
+				t.Errorf("got (limit=%d, offset=%d), want (limit=%d, offset=%d)",
+					limit, offset, tc.wantLimit, tc.wantOffset)
+			}
+		})
+	}
+}
+
+func TestNextCursor(t *testing.T) {
+	t.Parallel()
+	// Short page → no next cursor.
+	if c := nextCursor(0, 50, 12); c != "" {
+		t.Errorf("short page should yield empty cursor, got %q", c)
+	}
+	// Full page → cursor decodes to offset+returned.
+	c := nextCursor(10, 5, 5)
+	if c == "" {
+		t.Fatal("full page should yield a cursor")
+	}
+	got, err := wire.DecodePageCursor(c)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Off != 15 {
+		t.Errorf("next offset: got %d, want 15", got.Off)
+	}
+}
 
 func TestParseSessionIDsQuery(t *testing.T) {
 	t.Parallel()

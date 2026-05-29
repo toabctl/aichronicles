@@ -91,9 +91,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if opts.Limit <= 0 {
 		opts.Limit = store.DefaultSearchLimit
 	}
-	if opts.Offset+opts.Limit > wire.MaxSearchOffset {
+	if opts.Offset+opts.Limit > wire.MaxOffset {
 		writeProblem(w, http.StatusBadRequest, "Offset too deep",
-			fmt.Sprintf("search pagination is limited to %d results", wire.MaxSearchOffset))
+			fmt.Sprintf("search pagination is limited to %d results", wire.MaxOffset))
 		return
 	}
 
