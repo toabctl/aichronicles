@@ -1,0 +1,32 @@
+{{define "facts-rows"}}
+{{range .Facts}}
+<tr>
+  <td><code>{{.Predicate}}</code></td>
+  <td>{{.Object}}</td>
+  <td>{{.Confidence}}%</td>
+  <td>{{.AssertedAgo}}</td>
+  <td>
+    {{if .SessionID}}
+      <a href="/sessions/{{.SessionID}}" class="sid">{{.SessionShort}}</a>
+    {{end}}
+    {{if .Quote}}
+      <small><em>{{.Quote}}</em></small>
+    {{end}}
+  </td>
+</tr>
+{{end}}
+{{if .NextCursor}}
+{{/* Self-replacing load-more row (see _session-rows.html for the
+     pattern): clicking swaps this <tr> for the next page + a fresh
+     load-more row. Pure htmx, no JS. */}}
+<tr class="loadmore-row">
+  <td colspan="5">
+    <button type="button"
+            class="resume-btn search-loadmore"
+            hx-get="/facts/rows?subject={{.Subject | urlquery}}&cursor={{.NextCursor}}"
+            hx-target="closest tr"
+            hx-swap="outerHTML">Load more</button>
+  </td>
+</tr>
+{{end}}
+{{end}}

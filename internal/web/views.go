@@ -304,6 +304,19 @@ type FactsPage struct {
 	Subject  string    // when set, page shows facts for this subject only
 	Subjects []string  // index mode: distinct subjects to choose from
 	Facts    []FactRow // detail mode: facts for the selected subject
+	// NextCursor feeds the detail page's "Load more" control (shared
+	// "facts-rows" partial); empty on the last page.
+	NextCursor string
+}
+
+// FactRowsView is the data the shared "facts-rows" partial consumes —
+// used inline by the facts detail page (FactsPage exposes the same
+// Facts/NextCursor/Subject fields) and by the /facts/rows htmx
+// fragment for "Load more".
+type FactRowsView struct {
+	Subject    string
+	Facts      []FactRow
+	NextCursor string
 }
 
 // FactRow is one row in the facts table for the detail page.

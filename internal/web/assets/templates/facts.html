@@ -12,7 +12,7 @@
 
 {{if .Facts}}
 <article>
-  <header><h2>Facts <small>({{len .Facts}})</small></h2></header>
+  <header><h2>Facts</h2></header>
   <table>
     <thead>
       <tr>
@@ -24,22 +24,10 @@
       </tr>
     </thead>
     <tbody>
-      {{range .Facts}}
-      <tr>
-        <td><code>{{.Predicate}}</code></td>
-        <td>{{.Object}}</td>
-        <td>{{.Confidence}}%</td>
-        <td>{{.AssertedAgo}}</td>
-        <td>
-          {{if .SessionID}}
-            <a href="/sessions/{{.SessionID}}" class="sid">{{.SessionShort}}</a>
-          {{end}}
-          {{if .Quote}}
-            <small><em>{{.Quote}}</em></small>
-          {{end}}
-        </td>
-      </tr>
-      {{end}}
+      {{/* Shared with the /facts/rows htmx fragment — see
+           _facts-rows.html. Rows plus a self-replacing "Load more"
+           row when NextCursor is set. */}}
+      {{template "facts-rows" .}}
     </tbody>
   </table>
 </article>

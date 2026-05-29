@@ -147,7 +147,7 @@ var pageNames = []string{"sessions", "session", "search", "insights", "skills", 
 // assets/templates/_<name>.html — the underscore prefix flags
 // them as partials, parsed without base.html so they emit just
 // the table or empty-state line that swaps into a target.
-var fragmentNames = []string{"hits", "session-rows"}
+var fragmentNames = []string{"hits", "session-rows", "facts-rows"}
 
 // mustParsePages loads each page's template into a per-page
 // template.Template, sharing only base.html. Single shared set
@@ -159,10 +159,12 @@ func mustParsePages() map[string]*template.Template {
 	for _, name := range pageNames {
 		t, err := template.New(name).ParseFS(assetsFS,
 			"assets/templates/base.html",
-			// Shared row partials (e.g. "session-rows") that pages
-			// render inline AND htmx fragments reuse — parsed into
-			// every page set so the {{template}} call resolves.
+			// Shared row partials (e.g. "session-rows", "facts-rows")
+			// that pages render inline AND htmx fragments reuse —
+			// parsed into every page set so the {{template}} call
+			// resolves.
 			"assets/templates/_session-rows.html",
+			"assets/templates/_facts-rows.html",
 			"assets/templates/"+name+".html",
 		)
 		if err != nil {
@@ -207,6 +209,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /digests", s.digestsHandler)
 	s.mux.HandleFunc("GET /propose", s.proposeHandler)
 	s.mux.HandleFunc("GET /facts", s.factsHandler)
+	s.mux.HandleFunc("GET /facts/rows", s.handleFactsRows)
 	s.mux.HandleFunc("GET /workflows", s.workflowsHandler)
 	s.mux.HandleFunc("GET /usage", s.usageHandler)
 	s.mux.HandleFunc("GET /stream", s.streamHandler)

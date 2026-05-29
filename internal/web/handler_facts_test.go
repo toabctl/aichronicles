@@ -120,6 +120,24 @@ func TestFactsPage_DetailRendersFactsTable(t *testing.T) {
 			t.Errorf("missing %q\n--- body ---\n%s", want, body)
 		}
 	}
+
+	// The /facts/rows htmx fragment renders the same rows via the
+	// shared facts-rows partial (single subject, under the page limit
+	// → no Load more row).
+	status, frag := fetch(t, base+"/facts/rows?subject=%2Fwork%2Fmyproj")
+	if status != http.StatusOK {
+		t.Fatalf("fragment status=%d body=%s", status, frag)
+	}
+	if !strings.Contains(frag, "uses_language_version") {
+		t.Errorf("fragment missing fact row:\n%s", frag)
+	}
+	if strings.Contains(frag, "Load more") {
+		t.Errorf("single sub-page result should have no Load more:\n%s", frag)
+	}
+	// Missing subject → 400.
+	if st2, _ := fetch(t, base+"/facts/rows"); st2 != http.StatusBadRequest {
+		t.Errorf("/facts/rows without subject: status=%d, want 400", st2)
+	}
 }
 
 func TestFactsPage_DetailEmpty(t *testing.T) {

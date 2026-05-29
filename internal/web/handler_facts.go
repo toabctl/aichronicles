@@ -7,12 +7,17 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/timefmt"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // factsIndexLimit caps how many distinct subjects /facts (no
 // subject) renders. Matches the prior raw-SQL LIMIT 200; the wire
 // endpoint clamps internally too.
 const factsIndexLimit = 200
+
+// factsPageLimit is the per-page size for a subject's facts in the
+// detail view; the rest load via the "Load more" control.
+const factsPageLimit = 50
 
 // factsHandler renders /facts. Two modes:
 //
@@ -44,13 +49,43 @@ func (s *Server) factsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Detail mode.
 	page.Subject = subject
-	resp, err := s.api.Facts(r.Context(), subject, 0, "")
+	resp, err := s.api.Facts(r.Context(), subject, factsPageLimit, "")
 	if err != nil {
 		s.internalError(w, "factsHandler: load facts subject="+subject, "could not load facts", err)
 		return
 	}
-	now := time.Now().UTC()
-	for _, f := range resp.Facts {
+	page.Facts = buildFactRows(resp.Facts, time.Now().UTC())
+	page.NextCursor = string(resp.NextCursor)
+	s.render(w, r, "facts", page)
+}
+
+// handleFactsRows serves GET /facts/rows?subject=&cursor= — the htmx
+// fragment backing the facts detail "Load more" control. Same
+// self-replacing-row pattern as the sessions list.
+func (s *Server) handleFactsRows(w http.ResponseWriter, r *http.Request) {
+	subject := strings.TrimSpace(r.URL.Query().Get("subject"))
+	if subject == "" {
+		http.Error(w, "subject required", http.StatusBadRequest)
+		return
+	}
+	cursor := r.URL.Query().Get("cursor")
+	resp, err := s.api.Facts(r.Context(), subject, factsPageLimit, wire.Cursor(cursor))
+	if err != nil {
+		s.internalError(w, "handleFactsRows: load subject="+subject, "could not load facts", err)
+		return
+	}
+	s.renderFragment(w, "facts-rows", FactRowsView{
+		Subject:    subject,
+		Facts:      buildFactRows(resp.Facts, time.Now().UTC()),
+		NextCursor: string(resp.NextCursor),
+	})
+}
+
+// buildFactRows maps wire facts to the row view shared by the full
+// detail page and the load-more fragment.
+func buildFactRows(facts []wire.SemanticFact, now time.Time) []FactRow {
+	out := make([]FactRow, 0, len(facts))
+	for _, f := range facts {
 		row := FactRow{
 			Predicate:   f.Predicate,
 			Object:      f.Object,
@@ -64,7 +99,7 @@ func (s *Server) factsHandler(w http.ResponseWriter, r *http.Request) {
 			row.SessionID = *f.EvidenceSessionID
 			row.SessionShort = preview.ShortID(*f.EvidenceSessionID)
 		}
-		page.Facts = append(page.Facts, row)
+		out = append(out, row)
 	}
-	s.render(w, r, "facts", page)
+	return out
 }
