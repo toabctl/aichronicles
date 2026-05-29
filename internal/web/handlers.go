@@ -40,7 +40,7 @@ const sessionsListLimit = 100
 // removing one preserves the others.
 func (s *Server) sessionsHandler(w http.ResponseWriter, r *http.Request) {
 	filters := readSessionListFilters(r)
-	rows, err := loadSessionsForList(r.Context(), s, sessionsListLimit, filters)
+	rows, nextCursor, err := loadSessionsForList(r.Context(), s, sessionsListLimit, "", filters)
 	if err != nil {
 		s.internalError(w, "sessionsHandler: load", "could not load sessions", err)
 		return
@@ -61,6 +61,8 @@ func (s *Server) sessionsHandler(w http.ResponseWriter, r *http.Request) {
 	page := SessionsPage{
 		Title:              title,
 		Sessions:           rows,
+		NextCursor:         nextCursor,
+		FacetQuery:         encodeSessionFacetPrefix(filters),
 		Agents:             agents,
 		ActiveAgent:        filters.Agent,
 		ActiveProject:      filters.Project,
@@ -72,6 +74,62 @@ func (s *Server) sessionsHandler(w http.ResponseWriter, r *http.Request) {
 		FilterChips:        buildSessionListChips("/", filters),
 	}
 	s.render(w, r, "sessions", page)
+}
+
+// handleSessionsRows serves GET /sessions/rows — the htmx fragment
+// backing the sessions list "Load more" control. Same filters as the
+// full page plus ?cursor=; renders the shared session-rows partial
+// (the next page of <tr> rows plus a fresh load-more row when more
+// remain). The load-more <tr> targets itself with hx-swap=outerHTML,
+// so clicking it appends the next page and replaces the button in
+// place — no bespoke JS, and appended rows carry sse-swap so their
+// live "latest event" cell wires up automatically.
+func (s *Server) handleSessionsRows(w http.ResponseWriter, r *http.Request) {
+	filters := readSessionListFilters(r)
+	cursor := r.URL.Query().Get("cursor")
+	rows, nextCursor, err := loadSessionsForList(r.Context(), s, sessionsListLimit, cursor, filters)
+	if err != nil {
+		s.internalError(w, "handleSessionsRows: load", "could not load sessions", err)
+		return
+	}
+	s.renderFragment(w, "session-rows", SessionRowsView{
+		Sessions:   rows,
+		NextCursor: nextCursor,
+		FacetQuery: encodeSessionFacetPrefix(filters),
+	})
+}
+
+// encodeSessionFacetPrefix renders the active facet filters as a
+// URL query prefix ending in "&" (or "" when no facet is set), so a
+// load-more link can append cursor=… directly:
+// /sessions/rows?<prefix>cursor=<c>.
+func encodeSessionFacetPrefix(f sessionListFilters) string {
+	v := url.Values{}
+	if f.Agent != "" {
+		v.Set("agent", f.Agent)
+	}
+	if f.Project != "" {
+		v.Set("project", f.Project)
+	}
+	if f.Tool != "" {
+		v.Set("tool", f.Tool)
+	}
+	if f.Skill != "" {
+		v.Set("skill", f.Skill)
+	}
+	if f.File != "" {
+		v.Set("file", f.File)
+	}
+	if f.WithFailures {
+		v.Set("with-failures", "1")
+	}
+	if f.NoSummary {
+		v.Set("no-summary", "1")
+	}
+	if len(v) == 0 {
+		return ""
+	}
+	return v.Encode() + "&"
 }
 
 // sessionListFilters collects every faceted-filter param the
@@ -220,9 +278,10 @@ func filtersToURL(basePath string, f sessionListFilters) string {
 //
 // All filters in the struct are optional; multiple combine with AND
 // server-side. Empty / false values are skipped.
-func loadSessionsForList(ctx context.Context, s *Server, limit int, f sessionListFilters) ([]SessionRow, error) {
+func loadSessionsForList(ctx context.Context, s *Server, limit int, cursor string, f sessionListFilters) ([]SessionRow, string, error) {
 	digests, err := s.api.Sessions(ctx, wire.SessionListRequest{
-		Limit: limit,
+		Limit:  limit,
+		Cursor: wire.Cursor(cursor),
 		// SinceMs=1 means "any session, no time cutoff." The api
 		// applies a 30-day default when since_ms is unset; the web
 		// list deliberately shows the full corpus capped at limit,
@@ -238,7 +297,7 @@ func loadSessionsForList(ctx context.Context, s *Server, limit int, f sessionLis
 		WithoutSummary:    f.NoSummary,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list sessions: %w", err)
+		return nil, "", fmt.Errorf("list sessions: %w", err)
 	}
 
 	now := time.Now()
@@ -297,7 +356,7 @@ func loadSessionsForList(ctx context.Context, s *Server, limit int, f sessionLis
 		return nil
 	})
 	if err := g.Wait(); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	for i := range out {
@@ -320,7 +379,7 @@ func loadSessionsForList(ctx context.Context, s *Server, limit int, f sessionLis
 		status, title := sessionStatus(latestPtr, now)
 		out[i].StatusDotHTML = template.HTML(renderStatusDot(out[i].ID, status, title, false))
 	}
-	return out, nil
+	return out, string(digests.NextCursor), nil
 }
 
 // effectiveTsPtr is the *int64 sibling of effectiveTs: returns

@@ -1,0 +1,52 @@
+{{define "session-rows"}}
+{{range .Sessions}}
+<tr class="nav-row" tabindex="0">
+  <td class="status-cell">{{.StatusDotHTML}}</td>
+  <td class="sid"><a href="/sessions/{{.ID}}">{{.ShortID}}</a></td>
+  <td class="ts">{{.LastActivity}}</td>
+  <td>{{.EventCount}}</td>
+  <td class="prompt-cell">
+    {{/* Preview is the model's summary topic when available, else a
+         substantive first user_prompt, else a muted "no summary yet"
+         placeholder — pickRowPreview in the handler chooses.
+         PreviewKind drives the styling so muted placeholders render
+         in the empty colour. */}}
+    <span class="preview preview-{{.PreviewKind}}">{{.Preview}}</span>
+    <br><small class="cwd">{{.Cwd}}</small>
+  </td>
+  <td class="latest"
+      sse-swap="session-{{.ID}}"
+      hx-swap="innerHTML">{{if .LatestEventHTML}}{{.LatestEventHTML}}{{else}}<span class="empty">—</span>{{end}}</td>
+  <td class="row-actions">
+    {{if .HasSummary}}<span class="badge badge-summary"{{if .SummaryTooltip}} title="{{.SummaryTooltip}}"{{end}}>summary</span>{{end}}
+    {{if .ResumeCommand}}
+    <button type="button"
+            class="resume-btn resume-btn-icon"
+            data-resume-cmd="{{.ResumeCommand}}"
+            title="Copy `{{.ResumeCommand}}` to clipboard so you can paste it in a terminal to resume the agent">↻</button>
+    {{end}}
+    {{if .ResumeCommandDangerous}}
+    <button type="button"
+            class="resume-btn resume-btn-icon resume-btn-dangerous"
+            data-resume-cmd="{{.ResumeCommandDangerous}}"
+            title="Copy `{{.ResumeCommandDangerous}}` to clipboard — resume with --dangerously-skip-permissions">⚡</button>
+    {{end}}
+  </td>
+</tr>
+{{end}}
+{{if .NextCursor}}
+{{/* Self-replacing load-more row: clicking swaps this <tr> with the
+     next page's rows + a fresh load-more row (hx-swap=outerHTML on the
+     closest tr). Pure htmx; appended rows carry sse-swap so their live
+     cell wires up on swap. */}}
+<tr class="loadmore-row">
+  <td colspan="7">
+    <button type="button"
+            class="resume-btn search-loadmore"
+            hx-get="/sessions/rows?{{.FacetQuery}}cursor={{.NextCursor}}"
+            hx-target="closest tr"
+            hx-swap="outerHTML">Load more</button>
+  </td>
+</tr>
+{{end}}
+{{end}}

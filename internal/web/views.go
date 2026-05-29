@@ -19,9 +19,23 @@ type Page struct {
 // timestamps, truncate prompts, and compute display-only fields
 // (ShortID, LastActivity) once per request without pushing
 // presentation logic into the SQL layer.
+// SessionRowsView is the data the shared "session-rows" partial
+// consumes — used both inline by the full sessions page (SessionsPage
+// exposes the same Sessions/NextCursor/FacetQuery fields) and by the
+// /sessions/rows htmx fragment for "Load more".
+type SessionRowsView struct {
+	Sessions   []SessionRow
+	NextCursor string // opaque cursor for the next page; empty = last page
+	FacetQuery string // active facets as a "k=v&…&" prefix for the load-more URL
+}
+
 type SessionsPage struct {
 	Title    string
 	Sessions []SessionRow
+	// NextCursor / FacetQuery feed the "session-rows" partial's
+	// load-more control (see SessionRowsView).
+	NextCursor string
+	FacetQuery string
 	// Agents is the list of distinct source_agent slugs present in
 	// the store. The template renders one filter chip per slug
 	// linking to ?agent=<slug>; nil/empty hides the chip row.

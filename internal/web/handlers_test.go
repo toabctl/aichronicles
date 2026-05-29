@@ -109,6 +109,38 @@ func TestSessionsPage_RendersAllSessions(t *testing.T) {
 	}
 }
 
+// TestSessionsRowsFragment_RendersRows pins the /sessions/rows htmx
+// fragment: it renders session <tr> rows (with the SSE live cell and
+// detail link) via the shared session-rows partial, so the full page
+// and the "Load more" append path can't drift.
+func TestSessionsRowsFragment_RendersRows(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	seedSession(t, st, "sess-frag", "fragment row probe", now)
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	status, body := fetch(t, base+"/sessions/rows")
+	if status != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", status, body)
+	}
+	for _, want := range []string{
+		`<a href="/sessions/`, // row links to detail
+		`sse-swap="session-`,  // live "latest event" cell wired for SSE
+		`class="nav-row"`,     // keyboard-nav row
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("fragment missing %q\n--- body ---\n%s", want, body)
+		}
+	}
+	// A small store (< page limit) has no next page → no load-more row.
+	if strings.Contains(body, "Load more") {
+		t.Errorf("did not expect a Load more control for a sub-page result:\n%s", body)
+	}
+}
+
 // TestSessionsPage_AgentFilterChips covers the source-agent
 // filter UI: chips render for every distinct agent in the store,
 // the active chip is marked, ?agent=<slug> narrows the list, and

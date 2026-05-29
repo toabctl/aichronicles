@@ -147,7 +147,7 @@ var pageNames = []string{"sessions", "session", "search", "insights", "skills", 
 // assets/templates/_<name>.html — the underscore prefix flags
 // them as partials, parsed without base.html so they emit just
 // the table or empty-state line that swaps into a target.
-var fragmentNames = []string{"hits"}
+var fragmentNames = []string{"hits", "session-rows"}
 
 // mustParsePages loads each page's template into a per-page
 // template.Template, sharing only base.html. Single shared set
@@ -159,6 +159,10 @@ func mustParsePages() map[string]*template.Template {
 	for _, name := range pageNames {
 		t, err := template.New(name).ParseFS(assetsFS,
 			"assets/templates/base.html",
+			// Shared row partials (e.g. "session-rows") that pages
+			// render inline AND htmx fragments reuse — parsed into
+			// every page set so the {{template}} call resolves.
+			"assets/templates/_session-rows.html",
 			"assets/templates/"+name+".html",
 		)
 		if err != nil {
@@ -193,6 +197,7 @@ func mustParseFragments() map[string]*template.Template {
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /healthz", s.healthz)
 	s.mux.HandleFunc("GET /{$}", s.sessionsHandler)
+	s.mux.HandleFunc("GET /sessions/rows", s.handleSessionsRows)
 	s.mux.HandleFunc("GET /sessions/{id}", s.sessionDetailHandler)
 	s.mux.HandleFunc("GET /search", s.searchHandler)
 	s.mux.HandleFunc("GET /search/hits", s.searchHitsHandler)
