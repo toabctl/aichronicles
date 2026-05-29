@@ -39,9 +39,23 @@ type SearchRequest struct {
 	// to debug ingest fan-out.
 	NoDedup bool `json:"no_dedup,omitempty"`
 	Limit   int  `json:"limit,omitempty"`
+	// Cursor pages forward through a previous response's NextCursor.
+	// Empty means "first page." Pass it back verbatim with the SAME q
+	// and filters: the cursor carries only the page position plus the
+	// locked stage / as-of snapshot, not the query itself. See
+	// SearchCursor and the as-of semantics on SearchResponse.
+	Cursor Cursor `json:"cursor,omitempty"`
 }
 
 // SearchResponse is the body shape for GET /v1/search.
+//
+// Pagination is a snapshot as-of the first page: the cursor pins the
+// as-of timestamp and the FTS fallback stage, so paging never skips,
+// duplicates, or mixes corpora — but rows ingested mid-pagination
+// surface only on a fresh search (empty cursor). NextCursor is empty
+// when there are no more pages; clients stop on that signal, not on
+// len(Hits).
 type SearchResponse struct {
-	Hits []SearchHit `json:"hits"`
+	Hits       []SearchHit `json:"hits"`
+	NextCursor Cursor      `json:"next_cursor,omitempty"`
 }
