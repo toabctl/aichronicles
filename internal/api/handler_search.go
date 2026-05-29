@@ -2,7 +2,9 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/toabctl/aichronicles/internal/searchquery"
 	"github.com/toabctl/aichronicles/internal/store"
@@ -62,7 +64,40 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hits, err := store.SearchEvents(r.Context(), s.store.DB(), opts)
+	// A cursor pins the page position plus everything that must stay
+	// constant across pages (FTS stage, as-of now-ms, order, dedup) —
+	// it is authoritative over the re-sent order/dedup so the locks
+	// can't be broken mid-pagination. No cursor → first page: pin
+	// now-ms here so the value we put in NextCursor matches what the
+	// store scores against.
+	if raw := q.Get("cursor"); raw != "" {
+		cur, err := wire.DecodeSearchCursor(wire.Cursor(raw))
+		if err != nil {
+			writeProblem(w, http.StatusBadRequest, "Invalid cursor", err.Error())
+			return
+		}
+		opts.Offset = cur.Off
+		opts.Stage = cur.Stage
+		opts.NowMs = cur.Now
+		opts.Order = store.SearchOrder(cur.Ord)
+		opts.NoDedup = cur.Dedup
+	} else {
+		opts.NowMs = time.Now().UnixMilli()
+	}
+
+	// Resolve the effective page size the store will apply, so the
+	// NextCursor "last page" test (len(hits) < limit) compares against
+	// the right number, and bound the offset depth.
+	if opts.Limit <= 0 {
+		opts.Limit = store.DefaultSearchLimit
+	}
+	if opts.Offset+opts.Limit > wire.MaxSearchOffset {
+		writeProblem(w, http.StatusBadRequest, "Offset too deep",
+			fmt.Sprintf("search pagination is limited to %d results", wire.MaxSearchOffset))
+		return
+	}
+
+	hits, stage, err := store.SearchEventsPaged(r.Context(), s.store.DB(), opts)
 	if err != nil {
 		s.storeError(w, "SearchEvents", err)
 		return
@@ -78,6 +113,24 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			Content:    h.Content,
 			Snippet:    h.Snippet,
 		})
+	}
+
+	// A short page is the last page (the single stop signal). A full
+	// page emits a cursor for the next; following it may return zero
+	// rows and an empty cursor, which is correct.
+	if len(hits) == opts.Limit {
+		next, err := wire.EncodeSearchCursor(wire.SearchCursor{
+			Off:   opts.Offset + len(hits),
+			Stage: stage,
+			Now:   opts.NowMs,
+			Ord:   int(opts.Order),
+			Dedup: opts.NoDedup,
+		})
+		if err != nil {
+			s.storeError(w, "EncodeSearchCursor", err)
+			return
+		}
+		out.NextCursor = next
 	}
 	writeJSON(w, http.StatusOK, out)
 }
