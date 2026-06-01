@@ -122,7 +122,9 @@ func RunReflect(
 	}
 
 	sinceMs := time.Now().Add(-window).UnixMilli()
-	resp, err := c.SessionDigests(ctx, sinceMs, opts.Limit)
+	// Unbounded upper end: ad-hoc reflect wants everything from the
+	// window start up to now.
+	resp, err := c.SessionDigests(ctx, sinceMs, 0, opts.Limit)
 	if err != nil {
 		return 0, fmt.Errorf("reflect: load sessions: %w", err)
 	}

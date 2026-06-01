@@ -62,13 +62,23 @@ func (c *Client) SessionOutcome(ctx context.Context, sessionID string) (wire.Ses
 	return out, nil
 }
 
-// SessionDigests queries GET /v1/sessions/digests?since_ms=&limit=.
-// Returns the LoadRecentSessionDigests result — full SessionDigest
-// rows for reflect/propose's window. Distinct from
-// c.Sessions which serves the cwd-scoped MCP path.
-func (c *Client) SessionDigests(ctx context.Context, sinceMs int64, limit int) (wire.SessionDigestsResponse, error) {
+// SessionDigests queries GET
+// /v1/sessions/digests?since_ms=&until_ms=&limit=. Returns the
+// LoadRecentSessionDigests result — full SessionDigest rows for
+// reflect/propose's window. Distinct from c.Sessions which serves
+// the cwd-scoped MCP path.
+//
+// untilMs, when > 0, is an exclusive upper bound — the rows returned
+// then fall in [sinceMs, untilMs). Pass 0 for an unbounded
+// "everything since" window (recent reflect/propose). The weekly
+// digest passes its period end so the limit applies inside the
+// target week rather than to whichever sessions are newest overall.
+func (c *Client) SessionDigests(ctx context.Context, sinceMs, untilMs int64, limit int) (wire.SessionDigestsResponse, error) {
 	var q qparams
 	q.SetInt64("since_ms", sinceMs)
+	if untilMs > 0 {
+		q.SetInt64("until_ms", untilMs)
+	}
 	q.SetInt("limit", limit)
 	var out wire.SessionDigestsResponse
 	if err := c.do(ctx, http.MethodGet, q.URL("/v1/sessions/digests"), nil, &out); err != nil {

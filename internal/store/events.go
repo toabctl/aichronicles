@@ -545,17 +545,33 @@ type SessionDigestRow struct {
 }
 
 // LoadRecentSessionDigests returns the most-recently-ended sessions
-// whose ended_at is within the `sinceMs` cutoff, newest first,
-// capped at `limit`. Sessions with a NULL ended_at fall back to
-// started_at so mid-flight captures aren't invisible.
+// whose effective timestamp is within the `sinceMs` cutoff, newest
+// first, capped at `limit`. Sessions with a NULL ended_at fall back
+// to started_at so mid-flight captures aren't invisible.
+//
+// untilMs, when > 0, is an exclusive upper bound on the effective
+// timestamp — so the window is [sinceMs, untilMs). This matters when
+// the caller wants a bounded historical window AND a row cap: without
+// it the LIMIT is applied before any upper bound the caller filters
+// later, so sessions newer than the window eat into the budget and
+// starve the actual window (e.g. regenerating a past weekly digest
+// while newer sessions exist). 0 means "no upper bound" — the recent
+// reflect/propose readers and the paginated sessions list pass 0.
 //
 // Both subqueries (first_prompt, latest_summary) are correlated;
 // at thousand-session scale the cost is negligible. If that ever
 // becomes the slow spot, materialize them into columns.
-func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs int64, limit, offset int) ([]SessionDigestRow, error) {
+func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs, untilMs int64, limit, offset int) ([]SessionDigestRow, error) {
 	if limit <= 0 {
 		limit = 30
 	}
+	upper := ""
+	args := []any{string(LLMKindSummary), sinceMs}
+	if untilMs > 0 {
+		upper = " AND " + EffectiveTsExpr + " < ?"
+		args = append(args, untilMs)
+	}
+	args = append(args, limit, offset)
 	rows, err := db.QueryContext(ctx,
 		`SELECT s.id, s.started_at_ms, s.ended_at_ms, s.cwd, s.start_cwd,
 			s.first_prompt_text AS first_prompt,
@@ -564,10 +580,10 @@ func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs int64, li
 				ORDER BY created_at_ms DESC LIMIT 1) AS latest_summary,
 			s.source_agent, s.source_session_id
 		FROM sessions s
-		WHERE `+EffectiveTsExpr+` >= ?
+		WHERE `+EffectiveTsExpr+` >= ?`+upper+`
 		ORDER BY `+EffectiveTsExpr+` DESC, s.id DESC
 		LIMIT ? OFFSET ?`,
-		string(LLMKindSummary), sinceMs, limit, offset,
+		args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query session digests: %w", err)

@@ -53,7 +53,8 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		rows, err = store.LoadRecentSessionDigests(r.Context(), s.store.DB(), req.SinceMs, req.Limit, offset)
+		// Paginated browse list: no upper bound on the window.
+		rows, err = store.LoadRecentSessionDigests(r.Context(), s.store.DB(), req.SinceMs, 0, req.Limit, offset)
 		if err != nil {
 			s.storeError(w, "LoadRecentSessionDigests", err)
 			return

@@ -178,8 +178,13 @@ func RunDigestWeekly(
 		return 0, errors.New("digest weekly: PeriodStart must be before PeriodEnd")
 	}
 
+	// Bound the query to [PeriodStart, PeriodEnd) at the DB so the
+	// Limit caps sessions inside the target week. Without the upper
+	// bound, regenerating a past week (with newer sessions present)
+	// lets those newer sessions consume the row budget and starve
+	// the window — the digest then reflects over almost nothing.
 	resp, err := c.SessionDigests(ctx,
-		opts.PeriodStart.UnixMilli(), opts.Limit)
+		opts.PeriodStart.UnixMilli(), opts.PeriodEnd.UnixMilli(), opts.Limit)
 	if err != nil {
 		return 0, fmt.Errorf("digest weekly: load sessions: %w", err)
 	}
