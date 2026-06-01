@@ -117,7 +117,27 @@ type Response struct {
 	// Populated only when Request.Tools was non-empty. Callers with
 	// ForceTool set expect exactly one entry.
 	ToolUses []ToolUse
+
+	// StopReason is the provider's reason the generation ended,
+	// normalised to provider-neutral values. The one callers must act
+	// on is StopMaxTokens: a forced-tool reply that stopped at the
+	// token cap may carry a truncated (or salvaged-empty) tool_use
+	// input, which must not be persisted as if it were complete.
+	// Empty when the provider did not report one.
+	StopReason StopReason
 }
+
+// StopReason is the provider-neutral generation-stop reason. Only the
+// values the orchestration acts on are enumerated; anything else maps
+// to StopOther so callers switch exhaustively without chasing every
+// provider-specific string.
+type StopReason string
+
+const (
+	StopOther     StopReason = ""           // end_turn, stop_sequence, unknown
+	StopMaxTokens StopReason = "max_tokens" // truncated at the token cap
+	StopToolUse   StopReason = "tool_use"   // stopped to emit a tool call
+)
 
 // ToolUse is one invocation of a structured-output tool. Input is the
 // raw JSON the model produced, suitable for Unmarshal into the

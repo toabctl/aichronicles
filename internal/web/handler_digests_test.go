@@ -194,6 +194,35 @@ func TestDigestsPage_RawBodyFallback(t *testing.T) {
 	}
 }
 
+func TestDigestsPage_EmptyBodyIsNotUnparseable(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+
+	// A body that decodes cleanly into a ReflectionResult but carries
+	// no patterns — the exact shape a max_tokens-truncated digest run
+	// salvages ({"task_types":null,"frictions":null,"workflow_change":""}).
+	// This is an EMPTY digest, not a broken one: the page must say so
+	// rather than mislabeling valid JSON as "unparseable body".
+	seedWeeklyDigest(t, st, prompts.ReflectionResult{}, "empty-body",
+		time.Date(2026, 4, 21, 6, 0, 0, 0, time.UTC).UnixMilli())
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	status, body := fetch(t, base+"/digests")
+	if status != http.StatusOK {
+		t.Errorf("page should still render; got %d", status)
+	}
+	if !strings.Contains(body, "empty digest") {
+		t.Errorf("expected empty-digest label, got:\n%s", body)
+	}
+	// The misleading "unparseable" label must NOT appear for valid
+	// JSON, and no raw-JSON dump should leak for an empty body.
+	if strings.Contains(body, "unparseable body") {
+		t.Errorf("empty body must not be labeled unparseable:\n%s", body)
+	}
+}
+
 func TestDigestsPage_RespectsLimitParam(t *testing.T) {
 	t.Parallel()
 	st := openTempStore(t)

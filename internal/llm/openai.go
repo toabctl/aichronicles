@@ -256,13 +256,30 @@ func convertOpenAIResponse(resp *openaisdk.ChatCompletion, requestedModel string
 		respModel = requestedModel
 	}
 	return &Response{
-		Text:     msg.Content,
-		Model:    respModel,
-		ToolUses: toolUses,
+		Text:       msg.Content,
+		Model:      respModel,
+		ToolUses:   toolUses,
+		StopReason: mapOpenAIFinishReason(resp.Choices[0].FinishReason),
 		Usage: Usage{
 			InputTokens:  int(resp.Usage.PromptTokens),
 			OutputTokens: int(resp.Usage.CompletionTokens),
 		},
+	}
+}
+
+// mapOpenAIFinishReason normalises OpenAI's finish_reason into our
+// provider-neutral StopReason. "length" is OpenAI's name for the
+// token-cap truncation Anthropic calls "max_tokens"; "tool_calls"
+// is its tool_use. Everything else (stop, content_filter, …) is
+// StopOther.
+func mapOpenAIFinishReason(r string) StopReason {
+	switch r {
+	case "length":
+		return StopMaxTokens
+	case "tool_calls", "function_call":
+		return StopToolUse
+	default:
+		return StopOther
 	}
 }
 

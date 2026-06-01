@@ -100,6 +100,38 @@ func TestParseToolResult_AcceptsExactlyOne(t *testing.T) {
 	}
 }
 
+// TestParseToolResult_RejectsMaxTokensTruncation pins the
+// truncation guard: a reply that stopped at the token cap carries
+// an unreliable tool input — even one that decodes into a clean
+// zero-valued struct (the failure mode that cached an empty
+// reflect_weekly digest). We must reject it rather than let the
+// caller persist a hollow result under a cache key.
+func TestParseToolResult_RejectsMaxTokensTruncation(t *testing.T) {
+	t.Parallel()
+	resp := &llm.Response{
+		StopReason: llm.StopMaxTokens,
+		// A well-formed-but-empty tool input that WOULD decode fine —
+		// the guard must fire on stop reason, before trusting bytes.
+		ToolUses: []llm.ToolUse{
+			{Name: "record_reflection", Input: json.RawMessage(`{}`)},
+		},
+		Usage: llm.Usage{OutputTokens: 2048},
+	}
+	var got struct {
+		Topic string `json:"topic"`
+	}
+	err := parseToolResult(resp, "record_reflection", &got)
+	if err == nil {
+		t.Fatal("expected error for max_tokens-truncated response")
+	}
+	if !strings.Contains(err.Error(), "max_tokens") {
+		t.Errorf("error should name the truncation cause, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "2048") {
+		t.Errorf("error should surface output_tokens for diagnosis, got: %v", err)
+	}
+}
+
 func TestParseToolResult_ToolNameMismatchIsError(t *testing.T) {
 	t.Parallel()
 	resp := &llm.Response{

@@ -76,14 +76,22 @@ func buildDigestCards(rows []wire.LLMOutput, now time.Time) []DigestCard {
 		populated := len(result.TaskTypes) > 0 ||
 			len(result.Frictions) > 0 ||
 			result.WorkflowChange != ""
-		if parsed && populated {
+		switch {
+		case parsed && populated:
 			card.WorkflowChange = result.WorkflowChange
 			card.TaskTypes = buildDigestTaskTypes(result.TaskTypes)
 			card.Frictions = buildDigestFrictions(result.Frictions)
-		} else {
-			// Malformed or empty body (older shape, hand-edited
-			// row, schema drift): fall back to dumping the raw
-			// text so the user can see what's there.
+		case parsed:
+			// Decoded cleanly but carried no patterns. This is an
+			// empty digest, not a broken one — most often a
+			// max_tokens-truncated LLM call that salvaged a
+			// zero-valued result. Label it honestly rather than
+			// calling valid JSON "unparseable".
+			card.Empty = true
+		default:
+			// Body failed to decode (older shape, hand-edited row,
+			// schema drift): fall back to dumping the raw text so
+			// the user can see what's there.
 			card.RawBody = row.Body
 		}
 		out = append(out, card)

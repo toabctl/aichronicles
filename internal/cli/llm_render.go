@@ -105,6 +105,17 @@ func parseToolResult(resp *llm.Response, toolName string, target any) error {
 	if resp == nil {
 		return fmt.Errorf("parseToolResult: nil response")
 	}
+	// A max_tokens stop means the reply was truncated at the token
+	// cap. For a forced-tool call the tool_use input is then partial:
+	// it may fail to decode, or — worse — salvage into a zero-valued
+	// result that looks complete (this is how an empty reflect_weekly
+	// digest got cached). Reject it so the caller doesn't persist a
+	// hollow artifact under a cache key; the right fix is a bigger
+	// MaxTokens or fewer inputs, not a silently-empty row.
+	if resp.StopReason == llm.StopMaxTokens {
+		return fmt.Errorf("model response for %s truncated at max_tokens (output_tokens=%d); not persisting a partial result",
+			toolName, resp.Usage.OutputTokens)
+	}
 	if len(resp.ToolUses) == 0 {
 		fallback := strings.TrimSpace(resp.Text)
 		if fallback == "" {

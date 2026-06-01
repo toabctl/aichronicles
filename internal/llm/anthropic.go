@@ -338,13 +338,29 @@ func convertAnthropicMessage(msg *anthropicsdk.Message, requestedModel string) *
 		respModel = requestedModel
 	}
 	return &Response{
-		Text:     text.String(),
-		Model:    respModel,
-		ToolUses: toolUses,
+		Text:       text.String(),
+		Model:      respModel,
+		ToolUses:   toolUses,
+		StopReason: mapAnthropicStopReason(msg.StopReason),
 		Usage: Usage{
 			InputTokens:  int(msg.Usage.InputTokens),
 			OutputTokens: int(msg.Usage.OutputTokens),
 		},
+	}
+}
+
+// mapAnthropicStopReason normalises the SDK's stop_reason string into
+// our provider-neutral StopReason. Only max_tokens and tool_use carry
+// orchestration meaning; everything else (end_turn, stop_sequence,
+// pause_turn, refusal, …) collapses to StopOther.
+func mapAnthropicStopReason(r anthropicsdk.StopReason) StopReason {
+	switch r {
+	case anthropicsdk.StopReasonMaxTokens:
+		return StopMaxTokens
+	case anthropicsdk.StopReasonToolUse:
+		return StopToolUse
+	default:
+		return StopOther
 	}
 }
 

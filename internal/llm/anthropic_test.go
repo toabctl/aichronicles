@@ -132,6 +132,46 @@ func TestAnthropic_Complete_ConcatenatesTextBlocks(t *testing.T) {
 	}
 }
 
+// TestAnthropic_Complete_MapsStopReason pins that the provider's
+// stop_reason survives the round-trip into the neutral
+// Response.StopReason — the signal runCachedLLM/parseToolResult use
+// to refuse a truncated reply. Exercises the real SDK deserializer,
+// not just the mapper, so a field rename upstream is caught here.
+func TestAnthropic_Complete_MapsStopReason(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		raw  string
+		want StopReason
+	}{
+		{"max_tokens", StopMaxTokens},
+		{"tool_use", StopToolUse},
+		{"end_turn", StopOther},
+		{"stop_sequence", StopOther},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			t.Parallel()
+			c := fakeAnthropic(t, func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{
+					"content":[{"type":"text","text":"x"}],
+					"stop_reason":"`+tc.raw+`",
+					"usage":{"input_tokens":1,"output_tokens":1}
+				}`)
+			})
+			resp, err := c.Complete(context.Background(), Request{
+				Messages:  []Message{{Role: RoleUser, Content: "x"}},
+				MaxTokens: 16,
+			})
+			if err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+			if resp.StopReason != tc.want {
+				t.Errorf("stop_reason %q: got %q, want %q", tc.raw, resp.StopReason, tc.want)
+			}
+		})
+	}
+}
+
 func TestAnthropic_Complete_DefaultsModelWhenEmpty(t *testing.T) {
 	t.Parallel()
 	var gotModel string

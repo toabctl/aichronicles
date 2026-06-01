@@ -437,6 +437,13 @@ type DigestsPage struct {
 // the body as a bare ReflectionResult, by design — see
 // buildDigestCards) so the card title falls back to "digest #ID"
 // in the template; Generated / GeneratedAt give the timestamp.
+//
+// Empty and RawBody are mutually exclusive fallbacks for a body
+// that produced no sections: Empty marks a body that decoded
+// cleanly but carried no patterns (e.g. a max_tokens-truncated
+// LLM call that salvaged a zero-valued result); RawBody marks a
+// body that failed to decode at all. Conflating the two — as the
+// page did before — mislabels an empty digest as "unparseable".
 type DigestCard struct {
 	ID             int64
 	Model          string
@@ -445,6 +452,7 @@ type DigestCard struct {
 	WorkflowChange string
 	TaskTypes      []DigestTaskTypeRow
 	Frictions      []DigestFrictionRow
+	Empty          bool   // body decoded but held no patterns
 	RawBody        string // populated when the body failed to parse
 }
 
