@@ -21,7 +21,15 @@
     </small>
   </header>
 
-  {{if .RawBody}}
+  {{if .Empty}}
+  {{/* Body decoded cleanly but carried no patterns — typically a
+       max_tokens-truncated LLM call that salvaged a zero-valued
+       result. Say so plainly; this is valid JSON, not a parse
+       failure. Re-run with `aichronicles digest weekly --week-of
+       <Mon> --force` to regenerate. */}}
+  <p class="muted">empty digest — no task patterns or frictions recorded
+     (regenerate with <code>digest weekly --force</code>)</p>
+  {{else if .RawBody}}
   {{/* Body didn't parse as a ReflectionResult — older shape,
        hand-edited row, or schema drift. Surface the raw JSON so
        the user can see what's there rather than a blank card. */}}
