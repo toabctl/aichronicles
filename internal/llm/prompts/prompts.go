@@ -50,10 +50,19 @@ type Built struct {
 
 // maxTokens defaults. Callers can override by setting Request.MaxTokens
 // themselves after the build step if they need more headroom.
+//
+// All three sit at 4096 — parity with the newer induction/facts/
+// challenge prompts. The earlier, tighter caps (summary 1024, reflect
+// /propose 2048) truncated substantive inputs: a long session's
+// summary, or a reflect over a full week of summaries, routinely ran
+// past them. Truncation now fails loudly (parseToolResult rejects a
+// max_tokens stop) instead of silently caching a partial result, so
+// an under-sized cap surfaces as a hard error rather than a quietly
+// empty digest — these were raised after exactly that bit.
 const (
-	summaryMaxTokens = 1024
-	reflectMaxTokens = 2048
-	proposeMaxTokens = 2048
+	summaryMaxTokens = 4096
+	reflectMaxTokens = 4096
+	proposeMaxTokens = 4096
 )
 
 // Tool names. Keeping them as consts so callers (CLI wrappers, tests)
