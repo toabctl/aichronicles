@@ -2,17 +2,16 @@
 Description=aichronicles induction sweep timer
 
 [Timer]
-# Mirrors the daemon-resident sweeper's cadence (15 minutes between
-# runs). OnUnitInactiveSec is "gap between runs" rather than a
-# wall-clock-aligned schedule (OnCalendar) — same shape as the Go
-# time.Ticker the goroutine used. OnBootSec=2min keeps a fresh
-# boot from immediately spending on a 5-LLM-call sweep; flip to 0
-# for fire-immediately-on-boot behaviour.
+# Twice a day (09:00 and 21:00 local). Summarising idle sessions is
+# not latency-sensitive — a session settled hours ago is just as
+# summarisable now as in 15 minutes — and a tighter cadence only
+# burned LLM tokens polling a mostly-empty backlog. The --since
+# window on the sweep (and `summaries fill`) means nothing is lost
+# between runs; a missed window is just a slightly larger next batch.
 #
 # Persistent=true makes systemd run a missed timer ASAP after wakeup
 # so a powered-off laptop doesn't leave idle sessions un-induced.
-OnBootSec=2min
-OnUnitInactiveSec=15min
+OnCalendar=*-*-* 09,21:00:00
 Persistent=true
 Unit=aichronicles-cron-induction.service
 
