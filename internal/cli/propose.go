@@ -184,7 +184,9 @@ func RunPropose(
 		humanDuration(window), opts.Limit)
 
 	sinceMs := time.Now().Add(-window).UnixMilli()
-	resp, err := c.SessionDigests(ctx, sinceMs, opts.Limit)
+	// Unbounded upper end: propose wants everything from the window
+	// start up to now.
+	resp, err := c.SessionDigests(ctx, sinceMs, 0, opts.Limit)
 	if err != nil {
 		return 0, fmt.Errorf("propose: load sessions: %w", err)
 	}

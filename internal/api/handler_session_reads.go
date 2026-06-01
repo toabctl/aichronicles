@@ -248,13 +248,21 @@ func (s *Server) handleSessionDigests(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// until_ms is an optional exclusive upper bound on the window;
+	// 0/missing means unbounded. The weekly digest passes it so its
+	// row cap applies inside [since, until) rather than being eaten
+	// by sessions newer than the target week.
+	untilMs, ok := parseInt64Query(w, r, "until_ms")
+	if !ok {
+		return
+	}
 	limit, ok := parseLimitQuery(w, r, wire.DefaultPageLimit)
 	if !ok {
 		return
 	}
 	// Pipeline reader (reflect/propose window): single-shot, no
 	// cursor — offset 0.
-	rows, err := store.LoadRecentSessionDigests(r.Context(), s.store.DB(), sinceMs, limit, 0)
+	rows, err := store.LoadRecentSessionDigests(r.Context(), s.store.DB(), sinceMs, untilMs, limit, 0)
 	if err != nil {
 		s.storeError(w, "LoadRecentSessionDigests", err)
 		return

@@ -833,7 +833,7 @@ func TestLoadSessionDigests_PopulateResumeFields(t *testing.T) {
 	}
 
 	t.Run("recent", func(t *testing.T) {
-		rows, err := LoadRecentSessionDigests(t.Context(), s.DB(), 1, 10, 0)
+		rows, err := LoadRecentSessionDigests(t.Context(), s.DB(), 1, 0, 10, 0)
 		if err != nil {
 			t.Fatalf("LoadRecentSessionDigests: %v", err)
 		}
@@ -853,5 +853,65 @@ func TestLoadSessionDigests_PopulateResumeFields(t *testing.T) {
 			t.Fatalf("expected 1 row, got %d", len(rows))
 		}
 		check(t, "faceted", rows[0])
+	})
+}
+
+// TestLoadSessionDigests_UntilBound pins that untilMs is an exclusive
+// upper bound applied AT THE QUERY, alongside the limit. The
+// regression it guards: regenerating a past window while newer
+// sessions exist must not let those newer sessions consume the row
+// budget and starve the window (the empty-weekly-digest bug).
+func TestLoadSessionDigests_UntilBound(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	base := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+
+	// Three sessions, ascending effective ts: A, B inside the target
+	// window; C strictly newer (simulating "today" when regenerating
+	// an old week).
+	seedEvents(t, s, "win-A", 1, base)
+	seedEvents(t, s, "win-B", 1, base.Add(time.Hour))
+	seedEvents(t, s, "win-C", 1, base.Add(3*time.Hour))
+
+	until := base.Add(2 * time.Hour).UnixMilli() // between B and C
+
+	t.Run("unbounded sees all three", func(t *testing.T) {
+		rows, err := LoadRecentSessionDigests(t.Context(), s.DB(), base.UnixMilli(), 0, 10, 0)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if len(rows) != 3 {
+			t.Fatalf("unbounded: got %d rows, want 3", len(rows))
+		}
+	})
+
+	t.Run("until excludes the newer session", func(t *testing.T) {
+		rows, err := LoadRecentSessionDigests(t.Context(), s.DB(), base.UnixMilli(), until, 10, 0)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if len(rows) != 2 {
+			t.Fatalf("bounded: got %d rows, want 2 (A,B; C excluded)", len(rows))
+		}
+		for _, r := range rows {
+			if r.ID == events.DeriveSessionID("claude-code", "win-C") {
+				t.Errorf("session C is newer than until and must be excluded")
+			}
+		}
+	})
+
+	t.Run("limit applies inside the window, not eaten by newer rows", func(t *testing.T) {
+		// limit=1 with the upper bound must return B (newest WITHIN
+		// the window), proving C didn't consume the single slot.
+		rows, err := LoadRecentSessionDigests(t.Context(), s.DB(), base.UnixMilli(), until, 1, 0)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("got %d rows, want 1", len(rows))
+		}
+		if want := events.DeriveSessionID("claude-code", "win-B"); rows[0].ID != want {
+			t.Errorf("limit=1 in-window: got %s, want win-B (%s)", rows[0].ID, want)
+		}
 	})
 }
