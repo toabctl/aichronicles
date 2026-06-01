@@ -103,6 +103,48 @@ func TestOpenAI_Complete_HappyPath(t *testing.T) {
 	}
 }
 
+// TestOpenAI_Complete_MapsFinishReason mirrors the Anthropic
+// stop-reason test: OpenAI's finish_reason "length" is the
+// token-cap truncation we surface as StopMaxTokens so the shared
+// truncation guard fires for either provider.
+func TestOpenAI_Complete_MapsFinishReason(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		raw  string
+		want StopReason
+	}{
+		{"length", StopMaxTokens},
+		{"tool_calls", StopToolUse},
+		{"stop", StopOther},
+		{"content_filter", StopOther},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			t.Parallel()
+			c := fakeOpenAI(t, func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{
+					"choices":[{
+						"index":0,
+						"message":{"role":"assistant","content":"x","refusal":""},
+						"finish_reason":"`+tc.raw+`"
+					}],
+					"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+				}`)
+			})
+			resp, err := c.Complete(context.Background(), Request{
+				Messages:  []Message{{Role: RoleUser, Content: "x"}},
+				MaxTokens: 16,
+			})
+			if err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+			if resp.StopReason != tc.want {
+				t.Errorf("finish_reason %q: got %q, want %q", tc.raw, resp.StopReason, tc.want)
+			}
+		})
+	}
+}
+
 func TestOpenAI_Complete_DefaultsModelWhenEmpty(t *testing.T) {
 	t.Parallel()
 	var gotModel string
