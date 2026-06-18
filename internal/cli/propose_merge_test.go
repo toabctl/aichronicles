@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
+	"github.com/toabctl/aichronicles/internal/skillscaffold"
 	"github.com/toabctl/aichronicles/internal/store"
 )
 
@@ -83,7 +84,7 @@ func TestWriteMergedSkill_RebuildsFrontmatter(t *testing.T) {
 	if !strings.Contains(bs, "aichronicles-provenance: sha256:") {
 		t.Errorf("missing provenance footer:\n%s", bs)
 	}
-	if !strings.Contains(bs, hash[:skillProvenanceFingerprintLen]) {
+	if !strings.Contains(bs, hash[:skillscaffold.FingerprintLen]) {
 		t.Errorf("footer should embed the leading hex of the returned hash %q:\n%s", hash, bs)
 	}
 
