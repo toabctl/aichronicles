@@ -140,7 +140,7 @@ func NewServer(api *apiclient.Client, cfg Config, log *slog.Logger) *Server {
 // renders. Each name maps to assets/templates/<name>.html, which
 // is parsed alongside base.html into its own template set so the
 // `content` block one page defines doesn't shadow another's.
-var pageNames = []string{"sessions", "session", "search", "insights", "skills", "projects", "digests", "propose", "facts", "workflows", "usage"}
+var pageNames = []string{"sessions", "session", "search", "insights", "skills", "projects", "digests", "propose", "propose_detail", "facts", "workflows", "usage"}
 
 // fragmentNames is the canonical list of htmx fragment templates
 // the server renders. Each name maps to
@@ -208,6 +208,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /projects", s.projectsHandler)
 	s.mux.HandleFunc("GET /digests", s.digestsHandler)
 	s.mux.HandleFunc("GET /propose", s.proposeHandler)
+	s.mux.HandleFunc("GET /propose/{id}/{skill}", s.proposeDetailHandler)
 	s.mux.HandleFunc("GET /facts", s.factsHandler)
 	s.mux.HandleFunc("GET /facts/rows", s.handleFactsRows)
 	s.mux.HandleFunc("GET /workflows", s.workflowsHandler)

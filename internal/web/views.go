@@ -529,7 +529,12 @@ type ProposeCard struct {
 // ProposeSkillRow mirrors prompts.ProposedSkill with display-ready
 // helpers (AddCmd already shaped, evidence pre-shortened, etc.).
 type ProposeSkillRow struct {
-	Name                 string
+	Name string
+	// OutputID is the llm_outputs row this skill came from. Carried
+	// on the row (not just the card) so the template can build the
+	// /propose/{id}/{skill} preview link without reaching for the
+	// enclosing card's scope.
+	OutputID             int64
 	WhenToUse            string
 	Why                  string
 	Frequency            int
@@ -554,6 +559,38 @@ type ProposeEvidenceRow struct {
 	ShortID      string
 	Quote        string
 	WhatHappened string
+}
+
+// ProposeDetailPage backs /propose/{id}/{skill}: a read-only
+// preview of the exact SKILL.md (and helper scripts) that
+// `aichronicles propose add --skill <name> --output-id <id>` would
+// write to disk. Rendered by internal/skillscaffold — the same code
+// the CLI writes from — so the preview is byte-identical to the
+// file the user would get, including the TODO-stubbed Steps section
+// and the provenance footer. The page never writes anything; the
+// add command stays CLI-only.
+type ProposeDetailPage struct {
+	Title       string
+	OutputID    int64
+	Model       string
+	Generated   string // relative ("2d ago")
+	GeneratedAt string // absolute UTC for the title attr
+	SkillName   string
+	WhenToUse   string
+	Why         string
+	// AddCmd is the exact command that materialises this preview.
+	AddCmd string
+	// SkillMd is the full SKILL.md content (frontmatter + body +
+	// provenance footer) exactly as `propose add` would write it.
+	SkillMd string
+	Scripts []ProposeDetailScript
+}
+
+// ProposeDetailScript is one helper script preview: its on-disk
+// name under scripts/ and the scaffolded body bytes.
+type ProposeDetailScript struct {
+	Name string
+	Body string
 }
 
 // SearchPage is the data shape the /search full-page template
