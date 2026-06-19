@@ -11,6 +11,7 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/preview"
+	"github.com/toabctl/aichronicles/internal/textfmt"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -156,7 +157,7 @@ func renderInsightsText(out io.Writer, r *wire.Insights) error {
 				cwd = *ts.Cwd
 			}
 			prompt := strings.TrimSpace(ts.FirstPrompt)
-			prompt = collapseWhitespace(prompt)
+			prompt = textfmt.CollapseWhitespace(prompt)
 			// Rune-based truncation: byte-slicing at [:57] can cut
 			// a multibyte UTF-8 codepoint mid-sequence and produce
 			// invalid bytes in the list output. truncateRunes
@@ -244,25 +245,4 @@ func writeHourHistogram(b *strings.Builder, buckets []wire.HourBucket) {
 		}
 		fmt.Fprintf(b, "  %02d  %-*s  %d\n", hb.Hour, barMax, bar, hb.Count)
 	}
-}
-
-// collapseWhitespace squashes runs of whitespace (newlines,
-// multiple spaces) into single spaces so a multi-line first
-// prompt fits on one line in the report.
-func collapseWhitespace(s string) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	prevSpace := false
-	for _, r := range s {
-		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
-			if !prevSpace {
-				b.WriteByte(' ')
-				prevSpace = true
-			}
-			continue
-		}
-		b.WriteRune(r)
-		prevSpace = false
-	}
-	return b.String()
 }

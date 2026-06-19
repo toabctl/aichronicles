@@ -133,9 +133,10 @@
   {{range .Skills}}
   <section class="propose-skill">
     <header>
-      <h3><code>{{.Name}}</code>
+      <h3><a href="/propose/{{.OutputID}}/{{.Name}}"><code>{{.Name}}</code></a>
         <small class="muted">×{{.Frequency}}{{if .Effort}} · effort: {{.Effort}}{{end}}</small>
       </h3>
+      <p><small><a href="/propose/{{.OutputID}}/{{.Name}}">▶ preview the SKILL.md this would write</a></small></p>
     </header>
 
     {{if .WhenToUse}}

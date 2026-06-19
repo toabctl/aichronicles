@@ -129,21 +129,6 @@ func TestRenderInsightsText_OmitsEmptySections(t *testing.T) {
 	}
 }
 
-func TestCollapseWhitespace(t *testing.T) {
-	t.Parallel()
-	cases := map[string]string{
-		"hello world":          "hello world",
-		"hello\nworld":         "hello world",
-		"  hello   \n\nworld ": " hello world ",
-		"single":               "single",
-	}
-	for in, want := range cases {
-		if got := collapseWhitespace(in); got != want {
-			t.Errorf("collapseWhitespace(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 // makeHourBuckets builds a dense 24-bucket array with the given
 // counts overlaid. Mirrors the contract /v1/insights provides; we
 // can't test the renderer faithfully without it.

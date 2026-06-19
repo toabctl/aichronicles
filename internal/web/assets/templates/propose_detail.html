@@ -1,0 +1,52 @@
+{{define "content"}}
+<hgroup>
+  <h1>Preview: <code>{{.SkillName}}</code></h1>
+  <p><small class="muted">
+     from <a href="/propose#propose-{{.OutputID}}">proposal #{{.OutputID}}</a>
+     · generated <span title="{{.GeneratedAt}}">{{.Generated}}</span>
+     · model <code>{{.Model}}</code>
+  </small></p>
+</hgroup>
+
+<p>This is the exact <code>SKILL.md</code> (and any helper scripts)
+   that <code>aichronicles propose add</code> would write to
+   <code>~/.claude/skills/{{.SkillName}}/</code>. The frontmatter is
+   filled from the proposal; the <strong>Steps</strong> section is a
+   <code>TODO</code> scaffold you fill in from the cited evidence
+   sessions. Nothing is written until you run the command — this page
+   only previews it.</p>
+
+{{if .WhenToUse}}
+<p><strong>When to use:</strong> {{.WhenToUse}}</p>
+{{end}}
+{{if .Why}}
+<p><strong>Why:</strong> {{.Why}}</p>
+{{end}}
+
+<button type="button"
+        class="copy-btn"
+        data-copy="{{.AddCmd}}"
+        title="Copy `{{.AddCmd}}` to your clipboard so you can paste it in a terminal to materialise this skill">
+  📋 copy add command
+</button>
+<code class="apply-cmd-preview">{{.AddCmd}}</code>
+
+<section>
+  <h2><code>SKILL.md</code></h2>
+  <pre><code>{{.SkillMd}}</code></pre>
+</section>
+
+{{if .Scripts}}
+<section>
+  <h2>Helper scripts <small class="muted">({{len .Scripts}})</small></h2>
+  {{range .Scripts}}
+  <article>
+    <header><code>scripts/{{.Name}}</code></header>
+    <pre><code>{{.Body}}</code></pre>
+  </article>
+  {{end}}
+</section>
+{{end}}
+
+<p><a href="/propose#propose-{{.OutputID}}" class="muted">← back to proposals</a></p>
+{{end}}

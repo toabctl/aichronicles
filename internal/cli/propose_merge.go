@@ -23,6 +23,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/skills"
+	"github.com/toabctl/aichronicles/internal/skillscaffold"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -402,7 +403,7 @@ func renderMergedScriptScaffold(sc *prompts.ProposedSkillScript, skillName strin
 
 	switch {
 	case len(sc.Steps) > 0:
-		writePlaceholderBlock(&b, sc.Placeholders)
+		skillscaffold.WritePlaceholderBlock(&b, sc.Placeholders)
 		fmt.Fprintln(&b)
 		fmt.Fprintln(&b, "set -euo pipefail")
 		fmt.Fprintln(&b)
@@ -440,19 +441,19 @@ func renderMergedScriptScaffold(sc *prompts.ProposedSkillScript, skillName strin
 // — without that, the on-disk hash drifts from the DB record and
 // the next `skills verify` flags every merged skill as tampered.
 func writeMergedSkill(path string, merged *prompts.MergedSkillResult, nextVersion string) (bodyHashHex string, err error) {
-	examples := make([]skillFrontmatterExample, 0, len(merged.Examples))
+	examples := make([]skillscaffold.FrontmatterExample, 0, len(merged.Examples))
 	for _, e := range merged.Examples {
-		examples = append(examples, skillFrontmatterExample{
+		examples = append(examples, skillscaffold.FrontmatterExample{
 			Input:  e.Input,
 			Output: e.Output,
 		})
 	}
-	frontmatter, err := yaml.Marshal(skillFrontmatter{
+	frontmatter, err := yaml.Marshal(skillscaffold.Frontmatter{
 		Name:        merged.Name,
 		Description: merged.Description,
 		WhenToUse:   merged.WhenToUse,
 		Version:     nextVersion,
-		Kind:        frontmatterKind(merged.Kind),
+		Kind:        skillscaffold.FrontmatterKind(merged.Kind),
 		Tags:        append([]string(nil), merged.Tags...),
 		Triggers:    append([]string(nil), merged.Triggers...),
 		Examples:    examples,
@@ -478,7 +479,7 @@ func writeMergedSkill(path string, merged *prompts.MergedSkillResult, nextVersio
 	// `skills verify` doesn't need to special-case merge output.
 	sum := sha256.Sum256(buf)
 	bodyHashHex = hex.EncodeToString(sum[:])
-	buf = append(buf, skillProvenanceFooter(bodyHashHex)...)
+	buf = append(buf, skillscaffold.ProvenanceFooter(bodyHashHex)...)
 
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, buf, 0o644); err != nil {
