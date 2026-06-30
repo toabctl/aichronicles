@@ -20,7 +20,7 @@
     
     
       
-        <title>Aichronicles - aichronicles</title>
+        <title>Aichronicles resume - aichronicles</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#aichronicles" class="md-skip">
+        <a href="#aichronicles-resume" class="md-skip">
           Skip to content
         </a>
       
@@ -108,7 +108,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Aichronicles
+              Aichronicles resume
             
           </span>
         </div>
@@ -600,13 +600,13 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#aichronicles" class="md-nav__link">
+  <a href="#aichronicles-resume" class="md-nav__link">
     <span class="md-ellipsis">
-      aichronicles
+      aichronicles resume
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="aichronicles">
+    <nav class="md-nav" aria-label="aichronicles resume">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -656,7 +656,7 @@
                   
 
   
-    <a href="https://github.com/toabctl/aichronicles/edit/main/docs/reference/cli/aichronicles.md" title="Edit this page" class="md-content__button md-icon">
+    <a href="https://github.com/toabctl/aichronicles/edit/main/docs/reference/cli/aichronicles_resume.md" title="Edit this page" class="md-content__button md-icon">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -664,46 +664,41 @@
   
 
 
-  <h1>Aichronicles</h1>
+  <h1>Aichronicles resume</h1>
 
-<h2 id="aichronicles">aichronicles<a class="headerlink" href="#aichronicles" title="Permanent link">&para;</a></h2>
-<p>Capture AI coding agent session events</p>
+<h2 id="aichronicles-resume">aichronicles resume<a class="headerlink" href="#aichronicles-resume" title="Permanent link">&para;</a></h2>
+<p>Search sessions and resume the chosen one in its workspace</p>
 <h3 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h3>
-<p>aichronicles is the CLI for the aichronicles-api daemon. The <code>hook</code> subcommand receives hook payloads from Claude Code / Gemini CLI, wraps them in the canonical Envelope, and forwards to the api over a Unix domain socket; other subcommands (summarize, reflect, propose, sessions, search, ...) read and write through the same UDS.</p>
+<p>Full-text searches captured sessions for <query>, lists the
+best matches one per line (when, short id, cwd, opening
+prompt), and prompts you to pick one. The chosen session is
+resumed by launching its agent (<code>claude --resume &lt;id&gt;</code> /
+<code>gemini --resume &lt;id&gt;</code>) after cd-ing into the workspace the
+session started in — <code>claude --resume</code> indexes transcripts by
+start cwd, so this is what makes resume actually find the
+conversation.</p>
+<p>The current process is replaced by the agent, so you land
+directly in the resumed session. Pass --print to emit the
+resume one-liners instead of launching (also the automatic
+behavior when stdin is not a terminal, so it composes with
+pipes). Sessions whose agent we can't model are omitted —
+resume only lists what it can actually relaunch.</p>
+<p>Talks to aichronicles-api over its UDS (override with
+--socket or $AICHRONICLES_API_SOCKET).</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>aichronicles resume &lt;query&gt; [flags]
+</span></code></pre></div>
 <h3 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>  -h, --help   help for aichronicles
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>      --agent string       filter by source agent (claude-code | gemini-cli)
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  -h, --help               help for resume
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>      --limit int          max matching sessions to list (default 10)
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>  -n, --print              print the resume command(s) instead of launching the agent
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>      --since duration     only sessions with events within this duration (e.g. 24h, 7d) (default 0s)
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>  -d, --skip-permissions   (dangerous) resume with --dangerously-skip-permissions (claude-code only)
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>      --socket string      aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 </span></code></pre></div>
 <h3 id="see-also">SEE ALSO<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h3>
 <ul>
-<li><a href="../aichronicles_audit/">aichronicles audit</a>  - Scan stored events for credential patterns (read-only)</li>
-<li><a href="../aichronicles_backfill-extractions/">aichronicles backfill-extractions</a>    - Re-run extractors over every raw envelope and rewrite the extractions table</li>
-<li><a href="../aichronicles_digest/">aichronicles digest</a>    - Periodic LLM-driven digests stored as queryable artefacts</li>
-<li><a href="../aichronicles_doctor/">aichronicles doctor</a>    - Probe the running aichronicles-api daemon and report health</li>
-<li><a href="../aichronicles_facts/">aichronicles facts</a>  - Typed semantic-fact memory induced from sessions (MIRIX semantic layer)</li>
-<li><a href="../aichronicles_hook/">aichronicles hook</a>    - Read a hook payload on stdin and forward as an envelope to aichronicles-api</li>
-<li><a href="../aichronicles_import-claude/">aichronicles import-claude</a>  - Walk Claude Code .jsonl transcripts and stream them into aichronicles-api</li>
-<li><a href="../aichronicles_import-gemini/">aichronicles import-gemini</a>  - Import gemini-cli session JSON files into the store</li>
-<li><a href="../aichronicles_import-jsonl/">aichronicles import-jsonl</a>    - Replay events.jsonl into the SQLite store via aichronicles-api</li>
-<li><a href="../aichronicles_induction/">aichronicles induction</a>  - Online single-session induction (AWM-style auto-skill-extraction)</li>
-<li><a href="../aichronicles_insights/">aichronicles insights</a>    - Cross-session usage digest (sessions, top tools, top skills, activity-by-hour)</li>
-<li><a href="../aichronicles_mcp-serve/">aichronicles mcp-serve</a>  - Run an MCP server over stdio exposing the user's session history</li>
-<li><a href="../aichronicles_meta/">aichronicles meta</a>    - Cadence-gated meta-analyses (propose / reflect / challenge / reflect_weekly / skill_revision)</li>
-<li><a href="../aichronicles_propose/">aichronicles propose</a>  - LLM-suggested skills / CLAUDE.md entries / scripts from recent sessions</li>
-<li><a href="../aichronicles_prune/">aichronicles prune</a>  - Delete sessions (and everything they own) older than --older-than</li>
-<li><a href="../aichronicles_reflect/">aichronicles reflect</a>  - LLM-derived meta-analysis of recent sessions</li>
-<li><a href="../aichronicles_resume/">aichronicles resume</a>    - Search sessions and resume the chosen one in its workspace</li>
-<li><a href="../aichronicles_scrub/">aichronicles scrub</a>  - Rewrite stored events to remove credentials (IRREVERSIBLE with --yes)</li>
-<li><a href="../aichronicles_search/">aichronicles search</a>    - Full-text search over captured envelopes</li>
-<li><a href="../aichronicles_sessions/">aichronicles sessions</a>    - List sessions in the store, most-recently-ended first</li>
-<li><a href="../aichronicles_setup/">aichronicles setup</a>  - Install aichronicles into an AI coding agent or the OS</li>
-<li><a href="../aichronicles_skills/">aichronicles skills</a>    - Inspect captured skill activity (frequency, staleness, ...)</li>
-<li><a href="../aichronicles_summaries/">aichronicles summaries</a>  - Inspect stored LLM outputs (summaries, reflections, proposals)</li>
-<li><a href="../aichronicles_summarize/">aichronicles summarize</a>  - Generate an LLM summary for one session</li>
-<li><a href="../aichronicles_teardown/">aichronicles teardown</a>    - Remove aichronicles integration from an AI coding agent or the OS</li>
-<li><a href="../aichronicles_unresolved/">aichronicles unresolved</a>    - Print unresolved items from prior sessions in this cwd</li>
-<li><a href="../aichronicles_usage/">aichronicles usage</a>  - Per-day LLM token totals (input/output) by kind and model</li>
-<li><a href="../aichronicles_vacuum/">aichronicles vacuum</a>    - Compact the SQLite store and truncate the WAL</li>
-<li><a href="../aichronicles_web/">aichronicles web</a>  - Serve a local web UI for browsing sessions and summaries</li>
+<li><a href="../aichronicles/">aichronicles</a>  - Capture AI coding agent session events</li>
 </ul>
 
 
