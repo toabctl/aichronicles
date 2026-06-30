@@ -115,6 +115,68 @@ func TestLoadEventsForSession_UnknownSession_ReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestLoadSessionMessageTail_ReturnsRecentMessagesOnly(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	mk := func(i int, kind, role, text string, tool *events.Tool) {
+		env := &events.Envelope{
+			V: 1, EventID: uuid.Must(uuid.NewV7()).String(),
+			SourceAgent: "claude-code", SourceSessionID: "tail",
+			Kind: kind, Role: role, ContentText: text, Tool: tool,
+			TsSource:  base.Add(time.Duration(i) * time.Millisecond),
+			Payload:   map[string]any{},
+			Redaction: &events.Redaction{Applied: true},
+		}
+		withTx(t, s, func(tx *sql.Tx) {
+			if _, _, err := IngestEnvelope(t.Context(), tx, env, []byte(`{"v":1}`), env.TsSource.UnixMilli()); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+		})
+	}
+	// 4 conversational messages bracketing a tool_use that must be filtered.
+	mk(0, "user_prompt", "user", "first question", nil)
+	mk(1, "assistant_message", "assistant", "first answer", nil)
+	mk(2, "tool_use", "assistant", "Bash", &events.Tool{Name: "Bash"})
+	mk(3, "user_prompt", "user", "second question", nil)
+	mk(4, "assistant_message", "assistant", "second answer", nil)
+
+	id := events.DeriveSessionID("claude-code", "tail")
+	got, err := LoadSessionMessageTail(t.Context(), s.DB(), id, 3)
+	if err != nil {
+		t.Fatalf("tail: %v", err)
+	}
+
+	// Tool excluded; the newest 3 messages returned oldest→newest.
+	want := []string{"first answer", "second question", "second answer"}
+	if len(got) != len(want) {
+		t.Fatalf("got %d rows, want %d: %+v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if p := got[i].ContentText.Ptr(); p == nil || *p != w {
+			t.Errorf("row %d: got %v, want %q", i, got[i].ContentText.Ptr(), w)
+		}
+		if got[i].Kind == "tool_use" {
+			t.Errorf("row %d: tool_use leaked into the message tail", i)
+		}
+	}
+}
+
+func TestLoadSessionMessageTail_NonPositiveLimitReturnsNil(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	seedEvents(t, s, "x", 3, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	id := events.DeriveSessionID("claude-code", "x")
+	got, err := LoadSessionMessageTail(t.Context(), s.DB(), id, 0)
+	if err != nil {
+		t.Fatalf("tail: %v", err)
+	}
+	if got != nil {
+		t.Errorf("limit 0 should return nil, got %d rows", len(got))
+	}
+}
+
 func TestLoadExtractionsForSession_DedupsAndOrdersByFirstSight(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)

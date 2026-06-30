@@ -48,6 +48,34 @@ func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// handleSessionMessageTail serves GET
+// /v1/sessions/{id}/message-tail?limit=N. Returns up to N of the most
+// recent conversational messages (user prompts + assistant messages, no
+// tool noise) in chronological order — the "where this left off"
+// preview the resume picker renders. Reuses the SessionEventsResponse
+// shape; limit defaults to 3.
+func (s *Server) handleSessionMessageTail(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing session id", "")
+		return
+	}
+	limit, ok := parsePositiveIntQuery(w, r, "limit", 3)
+	if !ok {
+		return
+	}
+	rows, err := store.LoadSessionMessageTail(r.Context(), s.store.DB(), id, limit)
+	if err != nil {
+		s.storeError(w, "LoadSessionMessageTail", err)
+		return
+	}
+	out := wire.SessionEventsResponse{Events: make([]wire.SessionEvent, 0, len(rows))}
+	for _, e := range rows {
+		out.Events = append(out.Events, eventViewToWire(e))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func eventViewToWire(e events.EventView) wire.SessionEvent {
 	return wire.SessionEvent{
 		EventID:      e.EventID,

@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/resumecmd"
 	"github.com/toabctl/aichronicles/internal/wire"
@@ -110,10 +111,13 @@ type ResumeOptions struct {
 type resumeExecFn func(resumecmd.Spec) error
 
 // resumeCandidate pairs a matched session's digest (for display) with
-// its resolved resume invocation (for launch / print).
+// its resolved resume invocation (for launch / print). tail holds the
+// trailing conversation messages shown on the interactive preview card;
+// nil in non-interactive paths (we don't fetch what we won't render).
 type resumeCandidate struct {
 	digest wire.SessionDigest
 	spec   resumecmd.Spec
+	tail   []wire.SessionEvent
 }
 
 // RunResume searches for sessions matching opts.Query, lists the
@@ -204,20 +208,37 @@ func RunResume(
 		return err
 	}
 
-	if err := renderResumeTable(out, cands); err != nil {
-		return err
-	}
-	if skippedAny {
-		_, _ = fmt.Fprintln(out, "(some matching sessions can't be resumed — unknown agent or missing session id — and were skipped)")
-	}
-
 	// Launch only when we have a terminal to prompt on and --print
-	// wasn't requested; otherwise show the commands and stop.
+	// wasn't requested; otherwise show the table + commands and stop.
 	if opts.Print || !opts.Interactive {
+		if err := renderResumeTable(out, cands); err != nil {
+			return err
+		}
+		if skippedAny {
+			_, _ = fmt.Fprintln(out, resumeSkippedNote)
+		}
 		if !opts.Interactive && !opts.Print {
 			_, _ = fmt.Fprintln(out, "(stdin is not a terminal; printing resume commands — run in a terminal to pick one)")
 		}
 		return printResumeCommands(out, cands)
+	}
+
+	// Interactive: enrich each candidate with a short tail preview so the
+	// picker shows where the session left off, then render cards + prompt.
+	for i := range cands {
+		tail, terr := c.SessionMessageTail(ctx, cands[i].digest.ID, resumePreviewMessages)
+		if terr != nil {
+			// Preview is best-effort: a failed fetch yields a card
+			// without its tail, never a failed resume.
+			tail = nil
+		}
+		cands[i].tail = tail
+	}
+	if err := renderResumeCards(out, cands, time.Now()); err != nil {
+		return err
+	}
+	if skippedAny {
+		_, _ = fmt.Fprintln(out, resumeSkippedNote)
 	}
 
 	choice, ok, err := promptResumeChoice(in, out, len(cands))
@@ -268,6 +289,76 @@ func printResumeCommands(out io.Writer, cands []resumeCandidate) error {
 		}
 	}
 	return nil
+}
+
+// resumePreviewMessages is how many trailing conversation messages each
+// interactive card shows — enough to recognise where a session left off
+// without turning the picker into a transcript.
+const resumePreviewMessages = 3
+
+// resumePreviewWidth caps each preview line so a multi-KB turn doesn't
+// wrap across the terminal. Sits comfortably inside ~100 columns after
+// the "    │ asst: " prefix.
+const resumePreviewWidth = 88
+
+const resumeSkippedNote = "(some matching sessions can't be resumed — unknown agent or missing session id — and were skipped)"
+
+// renderResumeCards writes one card per candidate: a header line
+// (index · short id · when · cwd), the opening prompt, and the trailing
+// message preview, closed by a rule. Colour is applied only when out is
+// a TTY (styled() gates on that), so test buffers see plain text.
+func renderResumeCards(out io.Writer, cands []resumeCandidate, now time.Time) error {
+	for i, c := range cands {
+		d := c.digest
+		header := fmt.Sprintf(" %d  %s · %s · %s",
+			i+1, preview.ShortID(d.ID), resumeWhen(d, now), strPtrOrDash(d.Cwd))
+		if _, err := fmt.Fprintln(out, styled(out, header, ansiBold)); err != nil {
+			return err
+		}
+		if fp := strPtrOrDash(d.FirstPrompt); fp != "-" {
+			line := "    " + styled(out, "▸", ansiCyan) + " " + truncateRunes(flattenLine(fp), resumePreviewWidth)
+			if _, err := fmt.Fprintln(out, line); err != nil {
+				return err
+			}
+		}
+		for _, ev := range c.tail {
+			text := truncateRunes(flattenLine(ptrStrOrEmpty(ev.ContentText)), resumePreviewWidth)
+			// %-5s pads "you:" / "asst:" so the message text lines up.
+			prefix := fmt.Sprintf("│ %-5s", resumeRoleLabel(ev.Kind))
+			line := "    " + styled(out, prefix, ansiDim) + " " + text
+			if _, err := fmt.Fprintln(out, line); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(out, styled(out, " "+strings.Repeat("─", 56), ansiDim)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// resumeRoleLabel maps an event kind to a short speaker label (with its
+// colon) for the preview lines: user prompts read "you:", assistant
+// turns "asst:". The renderer pads these to a common width so the
+// message text aligns.
+func resumeRoleLabel(kind string) string {
+	switch kind {
+	case events.KindUserPrompt:
+		return "you:"
+	case events.KindAssistantMessage:
+		return "asst:"
+	default:
+		return "···:"
+	}
+}
+
+// flattenLine collapses whitespace so a multi-line turn renders on a
+// single preview line.
+func flattenLine(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, "\t", " ")
+	return strings.TrimSpace(s)
 }
 
 // promptResumeChoice prompts until it reads a valid 1..n selection, a

@@ -1135,6 +1135,62 @@ func LoadEventsForSession(ctx context.Context, db *sql.DB, sessionID string, lim
 // rows please" (limit > 0).
 const LoadEventsForSessionUnbounded = -1
 
+// LoadSessionMessageTail returns up to `limit` of the most recent
+// conversational message events — user prompts and assistant messages
+// only, excluding tool calls/results and other machinery — for
+// sessionID, ordered oldest→newest so a caller can render them as a
+// chronological "where this left off" preview. limit <= 0 returns nil
+// (the caller wants no preview).
+//
+// The inner subquery grabs the newest `limit` message rows (DESC); the
+// outer query flips them back to chronological order. Bounded by LIMIT,
+// so it stays cheap even on sessions with thousands of events — unlike
+// LoadEventsForSession, whose LIMIT takes the head, not the tail.
+func LoadSessionMessageTail(ctx context.Context, db *sql.DB, sessionID string, limit int) ([]events.EventView, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	const projection = `event_id, kind, role, content_text, ts_source_ms, tool_name,
+		        subagent_id, subagent_type, cwd`
+	rows, err := db.QueryContext(ctx,
+		// Tiebreak on event_id (a time-sortable UUIDv7) rather than
+		// rowid so the outer query orders by a column the subquery
+		// actually projects.
+		`SELECT `+projection+` FROM (
+			SELECT `+projection+`
+			   FROM events
+			  WHERE session_id = ? AND kind IN (?, ?)
+			  ORDER BY ts_source_ms DESC, event_id DESC
+			  LIMIT ?
+		 ) ORDER BY ts_source_ms ASC, event_id ASC`,
+		sessionID, events.KindUserPrompt, events.KindAssistantMessage, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query message tail: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []events.EventView
+	for rows.Next() {
+		var (
+			e                                                      events.EventView
+			role, content, toolName, subagentID, subagentType, cwd sql.NullString
+		)
+		if err := rows.Scan(&e.EventID, &e.Kind, &role, &content,
+			&e.TsSourceMs, &toolName, &subagentID, &subagentType, &cwd); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		e.Role = nullStringToEvents(role)
+		e.ContentText = nullStringToEvents(content)
+		e.ToolName = nullStringToEvents(toolName)
+		e.SubagentID = nullStringToEvents(subagentID)
+		e.SubagentType = nullStringToEvents(subagentType)
+		e.Cwd = nullStringToEvents(cwd)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // LoadStreamEventsSinceSeq returns the SSE-shaped events whose
 // ingest_seq is strictly greater than sinceSeq, ordered ascending,
 // capped at limit. It powers the GET /v1/stream Last-Event-ID
