@@ -45,37 +45,45 @@ func threeCands() []resumeCandidate {
 	}
 }
 
+// sizedModel returns a model that's received a window size, so the
+// embedded list knows its dimensions and navigation works.
+func sizedModel(t *testing.T, cands []resumeCandidate) resumeModel {
+	t.Helper()
+	next, _ := newResumeModel(cands).Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	return next.(resumeModel)
+}
+
 func TestResumeModel_NavigationClamps(t *testing.T) {
 	t.Parallel()
-	m := newResumeModel(threeCands())
-	if m.cursor != 0 {
-		t.Fatalf("initial cursor = %d, want 0", m.cursor)
+	m := sizedModel(t, threeCands())
+	if m.list.Index() != 0 {
+		t.Fatalf("initial index = %d, want 0", m.list.Index())
 	}
 	// Up at the top is a no-op.
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyUp})
-	if m.cursor != 0 {
-		t.Errorf("up at top: cursor = %d, want 0", m.cursor)
+	if m.list.Index() != 0 {
+		t.Errorf("up at top: index = %d, want 0", m.list.Index())
 	}
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
-	if m.cursor != 2 {
-		t.Errorf("after two downs: cursor = %d, want 2", m.cursor)
+	if m.list.Index() != 2 {
+		t.Errorf("after two downs: index = %d, want 2", m.list.Index())
 	}
 	// Down at the bottom is a no-op (clamped).
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
-	if m.cursor != 2 {
-		t.Errorf("down at bottom: cursor = %d, want 2", m.cursor)
+	if m.list.Index() != 2 {
+		t.Errorf("down at bottom: index = %d, want 2", m.list.Index())
 	}
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyUp})
-	if m.cursor != 1 {
-		t.Errorf("after up: cursor = %d, want 1", m.cursor)
+	if m.list.Index() != 1 {
+		t.Errorf("after up: index = %d, want 1", m.list.Index())
 	}
 }
 
 func TestResumeModel_EnterSelectsCursor(t *testing.T) {
 	t.Parallel()
-	m := newResumeModel(threeCands())
-	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyDown}) // cursor 1
+	m := sizedModel(t, threeCands())
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyDown}) // index 1
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if !m.quitting {
 		t.Error("enter should set quitting")
