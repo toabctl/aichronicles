@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 
@@ -21,15 +22,41 @@ func recordExec() (*resumecmd.Spec, *bool, resumeExecFn) {
 	return &got, &called, fn
 }
 
+// pickCancel is a fake picker that simulates the user cancelling.
+func pickCancel(_ []resumeCandidate, _ io.Reader, _ io.Writer) (int, bool, error) {
+	return 0, false, nil
+}
+
+// pickNever fails the test if the picker is reached — used on paths
+// (print, non-TTY, no matches) that must never prompt.
+func pickNever(t *testing.T) resumePicker {
+	return func([]resumeCandidate, io.Reader, io.Writer) (int, bool, error) {
+		t.Helper()
+		t.Fatal("picker must not be called on this path")
+		return 0, false, nil
+	}
+}
+
 func TestRunResume_InteractiveLaunchesSelected(t *testing.T) {
 	t.Parallel()
 	s, _ := seedStore(t)
 	got, called, exec := recordExec()
 	var out bytes.Buffer
 
-	// "jsonl" matches only sess-foo (cwd /work/foo). Pick #1.
+	// Picker also asserts RunResume fetched the tail preview before
+	// handing candidates off.
+	pick := func(cands []resumeCandidate, _ io.Reader, _ io.Writer) (int, bool, error) {
+		if len(cands) == 0 {
+			t.Fatal("no candidates passed to picker")
+		}
+		if len(cands[0].tail) == 0 {
+			t.Errorf("expected tail preview fetched for candidate 0")
+		}
+		return 0, true, nil
+	}
+
 	opts := ResumeOptions{Query: "jsonl", Interactive: true}
-	if err := RunResume(t.Context(), apiForStore(t, s), opts, strings.NewReader("1\n"), &out, exec); err != nil {
+	if err := RunResume(t.Context(), apiForStore(t, s), opts, strings.NewReader(""), &out, pick, exec); err != nil {
 		t.Fatalf("RunResume: %v", err)
 	}
 	if !*called {
@@ -38,82 +65,26 @@ func TestRunResume_InteractiveLaunchesSelected(t *testing.T) {
 	if want := "cd /work/foo && claude --resume sess-foo"; got.Shell() != want {
 		t.Errorf("launched %q, want %q", got.Shell(), want)
 	}
-	// The card (opening prompt) and the chosen command echo should show.
-	for _, want := range []string{"▸ what is jsonl format", "→ cd /work/foo && claude --resume sess-foo"} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("output missing %q:\n%s", want, out.String())
-		}
+	if !strings.Contains(out.String(), "→ cd /work/foo && claude --resume sess-foo") {
+		t.Errorf("missing launch echo:\n%s", out.String())
 	}
 }
 
-func TestRunResume_InteractiveShowsTailPreview(t *testing.T) {
-	t.Parallel()
-	s, _ := seedStore(t)
-	_, called, exec := recordExec()
-	var out bytes.Buffer
-
-	// sess-foo has a user_prompt + assistant_message; the card should
-	// preview both with speaker labels, and NOT leak tool noise.
-	opts := ResumeOptions{Query: "jsonl", Interactive: true}
-	if err := RunResume(t.Context(), apiForStore(t, s), opts, strings.NewReader("1\n"), &out, exec); err != nil {
-		t.Fatalf("RunResume: %v", err)
-	}
-	if !*called {
-		t.Fatalf("exec not called:\n%s", out.String())
-	}
-	got := out.String()
-	for _, want := range []string{
-		"you:", "what is jsonl format",
-		"asst:", "JSON Lines is one object per line",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("preview missing %q:\n%s", want, got)
-		}
-	}
-	// Tool content from other sessions must never appear in this card.
-	if strings.Contains(got, "systemctl") {
-		t.Errorf("preview leaked tool/other-session content:\n%s", got)
-	}
-}
-
-func TestRunResume_BlankAndQCancel(t *testing.T) {
-	t.Parallel()
-	for _, in := range []string{"\n", "q\n", "Q\n", ""} {
-		s, _ := seedStore(t)
-		_, called, exec := recordExec()
-		var out bytes.Buffer
-		opts := ResumeOptions{Query: "jsonl", Interactive: true}
-		if err := RunResume(t.Context(), apiForStore(t, s), opts, strings.NewReader(in), &out, exec); err != nil {
-			t.Fatalf("RunResume(in=%q): %v", in, err)
-		}
-		if *called {
-			t.Errorf("in=%q: exec should not run on cancel", in)
-		}
-		if !strings.Contains(out.String(), "(cancelled)") {
-			t.Errorf("in=%q: expected (cancelled), got:\n%s", in, out.String())
-		}
-	}
-}
-
-func TestRunResume_ReprompsOnInvalidChoice(t *testing.T) {
+func TestRunResume_CancelDoesNotLaunch(t *testing.T) {
 	t.Parallel()
 	s, _ := seedStore(t)
 	_, called, exec := recordExec()
 	var out bytes.Buffer
 
 	opts := ResumeOptions{Query: "jsonl", Interactive: true}
-	// "x" is not a number, "9" is out of range, "1" is valid.
-	if err := RunResume(t.Context(), apiForStore(t, s), opts, strings.NewReader("x\n9\n1\n"), &out, exec); err != nil {
+	if err := RunResume(t.Context(), apiForStore(t, s), opts, strings.NewReader(""), &out, pickCancel, exec); err != nil {
 		t.Fatalf("RunResume: %v", err)
 	}
-	if !*called {
-		t.Fatalf("exec was not called after valid retry:\n%s", out.String())
+	if *called {
+		t.Error("exec should not run when the picker is cancelled")
 	}
-	if !strings.Contains(out.String(), "sess-foo") {
-		t.Errorf("expected the chosen session to launch:\n%s", out.String())
-	}
-	if strings.Count(out.String(), "not a valid choice") != 2 {
-		t.Errorf("expected two invalid-choice notices, got:\n%s", out.String())
+	if !strings.Contains(out.String(), "(cancelled)") {
+		t.Errorf("expected (cancelled), got:\n%s", out.String())
 	}
 }
 
@@ -123,9 +94,9 @@ func TestRunResume_PrintDoesNotLaunch(t *testing.T) {
 	_, called, exec := recordExec()
 	var out bytes.Buffer
 
-	// Interactive true, but --print wins: list commands, never exec.
+	// Interactive true, but --print wins: list commands, never prompt.
 	opts := ResumeOptions{Query: "jsonl", Interactive: true, Print: true}
-	if err := RunResume(t.Context(), apiForStore(t, s), opts, strings.NewReader("1\n"), &out, exec); err != nil {
+	if err := RunResume(t.Context(), apiForStore(t, s), opts, strings.NewReader(""), &out, pickNever(t), exec); err != nil {
 		t.Fatalf("RunResume: %v", err)
 	}
 	if *called {
@@ -143,7 +114,7 @@ func TestRunResume_NonInteractiveFallsBackToPrint(t *testing.T) {
 	var out bytes.Buffer
 
 	opts := ResumeOptions{Query: "jsonl", Interactive: false}
-	if err := RunResume(t.Context(), apiForStore(t, s), opts, strings.NewReader("1\n"), &out, exec); err != nil {
+	if err := RunResume(t.Context(), apiForStore(t, s), opts, strings.NewReader(""), &out, pickNever(t), exec); err != nil {
 		t.Fatalf("RunResume: %v", err)
 	}
 	if *called {
@@ -163,7 +134,7 @@ func TestRunResume_NoMatch(t *testing.T) {
 	var out bytes.Buffer
 
 	opts := ResumeOptions{Query: "nonexistentterm", Interactive: true}
-	if err := RunResume(t.Context(), apiForStore(t, s), opts, strings.NewReader("1\n"), &out, exec); err != nil {
+	if err := RunResume(t.Context(), apiForStore(t, s), opts, strings.NewReader(""), &out, pickNever(t), exec); err != nil {
 		t.Fatalf("RunResume: %v", err)
 	}
 	if *called {
@@ -182,7 +153,7 @@ func TestRunResume_AgentFilterExcludesAll(t *testing.T) {
 
 	// Seed data is all claude-code; filtering to gemini-cli matches none.
 	opts := ResumeOptions{Query: "jsonl", Agent: "gemini-cli", Interactive: true}
-	if err := RunResume(t.Context(), apiForStore(t, s), opts, strings.NewReader("1\n"), &out, exec); err != nil {
+	if err := RunResume(t.Context(), apiForStore(t, s), opts, strings.NewReader(""), &out, pickNever(t), exec); err != nil {
 		t.Fatalf("RunResume: %v", err)
 	}
 	if *called {
@@ -213,7 +184,7 @@ func TestRunResume_EmptyQueryErrors(t *testing.T) {
 	_, _, exec := recordExec()
 	var out bytes.Buffer
 
-	err := RunResume(t.Context(), apiForStore(t, s), ResumeOptions{Query: "  ", Interactive: true}, strings.NewReader(""), &out, exec)
+	err := RunResume(t.Context(), apiForStore(t, s), ResumeOptions{Query: "  ", Interactive: true}, strings.NewReader(""), &out, pickNever(t), exec)
 	if err == nil {
 		t.Fatal("expected an error for an empty query")
 	}

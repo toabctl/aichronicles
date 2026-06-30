@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -9,7 +8,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -78,7 +76,7 @@ func newResumeCmd() *cobra.Command {
 			if since > 0 {
 				opts.SinceMs = time.Now().Add(-since).UnixMilli()
 			}
-			return RunResume(cmd.Context(), c, opts, cmd.InOrStdin(), cmd.OutOrStdout(), execResume)
+			return RunResume(cmd.Context(), c, opts, cmd.InOrStdin(), cmd.OutOrStdout(), runResumeTUI, execResume)
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 10, "max matching sessions to list")
@@ -110,6 +108,11 @@ type ResumeOptions struct {
 // instead of actually exec-ing claude.
 type resumeExecFn func(resumecmd.Spec) error
 
+// resumePicker presents the candidates and returns the chosen index
+// (ok=false on cancel). Injected so tests drive selection without a real
+// terminal; the default (runResumeTUI) runs the bubbletea picker.
+type resumePicker func(cands []resumeCandidate, in io.Reader, out io.Writer) (int, bool, error)
+
 // resumeCandidate pairs a matched session's digest (for display) with
 // its resolved resume invocation (for launch / print). tail holds the
 // trailing conversation messages shown on the interactive preview card;
@@ -131,6 +134,7 @@ func RunResume(
 	opts ResumeOptions,
 	in io.Reader,
 	out io.Writer,
+	pick resumePicker,
 	execFn resumeExecFn,
 ) error {
 	if strings.TrimSpace(opts.Query) == "" {
@@ -223,33 +227,28 @@ func RunResume(
 		return printResumeCommands(out, cands)
 	}
 
-	// Interactive: enrich each candidate with a short tail preview so the
-	// picker shows where the session left off, then render cards + prompt.
+	// Interactive: enrich each candidate with a tail preview so the
+	// picker's preview pane shows where the session left off, then run
+	// the TUI and launch the chosen session.
 	for i := range cands {
-		tail, terr := c.SessionMessageTail(ctx, cands[i].digest.ID, resumePreviewMessages)
+		tail, terr := c.SessionMessageTail(ctx, cands[i].digest.ID, resumePreviewPaneMessages)
 		if terr != nil {
-			// Preview is best-effort: a failed fetch yields a card
+			// Preview is best-effort: a failed fetch yields a pane
 			// without its tail, never a failed resume.
 			tail = nil
 		}
 		cands[i].tail = tail
 	}
-	if err := renderResumeCards(out, cands, time.Now()); err != nil {
-		return err
-	}
-	if skippedAny {
-		_, _ = fmt.Fprintln(out, resumeSkippedNote)
-	}
 
-	choice, ok, err := promptResumeChoice(in, out, len(cands))
+	idx, ok, err := pick(cands, in, out)
 	if err != nil {
-		return err
+		return fmt.Errorf("resume picker: %w", err)
 	}
 	if !ok {
 		_, err := fmt.Fprintln(out, "(cancelled)")
 		return err
 	}
-	chosen := cands[choice-1]
+	chosen := cands[idx]
 	_, _ = fmt.Fprintf(out, "→ %s\n", chosen.spec.Shell())
 	return execFn(chosen.spec)
 }
@@ -291,51 +290,7 @@ func printResumeCommands(out io.Writer, cands []resumeCandidate) error {
 	return nil
 }
 
-// resumePreviewMessages is how many trailing conversation messages each
-// interactive card shows — enough to recognise where a session left off
-// without turning the picker into a transcript.
-const resumePreviewMessages = 3
-
-// resumePreviewWidth caps each preview line so a multi-KB turn doesn't
-// wrap across the terminal. Sits comfortably inside ~100 columns after
-// the "    │ asst: " prefix.
-const resumePreviewWidth = 88
-
 const resumeSkippedNote = "(some matching sessions can't be resumed — unknown agent or missing session id — and were skipped)"
-
-// renderResumeCards writes one card per candidate: a header line
-// (index · short id · when · cwd), the opening prompt, and the trailing
-// message preview, closed by a rule. Colour is applied only when out is
-// a TTY (styled() gates on that), so test buffers see plain text.
-func renderResumeCards(out io.Writer, cands []resumeCandidate, now time.Time) error {
-	for i, c := range cands {
-		d := c.digest
-		header := fmt.Sprintf(" %d  %s · %s · %s",
-			i+1, preview.ShortID(d.ID), resumeWhen(d, now), strPtrOrDash(d.Cwd))
-		if _, err := fmt.Fprintln(out, styled(out, header, ansiBold)); err != nil {
-			return err
-		}
-		if fp := strPtrOrDash(d.FirstPrompt); fp != "-" {
-			line := "    " + styled(out, "▸", ansiCyan) + " " + truncateRunes(flattenLine(fp), resumePreviewWidth)
-			if _, err := fmt.Fprintln(out, line); err != nil {
-				return err
-			}
-		}
-		for _, ev := range c.tail {
-			text := truncateRunes(flattenLine(ptrStrOrEmpty(ev.ContentText)), resumePreviewWidth)
-			// %-5s pads "you:" / "asst:" so the message text lines up.
-			prefix := fmt.Sprintf("│ %-5s", resumeRoleLabel(ev.Kind))
-			line := "    " + styled(out, prefix, ansiDim) + " " + text
-			if _, err := fmt.Fprintln(out, line); err != nil {
-				return err
-			}
-		}
-		if _, err := fmt.Fprintln(out, styled(out, " "+strings.Repeat("─", 56), ansiDim)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 // resumeRoleLabel maps an event kind to a short speaker label (with its
 // colon) for the preview lines: user prompts read "you:", assistant
@@ -359,31 +314,6 @@ func flattenLine(s string) string {
 	s = strings.ReplaceAll(s, "\r", " ")
 	s = strings.ReplaceAll(s, "\t", " ")
 	return strings.TrimSpace(s)
-}
-
-// promptResumeChoice prompts until it reads a valid 1..n selection, a
-// cancel (blank line or "q"), or EOF. The returned bool is false on
-// cancel/EOF; the int is the 1-based choice when true.
-func promptResumeChoice(in io.Reader, out io.Writer, n int) (int, bool, error) {
-	r := bufio.NewReader(in)
-	for {
-		_, _ = fmt.Fprintf(out, "Resume which session? [1-%d], q to cancel: ", n)
-		line, readErr := r.ReadString('\n')
-		trimmed := strings.TrimSpace(line)
-
-		if trimmed == "" || strings.EqualFold(trimmed, "q") {
-			return 0, false, nil
-		}
-		if choice, err := strconv.Atoi(trimmed); err == nil && choice >= 1 && choice <= n {
-			return choice, true, nil
-		}
-		_, _ = fmt.Fprintf(out, "  not a valid choice: %q\n", trimmed)
-		if readErr != nil {
-			// Bad token followed by EOF (closed stdin) — stop rather
-			// than spin forever re-prompting against an empty reader.
-			return 0, false, nil
-		}
-	}
 }
 
 // resumeWhen renders the session's effective timestamp (ended_at when
