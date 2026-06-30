@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -36,7 +37,37 @@ var (
 	// each turn reads as one block.
 	resumeYouStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("45")).Bold(true)
 	resumeAsstStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
+	// List row styles: the selected row is cyan + bold with a ›
+	// pointer, others are plain. One line per row (see resumeDelegate)
+	// so short lists never paginate.
+	resumeRowSelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("45")).Bold(true)
 )
+
+// resumeDelegate renders each session as a single line — "short id ·
+// when · cwd" — so the list fits many rows per page and a handful of
+// sessions never triggers pagination. The selected row is highlighted
+// with a › pointer; others are indented to align.
+type resumeDelegate struct{}
+
+func (resumeDelegate) Height() int                         { return 1 }
+func (resumeDelegate) Spacing() int                        { return 0 }
+func (resumeDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
+func (resumeDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	it, ok := item.(resumeItem)
+	if !ok {
+		return
+	}
+	line := it.title
+	if it.desc != "" {
+		line += "  " + it.desc
+	}
+	width := m.Width() - 2 // leave room for the marker
+	if index == m.Index() {
+		_, _ = fmt.Fprint(w, resumeRowSelStyle.Render("› "+truncateRunes(line, width)))
+		return
+	}
+	_, _ = fmt.Fprint(w, "  "+truncateRunes(line, width))
+}
 
 // resumeItem is one row in the bubbles/list. It carries the candidate
 // index so the model can map the list's selection back to m.cands
@@ -77,7 +108,7 @@ func newResumeModel(cands []resumeCandidate) resumeModel {
 			fv:    strPtrOrDash(d.Cwd) + " " + strPtrOrDash(d.FirstPrompt),
 		}
 	}
-	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
+	l := list.New(items, resumeDelegate{}, 0, 0)
 	l.Title = "sessions"
 	l.SetShowHelp(false)
 	l.SetShowStatusBar(false)

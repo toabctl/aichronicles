@@ -80,6 +80,36 @@ func TestResumeModel_NavigationClamps(t *testing.T) {
 	}
 }
 
+// TestResumeModel_ShortListDoesNotPaginate pins the fix for the bug
+// where a short list (≈5 sessions) paginated on a normal-height
+// terminal — flipping pages hid the earlier rows. The compact one-line
+// delegate must keep a handful of sessions on a single page so nothing
+// scrolls out of view.
+func TestResumeModel_ShortListDoesNotPaginate(t *testing.T) {
+	t.Parallel()
+	cands := make([]resumeCandidate, 6)
+	for i := range cands {
+		cands[i] = tuiCand("id"+string(rune('a'+i)), "/work/x", "p", nil)
+	}
+	// A modest height that paginated under the tall default delegate.
+	next, _ := newResumeModel(cands).Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m := next.(resumeModel)
+	if m.list.Paginator.TotalPages != 1 {
+		t.Fatalf("6 items at height 24 should fit one page, got %d", m.list.Paginator.TotalPages)
+	}
+	// Walk to the last item; still page 0, so the first row never hides.
+	for range len(cands) {
+		n, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = n.(resumeModel)
+	}
+	if m.list.Paginator.Page != 0 {
+		t.Errorf("after navigating to last item: page = %d, want 0", m.list.Paginator.Page)
+	}
+	if m.list.Index() != len(cands)-1 {
+		t.Errorf("index = %d, want %d", m.list.Index(), len(cands)-1)
+	}
+}
+
 func TestResumeModel_EnterSelectsCursor(t *testing.T) {
 	t.Parallel()
 	m := sizedModel(t, threeCands())
