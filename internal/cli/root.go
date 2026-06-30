@@ -91,6 +91,7 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newImportGeminiCmd())
 	cmd.AddCommand(newSearchCmd())
 	cmd.AddCommand(newSessionsCmd())
+	cmd.AddCommand(newResumeCmd())
 	cmd.AddCommand(newAuditCmd())
 	cmd.AddCommand(newScrubCmd())
 	cmd.AddCommand(newSummarizeCmd())

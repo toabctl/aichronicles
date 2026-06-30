@@ -30,6 +30,7 @@ aichronicles is the CLI for the aichronicles-api daemon. The `hook` subcommand r
 * [aichronicles propose](./aichronicles_propose.md)	 - LLM-suggested skills / CLAUDE.md entries / scripts from recent sessions
 * [aichronicles prune](./aichronicles_prune.md)	 - Delete sessions (and everything they own) older than --older-than
 * [aichronicles reflect](./aichronicles_reflect.md)	 - LLM-derived meta-analysis of recent sessions
+* [aichronicles resume](./aichronicles_resume.md)	 - Search sessions and resume the chosen one in its workspace
 * [aichronicles scrub](./aichronicles_scrub.md)	 - Rewrite stored events to remove credentials (IRREVERSIBLE with --yes)
 * [aichronicles search](./aichronicles_search.md)	 - Full-text search over captured envelopes
 * [aichronicles sessions](./aichronicles_sessions.md)	 - List sessions in the store, most-recently-ended first

@@ -18,6 +18,17 @@ func isCharDevice(w io.Writer) bool {
 	if !ok {
 		return false
 	}
+	return fileIsCharDevice(f)
+}
+
+// fileIsCharDevice reports whether f is a terminal (character device)
+// rather than a pipe or redirected file. Used to decide whether stdin
+// can be prompted interactively (the `resume` picker) — a check that
+// needs the *os.File directly, not the io.Writer isCharDevice takes.
+func fileIsCharDevice(f *os.File) bool {
+	if f == nil {
+		return false
+	}
 	info, err := f.Stat()
 	if err != nil {
 		return false
