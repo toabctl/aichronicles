@@ -16,7 +16,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
-	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/resumecmd"
 	"github.com/toabctl/aichronicles/internal/wire"
@@ -291,21 +290,6 @@ func printResumeCommands(out io.Writer, cands []resumeCandidate) error {
 }
 
 const resumeSkippedNote = "(some matching sessions can't be resumed — unknown agent or missing session id — and were skipped)"
-
-// resumeRoleLabel maps an event kind to a short speaker label (with its
-// colon) for the preview lines: user prompts read "you:", assistant
-// turns "asst:". The renderer pads these to a common width so the
-// message text aligns.
-func resumeRoleLabel(kind string) string {
-	switch kind {
-	case events.KindUserPrompt:
-		return "you:"
-	case events.KindAssistantMessage:
-		return "asst:"
-	default:
-		return "···:"
-	}
-}
 
 // flattenLine collapses whitespace so a multi-line turn renders on a
 // single preview line.
