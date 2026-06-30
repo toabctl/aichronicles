@@ -16,7 +16,7 @@ import (
 func tuiCand(id, cwd, prompt string, tail []wire.SessionEvent) resumeCandidate {
 	cwdCopy, promptCopy := cwd, prompt
 	return resumeCandidate{
-		digest: wire.SessionDigest{ID: id, Cwd: &cwdCopy, FirstPrompt: &promptCopy},
+		digest: wire.SessionDigest{ID: id, Cwd: &cwdCopy, FirstPrompt: &promptCopy, SourceAgent: "claude-code"},
 		spec:   resumecmd.Spec{Bin: "claude", Args: []string{"--resume", id}},
 		tail:   tail,
 	}
@@ -125,6 +125,8 @@ func TestResumeModel_ViewShowsListAndPreview(t *testing.T) {
 		"open alpha",  // selected session's opening prompt
 		"fix the bug", // selected session's tail
 		"done, shipped a fix",
+		"you",          // speaker label for the user turn
+		"claude",       // speaker label for the assistant turn (claude-code)
 		"enter resume", // footer hint
 	} {
 		if !strings.Contains(view, want) {
@@ -135,6 +137,37 @@ func TestResumeModel_ViewShowsListAndPreview(t *testing.T) {
 	// The non-selected session's preview content must not show.
 	if strings.Contains(view, "open beta") {
 		t.Errorf("view leaked the non-selected session's preview:\n%s", view)
+	}
+}
+
+func TestWrapWords(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		s        string
+		width    int
+		maxLines int
+		want     []string
+	}{
+		{"empty", "", 10, 3, nil},
+		{"fits one line", "hello world", 20, 3, []string{"hello world"}},
+		{"wraps on spaces", "alpha beta gamma delta", 11, 3, []string{"alpha beta", "gamma delta"}},
+		{"caps lines with ellipsis", "one two three four five six", 7, 2, []string{"one two", "three…"}},
+		{"hard-splits long word", "supercalifragilistic", 6, 3, []string{"superc", "alifra", "gilis…"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := wrapWords(tc.s, tc.width, tc.maxLines)
+			if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+				t.Errorf("wrapWords(%q,%d,%d) = %q, want %q", tc.s, tc.width, tc.maxLines, got, tc.want)
+			}
+			for i, ln := range got {
+				if n := len([]rune(ln)); n > tc.width {
+					t.Errorf("line %d %q has %d runes, exceeds width %d", i, ln, n, tc.width)
+				}
+			}
+		})
 	}
 }
 

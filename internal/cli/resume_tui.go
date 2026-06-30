@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/preview"
 )
 
@@ -30,6 +31,12 @@ var (
 	resumeDimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	resumeTitleStyle    = lipgloss.NewStyle().Bold(true)
 	resumeFooterStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).MarginTop(1)
+	// Per-speaker styles colour the preview so your turns and the
+	// agent's are instantly distinguishable: you in cyan, the agent in
+	// green. The gutter bar carries the colour on every wrapped line so
+	// each turn reads as one block.
+	resumeYouStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("45")).Bold(true)
+	resumeAsstStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
 )
 
 // resumeModel is the bubbletea model behind the interactive picker: a
@@ -89,10 +96,18 @@ func (m resumeModel) View() string {
 		return ""
 	}
 	leftW, rightW := resumePaneWidths(m.width)
+	// Bound the preview body so the boxes + footer fit the screen: drop
+	// the box borders (2), the pane's header lines (3), and the footer
+	// (~2). Fill from the newest message backward so the latest exchange
+	// is always visible.
+	bodyLines := m.height - 2 - 3 - 2
+	if bodyLines < 4 {
+		bodyLines = 4
+	}
 	body := lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		resumeBoxStyle.Width(leftW).Render(renderResumeList(m.cands, m.cursor, leftW)),
-		resumeBoxStyle.Width(rightW).Render(renderResumePreviewPane(m.cands[m.cursor], rightW)),
+		resumeBoxStyle.Width(rightW).Render(renderResumePreviewPane(m.cands[m.cursor], rightW, bodyLines)),
 	)
 	footer := resumeFooterStyle.Render("↑/↓ move · enter resume · q quit")
 	return body + "\n" + footer
@@ -143,32 +158,132 @@ func renderResumeList(cands []resumeCandidate, cursor, width int) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// renderResumePreviewPane renders the right column for the selected
-// candidate: cwd + when header, the opening prompt, then the trailing
-// conversation (one truncated line per message, speaker-labelled).
-func renderResumePreviewPane(c resumeCandidate, width int) string {
-	d := c.digest
-	var b strings.Builder
-	b.WriteString(resumeTitleStyle.Render(truncateRunes(strPtrOrDash(d.Cwd), width)) + "\n")
-	b.WriteString(resumeDimStyle.Render(resumeWhen(d, time.Now())) + "\n\n")
+// resumeMsgMaxLines caps how many wrapped lines a single message
+// contributes to the preview, so one long turn can't crowd out the rest.
+const resumeMsgMaxLines = 5
 
+// renderResumePreviewPane renders the right column for the selected
+// candidate: a compact header (cwd, when, opening prompt) followed by
+// the trailing conversation. Each turn is a colour-coded block — a
+// speaker-tinted gutter bar down its left edge, your turns in cyan and
+// the agent's in green — wrapped to the pane width. Messages are filled
+// newest-first up to maxBodyLines, then rendered chronologically so the
+// latest exchange sits at the bottom and never scrolls off.
+func renderResumePreviewPane(c resumeCandidate, width, maxBodyLines int) string {
+	d := c.digest
+	var head strings.Builder
+	head.WriteString(resumeTitleStyle.Render(truncateRunes(strPtrOrDash(d.Cwd), width)) + "\n")
+	when := resumeWhen(d, time.Now())
 	if fp := strPtrOrDash(d.FirstPrompt); fp != "-" {
-		b.WriteString(truncateRunes("▸ "+flattenLine(fp), width) + "\n\n")
+		when += "  ▸ " + flattenLine(fp)
 	}
+	head.WriteString(resumeDimStyle.Render(truncateRunes(when, width)) + "\n\n")
 
 	if len(c.tail) == 0 {
-		b.WriteString(resumeDimStyle.Render("(no message preview)"))
-		return b.String()
+		head.WriteString(resumeDimStyle.Render("(no message preview)"))
+		return head.String()
 	}
-	for i, ev := range c.tail {
-		line := fmt.Sprintf("%-5s %s", resumeRoleLabel(ev.Kind),
-			flattenLine(ptrStrOrEmpty(ev.ContentText)))
-		b.WriteString(truncateRunes(line, width))
-		if i < len(c.tail)-1 {
-			b.WriteString("\n")
+	if maxBodyLines < 4 {
+		maxBodyLines = 4
+	}
+
+	// Build blocks newest→oldest until the budget is spent (always keep
+	// at least the newest), then emit them oldest→newest.
+	var blocks [][]string
+	used := 0
+	for i := len(c.tail) - 1; i >= 0; i-- {
+		ev := c.tail[i]
+		label, st := resumeSpeaker(ev.Kind, d.SourceAgent)
+		bar := st.Render("▌")
+		block := []string{bar + " " + st.Render(label)}
+		for _, ln := range wrapWords(flattenLine(ptrStrOrEmpty(ev.ContentText)), width-2, resumeMsgMaxLines) {
+			block = append(block, bar+" "+ln)
+		}
+		cost := len(block) + 1 // trailing blank between turns
+		if used+cost > maxBodyLines && len(blocks) > 0 {
+			break
+		}
+		blocks = append(blocks, block)
+		used += cost
+	}
+
+	var body strings.Builder
+	for bi := len(blocks) - 1; bi >= 0; bi-- {
+		for _, ln := range blocks[bi] {
+			body.WriteString(ln + "\n")
+		}
+		if bi > 0 {
+			body.WriteString("\n")
 		}
 	}
-	return b.String()
+	return head.String() + strings.TrimRight(body.String(), "\n")
+}
+
+// resumeSpeaker returns the display label and colour style for a
+// message kind. The agent name (claude / gemini) is used for assistant
+// turns so the preview reads naturally per source.
+func resumeSpeaker(kind, agent string) (string, lipgloss.Style) {
+	switch kind {
+	case events.KindUserPrompt:
+		return "you", resumeYouStyle
+	case events.KindAssistantMessage:
+		return resumeAgentName(agent), resumeAsstStyle
+	default:
+		return "·", resumeDimStyle
+	}
+}
+
+// resumeAgentName maps a source_agent to the short label shown on
+// assistant turns.
+func resumeAgentName(agent string) string {
+	switch agent {
+	case "claude-code":
+		return "claude"
+	case "gemini-cli":
+		return "gemini"
+	default:
+		return "assistant"
+	}
+}
+
+// wrapWords soft-wraps s into lines of at most width runes, breaking on
+// spaces (hard-splitting any single word longer than width), and caps
+// the result at maxLines — the last kept line gets an ellipsis when
+// content remains. Returns nil for non-positive bounds.
+func wrapWords(s string, width, maxLines int) []string {
+	if width <= 0 || maxLines <= 0 {
+		return nil
+	}
+	var lines []string
+	cur := ""
+	push := func() { lines = append(lines, cur); cur = "" }
+	for _, w := range strings.Fields(s) {
+		if cur == "" {
+			cur = w
+		} else if len([]rune(cur))+1+len([]rune(w)) <= width {
+			cur += " " + w
+		} else {
+			push()
+			cur = w
+		}
+		for len([]rune(cur)) > width { // word longer than the line
+			r := []rune(cur)
+			lines = append(lines, string(r[:width]))
+			cur = string(r[width:])
+		}
+	}
+	if cur != "" {
+		push()
+	}
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+		last := []rune(lines[maxLines-1])
+		if len(last) >= width {
+			last = last[:width-1]
+		}
+		lines[maxLines-1] = string(last) + "…"
+	}
+	return lines
 }
 
 // runResumeTUI is the default resumePicker: it runs the bubbletea
