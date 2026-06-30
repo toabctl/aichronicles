@@ -30,7 +30,7 @@ var (
 			Padding(0, 1)
 	resumeDimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	resumeTitleStyle  = lipgloss.NewStyle().Bold(true)
-	resumeFooterStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).MarginTop(1)
+	resumeFooterStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	// Per-speaker styles colour the preview so your turns and the
 	// agent's are instantly distinguishable: you in cyan, the agent in
 	// green. The gutter bar carries the colour on every wrapped line so
@@ -127,11 +127,7 @@ func (m resumeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		leftW, _ := resumePaneWidths(msg.Width)
-		listH := msg.Height - 4 // box border (2) + footer (~2)
-		if listH < 3 {
-			listH = 3
-		}
-		m.list.SetSize(leftW, listH)
+		m.list.SetSize(leftW, resumePaneContentH(msg.Height))
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q", "esc":
@@ -158,11 +154,10 @@ func (m resumeModel) View() string {
 		return ""
 	}
 	_, rightW := resumePaneWidths(m.width)
-	// Bound the preview body so the boxes + footer fit the screen: drop
-	// the box borders (2), the pane's header lines (3), and the footer
-	// (~2). Fill from the newest message backward so the latest exchange
-	// is always visible.
-	bodyLines := m.height - 2 - 3 - 2
+	paneH := resumePaneContentH(m.height)
+	// Preview body budget = pane height minus its header lines (cwd,
+	// when, blank). Fill newest-first so the latest exchange is visible.
+	bodyLines := paneH - 3
 	if bodyLines < 4 {
 		bodyLines = 4
 	}
@@ -170,13 +165,34 @@ func (m resumeModel) View() string {
 	if sel < 0 || sel >= len(m.cands) {
 		sel = 0
 	}
+	// Both panes are pinned to the same fixed height so navigating never
+	// changes the layout: the list pads short result sets, and the
+	// preview (whose length varies per session) is padded/clipped to fit.
 	body := lipgloss.JoinHorizontal(
 		lipgloss.Top,
-		resumeBoxStyle.Render(m.list.View()),
-		resumeBoxStyle.Width(rightW).Render(renderResumePreviewPane(m.cands[sel], rightW, bodyLines)),
+		resumeBoxStyle.Height(paneH).Render(m.list.View()),
+		resumeBoxStyle.Width(rightW).Height(paneH).Render(renderResumePreviewPane(m.cands[sel], rightW, bodyLines)),
 	)
 	footer := resumeFooterStyle.Render("↑/↓ move · enter resume · q quit")
-	return body + "\n" + footer
+	out := body + "\n" + footer
+	// Hard cap at the terminal height: a frame taller than the screen
+	// makes the terminal scroll, which reads as the box "jumping" as you
+	// move. Never emit more lines than we were given.
+	if lines := strings.Split(out, "\n"); len(lines) > m.height {
+		out = strings.Join(lines[:m.height], "\n")
+	}
+	return out
+}
+
+// resumePaneContentH is the content height (inside the border) shared by
+// both panes: the terminal height minus the two box border rows and the
+// one-line footer. Floored so a tiny window still renders.
+func resumePaneContentH(termH int) int {
+	h := termH - 3
+	if h < 3 {
+		h = 3
+	}
+	return h
 }
 
 // resumePaneWidths splits the terminal into a narrower list column and a

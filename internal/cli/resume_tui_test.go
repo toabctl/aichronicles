@@ -110,6 +110,35 @@ func TestResumeModel_ShortListDoesNotPaginate(t *testing.T) {
 	}
 }
 
+// TestResumeModel_FrameHeightIsStable pins the fix for the bug where the
+// left box "got shorter" when moving down: previews of different lengths
+// (and an over-tall frame) made the rendered height change with the
+// selection and overflow the terminal. The frame must always be exactly
+// the terminal height, regardless of which session is selected.
+func TestResumeModel_FrameHeightIsStable(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("word ", 80)
+	cands := []resumeCandidate{
+		tuiCand("aaaa-1", "/w/a", "pa", nil), // empty preview
+		tuiCand("bbbb-2", "/w/b", "pb", []wire.SessionEvent{ // tall preview
+			msg(events.KindUserPrompt, long), msg(events.KindAssistantMessage, long),
+		}),
+		tuiCand("cccc-3", "/w/c", "pc", []wire.SessionEvent{ // short preview
+			msg(events.KindUserPrompt, "hi"),
+		}),
+	}
+	const termH = 24
+	next, _ := newResumeModel(cands).Update(tea.WindowSizeMsg{Width: 110, Height: termH})
+	m := next.(resumeModel)
+	for i := 0; i <= len(cands); i++ {
+		if got := len(strings.Split(m.View(), "\n")); got != termH {
+			t.Fatalf("step %d (idx %d): frame height = %d, want exactly %d", i, m.list.Index(), got, termH)
+		}
+		n, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = n.(resumeModel)
+	}
+}
+
 func TestResumeModel_EnterSelectsCursor(t *testing.T) {
 	t.Parallel()
 	m := sizedModel(t, threeCands())
