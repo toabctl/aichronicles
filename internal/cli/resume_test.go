@@ -38,11 +38,41 @@ func TestRunResume_InteractiveLaunchesSelected(t *testing.T) {
 	if want := "cd /work/foo && claude --resume sess-foo"; got.Shell() != want {
 		t.Errorf("launched %q, want %q", got.Shell(), want)
 	}
-	// The numbered table and the chosen command echo should be visible.
-	for _, want := range []string{"FIRST_PROMPT", "what is jsonl format", "→ cd /work/foo && claude --resume sess-foo"} {
+	// The card (opening prompt) and the chosen command echo should show.
+	for _, want := range []string{"▸ what is jsonl format", "→ cd /work/foo && claude --resume sess-foo"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output missing %q:\n%s", want, out.String())
 		}
+	}
+}
+
+func TestRunResume_InteractiveShowsTailPreview(t *testing.T) {
+	t.Parallel()
+	s, _ := seedStore(t)
+	_, called, exec := recordExec()
+	var out bytes.Buffer
+
+	// sess-foo has a user_prompt + assistant_message; the card should
+	// preview both with speaker labels, and NOT leak tool noise.
+	opts := ResumeOptions{Query: "jsonl", Interactive: true}
+	if err := RunResume(t.Context(), apiForStore(t, s), opts, strings.NewReader("1\n"), &out, exec); err != nil {
+		t.Fatalf("RunResume: %v", err)
+	}
+	if !*called {
+		t.Fatalf("exec not called:\n%s", out.String())
+	}
+	got := out.String()
+	for _, want := range []string{
+		"you:", "what is jsonl format",
+		"asst:", "JSON Lines is one object per line",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("preview missing %q:\n%s", want, got)
+		}
+	}
+	// Tool content from other sessions must never appear in this card.
+	if strings.Contains(got, "systemctl") {
+		t.Errorf("preview leaked tool/other-session content:\n%s", got)
 	}
 }
 

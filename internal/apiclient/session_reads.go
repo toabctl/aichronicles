@@ -28,6 +28,22 @@ func (c *Client) SessionEvents(ctx context.Context, sessionID string, limit int,
 	return out, nil
 }
 
+// SessionMessageTail queries GET /v1/sessions/{id}/message-tail?limit=N.
+// Returns up to limit of the most recent conversational messages (user
+// + assistant, no tool noise) in chronological order — powers the
+// resume picker's preview cards. limit <= 0 lets the server default
+// apply (3).
+func (c *Client) SessionMessageTail(ctx context.Context, sessionID string, limit int) ([]wire.SessionEvent, error) {
+	var q qparams
+	q.SetInt("limit", limit)
+	var out wire.SessionEventsResponse
+	if err := c.do(ctx, http.MethodGet,
+		q.URL("/v1/sessions/"+url.PathEscape(sessionID)+"/message-tail"), nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Events, nil
+}
+
 // SessionExtractions queries GET /v1/sessions/{id}/extractions?kind=.
 // kind is required ("url", "file_path", "shell_command", ...).
 func (c *Client) SessionExtractions(ctx context.Context, sessionID, kind string) (wire.SessionExtractionsResponse, error) {
