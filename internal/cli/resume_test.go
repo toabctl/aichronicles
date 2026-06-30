@@ -163,6 +163,20 @@ func TestRunResume_AgentFilterExcludesAll(t *testing.T) {
 	}
 }
 
+func TestResumeCmd_DefaultSinceIsSixWeeks(t *testing.T) {
+	t.Parallel()
+	cmd := newResumeCmd()
+	f := cmd.Flags().Lookup("since")
+	if f == nil {
+		t.Fatal("--since flag not registered")
+	}
+	// 6 weeks = 1008h; pinned so the default can't silently regress to
+	// "no limit" (0s) or some other window.
+	if got, want := f.DefValue, "1008h0m0s"; got != want {
+		t.Errorf("--since default = %q, want %q (6 weeks)", got, want)
+	}
+}
+
 func TestRunResume_EmptyQueryErrors(t *testing.T) {
 	t.Parallel()
 	s, _ := seedStore(t)
