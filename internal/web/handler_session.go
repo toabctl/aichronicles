@@ -11,6 +11,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/preview"
+	"github.com/toabctl/aichronicles/internal/resumecmd"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -317,34 +318,15 @@ func loadSessionHeader(ctx context.Context, s *Server, id string) (*SessionDetai
 //
 // Returns "" for unknown / empty agents — the template branches
 // on that to hide the button rather than show a copy action that
-// pastes "" into the user's terminal.
+// pastes "" into the user's terminal. The agent-specific knowledge
+// lives in internal/resumecmd so the web buttons and the CLI
+// `resume` command render identical invocations.
 func buildResumeCommandPtr(agent, sourceSessionID string, cwd *string) string {
-	if sourceSessionID == "" {
+	spec, ok := resumecmd.Build(agent, sourceSessionID, cwd, false)
+	if !ok {
 		return ""
 	}
-	var base string
-	switch agent {
-	case "claude-code":
-		base = "claude --resume " + sourceSessionID
-	case "gemini-cli":
-		// gemini-cli's `--help` advertises only `--resume <index>`
-		// or `--resume latest`, but the binary also accepts the
-		// session UUID directly (verified end-to-end:
-		// `gemini --resume <uuid>` correctly carries the prior
-		// session history). We emit the UUID form so the resume
-		// button doesn't depend on the volatile index ordering of
-		// `--list-sessions` (which changes every time a new
-		// session is created).
-		base = "gemini --resume " + sourceSessionID
-	default:
-		// codex / other agents have their own resume invocations
-		// we haven't modelled yet; emit nothing rather than guess.
-		return ""
-	}
-	if cwd != nil && *cwd != "" {
-		return "cd " + *cwd + " && " + base
-	}
-	return base
+	return spec.Shell()
 }
 
 // buildResumeCommandDangerousPtr renders the same one-liner with
@@ -354,14 +336,11 @@ func buildResumeCommandPtr(agent, sourceSessionID string, cwd *string) string {
 // for any other agent we return "" and the template hides the
 // second button rather than emit a flag the binary will reject.
 func buildResumeCommandDangerousPtr(agent, sourceSessionID string, cwd *string) string {
-	if agent != "claude-code" {
+	spec, ok := resumecmd.Build(agent, sourceSessionID, cwd, true)
+	if !ok {
 		return ""
 	}
-	base := buildResumeCommandPtr(agent, sourceSessionID, cwd)
-	if base == "" {
-		return ""
-	}
-	return base + " --dangerously-skip-permissions"
+	return spec.Shell()
 }
 
 // loadLatestSummary returns the most recent summary llm_outputs
