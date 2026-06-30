@@ -103,7 +103,7 @@ func newResumeModel(cands []resumeCandidate) resumeModel {
 		d := c.digest
 		items[i] = resumeItem{
 			idx:   i,
-			title: preview.ShortID(d.ID) + "  " + resumeWhen(d, now),
+			title: preview.ShortID(d.ID) + "  " + resumeListWhen(d, now),
 			desc:  strPtrOrDash(d.Cwd),
 			fv:    strPtrOrDash(d.Cwd) + " " + strPtrOrDash(d.FirstPrompt),
 		}
