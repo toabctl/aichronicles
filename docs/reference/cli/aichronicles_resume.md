@@ -20,6 +20,10 @@ behavior when stdin is not a terminal, so it composes with
 pipes). Sessions whose agent we can't model are omitted —
 resume only lists what it can actually relaunch.
 
+By default only sessions active in the last 6 weeks are
+considered; widen or disable the window with --since (e.g.
+--since 90d, or --since 0 for no limit).
+
 Talks to aichronicles-api over its UDS (override with
 --socket or $AICHRONICLES_API_SOCKET).
 
@@ -34,7 +38,7 @@ aichronicles resume <query> [flags]
   -h, --help               help for resume
       --limit int          max matching sessions to list (default 10)
   -n, --print              print the resume command(s) instead of launching the agent
-      --since duration     only sessions with events within this duration (e.g. 24h, 7d) (default 0s)
+      --since duration     only sessions with events within this window (e.g. 24h, 7d); 0 = no limit (default 1008h0m0s)
   -d, --skip-permissions   (dangerous) resume with --dangerously-skip-permissions (claude-code only)
       --socket string      aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 ```

@@ -23,6 +23,12 @@ import (
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
+// defaultResumeWindow bounds the search to recently-active sessions by
+// default. Resume is for picking up where you left off, so the answer
+// you want is almost always recent; capping at 6 weeks keeps the picker
+// short and the FTS query cheap. Pass --since 0 to search all history.
+const defaultResumeWindow = 6 * 7 * 24 * time.Hour
+
 func newResumeCmd() *cobra.Command {
 	var (
 		limit     int
@@ -49,6 +55,9 @@ func newResumeCmd() *cobra.Command {
 			"behavior when stdin is not a terminal, so it composes with\n" +
 			"pipes). Sessions whose agent we can't model are omitted —\n" +
 			"resume only lists what it can actually relaunch.\n\n" +
+			"By default only sessions active in the last 6 weeks are\n" +
+			"considered; widen or disable the window with --since (e.g.\n" +
+			"--since 90d, or --since 0 for no limit).\n\n" +
 			"Talks to aichronicles-api over its UDS (override with\n" +
 			"--socket or $AICHRONICLES_API_SOCKET).",
 		Args: cobra.ExactArgs(1),
@@ -72,7 +81,7 @@ func newResumeCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 10, "max matching sessions to list")
-	addFlexDurationFlag(cmd, &since, "since", 0, "only sessions with events within this duration (e.g. 24h, 7d)")
+	addFlexDurationFlag(cmd, &since, "since", defaultResumeWindow, "only sessions with events within this window (e.g. 24h, 7d); 0 = no limit")
 	cmd.Flags().StringVar(&agent, "agent", "", "filter by source agent (claude-code | gemini-cli)")
 	cmd.Flags().BoolVarP(&printOnly, "print", "n", false, "print the resume command(s) instead of launching the agent")
 	cmd.Flags().BoolVarP(&skipPerms, "skip-permissions", "d", false, "(dangerous) resume with --dangerously-skip-permissions (claude-code only)")
