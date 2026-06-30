@@ -300,6 +300,31 @@ func flattenLine(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// resumeListWhen renders a session's time for the picker list as a
+// lowercase weekday plus an hours-ago count — e.g. "mon 5h ago" —
+// which scans faster than a full timestamp. Under an hour it falls back
+// to minutes; the weekday conveys the day, the relative part the
+// recency. "-" when no timestamp was recorded.
+func resumeListWhen(d wire.SessionDigest, now time.Time) string {
+	ts := d.EndedAtMs
+	if ts == nil {
+		ts = d.StartedAtMs
+	}
+	if ts == nil {
+		return "-"
+	}
+	t := time.UnixMilli(*ts)
+	wday := strings.ToLower(t.Local().Format("Mon"))
+	ago := now.Sub(t)
+	if ago < 0 {
+		ago = 0
+	}
+	if ago < time.Hour {
+		return fmt.Sprintf("%s %dm ago", wday, int(ago.Minutes()))
+	}
+	return fmt.Sprintf("%s %dh ago", wday, int(ago.Hours()))
+}
+
 // resumeWhen renders the session's effective timestamp (ended_at when
 // set, else started_at) in the CLI's relative form. "-" when neither
 // is recorded (a mid-flight session that never closed a turn).

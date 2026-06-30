@@ -5,8 +5,10 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/toabctl/aichronicles/internal/resumecmd"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // recordExec returns a resumeExecFn that captures the spec it's handed
@@ -161,6 +163,52 @@ func TestRunResume_AgentFilterExcludesAll(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "no sessions matched") {
 		t.Errorf("expected no-match message, got:\n%s", out.String())
+	}
+}
+
+func TestResumeListWhen(t *testing.T) {
+	t.Parallel()
+	// Wednesday 2026-07-01 12:00 local as the reference "now".
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.Local)
+	ms := func(tm time.Time) *int64 { v := tm.UnixMilli(); return &v }
+	cases := []struct {
+		name string
+		d    wire.SessionDigest
+		want string
+	}{
+		{
+			name: "hours ago, ended same day",
+			d:    wire.SessionDigest{EndedAtMs: ms(now.Add(-5 * time.Hour))},
+			want: "wed 5h ago",
+		},
+		{
+			name: "minutes ago under an hour",
+			d:    wire.SessionDigest{EndedAtMs: ms(now.Add(-12 * time.Minute))},
+			want: "wed 12m ago",
+		},
+		{
+			name: "days back shows that weekday + hours",
+			d:    wire.SessionDigest{EndedAtMs: ms(now.Add(-48 * time.Hour))}, // Mon
+			want: "mon 48h ago",
+		},
+		{
+			name: "falls back to started_at",
+			d:    wire.SessionDigest{StartedAtMs: ms(now.Add(-2 * time.Hour))},
+			want: "wed 2h ago",
+		},
+		{
+			name: "no timestamp",
+			d:    wire.SessionDigest{},
+			want: "-",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := resumeListWhen(tc.d, now); got != tc.want {
+				t.Errorf("resumeListWhen = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
