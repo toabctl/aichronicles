@@ -1,11 +1,11 @@
 package cli
 
 import (
-	"fmt"
 	"io"
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -27,10 +27,9 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("240")).
 			Padding(0, 1)
-	resumeSelectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
-	resumeDimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	resumeTitleStyle    = lipgloss.NewStyle().Bold(true)
-	resumeFooterStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).MarginTop(1)
+	resumeDimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	resumeTitleStyle  = lipgloss.NewStyle().Bold(true)
+	resumeFooterStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).MarginTop(1)
 	// Per-speaker styles colour the preview so your turns and the
 	// agent's are instantly distinguishable: you in cyan, the agent in
 	// green. The gutter bar carries the colour on every wrapped line so
@@ -39,13 +38,27 @@ var (
 	resumeAsstStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
 )
 
+// resumeItem is one row in the bubbles/list. It carries the candidate
+// index so the model can map the list's selection back to m.cands
+// regardless of how the list reorders internally.
+type resumeItem struct {
+	idx   int
+	title string // short id · when
+	desc  string // cwd
+	fv    string // filter value (cwd + opening prompt)
+}
+
+func (i resumeItem) Title() string       { return i.title }
+func (i resumeItem) Description() string { return i.desc }
+func (i resumeItem) FilterValue() string { return i.fv }
+
 // resumeModel is the bubbletea model behind the interactive picker: a
-// session list on the left, a preview of the selected session on the
-// right. chosen is the picked index after the user hits enter, or -1
-// when they cancelled (q / esc / ctrl-c).
+// bubbles/list of sessions on the left, a preview of the selected
+// session on the right. chosen is the picked candidate index after the
+// user hits enter, or -1 when they cancelled (q / esc / ctrl-c).
 type resumeModel struct {
 	cands    []resumeCandidate
-	cursor   int
+	list     list.Model
 	chosen   int
 	width    int
 	height   int
@@ -53,9 +66,27 @@ type resumeModel struct {
 }
 
 func newResumeModel(cands []resumeCandidate) resumeModel {
-	// Default size lets View() render sensibly before the first
-	// WindowSizeMsg arrives (and in tests, which send no size).
-	return resumeModel{cands: cands, chosen: -1, width: 96, height: 24}
+	now := time.Now()
+	items := make([]list.Item, len(cands))
+	for i, c := range cands {
+		d := c.digest
+		items[i] = resumeItem{
+			idx:   i,
+			title: preview.ShortID(d.ID) + "  " + resumeWhen(d, now),
+			desc:  strPtrOrDash(d.Cwd),
+			fv:    strPtrOrDash(d.Cwd) + " " + strPtrOrDash(d.FirstPrompt),
+		}
+	}
+	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
+	l.Title = "sessions"
+	l.SetShowHelp(false)
+	l.SetShowStatusBar(false)
+	l.SetFilteringEnabled(false)
+	// Default size lets View() render before the first WindowSizeMsg
+	// (and in tests, which send their own size).
+	leftW, _ := resumePaneWidths(96)
+	l.SetSize(leftW, 18)
+	return resumeModel{cands: cands, list: l, chosen: -1, width: 96, height: 24}
 }
 
 func (m resumeModel) Init() tea.Cmd { return nil }
@@ -64,38 +95,38 @@ func (m resumeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		leftW, _ := resumePaneWidths(msg.Width)
+		listH := msg.Height - 4 // box border (2) + footer (~2)
+		if listH < 3 {
+			listH = 3
+		}
+		m.list.SetSize(leftW, listH)
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q", "esc":
 			m.quitting = true
 			m.chosen = -1
 			return m, tea.Quit
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			if m.cursor < len(m.cands)-1 {
-				m.cursor++
-			}
-		case "home", "g":
-			m.cursor = 0
-		case "end", "G":
-			m.cursor = len(m.cands) - 1
 		case "enter":
-			m.chosen = m.cursor
+			if it, ok := m.list.SelectedItem().(resumeItem); ok {
+				m.chosen = it.idx
+			}
 			m.quitting = true
 			return m, tea.Quit
 		}
 	}
-	return m, nil
+	// All other keys (↑/↓, j/k, pgup/pgdn, home/end) drive the list,
+	// which owns selection, scrolling, and pagination.
+	var cmd tea.Cmd
+	m.list, cmd = m.list.Update(msg)
+	return m, cmd
 }
 
 func (m resumeModel) View() string {
 	if m.quitting || len(m.cands) == 0 {
 		return ""
 	}
-	leftW, rightW := resumePaneWidths(m.width)
+	_, rightW := resumePaneWidths(m.width)
 	// Bound the preview body so the boxes + footer fit the screen: drop
 	// the box borders (2), the pane's header lines (3), and the footer
 	// (~2). Fill from the newest message backward so the latest exchange
@@ -104,10 +135,14 @@ func (m resumeModel) View() string {
 	if bodyLines < 4 {
 		bodyLines = 4
 	}
+	sel := m.list.Index()
+	if sel < 0 || sel >= len(m.cands) {
+		sel = 0
+	}
 	body := lipgloss.JoinHorizontal(
 		lipgloss.Top,
-		resumeBoxStyle.Width(leftW).Render(renderResumeList(m.cands, m.cursor, leftW)),
-		resumeBoxStyle.Width(rightW).Render(renderResumePreviewPane(m.cands[m.cursor], rightW, bodyLines)),
+		resumeBoxStyle.Render(m.list.View()),
+		resumeBoxStyle.Width(rightW).Render(renderResumePreviewPane(m.cands[sel], rightW, bodyLines)),
 	)
 	footer := resumeFooterStyle.Render("↑/↓ move · enter resume · q quit")
 	return body + "\n" + footer
@@ -130,32 +165,6 @@ func resumePaneWidths(total int) (left, right int) {
 		right = 24
 	}
 	return left, right
-}
-
-// renderResumeList renders the left column: one entry per candidate
-// (index · short id · when, then a dim cwd line), with the cursor row
-// highlighted. Text is truncated to the content width before styling so
-// ANSI codes are never counted into — or sliced by — the rune cap.
-func renderResumeList(cands []resumeCandidate, cursor, width int) string {
-	now := time.Now()
-	var b strings.Builder
-	for i, c := range cands {
-		d := c.digest
-		marker := "  "
-		title := truncateRunes(fmt.Sprintf("%d  %s  %s",
-			i+1, preview.ShortID(d.ID), resumeWhen(d, now)), width-2)
-		if i == cursor {
-			marker = "▌ "
-			title = resumeSelectedStyle.Render(title)
-		}
-		cwd := truncateRunes(flattenLine(strPtrOrDash(d.Cwd)), width-2)
-		b.WriteString(marker + title + "\n")
-		b.WriteString("  " + resumeDimStyle.Render(cwd) + "\n")
-		if i < len(cands)-1 {
-			b.WriteString("\n")
-		}
-	}
-	return strings.TrimRight(b.String(), "\n")
 }
 
 // resumeMsgMaxLines caps how many wrapped lines a single message
