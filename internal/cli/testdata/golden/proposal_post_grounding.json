@@ -1,0 +1,22 @@
+{
+  "skills": [
+    {
+      "name": "run-integration-tests",
+      "when_to_use": "before pushing changes that touch the store",
+      "why": "integration tests catch UDS/SQLite seams unit tests miss",
+      "triggers": [
+        "go test"
+      ],
+      "evidence": [
+        {
+          "session_id": "11111111-1111-5111-8111-111111111111",
+          "quote": "we ran `go test -tags=integration ./...`",
+          "what_happened": "ran the integration suite"
+        }
+      ],
+      "frequency": 3,
+      "effort": "low",
+      "alternatives_rejected": "running the full suite every time"
+    }
+  ]
+}
