@@ -1,0 +1,21 @@
+{
+  "skill": {
+    "name": "deploy-staging",
+    "when_to_use": "deploying a service to staging",
+    "why": "the deploy script encodes the right flags",
+    "triggers": [
+      "deploy.sh"
+    ],
+    "evidence": [
+      {
+        "session_id": "11111111-1111-5111-8111-111111111111",
+        "quote": "ran ./deploy.sh staging",
+        "what_happened": "deployed to staging"
+      }
+    ],
+    "frequency": 1,
+    "effort": "low",
+    "alternatives_rejected": "manual kubectl"
+  },
+  "rationale": "extracted a deploy-staging skill from the concrete commands"
+}

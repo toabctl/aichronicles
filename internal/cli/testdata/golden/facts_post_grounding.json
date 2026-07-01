@@ -1,0 +1,14 @@
+{
+  "found": true,
+  "facts": [
+    {
+      "subject": "/work/proj",
+      "predicate": "runs_tests_via",
+      "object": "make test",
+      "confidence": 0.9,
+      "quote": "make test",
+      "what_happened": "ran the suite"
+    }
+  ],
+  "rationale": "extracted build/deploy facts"
+}
