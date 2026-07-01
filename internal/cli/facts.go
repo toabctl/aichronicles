@@ -347,6 +347,32 @@ func RunFactsForSession(
 // quote silently fails that contract. Empty substrate disables
 // the check (tests that don't wire the digest text shouldn't
 // drop every fact).
+// factGrounded reports whether an induced fact is attributable to its
+// session and therefore safe to persist. Two anti-fabrication checks,
+// each disabled when its input is unknown (CLAUDE.md §7 — drop, don't
+// invent):
+//   - Subject must equal the session cwd when the cwd is known. The
+//     facts prompt hard-rules "subject is the session's CWD"; a foreign
+//     subject means the LLM invented one.
+//   - Quote must appear (case-insensitively) in the session substrate
+//     (summary + first prompt) when both are present. A quote absent
+//     from the substrate is a paraphrase/transposition, not a verbatim
+//     excerpt the user can grep to verify.
+//
+// Shared by persistInducedFacts (the production drop) and the Layer-1
+// fabrication gate so the two can't diverge.
+func factGrounded(subject, sessionCwd, quote, substrate string) bool {
+	if sessionCwd != "" && subject != sessionCwd {
+		return false
+	}
+	if substrate != "" && strings.TrimSpace(quote) != "" {
+		if !strings.Contains(substrate, strings.ToLower(strings.TrimSpace(quote))) {
+			return false
+		}
+	}
+	return true
+}
+
 func persistInducedFacts(ctx context.Context, c *apiclient.Client, llmOutputID int64, sessionID, sessionCwd, substrate string, result *prompts.FactsResult) int {
 	if result == nil || !result.Found || len(result.Facts) == 0 {
 		return 0
@@ -354,23 +380,24 @@ func persistInducedFacts(ctx context.Context, c *apiclient.Client, llmOutputID i
 	now := time.Now().UnixMilli()
 	persisted := 0
 	for _, f := range result.Facts {
-		if sessionCwd != "" && f.Subject != sessionCwd {
-			slog.Warn("facts: dropping fact whose subject doesn't match session cwd",
-				"llm_output_id", llmOutputID,
-				"subject", f.Subject,
-				"session_cwd", sessionCwd,
-				"predicate", f.Predicate)
-			continue
-		}
-		if substrate != "" && f.Quote != "" {
-			if !strings.Contains(substrate, strings.ToLower(strings.TrimSpace(f.Quote))) {
+		if !factGrounded(f.Subject, sessionCwd, f.Quote, substrate) {
+			// Distinguish the two failure modes in the log while sharing
+			// the decision with factGrounded (so the tested predicate and
+			// the production drop can't drift apart).
+			if sessionCwd != "" && f.Subject != sessionCwd {
+				slog.Warn("facts: dropping fact whose subject doesn't match session cwd",
+					"llm_output_id", llmOutputID,
+					"subject", f.Subject,
+					"session_cwd", sessionCwd,
+					"predicate", f.Predicate)
+			} else {
 				slog.Warn("facts: dropping fact whose quote isn't in the session's summary",
 					"llm_output_id", llmOutputID,
 					"subject", f.Subject,
 					"predicate", f.Predicate,
 					"quote", f.Quote)
-				continue
 			}
+			continue
 		}
 		req := wire.SaveSemanticFactRequest{
 			SourceLLMOutputID: llmOutputID,
