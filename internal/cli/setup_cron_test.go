@@ -60,6 +60,7 @@ func TestInstallCronUnits_WritesEmbeddedFiles(t *testing.T) {
 		{"enable", "--now", "aichronicles-cron-weekly-digest.timer"},
 		{"enable", "--now", "aichronicles-cron-induction.timer"},
 		{"enable", "--now", "aichronicles-cron-meta-analysis.timer"},
+		{"enable", "--now", "aichronicles-cron-prune.timer"},
 	}
 	if !reflect.DeepEqual(f.calls, wantCalls) {
 		t.Errorf("systemctl calls: got %v, want %v", f.calls, wantCalls)
@@ -147,6 +148,7 @@ func TestRemoveCronUnits_LiveDisablesAndDeletes(t *testing.T) {
 			"aichronicles-cron-weekly-digest.timer",
 			"aichronicles-cron-induction.timer",
 			"aichronicles-cron-meta-analysis.timer",
+			"aichronicles-cron-prune.timer",
 		},
 		{"daemon-reload"},
 	}
@@ -229,5 +231,53 @@ func TestWeeklyDigestTimer_IsAnchoredInUTC(t *testing.T) {
 	}
 	if !found {
 		t.Error("no OnCalendar= line in the weekly digest timer")
+	}
+}
+
+// TestCronUnits_IncludeRetentionPrune pins that retention is
+// actually scheduled.
+//
+// store.Prune has existed, and been reachable via
+// POST /v1/admin/prune, since retention landed — but no timer ever
+// invoked it. raw_envelopes is append-only and deliberately
+// "sacred", so on a daily-driver machine the database grew without
+// bound until someone happened to run `aichronicles prune --yes` by
+// hand.
+func TestCronUnits_IncludeRetentionPrune(t *testing.T) {
+	t.Parallel()
+	var sawService, sawTimer bool
+	for _, n := range cronUnitFilenames {
+		switch n {
+		case "aichronicles-cron-prune.service":
+			sawService = true
+		case "aichronicles-cron-prune.timer":
+			sawTimer = true
+		}
+	}
+	if !sawService || !sawTimer {
+		t.Errorf("prune units missing from the install set: %v", cronUnitFilenames)
+	}
+
+	// The timer must be enabled, not merely written to disk.
+	var enabled bool
+	for _, n := range cronTimerUnits {
+		if n == "aichronicles-cron-prune.timer" {
+			enabled = true
+		}
+	}
+	if !enabled {
+		t.Errorf("prune timer is not in cronTimerUnits: %v", cronTimerUnits)
+	}
+
+	// --yes is required: a timer cannot answer prune's confirmation
+	// prompt, and without it the run is a dry run that deletes
+	// nothing — a scheduled no-op is worse than no schedule, because
+	// it looks like retention is handled.
+	if !strings.Contains(string(cronPruneService), "prune --yes") {
+		t.Errorf("prune service must pass --yes:\n%s", cronPruneService)
+	}
+	// Same UTC trap the weekly digest timer had.
+	if !strings.Contains(string(cronPruneTimer), "UTC") {
+		t.Errorf("prune timer OnCalendar must be UTC-anchored:\n%s", cronPruneTimer)
 	}
 }

@@ -1,0 +1,13 @@
+[Unit]
+Description=aichronicles retention prune
+
+[Service]
+Type=oneshot
+# %h expands to $HOME at runtime; same convention the other cron
+# units use for %h/.local/bin/aichronicles.
+#
+# --yes because a timer cannot answer a prompt; prune is dry-run by
+# default and would otherwise do nothing here. --older-than is left
+# at the command's own default (six months) so the retention window
+# lives in one place rather than being duplicated in a unit file.
+ExecStart=%h/.local/bin/aichronicles prune --yes

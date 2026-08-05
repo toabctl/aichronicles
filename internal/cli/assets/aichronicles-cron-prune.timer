@@ -1,0 +1,24 @@
+[Unit]
+Description=aichronicles retention prune
+
+[Timer]
+# Weekly, Sunday 04:00 UTC — off the Monday digest run so the two
+# never contend for SQLite's write lock, and in the small hours
+# because prune holds that lock for the length of its transaction.
+#
+# store.Prune has existed (and been reachable via
+# POST /v1/admin/prune) since retention landed, but nothing ever
+# scheduled it. raw_envelopes is append-only and deliberately
+# "sacred", so on a daily-driver machine the database grew without
+# bound until someone happened to run `aichronicles prune --yes` by
+# hand. A 2 GB store is what that looks like after a few months.
+#
+# UTC is explicit: OnCalendar= without a timezone is interpreted in
+# local time, which is the bug the weekly-digest timer had.
+OnCalendar=Sun 04:00:00 UTC
+# Catch up after a powered-off weekend rather than skipping a cycle.
+Persistent=true
+Unit=aichronicles-cron-prune.service
+
+[Install]
+WantedBy=timers.target

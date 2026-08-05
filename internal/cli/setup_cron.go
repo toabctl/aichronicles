@@ -17,6 +17,12 @@ import (
 // unit; this command exists for the canonical aichronicles
 // schedules we recommend.
 //
+//go:embed assets/aichronicles-cron-prune.timer
+var cronPruneTimer []byte
+
+//go:embed assets/aichronicles-cron-prune.service
+var cronPruneService []byte
+
 //go:embed assets/aichronicles-cron-weekly-digest.timer
 var cronWeeklyDigestTimer []byte
 
@@ -44,6 +50,8 @@ var cronUnitFilenames = []string{
 	"aichronicles-cron-induction.timer",
 	"aichronicles-cron-meta-analysis.service",
 	"aichronicles-cron-meta-analysis.timer",
+	"aichronicles-cron-prune.service",
+	"aichronicles-cron-prune.timer",
 }
 
 // cronTimerUnits is the subset of cronUnitFilenames that ARE
@@ -54,6 +62,7 @@ var cronTimerUnits = []string{
 	"aichronicles-cron-weekly-digest.timer",
 	"aichronicles-cron-induction.timer",
 	"aichronicles-cron-meta-analysis.timer",
+	"aichronicles-cron-prune.timer",
 }
 
 func newSetupCronCmd() *cobra.Command {
@@ -112,6 +121,10 @@ func cronUnitContent(name string) []byte {
 		return cronMetaAnalysisTimer
 	case "aichronicles-cron-meta-analysis.service":
 		return cronMetaAnalysisService
+	case "aichronicles-cron-prune.timer":
+		return cronPruneTimer
+	case "aichronicles-cron-prune.service":
+		return cronPruneService
 	default:
 		panic("unknown cron unit: " + name)
 	}
