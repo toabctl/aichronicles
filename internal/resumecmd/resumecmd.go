@@ -74,10 +74,65 @@ func Build(agent, sourceSessionID string, cwd *string, skipPerms bool) (Spec, bo
 // <bin> <args...>`, collapsing to `<bin> <args...>` when Cwd is empty.
 // This is the exact form the web Resume button copies to the clipboard
 // and the CLI `resume --print` flag emits.
+//
+// Every interpolated value is single-quoted. This is the one place in
+// the resume path where the trust boundary changes: the exec path
+// hands Bin and Args to syscall.Exec as a structured argv, where
+// quoting would be wrong, while the same fields here are pasted into
+// a shell, where its absence is.
+//
+// Unquoted, the everyday failure needs no attacker — a workspace at
+// "/home/u/My Projects/api" renders `cd /home/u/My Projects/api && …`,
+// which cds into "/home/u/My" and then runs "Projects/api" as a
+// command. cwd comes from the hook payload and is never validated,
+// and Envelope.Validate only checks that source_session_id is
+// non-empty, so a directory name containing ';' or '$(…)' turns a
+// clipboard paste into arbitrary execution.
 func (s Spec) Shell() string {
-	base := s.Bin + " " + strings.Join(s.Args, " ")
+	parts := make([]string, 0, len(s.Args)+1)
+	parts = append(parts, shellQuote(s.Bin))
+	for _, a := range s.Args {
+		parts = append(parts, shellQuote(a))
+	}
+	base := strings.Join(parts, " ")
 	if s.Cwd != "" {
-		return "cd " + s.Cwd + " && " + base
+		return "cd " + shellQuote(s.Cwd) + " && " + base
 	}
 	return base
+}
+
+// shellQuote wraps s in single quotes. An embedded single quote is
+// closed, escaped and reopened (the classic quote-backslash-quote-
+// quote sequence). Inside single quotes POSIX shells treat every
+// other byte literally, so this is safe for arbitrary content.
+//
+// Values that are already unambiguous — the common case, a plain path
+// or a UUID — are returned bare so the copied line stays readable.
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	if isShellSafe(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// isShellSafe reports whether s can appear unquoted without changing
+// meaning in any POSIX shell. Allowlist, not denylist: the set of
+// characters a shell treats specially is long, version-dependent and
+// easy to under-enumerate, whereas the set that is always literal is
+// short and stable.
+func isShellSafe(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9':
+		case r == '/' || r == '.' || r == '_' || r == '-' || r == '=' || r == ':' || r == '+' || r == ',':
+		default:
+			return false
+		}
+	}
+	return true
 }
