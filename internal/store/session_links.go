@@ -154,7 +154,7 @@ func SaveSessionLinks(ctx context.Context, db *sql.DB, from string, links []Sess
 				ON CONFLICT(from_session_id, to_session_id, kind) DO UPDATE SET
 				  rationale     = excluded.rationale,
 				  created_at_ms = excluded.created_at_ms
-			`, from, l.ToSessionID, l.Kind, l.Rationale, now)
+			`, from, l.ToSessionID, l.Kind, scrubStored(l.Rationale), now)
 			if err != nil {
 				return fmt.Errorf("insert link to %s (%s): %w", l.ToSessionID, l.Kind, err)
 			}

@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/toabctl/aichronicles/internal/nullable"
-	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -82,7 +81,7 @@ func SaveLLMOutput(ctx context.Context, tx *sql.Tx, out *LLMOutput) (id int64, i
 		return 0, false, errors.New("SaveLLMOutput: body is required")
 	}
 
-	scrubbedBody, _ := redact.Outbound(out.Body)
+	scrubbedBody := scrubStored(out.Body)
 
 	res, err := tx.ExecContext(ctx,
 		`INSERT OR IGNORE INTO llm_outputs(

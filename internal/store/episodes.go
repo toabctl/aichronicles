@@ -106,7 +106,9 @@ func SegmentSession(sessionID string, evs []events.EventView, idleGapMs int64) [
 			run.cwd = e.Cwd
 		}
 		if run.intent == "" && e.Kind == events.KindUserPrompt && e.ContentText.Valid {
-			run.intent = clipIntentSummary(e.ContentText.String)
+			// Scrub before clipping: truncating first can split a
+			// secret so the detector no longer matches it.
+			run.intent = clipIntentSummary(scrubStored(e.ContentText.String))
 		}
 		run.count++
 	}
@@ -189,7 +191,7 @@ func SaveEpisodes(ctx context.Context, db *sql.DB, sessionID string, episodes []
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 				sessionID, ep.Ordinal, ep.StartedAtMs, ep.EndedAtMs,
 				eventsNullStringToSQL(ep.Cwd),
-				ep.IntentSummary, ep.EventCount, ep.FirstEventID,
+				scrubStored(ep.IntentSummary), ep.EventCount, ep.FirstEventID,
 			); err != nil {
 				return fmt.Errorf("insert episode %d: %w", ep.Ordinal, err)
 			}

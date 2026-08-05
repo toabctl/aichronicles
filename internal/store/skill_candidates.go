@@ -259,15 +259,18 @@ func RecordSkillCandidateWithMetadata(ctx context.Context, db *sql.DB, llmOutput
 		return errors.New("RecordSkillCandidate: proposed_at_ms is required")
 	}
 
-	triggersJSON, err := marshalSkillStringList("triggers", meta.Triggers)
+	// Scrub the elements before marshalling, not the JSON afterwards:
+	// a secret containing a quote would be backslash-escaped in the
+	// encoded form and the detector would no longer match it.
+	triggersJSON, err := marshalSkillStringList("triggers", scrubStoredList(meta.Triggers))
 	if err != nil {
 		return err
 	}
-	tagsJSON, err := marshalSkillStringList("tags", meta.Tags)
+	tagsJSON, err := marshalSkillStringList("tags", scrubStoredList(meta.Tags))
 	if err != nil {
 		return err
 	}
-	examplesJSON, err := marshalSkillExamples(meta.Examples)
+	examplesJSON, err := marshalSkillExamples(scrubStoredExamples(meta.Examples))
 	if err != nil {
 		return err
 	}
@@ -299,7 +302,8 @@ func RecordSkillCandidateWithMetadata(ctx context.Context, db *sql.DB, llmOutput
 		     version  = COALESCE(skill_candidates.version, excluded.version),
 		     kind     = COALESCE(?, skill_candidates.kind)`,
 		llmOutputID, skillName, proposedAtMs,
-		nullableJSON(triggersJSON), nullableJSON(tagsJSON), nullableJSON(examplesJSON), version, kindParam, kindParam,
+		nullableJSON(triggersJSON), nullableJSON(tagsJSON),
+		nullableJSON(examplesJSON), version, kindParam, kindParam,
 	)
 	if err != nil {
 		return fmt.Errorf("insert skill_candidates: %w", err)

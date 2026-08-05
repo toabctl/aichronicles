@@ -122,8 +122,8 @@ ON CONFLICT(subject, predicate, object) DO UPDATE SET
 RETURNING id`
 	var id int64
 	if err := db.QueryRowContext(ctx, q,
-		f.SourceLLMOutputID, f.Subject, f.Predicate, f.Object,
-		f.Confidence, f.EvidenceSessionID, f.EvidenceQuote, f.AssertedAtMs,
+		f.SourceLLMOutputID, scrubStored(f.Subject), f.Predicate, scrubStored(f.Object),
+		f.Confidence, f.EvidenceSessionID, scrubStoredPtr(f.EvidenceQuote), f.AssertedAtMs,
 	).Scan(&id); err != nil {
 		return 0, fmt.Errorf("save semantic_fact: %w", err)
 	}
