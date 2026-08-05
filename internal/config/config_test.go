@@ -509,3 +509,71 @@ api_key_command = "echo secret"
 		t.Errorf("error should call out the symlink, got: %v", err)
 	}
 }
+
+// TestLoadFrom_RefusesSymlinkedConfigWithKeyCommand pins the trust
+// boundary the exec in internal/llm depends on.
+//
+// The check used to be stat-then-read: os.Lstat the path, os.ReadFile
+// the path, then compute the verdict from the earlier stat. Two
+// filesystem lookups, and only the first was validated — so an
+// attacker able to write the config DIRECTORY could swap in a symlink
+// between them, have the read follow it, and get their own
+// api_key_command executed under /bin/sh while the checks passed
+// against the old stat.
+//
+// Opening with O_NOFOLLOW and inspecting the descriptor makes the
+// lookup we validate the same one we read.
+func TestLoadFrom_RefusesSymlinkedConfigWithKeyCommand(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.toml")
+	link := filepath.Join(dir, "config.toml")
+
+	const body = "[llm.anthropic]\napi_key_command = \"echo hunter2\"\n"
+	if err := os.WriteFile(real, []byte(body), 0o600); err != nil {
+		t.Fatalf("write real config: %v", err)
+	}
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if _, err := LoadFrom(link); err == nil {
+		t.Error("a symlinked config with api_key_command must be refused")
+	} else if !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("error should name the symlink, got: %v", err)
+	}
+
+	// The same content at a real path is fine.
+	if _, err := LoadFrom(real); err != nil {
+		t.Errorf("a regular 0600 config must load: %v", err)
+	}
+}
+
+// TestLoadFrom_StillRejectsGroupWritableWithKeyCommand guards the
+// mode check that already existed, so the O_NOFOLLOW rework does not
+// quietly drop it.
+func TestLoadFrom_StillRejectsGroupWritableWithKeyCommand(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	const body = "[llm.anthropic]\napi_key_command = \"echo hunter2\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := LoadFrom(path); err == nil {
+		t.Error("a world-readable config with api_key_command must be refused")
+	}
+}
+
+// TestLoadFrom_MissingFileStillYieldsDefaults pins that the open
+// rework did not turn "no config" into an error.
+func TestLoadFrom_MissingFileStillYieldsDefaults(t *testing.T) {
+	t.Parallel()
+	cfg, err := LoadFrom(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatalf("missing config must yield defaults, got: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected a default config")
+	}
+}

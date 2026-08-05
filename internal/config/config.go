@@ -6,10 +6,12 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -385,22 +387,49 @@ func Load() (*Config, error) {
 // rewrite the config, they can redirect the key to arbitrary places.
 //
 // Symlinks at the config path are refused outright when
-// api_key_command is set: an attacker with permission to rewrite a
-// symlink (but not the underlying file) could race-replace the
-// target after the perm check, and Lstat-then-Stat is the only way
-// to close that window. We use Lstat to inspect the path itself —
-// os.Stat would have followed the symlink and reported the
-// target's permissions, missing the attack vector entirely.
+// api_key_command is set: an attacker able to rewrite a symlink (but
+// not the underlying file) could otherwise point it at a config they
+// control.
+//
+// The check runs against an fstat of the OPEN file descriptor we
+// actually read, not against a separate stat of the path. Stat-then-
+// open leaves a window: an attacker who can write the config
+// DIRECTORY swaps in a symlink between the two calls, the open
+// follows it, and the verdict is computed from the stale stat — so
+// the attacker's api_key_command runs under /bin/sh. Opening with
+// O_NOFOLLOW and inspecting the fd closes the window because there
+// is only one filesystem lookup and it is the one whose result we
+// validate.
+//
+// This matters more than the file mode alone suggests: the #nosec
+// annotation on the exec in internal/llm names this check as its
+// trust boundary.
 func LoadFrom(path string) (*Config, error) {
 	cfg := Default()
-	info, statErr := os.Lstat(path)
-	if statErr != nil {
-		if errors.Is(statErr, fs.ErrNotExist) {
+
+	// O_NOFOLLOW makes the open itself fail on a symlink, so the
+	// symlink check and the read cannot disagree.
+	f, openErr := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if openErr != nil {
+		if errors.Is(openErr, fs.ErrNotExist) {
 			return &cfg, nil
 		}
+		if errors.Is(openErr, syscall.ELOOP) {
+			return nil, fmt.Errorf(
+				"%s is a symlink; refuse to trust a symlinked config "+
+					"(race-replacement risk). resolve the symlink and put the real "+
+					"file at %s", path, path)
+		}
+		return nil, fmt.Errorf("open %s: %w", path, openErr)
+	}
+	defer func() { _ = f.Close() }()
+
+	// Stat the descriptor, not the path: this is the file we read.
+	info, statErr := f.Stat()
+	if statErr != nil {
 		return nil, fmt.Errorf("stat %s: %w", path, statErr)
 	}
-	data, err := os.ReadFile(path)
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
@@ -411,13 +440,12 @@ func LoadFrom(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if cfg.LLM.HasAPIKeyCommand() {
-		// Refuse symlinks: see the function-level comment.
-		if info.Mode()&os.ModeSymlink != 0 {
+		// O_NOFOLLOW already rejected symlinks; a non-regular file
+		// (fifo, device) is equally untrustworthy as a config source.
+		if !info.Mode().IsRegular() {
 			return nil, fmt.Errorf(
-				"%s is a symlink and a provider api_key_command is set; "+
-					"refuse to trust a symlinked config (race-replacement risk). "+
-					"resolve the symlink and put the real file at %s",
-				path, path)
+				"%s is not a regular file and a provider api_key_command is set; "+
+					"refuse to trust it", path)
 		}
 		if perm := info.Mode().Perm(); perm&0o077 != 0 {
 			return nil, fmt.Errorf(
