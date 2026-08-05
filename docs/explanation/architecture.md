@@ -73,9 +73,10 @@ rearchitecture collapsed that into a single store-owning process.)
 | `aichronicles-api` | Long-running daemon | systemd `--user` unit, socket-activated | The single SQLite-handling process. Serves `/v1/*` JSON read+write API and `/v1/stream` SSE live activity. Server-side redaction; the only point of "no unredacted bytes in storage" enforcement. |
 | `aichronicles-web` | Long-running daemon | systemd `--user` unit (`aichronicles-web.service`) | Renders `/` web HTML. Reads via `internal/apiclient` against `aichronicles-api`'s UDS — separate process so a web-handler bug can't take down ingest. |
 | `aichronicles hook` | Short-lived hook subprocess | Forked per Claude Code / Gemini CLI hook event | One envelope's worth of translation + POST to `aichronicles-api`. Translation is pure (post-Phase 0); the api applies redaction. Fire-and-forget: every error path logs and exits 0 so the hook never breaks the agent's prompt loop. |
-| `aichronicles induction sweep` | Short-lived periodic | `aichronicles-cron-induction.timer` (15min default) | Single-session induction across idle sessions |
+| `aichronicles induction sweep` | Short-lived periodic | `aichronicles-cron-induction.timer` (`OnCalendar=*-*-* 09,21:00:00`, twice daily) | Single-session induction across idle sessions |
 | `aichronicles meta sweep` | Short-lived periodic | `aichronicles-cron-meta-analysis.timer` (1h poll, per-kind cadences in SQLite) | Cadence-gated meta-analyses (propose / reflect / challenge / digest_weekly / skill_revision) |
 | `aichronicles digest weekly` | Short-lived periodic | `aichronicles-cron-weekly-digest.timer` (`OnCalendar=Mon 06:00:00 UTC`) | Weekly retrospective digest |
+| `aichronicles prune --yes` | Short-lived periodic | `aichronicles-cron-prune.timer` (`OnCalendar=Sun 04:00:00 UTC`) | Retention: drops sessions past `--older-than` (six months by default) and their cascade. Sunday so it never contends with the Monday digest for the write lock. |
 | `aichronicles <other>` | Short-lived user CLI | Forked per command | Read paths, imports, summarize, MCP server (`mcp serve`), web (`web serve`) |
 
 Why this shape:
@@ -122,15 +123,18 @@ extractions table). `aichronicles scrub` is in the same conceptual
 class but routes through `POST /v1/scrub` instead of opening the
 store, so it inherits the daemon's write lock.
 
-**Class 2 — LLM-cache writers** (`propose`, `propose add/merge/
-discard`, `induction`, `summaries`, `meta sweep`) open the store
-directly and INSERT into `llm_outputs` / `skill_candidates` /
-`semantic_facts` while the daemon runs. This is intentional:
-funneling many-MB LLM outputs through the UDS one row at a time
-would waste bandwidth and fight the daemon's HTTP request budget,
-and the affected tables carry UNIQUE constraints that turn
-race-condition duplicates into ON CONFLICT idempotency rather than
-data corruption.
+There is no Class 2. This document previously described the LLM
+commands (`propose`, `propose add/merge/discard`, `induction`,
+`summaries`, `meta sweep`) as opening the store directly to INSERT
+into `llm_outputs` / `skill_candidates` / `semantic_facts`, and
+justified it on bandwidth grounds. That was already false when
+written: `runCachedLLM` persists via `POST /v1/llm-outputs`, and
+depcheck's call-rule would fail CI on a direct `store.Save*` from
+`internal/cli`.
+
+The honest statement is: **the api daemon owns every write.**
+`backfill-extractions` is the single exception, and it refuses to
+run while the daemon is up.
 
 ### Read-side: through apiclient
 
@@ -148,9 +152,15 @@ goes through the api" is a hard invariant, enforced by
   for fixture setup and state assertions; doc-comment lines are
   also skipped.
 
-CLI subcommands no longer accept a `--db` flag (they don't open
-the SQLite file). They take `--socket` to point at the
-aichronicles-api UDS instead. `internal/cli` still imports
+Most CLI subcommands no longer accept a `--db` flag; they take
+`--socket` to point at the aichronicles-api UDS instead. The
+exceptions are `backfill-extractions` and `scrub`, the two
+maintenance commands that genuinely open the file — both refuse to
+run while the daemon is up.
+
+A depcheck call-rule forbids `.DB()` anywhere under `internal/cli`
+outside those two files, so the invariant is checked rather than
+asserted. `internal/cli` still imports
 `internal/store` for type/enum constants (`LLMOutputKind`,
 `SkillKind`, `OutcomeLabel`, error sentinels) — those are
 package-level values, not CRUD calls, and the depcheck regex
@@ -436,8 +446,14 @@ Enforced rules:
 | `internal/apiclient` does not import `internal/store` | ✅ |
 | No import cycles | ✅ |
 
-Phase D will lift these from "asserted in this doc" to
-"checked in CI" via a small dependency-direction guard.
+All of the above are checked in CI by `tools/depcheck`, not merely
+asserted here — with one caveat: "`internal/store` is the only
+SQL-aware package" is currently true of every package except
+`internal/skills`, which mixes filesystem discovery with raw SQL
+against `events` / `extractions`. depcheck cannot see it because
+the call-rules match on the `store.` qualifier. Moving those three
+functions into `internal/store` would leave `internal/skills` a
+pure filesystem leaf and let the rule be made absolute.
 
 Mixed read-side discipline (currently): some types are
 domain-clean (`EventView`, `Episode` in `internal/events`); most
