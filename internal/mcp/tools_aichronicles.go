@@ -16,8 +16,16 @@ import (
 // the helper folds the runtime clamp + default into one call so a
 // schema change can't silently leave the Go clamp stale.
 func clampLimit(n, def, max int) int {
-	if n <= 0 || n > max {
+	if n <= 0 {
 		return def
+	}
+	// Cap at max — do not fall back to the default. Returning def for
+	// an over-max request meant asking search_events for limit=500
+	// yielded 20 rows rather than the 100-row cap: fewer than asking
+	// for the cap, and fewer than asking for nothing. The caller sees
+	// a short result and reasonably concludes the corpus is small.
+	if n > max {
+		return max
 	}
 	return n
 }

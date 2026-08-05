@@ -100,7 +100,22 @@ func New(info ServerInfo, log *slog.Logger) *Server {
 // keeps commit 1 to the bare transport.
 func (s *Server) registerBuiltins() {
 	s.handlers["initialize"] = s.handleInitialize
-	s.handlers["initialized"] = s.handleInitialized // notification, no response
+	// The spec names this notifications/initialized. Registering the
+	// bare "initialized" alone meant no real client ever matched:
+	// the notification fell through to MethodNotFound and was
+	// silently dropped by the req.ID == nil guard, so s.initialized
+	// stayed false forever and Initialized() always reported false.
+	//
+	// Harmless while nothing gates on it — but mcp_test.go asserted
+	// the flag by sending the bare name, so the test passed while the
+	// production invariant never held. The moment anything refuses
+	// tool calls before the handshake (which the doc on Initialized
+	// explicitly contemplates), every real client would break.
+	//
+	// Both names stay registered: the bare form costs nothing and
+	// keeps any client that sends it working.
+	s.handlers["notifications/initialized"] = s.handleInitialized // notification, no response
+	s.handlers["initialized"] = s.handleInitialized
 	s.handlers["ping"] = s.handlePing
 	s.handlers["shutdown"] = s.handleShutdown
 }

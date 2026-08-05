@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 )
 
 // Tool is one registered tool. Handler is invoked with the raw
@@ -60,8 +61,9 @@ func (s *Server) RegisterTool(t Tool) {
 }
 
 // handleToolsList returns the registered tools. Ordering is map
-// iteration order today — clients should not depend on it; a future
-// enhancement could sort by name for determinism.
+// Sorted by name. Map iteration order is randomised in Go, so an
+// unsorted list made client-side logs and any snapshot test unstable
+// for no benefit.
 func (s *Server) handleToolsList(_ context.Context, _ json.RawMessage) (any, *Error) {
 	list := make([]Tool, 0, len(s.tools))
 	for _, t := range s.tools {
@@ -74,6 +76,7 @@ func (s *Server) handleToolsList(_ context.Context, _ json.RawMessage) (any, *Er
 			InputSchema: t.InputSchema,
 		})
 	}
+	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
 	return map[string]any{"tools": list}, nil
 }
 

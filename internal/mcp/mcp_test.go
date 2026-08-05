@@ -214,3 +214,85 @@ func TestServer_MultipleRequestsSequentially(t *testing.T) {
 		t.Fatalf("expected 3 responses, got %d:\n%s", len(lines), out.String())
 	}
 }
+
+// TestHandshake_AcceptsSpecNotificationName pins the real handshake.
+//
+// Only the bare "initialized" was registered, but MCP 2024-11-05
+// names the notification notifications/initialized. No real client
+// sends the bare form, so the notification fell through to
+// MethodNotFound and was silently dropped by the req.ID == nil guard
+// — s.initialized stayed false forever.
+//
+// The old test asserted the flag using the bare name, so it passed
+// while the production invariant never held. This one exercises the
+// name clients actually send.
+func TestHandshake_AcceptsSpecNotificationName(t *testing.T) {
+	t.Parallel()
+	s := New(ServerInfo{Name: "test", Version: "0.1"}, slog.New(slog.DiscardHandler))
+	if resp := runOne(t, s, `{"jsonrpc":"2.0","method":"notifications/initialized"}`); resp != nil {
+		t.Errorf("a notification must produce no response, got %+v", resp)
+	}
+	if !s.Initialized() {
+		t.Error("notifications/initialized must mark the server initialised")
+	}
+}
+
+// TestToolsList_IsSortedByName guards determinism: Go randomises map
+// iteration, so an unsorted list made client logs and snapshot tests
+// unstable for no benefit.
+func TestToolsList_IsSortedByName(t *testing.T) {
+	t.Parallel()
+	s := New(ServerInfo{Name: "test", Version: "0.1"}, slog.New(slog.DiscardHandler))
+	for _, name := range []string{"zebra", "alpha", "mango", "beta"} {
+		s.RegisterTool(Tool{
+			Name:        name,
+			Description: "d",
+			InputSchema: json.RawMessage(`{}`),
+			Handler: func(context.Context, json.RawMessage) (*ToolResult, *Error) {
+				return nil, nil
+			},
+		})
+	}
+	out, rpcErr := s.handleToolsList(context.Background(), nil)
+	if rpcErr != nil {
+		t.Fatalf("tools/list: %v", rpcErr)
+	}
+	m, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected result type %T", out)
+	}
+	list, ok := m["tools"].([]Tool)
+	if !ok {
+		t.Fatalf("unexpected tools type %T", m["tools"])
+	}
+	for i := 1; i < len(list); i++ {
+		if list[i-1].Name > list[i].Name {
+			t.Errorf("tools/list is not sorted: %q before %q", list[i-1].Name, list[i].Name)
+		}
+	}
+}
+
+// TestClampLimit_CapsRatherThanResetting pins the cap semantics.
+//
+// The helper's doc said "caps it at max" while the code returned the
+// default for anything over max — so search_events with limit=500
+// returned 20 rows instead of the 100-row cap. Fewer than the cap,
+// and fewer than asking for nothing at all.
+func TestClampLimit_CapsRatherThanResetting(t *testing.T) {
+	t.Parallel()
+	const def, max = 20, 100
+	cases := []struct{ in, want int }{
+		{0, def},
+		{-5, def},
+		{1, 1},
+		{50, 50},
+		{max, max},
+		{max + 1, max},
+		{10000, max},
+	}
+	for _, tc := range cases {
+		if got := clampLimit(tc.in, def, max); got != tc.want {
+			t.Errorf("clampLimit(%d, %d, %d) = %d, want %d", tc.in, def, max, got, tc.want)
+		}
+	}
+}
