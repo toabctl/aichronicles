@@ -8,10 +8,22 @@
 // internal/apiclient — same boundary internal/mcp uses — so the
 // daemon stays the single SQLite-aware process in production.
 //
-// Default bind is 127.0.0.1 — the localhost-only boundary is the
-// auth model, mirroring the daemon's 0600 UDS. Binding to a
-// public address is opt-in (--bind) and surfaces a startup
-// warning.
+// Default bind is 127.0.0.1 and there is no authentication. Be
+// precise about what that does and does not buy, because the two
+// have been conflated here before:
+//
+//   - It stops other MACHINES reaching the server.
+//   - It does NOT stop other LOCAL USERS. A loopback TCP port is
+//     open to every uid on the box, unlike the daemon's 0600 UDS,
+//     which the kernel restricts to one. Claiming the two are the
+//     same shape is wrong: on a shared host any local user can
+//     curl the whole corpus out of /search.
+//   - It does NOT by itself stop a web page the user visits, which
+//     is why requireLoopbackHost rejects non-loopback Host headers
+//     (DNS rebinding).
+//
+// Binding to a public address is opt-in (--bind) and surfaces a
+// startup warning.
 package web
 
 import (
@@ -290,7 +302,7 @@ func (s *Server) renderFragment(w http.ResponseWriter, name string, data any) {
 // README documents --bind 0.0.0.0 as an option; the moment that
 // happens these headers are the only thing standing between a
 // hostile coresident process and reading the corpus.
-func (s *Server) Handler() http.Handler { return secureHeaders(s.mux) }
+func (s *Server) Handler() http.Handler { return requireLoopbackHost(secureHeaders(s.mux)) }
 
 // secureHeaders applies a strict default Content-Security-Policy,
 // frame/clickjacking protection, MIME-sniff blocking, and a
@@ -321,6 +333,71 @@ func secureHeaders(next http.Handler) http.Handler {
 		h.Set("Referrer-Policy", "no-referrer")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requireLoopbackHost rejects any request whose Host header does not
+// name a loopback address, closing DNS rebinding.
+//
+// Binding to 127.0.0.1 stops other machines reaching the server; it
+// does nothing about the user's own browser. An attacker page sets a
+// short-TTL record for evil.com, waits for it to re-resolve to
+// 127.0.0.1, then fetches http://evil.com:7878/ from its own
+// JavaScript. The browser treats the response as same-origin with
+// evil.com, so the page can read it: the session list, transcript
+// snippets, cached summaries, /facts, arbitrary /search queries over
+// the whole FTS index, and an EventSource on /stream for live
+// exfiltration as new events ingest.
+//
+// The existing headers do not help. frame-ancestors and
+// X-Frame-Options block framing, not rebinding; connect-src 'self'
+// constrains our pages, not the attacker's; and post-rebind the
+// attacker's origin IS evil.com. Checking Host is the standard
+// defence, and it is cheap because the legitimate host set is tiny.
+//
+// Every route is GET, so the exposure was read-only — but for a tool
+// whose whole content is the user's coding history, read-only is the
+// bad case.
+//
+// Note this does NOT address a second, separate exposure: a loopback
+// TCP port is reachable by every local user, unlike the daemon's 0600
+// UDS. See the trust-model note on Config.
+func requireLoopbackHost(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isLoopbackHost(r.Host) {
+			http.Error(w, "invalid Host header", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// isLoopbackHost reports whether host (a Host header value, with or
+// without a port) names the loopback interface.
+//
+// Accepts any loopback IP rather than a fixed allowlist so an
+// operator binding to ::1 or 127.0.0.2 still works, and accepts the
+// literal "localhost" because that is what users type. A DNS name
+// that merely resolves to loopback is rejected, which is the whole
+// point — that is exactly what a rebinding attack supplies.
+func isLoopbackHost(host string) bool {
+	if host == "" {
+		// HTTP/1.1 requires Host; HTTP/2 synthesises it from
+		// :authority. An empty value is malformed either way.
+		return false
+	}
+	h, _, err := net.SplitHostPort(host)
+	if err != nil {
+		// No port present (or malformed) — fall back to the raw value.
+		h = host
+	}
+	h = strings.TrimSuffix(strings.TrimPrefix(h, "["), "]")
+	if strings.EqualFold(h, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // Addr returns the address the server is configured to listen on.

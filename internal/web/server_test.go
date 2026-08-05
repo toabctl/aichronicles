@@ -241,3 +241,75 @@ func TestServer_HandlerEmitsSecurityHeaders(t *testing.T) {
 		t.Errorf("CSP missing expected directives: %q", csp)
 	}
 }
+
+// TestRequireLoopbackHost_BlocksRebinding covers DNS rebinding, the
+// one remotely-triggerable hole in a loopback-only bind.
+//
+// Binding to 127.0.0.1 stops other machines; it does nothing about
+// the user's own browser. An attacker page re-resolves its own
+// hostname to 127.0.0.1 and then fetches the UI from its own
+// JavaScript — same-origin with the attacker, so it can read the
+// session list, transcripts, /facts, arbitrary /search results, and
+// subscribe to /stream for live exfiltration.
+//
+// CSP and X-Frame-Options do not help: they block framing, not
+// rebinding, and post-rebind the attacker's origin is its own.
+func TestRequireLoopbackHost_BlocksRebinding(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		host  string
+		allow bool
+	}{
+		{"127.0.0.1:7878", true},
+		{"localhost:7878", true},
+		{"LOCALHOST:7878", true},
+		{"[::1]:7878", true},
+		{"127.0.0.1", true},
+		{"127.0.0.2:7878", true},
+
+		{"evil.com:7878", false},
+		{"evil.com", false},
+		{"attacker.test:7878", false},
+		{"192.168.1.10:7878", false},
+		{"example.com.127.0.0.1.nip.io:7878", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		name := tc.host
+		if name == "" {
+			name = "empty"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := isLoopbackHost(tc.host); got != tc.allow {
+				t.Errorf("isLoopbackHost(%q) = %v, want %v", tc.host, got, tc.allow)
+			}
+		})
+	}
+}
+
+// TestRequireLoopbackHost_RejectsAtTheHandler pins that the check is
+// actually wired in, not merely available.
+func TestRequireLoopbackHost_RejectsAtTheHandler(t *testing.T) {
+	t.Parallel()
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	h := requireLoopbackHost(inner)
+
+	req := httptest.NewRequest(http.MethodGet, "http://evil.com/", nil)
+	req.Host = "evil.com"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("rebinding request: status %d, want 403", rr.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7878/", nil)
+	req.Host = "127.0.0.1:7878"
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("loopback request: status %d, want 200", rr.Code)
+	}
+}

@@ -2,9 +2,14 @@
 Description=aichronicles web UI socket
 
 [Socket]
-# Loopback-only TCP. The web server has no auth; the bind boundary
-# is the trust model (same shape as the daemon's 0600 UDS). Pick the
-# same default port the `aichronicles web` CLI uses so muscle memory
+# Loopback-only TCP. The web server has no auth, so the bind is the
+# only boundary — and it is weaker than the daemon's 0600 UDS, which
+# the kernel restricts to a single uid. A loopback port is reachable
+# by every local user, so on a shared host treat the corpus as
+# readable by anyone with an account. (Requests are additionally
+# Host-checked in-process to close DNS rebinding.)
+#
+# Same default port the `aichronicles web` CLI uses so muscle memory
 # survives the migration to socket activation.
 ListenStream=127.0.0.1:7878
 # Accept=no (default) hands the listening fd to one long-lived
