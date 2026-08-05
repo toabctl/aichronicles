@@ -201,9 +201,23 @@ func loadInsightsOverview(ctx context.Context, db *sql.DB, sinceMs int64) (Insig
 			args:  []any{sinceMs, events.KindToolUse},
 		},
 		{
+			// Window on the EVENT's timestamp, matching loadTopSkills.
+			//
+			// This used to window on the session's effective
+			// timestamp, so a session that started 60 days ago and
+			// ended today qualified for a 30-day window and ALL of
+			// its skill loads counted — including ones from 60 days
+			// ago that loadTopSkills correctly excludes. A single
+			// LoadInsights call could then report distinct_skills: 5
+			// above a "Top skills" table with 2 rows.
+			//
+			// Long-lived sessions spanning the window boundary are
+			// the normal case for this corpus, not an edge case.
 			dst: &o.DistinctSkills,
-			query: `SELECT COUNT(DISTINCT value) FROM extractions WHERE kind = ?
-				    AND session_id IN (SELECT id FROM sessions WHERE COALESCE(ended_at_ms, started_at_ms) >= ?)`,
+			query: `SELECT COUNT(DISTINCT x.value)
+				      FROM extractions x
+				      JOIN events e ON e.event_id = x.event_id
+				     WHERE x.kind = ? AND e.ts_source_ms >= ?`,
 			args: []any{events.ExtractionKindSkillLoad, sinceMs},
 		},
 	}

@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -224,5 +226,87 @@ func TestLoadInsights_TopSessionsByEventCount(t *testing.T) {
 	}
 	if r.TopSessions[0].EventCount != 5 {
 		t.Errorf("top session events: got %d, want 5", r.TopSessions[0].EventCount)
+	}
+}
+
+// TestInsights_DistinctSkillsMatchesTopSkillsWindow pins the two
+// halves of the report to the same window.
+//
+// DistinctSkills windowed on the SESSION's effective timestamp while
+// loadTopSkills windows on the EVENT's. A session that started before
+// the cutoff and ended inside it qualified wholesale, so skill loads
+// from outside the window inflated the headline count while being
+// correctly excluded from the table beneath it — one LoadInsights
+// call reporting mutually inconsistent numbers.
+//
+// Long-lived sessions spanning a window boundary are the normal case
+// here, not an edge case.
+func TestInsights_DistinctSkillsMatchesTopSkillsWindow(t *testing.T) {
+	t.Parallel()
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	const day = 24 * 60 * 60 * 1000
+	now := int64(1_700_000_000_000)
+	cutoff := now - 30*day
+
+	// One session that straddles the cutoff: started well before,
+	// ended after. Its old skill load must not count; its recent one
+	// must.
+	seedSkillLoadEvent(t, s, "straddler", now-60*day, "old-skill")
+	seedSkillLoadEvent(t, s, "straddler", now-day, "recent-skill")
+
+	report, err := LoadInsights(ctx, s.DB(), cutoff, InsightsLimits{})
+	if err != nil {
+		t.Fatalf("LoadInsights: %v", err)
+	}
+
+	if got := len(report.TopSkills); report.Overview.DistinctSkills != got {
+		t.Errorf("distinct_skills = %d but TopSkills has %d rows; the two "+
+			"halves of one report disagree", report.Overview.DistinctSkills, got)
+	}
+	for _, sk := range report.TopSkills {
+		if sk.Name == "old-skill" {
+			t.Error("a skill load from before the cutoff leaked into TopSkills")
+		}
+	}
+}
+
+// seedSkillLoadEvent writes one skill_load extraction attached to an
+// event at tsMs in the named session, creating the session on first
+// use. The session's own start/end deliberately span a much wider
+// range than its events so the straddling case is reproduced.
+func seedSkillLoadEvent(t *testing.T, s *Store, sourceSessionID string, tsMs int64, skill string) {
+	t.Helper()
+	env := &events.Envelope{
+		V:               1,
+		EventID:         uuid.Must(uuid.NewV7()).String(),
+		SourceAgent:     "claude-code",
+		SourceSessionID: sourceSessionID,
+		Kind:            events.KindToolUse,
+		Role:            "assistant",
+		TsSource:        time.UnixMilli(tsMs).UTC(),
+		ContentText:     "Skill",
+		Payload:         map[string]any{"tool_name": "Skill"},
+		Transport:       "hook",
+		Redaction:       &events.Redaction{Applied: true},
+	}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	tx, err := s.DB().Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, _, err := IngestEnvelopeWithExtractions(
+		context.Background(), tx, env, raw, tsMs,
+		[]events.Extraction{{Kind: events.ExtractionKindSkillLoad, Value: skill}},
+	); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("ingest: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
 	}
 }
