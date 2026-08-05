@@ -289,13 +289,23 @@ func scrubExtractions(ctx context.Context, tx *sql.Tx, scanner redact.Scanner, o
 			return fmt.Errorf("scan extractions row: %w", err)
 		}
 
+		// redact.Replace already returns a unique, sorted name list per
+		// column; the set just unions the two columns' lists.
+		fired := map[string]struct{}{}
 		cleanValue, valueNames := redact.Replace(value, scanner.Scan(value))
-		cleanExtra, extraNames := extra.String, []string(nil)
+		cleanExtra := extra.String
+		var extraNames []string
 		if extra.Valid {
 			cleanExtra, extraNames = redact.Replace(extra.String, scanner.Scan(extra.String))
 		}
 		if cleanValue == value && cleanExtra == extra.String {
 			continue
+		}
+		for _, n := range valueNames {
+			fired[n] = struct{}{}
+		}
+		for _, n := range extraNames {
+			fired[n] = struct{}{}
 		}
 
 		if sessionID.Valid {
@@ -305,7 +315,7 @@ func scrubExtractions(ctx context.Context, tx *sql.Tx, scanner redact.Scanner, o
 			id:       id,
 			newValue: cleanValue,
 			newExtra: sql.NullString{String: cleanExtra, Valid: extra.Valid},
-			patterns: scrubMergePatterns(valueNames, extraNames),
+			patterns: scrubSortedKeys(fired),
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -332,24 +342,6 @@ func scrubExtractions(ctx context.Context, tx *sql.Tx, scanner redact.Scanner, o
 		_, _ = fmt.Fprintf(out, "%s extraction id=%d patterns=%v\n", mode, rw.id, rw.patterns)
 	}
 	return nil
-}
-
-// scrubMergePatterns unions two pattern-name lists, preserving a
-// stable order so report output and tests stay deterministic.
-func scrubMergePatterns(a, b []string) []string {
-	seen := make(map[string]struct{}, len(a)+len(b))
-	out := make([]string, 0, len(a)+len(b))
-	for _, list := range [][]string{a, b} {
-		for _, n := range list {
-			if _, ok := seen[n]; ok {
-				continue
-			}
-			seen[n] = struct{}{}
-			out = append(out, n)
-		}
-	}
-	sort.Strings(out)
-	return out
 }
 
 func scrubLLMOutputs(ctx context.Context, tx *sql.Tx, scanner redact.Scanner, opts ScrubOptions, report *ScrubReport, out io.Writer, affected map[string]struct{}) error {
@@ -480,7 +472,11 @@ func rederiveSessionColumns(ctx context.Context, tx *sql.Tx, affected map[string
 	return nil
 }
 
-func scrubSortedKeys(m map[string]int) []string {
+// scrubSortedKeys returns a map's keys in sorted order. Generic over
+// the value type so the same helper serves both the PatternHits
+// counter map and the per-row pattern sets, rather than each caller
+// growing its own copy.
+func scrubSortedKeys[V any](m map[string]V) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
