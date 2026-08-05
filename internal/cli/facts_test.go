@@ -352,3 +352,52 @@ func TestRunFactsForSession_JSONFormatEmitsRawBody(t *testing.T) {
 		t.Errorf("expected raw JSON body, got:\n%s", got)
 	}
 }
+
+// TestFactsSubstrate_CoversEverythingThePromptShows guards the
+// grounding filter against discarding true facts.
+//
+// The substrate was summary + first_prompt only, but renderDigests
+// also emits "Links observed" and "Shell commands observed
+// (extracted from tool_use events)". A fact grounded in a command the
+// prompt explicitly showed the model therefore failed the substring
+// check and was dropped with a message that reads like an
+// infrastructure error.
+//
+// The bias was systematic, not incidental: the documented predicate
+// vocabulary leads with runs_tests_via / runs_build_via /
+// runs_lint_via, all of which are naturally quoted from the shell
+// commands rather than from summary prose.
+func TestFactsSubstrate_CoversEverythingThePromptShows(t *testing.T) {
+	t.Parallel()
+	digest := prompts.SessionDigest{
+		Cwd:           "/tmp/proj",
+		Summary:       "worked on the build",
+		FirstPrompt:   "fix the tests",
+		ShellCommands: []string{"go test ./...", "golangci-lint run"},
+		Links:         []string{"https://example.test/issues/7"},
+	}
+	substrate := factsGroundingSubstrate(digest)
+
+	cases := []struct {
+		name  string
+		quote string
+		want  bool
+	}{
+		{"quote from summary", "worked on the build", true},
+		{"quote from first prompt", "fix the tests", true},
+		{"quote from a shell command", "go test ./...", true},
+		{"quote from another shell command", "golangci-lint run", true},
+		{"quote from an observed link", "https://example.test/issues/7", true},
+		{"case-insensitive match", "GO TEST ./...", true},
+		{"quote the model invented", "make deploy-prod", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := factGrounded("/tmp/proj", digest.Cwd, tc.quote, substrate)
+			if got != tc.want {
+				t.Errorf("factGrounded(%q) = %v, want %v", tc.quote, got, tc.want)
+			}
+		})
+	}
+}

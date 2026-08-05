@@ -305,13 +305,26 @@ func RunFactsForSession(
 	if err := json.Unmarshal([]byte(row.Body), &result); err != nil {
 		return id, fmt.Errorf("facts: parse persisted body: %w", err)
 	}
-	// Anti-fabrication substrate for quote grounding: the facts
-	// prompt sees only the summary + first prompt for the session,
-	// so any quote a fact cites MUST appear in one of those.
-	// Anything else is the LLM paraphrasing or transposing a quote
-	// — both of which the prompt's hard rule #2 forbids. Lowercase
-	// once so the per-fact substring check is case-insensitive.
-	substrate := strings.ToLower(digest.Summary + " " + digest.FirstPrompt)
+	// Anti-fabrication substrate for quote grounding: every quote a
+	// fact cites MUST appear verbatim in what the prompt actually
+	// showed the model. Anything else is paraphrasing or transposing,
+	// both of which the prompt's hard rule #2 forbids.
+	//
+	// The substrate must therefore mirror renderDigests, which emits
+	// the summary and first prompt AND the observed links and shell
+	// commands. Restricting it to summary+first_prompt silently
+	// discarded facts grounded in exactly the evidence the prompt was
+	// designed to surface: a session that ran `go test ./...` shows
+	// the command to the model, the model emits
+	// runs_tests_via / "go test ./..." with that command as the
+	// quote, and the fact was dropped unless the summariser happened
+	// to repeat the string in its prose. The documented predicate
+	// vocabulary leads with runs_tests_via / runs_build_via /
+	// runs_lint_via — precisely the class this biased against.
+	//
+	// Lowercase once so the per-fact substring check is
+	// case-insensitive.
+	substrate := factsGroundingSubstrate(digest)
 	persistedCount := persistInducedFacts(ctx, c, id, sessionID, digest.Cwd, substrate, &result)
 
 	if opts.JSON {
@@ -361,6 +374,22 @@ func RunFactsForSession(
 //
 // Shared by persistInducedFacts (the production drop) and the Layer-1
 // fabrication gate so the two can't diverge.
+// factsGroundingSubstrate returns the lowercased text a fact's quote
+// must appear in, mirroring exactly what renderDigests shows the
+// model: the summary, the first prompt, and the observed shell
+// commands and links.
+//
+// Keeping this in one function rather than inline at the call site is
+// what makes the mirror checkable — the previous inline version
+// omitted two of the four sources and nothing flagged the drift.
+func factsGroundingSubstrate(digest prompts.SessionDigest) string {
+	parts := make([]string, 0, 2+len(digest.ShellCommands)+len(digest.Links))
+	parts = append(parts, digest.Summary, digest.FirstPrompt)
+	parts = append(parts, digest.ShellCommands...)
+	parts = append(parts, digest.Links...)
+	return strings.ToLower(strings.Join(parts, " "))
+}
+
 func factGrounded(subject, sessionCwd, quote, substrate string) bool {
 	if sessionCwd != "" && subject != sessionCwd {
 		return false
