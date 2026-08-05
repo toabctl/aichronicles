@@ -1,0 +1,49 @@
+# Dependabot version updates.
+#
+# Minor and patch bumps are grouped into one PR per ecosystem to keep
+# the noise down, and auto-merged once CI passes (see
+# .github/workflows/dependabot-automerge.yml). Major bumps arrive as
+# individual PRs and wait for manual review.
+#
+# Commit-message prefixes are chosen so squash-merged PR titles satisfy
+# the conventional-commit rule in CLAUDE.md (`build(deps): ...`,
+# `ci(deps): ...`).
+
+version: 2
+
+updates:
+  # Go modules (go.mod / go.sum)
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      go-minor-patch:
+        update-types: [minor, patch]
+
+  # Actions referenced in .github/workflows/*
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+
+  # MkDocs toolchain pins (requirements-docs.txt)
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      docs-minor-patch:
+        update-types: [minor, patch]
