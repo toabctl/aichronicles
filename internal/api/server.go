@@ -48,6 +48,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/events"
@@ -330,14 +331,77 @@ func runServer(srv *http.Server, l net.Listener, log *slog.Logger) {
 // bound graceful drain: in-flight requests run until they finish or
 // the context fires, whichever comes first. A nil ctx is treated as
 // "no drain" and is equivalent to a hard close.
+// verifySocketDir refuses to use a socket directory that is not
+// owned by this user or that is reachable by anyone else.
+//
+// os.MkdirAll returns nil for a directory that ALREADY EXISTS,
+// whatever its owner or mode — it neither chowns nor chmods. That is
+// fine under systemd, which creates %t/aichronicles itself with
+// DirectoryMode=0700. It is not fine on the fallback path: when
+// XDG_RUNTIME_DIR is unset, paths.RuntimeDir returns
+// $TMPDIR/aichronicles-<uid>, a predictable name in a world-writable
+// directory. Another local user can pre-create it mode 0777, and the
+// sticky bit on /tmp does not protect the contents of a directory
+// they own.
+//
+// They would then win the window between our os.Remove and
+// net.Listen and bind their own socket at the path — and hooks would
+// POST full unredacted transcript envelopes to them. The comment that
+// used to sit on that Remove asserted UDS paths "are owned by this
+// process", which is precisely the assumption that fails here.
+//
+// XDG_RUNTIME_DIR is unset for plain `ssh host aichronicles ...`,
+// some cron contexts, and containers, so this is not an exotic path.
+func verifySocketDir(dir string) error {
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("stat socket dir %s: %w", dir, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("socket dir %s is not a directory", dir)
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		// Non-POSIX platform: the ownership check is unavailable, so
+		// fall back to the mode check alone rather than failing open
+		// silently on a platform we do not ship to.
+		if perm := info.Mode().Perm(); perm&0o077 != 0 {
+			return fmt.Errorf("socket dir %s has mode %04o; want 0700", dir, perm)
+		}
+		return nil
+	}
+	// Ownership is the property we cannot repair: if the directory
+	// belongs to someone else, they can replace anything we put in it
+	// no matter what we do next.
+	if uid := os.Getuid(); int(st.Uid) != uid {
+		return fmt.Errorf(
+			"socket dir %s is owned by uid %d, not %d; refusing to bind a socket "+
+				"in a directory another user controls", dir, st.Uid, uid)
+	}
+	// A loose mode on a directory we own IS repairable, so repair it
+	// rather than refusing. This also keeps us tolerant of a
+	// pre-existing runtime dir created under a permissive umask.
+	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return fmt.Errorf(
+				"socket dir %s has mode %04o and could not be tightened to 0700: %w",
+				dir, perm, err)
+		}
+	}
+	return nil
+}
+
 func ListenAndServe(sockPath string, handler http.Handler, log *slog.Logger) (func(context.Context) error, error) {
-	if err := os.MkdirAll(filepath.Dir(sockPath), 0o700); err != nil {
+	sockDir := filepath.Dir(sockPath)
+	if err := os.MkdirAll(sockDir, 0o700); err != nil {
 		return nil, fmt.Errorf("ensure socket dir: %w", err)
 	}
-	// Remove any stale socket from a previous run. Safe because
-	// UDS paths are owned by this process; a live server holding
-	// the socket would have failed the MkdirAll already if there
-	// was a permissions issue.
+	if err := verifySocketDir(sockDir); err != nil {
+		return nil, err
+	}
+	// Remove any stale socket from a previous run. Safe now that the
+	// directory has been verified to be ours and private: nobody else
+	// can have planted the path we are about to unlink.
 	_ = os.Remove(sockPath)
 
 	l, err := net.Listen("unix", sockPath)

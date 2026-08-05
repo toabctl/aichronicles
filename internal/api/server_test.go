@@ -631,3 +631,71 @@ func TestIngest_RejectsTrailingDataAfterEnvelope(t *testing.T) {
 		})
 	}
 }
+
+// TestVerifySocketDir covers the fallback runtime directory, where
+// the socket path is predictable and the parent is world-writable.
+//
+// os.MkdirAll returns nil for a directory that already exists,
+// whatever its owner or mode — it neither chowns nor chmods. Under
+// systemd that is fine (%t/aichronicles is created with
+// DirectoryMode=0700), but when XDG_RUNTIME_DIR is unset
+// paths.RuntimeDir returns $TMPDIR/aichronicles-<uid>. Another local
+// user can pre-create that name mode 0777; /tmp's sticky bit does not
+// protect the contents of a directory they own. They then win the
+// window between our os.Remove and net.Listen, bind their own socket,
+// and hooks POST full unredacted transcripts to them.
+func TestVerifySocketDir(t *testing.T) {
+	t.Parallel()
+
+	t.Run("tightens a loose mode on a directory we own", func(t *testing.T) {
+		t.Parallel()
+		dir := filepath.Join(t.TempDir(), "runtime")
+		if err := os.MkdirAll(dir, 0o777); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.Chmod(dir, 0o777); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
+
+		if err := verifySocketDir(dir); err != nil {
+			t.Fatalf("a directory we own should be repaired, not refused: %v", err)
+		}
+
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("stat: %v", err)
+		}
+		if perm := info.Mode().Perm(); perm&0o077 != 0 {
+			t.Errorf("mode is %04o; verifySocketDir must tighten it to 0700", perm)
+		}
+	})
+
+	t.Run("accepts an already-private directory", func(t *testing.T) {
+		t.Parallel()
+		dir := filepath.Join(t.TempDir(), "runtime")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := verifySocketDir(dir); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("rejects a path that is not a directory", func(t *testing.T) {
+		t.Parallel()
+		f := filepath.Join(t.TempDir(), "notadir")
+		if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		if err := verifySocketDir(f); err == nil {
+			t.Error("expected a refusal for a non-directory")
+		}
+	})
+
+	t.Run("rejects a missing directory", func(t *testing.T) {
+		t.Parallel()
+		if err := verifySocketDir(filepath.Join(t.TempDir(), "absent")); err == nil {
+			t.Error("expected a refusal for a missing directory")
+		}
+	})
+}
