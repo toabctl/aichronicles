@@ -812,7 +812,7 @@ func TestLoadLatestProposal_WrongKindIsError(t *testing.T) {
 	}
 
 	_, _, err = loadLatestProposal(context.Background(), apiForStore(t, s), id)
-	if err == nil || !strings.Contains(err.Error(), "not a propose row") {
+	if err == nil || !strings.Contains(err.Error(), `expected "propose" or "induction"`) {
 		t.Errorf("want wrong-kind error, got %v", err)
 	}
 }
@@ -847,4 +847,99 @@ func TestRenderProposalIndex_EmptySkillsMessage(t *testing.T) {
 	if !strings.Contains(buf.String(), "(no skills in proposal)") {
 		t.Errorf("expected empty-state line, got: %s", buf.String())
 	}
+}
+
+// TestLoadLatestProposal_AcceptsInductionOutput closes a gap that made
+// half the AutoSkill lifecycle write-only.
+//
+// renderInductionResult prints
+// "add: aichronicles propose add --skill X --output-id <id>", and
+// RunInductionForSession writes a skill_candidates row per induced
+// skill — but the loader rejected every kind except propose, so that
+// command always failed. Induced candidates sat in `pending` forever,
+// and renderPriorProposals then fed them back to the propose LLM as
+// "user did not act on this suggestion", teaching the corpus to stop
+// proposing them.
+//
+// InductionResult.Skill is already a *ProposedSkill and its doc says
+// propose add "consumes it without translation", so this is the
+// documented behaviour finally holding.
+func TestLoadLatestProposal_AcceptsInductionOutput(t *testing.T) {
+	t.Parallel()
+	s := openTempCLIStore(t)
+
+	body, err := json.Marshal(prompts.InductionResult{
+		Skill: &prompts.ProposedSkill{
+			Name:      "induced-skill",
+			WhenToUse: "when the induced pattern recurs",
+			Why:       "observed repeatedly",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	id := saveInductionOutput(t, s, string(body))
+
+	result, output, err := loadLatestProposal(context.Background(), apiForStore(t, s), id)
+	if err != nil {
+		t.Fatalf("loadLatestProposal on an induction row: %v", err)
+	}
+	if output.ID != id {
+		t.Errorf("output.ID = %d, want %d", output.ID, id)
+	}
+	if len(result.Skills) != 1 || result.Skills[0].Name != "induced-skill" {
+		t.Fatalf("expected the induced skill to surface, got %+v", result.Skills)
+	}
+	// findProposedSkill is what --skill resolves through, so the
+	// advertised command has to work end to end.
+	if _, err := findProposedSkill(result, "induced-skill"); err != nil {
+		t.Errorf("findProposedSkill: %v", err)
+	}
+}
+
+// TestLoadLatestProposal_InductionWithoutSkillIsAClearError covers the
+// workflow-only case: induction can legitimately emit a workflow and
+// no skill, and there is no "apply workflow to disk" path, so the
+// error must say so rather than surfacing a confusing empty proposal.
+func TestLoadLatestProposal_InductionWithoutSkillIsAClearError(t *testing.T) {
+	t.Parallel()
+	s := openTempCLIStore(t)
+
+	body, err := json.Marshal(prompts.InductionResult{})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	id := saveInductionOutput(t, s, string(body))
+
+	_, _, err = loadLatestProposal(context.Background(), apiForStore(t, s), id)
+	if err == nil || !strings.Contains(err.Error(), "induced no skill") {
+		t.Errorf("want a clear no-skill error, got %v", err)
+	}
+}
+
+// saveInductionOutput persists a kind=induction llm_outputs row and
+// returns its id. session_id is NULL to skip the FK check — these
+// tests only need the row to exist with the right kind.
+func saveInductionOutput(t *testing.T, s *store.Store, body string) int64 {
+	t.Helper()
+	tx, err := s.DB().Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	id, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
+		SessionID:   nil,
+		Kind:        store.LLMKindInduction,
+		Model:       "x",
+		PromptHash:  "induction-" + body[:min(8, len(body))],
+		Body:        body,
+		CreatedAtMs: time.Now().UnixMilli(),
+	})
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("save induction output: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	return id
 }

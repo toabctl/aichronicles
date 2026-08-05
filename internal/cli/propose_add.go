@@ -178,8 +178,10 @@ func loadLatestProposal(ctx context.Context, c *apiclient.Client, wantID int64) 
 		if err != nil {
 			return nil, nil, fmt.Errorf("load propose output id=%d: %w", wantID, err)
 		}
-		if out.Kind != string(store.LLMKindPropose) {
-			return nil, nil, fmt.Errorf("llm_outputs id=%d is not a propose row", wantID)
+		if out.Kind != string(store.LLMKindPropose) && out.Kind != string(store.LLMKindInduction) {
+			return nil, nil, fmt.Errorf(
+				"llm_outputs id=%d has kind %q; expected %q or %q",
+				wantID, out.Kind, store.LLMKindPropose, store.LLMKindInduction)
 		}
 		output = &out
 	} else {
@@ -193,9 +195,9 @@ func loadLatestProposal(ctx context.Context, c *apiclient.Client, wantID int64) 
 		output = &rows[0]
 	}
 
-	var result prompts.ProposalResult
-	if err := json.Unmarshal([]byte(output.Body), &result); err != nil {
-		return nil, nil, fmt.Errorf("parse cached propose body (id=%d): %w", output.ID, err)
+	result, err := proposalResultFromOutput(output)
+	if err != nil {
+		return nil, nil, err
 	}
 	// Anti-fabrication grounding: drop triggers the LLM emitted
 	// without anchoring in evidence Quote text. Done once at the
@@ -210,9 +212,47 @@ func loadLatestProposal(ctx context.Context, c *apiclient.Client, wantID int64) 
 	// hallucinated UUID. Without it the SKILL.md provenance footer
 	// and `/propose` web hyperlinks confidently cite sessions that
 	// don't exist (review 2026-05-14 P0).
-	resolved := resolveEvidenceSessions(ctx, c, &result)
+	resolved := resolveEvidenceSessions(ctx, c, result)
 	result.GroundEvidence(resolved)
-	return &result, output, nil
+	return result, output, nil
+}
+
+// proposalResultFromOutput decodes an llm_outputs body into the
+// proposal shape `propose add` works with, accepting both the
+// multi-skill propose body and the single-skill induction body.
+//
+// Induction is a first-class producer of skill candidates: it writes
+// a skill_candidates row per induced skill and renderInductionResult
+// prints "add: aichronicles propose add --skill X --output-id <id>".
+// That command could never work, because the loader rejected any kind
+// but propose — so induced candidates accumulated in `pending`
+// forever, and renderPriorProposals then fed them back to the propose
+// LLM as "user did not act on this suggestion", teaching the corpus
+// to stop proposing them. The online-induction half of the AutoSkill
+// lifecycle was effectively write-only.
+//
+// No translation is needed: InductionResult.Skill is a *ProposedSkill,
+// the same type ProposalResult.Skills holds, and its doc comment
+// already says propose add "consumes it without translation".
+func proposalResultFromOutput(output *wire.LLMOutput) (*prompts.ProposalResult, error) {
+	if output.Kind == string(store.LLMKindInduction) {
+		var induced prompts.InductionResult
+		if err := json.Unmarshal([]byte(output.Body), &induced); err != nil {
+			return nil, fmt.Errorf("parse cached induction body (id=%d): %w", output.ID, err)
+		}
+		if induced.Skill == nil {
+			return nil, fmt.Errorf(
+				"induction output id=%d induced no skill (only a workflow, or nothing) — "+
+					"there is nothing to add", output.ID)
+		}
+		return &prompts.ProposalResult{Skills: []prompts.ProposedSkill{*induced.Skill}}, nil
+	}
+
+	var result prompts.ProposalResult
+	if err := json.Unmarshal([]byte(output.Body), &result); err != nil {
+		return nil, fmt.Errorf("parse cached propose body (id=%d): %w", output.ID, err)
+	}
+	return &result, nil
 }
 
 // resolveEvidenceSessions returns the subset of distinct evidence
