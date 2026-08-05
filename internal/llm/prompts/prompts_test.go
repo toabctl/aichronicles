@@ -2127,7 +2127,7 @@ func TestRenderInvokedSkills_RendersLastLoadedAnnotation(t *testing.T) {
 		{Name: "no-impact-with-recency", Count: 2, LastLoadedMs: twoHoursAgo},
 		{Name: "no-impact-no-recency", Count: 1},
 	}
-	out := renderInvokedSkills(skills)
+	out := renderInvokedSkills(skills, patternSet{})
 	for _, want := range []string{
 		"fresh-impact × 6  (success: 100%, 0/6 loads followed by tool_failure, last loaded 2h ago)",
 		"stale-impact × 12  (success: 75%, 3/12 loads followed by tool_failure, last loaded 3d ago)",
@@ -2436,4 +2436,94 @@ func TestBuildInduce_HashStableAndContentSensitive(t *testing.T) {
 	if a.Hash == c.Hash {
 		t.Errorf("different first_prompt should change hash")
 	}
+}
+
+// TestBuilders_NoUnscrubbedFieldReachesTheWire is the egress gate for
+// the prompt layer.
+//
+// Several fields went out raw while a sibling on the adjacent line
+// was scrubbed: the challenge stanza scrubbed Item but not Topic, the
+// merge renderer scrubbed step Cmd but not step Purpose, and three
+// renderers (installed skills, invoked skills, prior proposals) took
+// no patternSet at all. Each carries DB-resident, transcript-derived
+// text.
+//
+// The second assertion matters as much as the first. A field that
+// skips the scrub also never lands in Built.Patterns, so the caller's
+// "egress redaction fired" log is blind to it — the leak is silent as
+// well as real.
+func TestBuilders_NoUnscrubbedFieldReachesTheWire(t *testing.T) {
+	t.Parallel()
+	const secret = "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	digests := []SessionDigest{{ID: "s1", FirstPrompt: "hi"}}
+
+	installed := []InstalledSkill{{
+		Name:        "skill-" + secret,
+		Description: "desc " + secret,
+		Source:      "project:/tmp/" + secret,
+	}}
+	invoked := []InvokedSkill{{Name: "invoked-" + secret, Count: 2}}
+	priors := []PriorProposal{{SkillName: "prior-" + secret}}
+
+	cases := []struct {
+		name  string
+		build func() (Built, error)
+	}{
+		{"propose", func() (Built, error) {
+			return BuildPropose(ProposeInputs{
+				Digests:         digests,
+				InstalledSkills: installed,
+				InvokedSkills:   invoked,
+				PriorProposals:  priors,
+			})
+		}},
+		{"challenge", func() (Built, error) {
+			return BuildChallenge(ChallengeInputs{
+				Digests:         digests,
+				InstalledSkills: installed,
+				InvokedSkills:   invoked,
+				Unresolved: []UnresolvedItemForChallenge{{
+					SessionID: "0123456789abcdef",
+					Topic:     "topic " + secret,
+					Item:      "item text",
+				}},
+			})
+		}},
+		{"induce", func() (Built, error) {
+			return BuildInduce(InduceFromSessionInputs{
+				Digest:          SessionDigest{ID: "s1", FirstPrompt: "hi"},
+				InstalledSkills: installed,
+			})
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			built, err := tc.build()
+			if err != nil {
+				t.Fatalf("build: %v", err)
+			}
+			whole := built.Request.System
+			for _, m := range built.Request.Messages {
+				whole += "\n" + m.Content
+			}
+			if strings.Contains(whole, secret) {
+				t.Errorf("secret reached the outbound prompt:\n%s", whole)
+			}
+			if !containsString(built.Patterns, "github_pat_classic") {
+				t.Errorf("Built.Patterns must record the hit so the caller's "+
+					"egress log is not blind to it; got %v", built.Patterns)
+			}
+		})
+	}
+}
+
+func containsString(hay []string, needle string) bool {
+	for _, s := range hay {
+		if s == needle {
+			return true
+		}
+	}
+	return false
 }

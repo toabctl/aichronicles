@@ -1229,9 +1229,9 @@ func BuildPropose(in ProposeInputs) (Built, error) {
 
 	userMsg := fmt.Sprintf(proposeTemplate,
 		len(in.Digests),
-		renderInstalledSkills(in.InstalledSkills),
-		renderInvokedSkills(in.InvokedSkills),
-		renderPriorProposals(in.PriorProposals),
+		renderInstalledSkills(in.InstalledSkills, pats),
+		renderInvokedSkills(in.InvokedSkills, pats),
+		renderPriorProposals(in.PriorProposals, pats),
 		renderFailureModes(in.FailureShapes),
 		body,
 	)
@@ -1723,7 +1723,7 @@ func BuildInduce(in InduceFromSessionInputs) (Built, error) {
 	pats := patternSet{}
 	body := renderDigests([]SessionDigest{in.Digest}, pats)
 	userMsg := fmt.Sprintf(inductionTemplate,
-		renderInstalledSkills(in.InstalledSkills),
+		renderInstalledSkills(in.InstalledSkills, pats),
 		body,
 	)
 	req := llm.Request{
@@ -2250,8 +2250,8 @@ func BuildChallenge(in ChallengeInputs) (Built, error) {
 
 	userMsg := fmt.Sprintf(challengeTemplate,
 		len(in.Digests),
-		renderInstalledSkills(in.InstalledSkills),
-		renderInvokedSkills(in.InvokedSkills),
+		renderInstalledSkills(in.InstalledSkills, pats),
+		renderInvokedSkills(in.InvokedSkills, pats),
 		renderUnresolvedStanza(in.Unresolved, pats),
 		body,
 	)
@@ -2287,7 +2287,10 @@ func renderUnresolvedStanza(items []UnresolvedItemForChallenge, pats patternSet)
 		if short == "" && len(it.SessionID) >= 8 {
 			short = it.SessionID[:8]
 		}
-		topic := it.Topic
+		// Scrubbed like the Item beside it: Topic is an
+		// LLM-written summary field read back out of the DB, not a
+		// slug.
+		topic := pats.scrub(it.Topic)
 		if topic == "" {
 			topic = "(no summary topic)"
 		}
@@ -2501,7 +2504,7 @@ func BuildVerifyProposal(in VerifyProposalInputs) (Built, error) {
 		triggersStr, tagsStr,
 		bodyClean,
 		strings.TrimRight(evidence.String(), "\n"),
-		renderInstalledSkills(in.InstalledSkills),
+		renderInstalledSkills(in.InstalledSkills, pats),
 	)
 
 	req := llm.Request{
@@ -2981,12 +2984,16 @@ func renderCandidateForMerge(c ProposedSkill) (string, []string) {
 			for j, st := range sc.Steps {
 				cleanCmd, p7 := redact.Outbound(st.Cmd)
 				pats.addAll(p7)
-				fmt.Fprintf(&b, "     step %d: %s    # %s\n", j+1, cleanCmd, st.Purpose)
+				fmt.Fprintf(&b, "     step %d: %s    # %s\n", j+1, cleanCmd, pats.scrub(st.Purpose))
 			}
 			for _, ph := range sc.Placeholders {
-				fmt.Fprintf(&b, "     placeholder {%s}: %s", ph.Token, ph.Description)
+				fmt.Fprintf(&b, "     placeholder {%s}: %s", ph.Token, pats.scrub(ph.Description))
 				if ph.Example != "" {
-					fmt.Fprintf(&b, " (e.g. %s)", ph.Example)
+					// The tool schema tells the model to fill this
+					// with "a real value the user actually used", so
+					// it is transcribed transcript text by design —
+					// the last field that should skip the scrub.
+					fmt.Fprintf(&b, " (e.g. %s)", pats.scrub(ph.Example))
 				}
 				b.WriteString("\n")
 			}
@@ -3084,14 +3091,15 @@ func BuildSearchSummary(query string, hits []SearchHit, maxTokens int) (Built, e
 // inserted before the sessions in the propose user message. Empty
 // list → empty string (no header), so a fresh user with no
 // installed skills doesn't get a misleading section.
-func renderInstalledSkills(skills []InstalledSkill) string {
+func renderInstalledSkills(skills []InstalledSkill, pats patternSet) string {
 	if len(skills) == 0 {
 		return ""
 	}
 	var b strings.Builder
 	b.WriteString("\n\nSkills installed (the user has these — do not propose new skills with overlapping names):\n")
 	for _, s := range skills {
-		_, _ = fmt.Fprintf(&b, "- %s [%s]: %s\n", s.Name, s.Source, s.Description)
+		_, _ = fmt.Fprintf(&b, "- %s [%s]: %s\n",
+			pats.scrub(s.Name), pats.scrub(s.Source), pats.scrub(s.Description))
 	}
 	return b.String()
 }
@@ -3109,7 +3117,7 @@ func renderInstalledSkills(skills []InstalledSkill) string {
 // instructions are stale) rather than displacement by a brand-new
 // proposal. Rows without impact data render the bare count, same
 // as before.
-func renderInvokedSkills(skills []InvokedSkill) string {
+func renderInvokedSkills(skills []InvokedSkill, pats patternSet) string {
 	if len(skills) == 0 {
 		return ""
 	}
@@ -3117,20 +3125,24 @@ func renderInvokedSkills(skills []InvokedSkill) string {
 	var b strings.Builder
 	b.WriteString("\nSkills invoked recently (count = times loaded in the window — these are working for the user; a low success rate suggests the existing skill needs a revision rather than displacement by a brand-new proposal; \"last loaded\" is the most recent invocation in the window — a skill loaded N times yesterday is a stronger signal than one loaded N times five days ago):\n")
 	for _, s := range skills {
+		// Name is extractions.value for kind=skill_load — transcript-
+		// derived text with no format guarantee at this render site,
+		// so scrub it once here rather than at each branch.
+		name := pats.scrub(s.Name)
 		switch {
 		case s.TotalLoads > 0 && s.LastLoadedMs > 0:
 			pct := int(s.SuccessRate * 100)
 			_, _ = fmt.Fprintf(&b, "- %s × %d  (success: %d%%, %d/%d loads followed by tool_failure, last loaded %s)\n",
-				s.Name, s.Count, pct, s.FailedLoads, s.TotalLoads, humanAgo(now, s.LastLoadedMs))
+				name, s.Count, pct, s.FailedLoads, s.TotalLoads, humanAgo(now, s.LastLoadedMs))
 		case s.TotalLoads > 0:
 			pct := int(s.SuccessRate * 100)
 			_, _ = fmt.Fprintf(&b, "- %s × %d  (success: %d%%, %d/%d loads followed by tool_failure)\n",
-				s.Name, s.Count, pct, s.FailedLoads, s.TotalLoads)
+				name, s.Count, pct, s.FailedLoads, s.TotalLoads)
 		case s.LastLoadedMs > 0:
 			_, _ = fmt.Fprintf(&b, "- %s × %d  (last loaded %s)\n",
-				s.Name, s.Count, humanAgo(now, s.LastLoadedMs))
+				name, s.Count, humanAgo(now, s.LastLoadedMs))
 		default:
-			_, _ = fmt.Fprintf(&b, "- %s × %d\n", s.Name, s.Count)
+			_, _ = fmt.Fprintf(&b, "- %s × %d\n", name, s.Count)
 		}
 	}
 	return b.String()
@@ -3227,7 +3239,7 @@ func renderOneEvent(e events.EventView, pats patternSet) string {
 		if e.SubagentType.Valid && e.SubagentType.String != "" {
 			t = e.SubagentType.String
 		}
-		label = "sa:" + e.SubagentID.String + ":" + t + " " + label
+		label = "sa:" + pats.scrub(e.SubagentID.String) + ":" + pats.scrub(t) + " " + label
 	}
 
 	var b strings.Builder
@@ -3497,7 +3509,7 @@ func renderFailureModes(shapes []FailureShapeDigest) string {
 // treat each category as guidance: don't repropose ADDED skills,
 // reconsider triggers for ADDED-unused, address failures for
 // ADDED-failing, and avoid repeating PENDING suggestions.
-func renderPriorProposals(props []PriorProposal) string {
+func renderPriorProposals(props []PriorProposal, pats patternSet) string {
 	if len(props) == 0 {
 		return ""
 	}
@@ -3505,23 +3517,26 @@ func renderPriorProposals(props []PriorProposal) string {
 	var b strings.Builder
 	b.WriteString("\nPrior proposals (the system has emitted these before — DO NOT repropose near-duplicates; reconsider when_to_use for ones that landed but went unused; address the failure for ones with post-add tool_failures):\n")
 	for _, p := range props {
+		// Model-emitted; the kebab-case shape is enforced only by
+		// the emitting schema, not at this read site.
+		name := pats.scrub(p.SkillName)
 		ageDays := daysSince(now, p.ProposedAtMs)
 		switch {
 		case !p.Added:
 			fmt.Fprintf(&b, "- %s — proposed %d days ago, PENDING (user did not act on this suggestion)\n",
-				p.SkillName, ageDays)
+				name, ageDays)
 		case p.LoadsAfterAdd == 0:
 			addedDays := daysSince(now, p.AddedAtMs)
 			fmt.Fprintf(&b, "- %s — proposed %d days ago, ADDED %d days ago, 0 loads since (skill on disk but unused — when_to_use may be wrong)\n",
-				p.SkillName, ageDays, addedDays)
+				name, ageDays, addedDays)
 		case p.FailedLoadsAfter > 0:
 			addedDays := daysSince(now, p.AddedAtMs)
 			fmt.Fprintf(&b, "- %s — proposed %d days ago, ADDED %d days ago, %d loads with %d failures (skill exists but failing — propose an evolution if the failure pattern is grounded in evidence)\n",
-				p.SkillName, ageDays, addedDays, p.LoadsAfterAdd, p.FailedLoadsAfter)
+				name, ageDays, addedDays, p.LoadsAfterAdd, p.FailedLoadsAfter)
 		default:
 			addedDays := daysSince(now, p.AddedAtMs)
 			fmt.Fprintf(&b, "- %s — proposed %d days ago, ADDED %d days ago, %d loads, 0 failures (in use, working — DO NOT repropose)\n",
-				p.SkillName, ageDays, addedDays, p.LoadsAfterAdd)
+				name, ageDays, addedDays, p.LoadsAfterAdd)
 		}
 	}
 	return b.String()
@@ -3688,6 +3703,21 @@ func hashRequest(req llm.Request) string {
 
 // patternSet is a tiny sorted-deduped string collector used while
 // rendering. Keeping it unexported avoids callers mutating it.
+// scrub runs redact.Outbound and records every pattern that fired.
+// Collapses the three-line clean/names/addAll idiom that each
+// renderer would otherwise repeat, and — more importantly — makes
+// "scrubbed" the easy thing to type, so a new field is less likely to
+// go out raw the way Topic, ph.Example and the skill-name renderers
+// did.
+func (p patternSet) scrub(s string) string {
+	if s == "" {
+		return s
+	}
+	clean, names := redact.Outbound(s)
+	p.addAll(names)
+	return clean
+}
+
 type patternSet map[string]struct{}
 
 func (p patternSet) addAll(names []string) {
