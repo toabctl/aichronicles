@@ -580,3 +580,54 @@ func TestHealthz(t *testing.T) {
 		t.Fatalf("unexpected body: %s", body)
 	}
 }
+
+// TestIngest_RejectsTrailingDataAfterEnvelope closes the accept side
+// of the queue-wedge bug.
+//
+// The handler decodes with json.Decoder.Decode, which stops at the
+// end of the first JSON value and ignores the rest; the worker parses
+// the staged body with json.Unmarshal, which rejects trailing bytes.
+// The two disagreed, so `{envelope}{"junk":1}` was 200-acked, staged,
+// and then failed in the worker on every attempt forever.
+//
+// The daemon must not ack a body it cannot fully process. Rejecting
+// here means the hook sees the failure and can report it, instead of
+// the event being silently lost after a success response.
+func TestIngest_RejectsTrailingDataAfterEnvelope(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		trailer string
+	}{
+		{"second object", `{"junk":1}`},
+		{"bare literal", `null`},
+		{"array", `[1,2,3]`},
+		{"repeated envelope", `{"v":1}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := newTestServer(t)
+			body := append(validBody(t), []byte(tc.trailer)...)
+
+			req := httptest.NewRequest(http.MethodPost, "/v1/ingest", bytes.NewReader(body))
+			rr := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400 (body must not be acked)", rr.Code)
+			}
+
+			// Nothing may have been staged: a rejected body that still
+			// enqueues is the wedge by another route.
+			var pending int
+			if err := srv.store.DB().QueryRow(
+				`SELECT COUNT(*) FROM ingest_pending`).Scan(&pending); err != nil {
+				t.Fatalf("count pending: %v", err)
+			}
+			if pending != 0 {
+				t.Errorf("rejected body still staged %d pending rows", pending)
+			}
+		})
+	}
+}

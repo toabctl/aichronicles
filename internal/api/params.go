@@ -208,6 +208,15 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 		writeProblem(w, http.StatusBadRequest, "Malformed body", err.Error())
 		return false
 	}
+	// Decode stops at the end of the first JSON value and ignores
+	// whatever follows, so `{...}{"junk":1}` decodes clean. Reject the
+	// trailing bytes instead of silently dropping them: a request the
+	// server only half-understood should not be acked as understood.
+	if dec.More() {
+		writeProblem(w, http.StatusBadRequest, "Malformed body",
+			"unexpected data after the JSON value")
+		return false
+	}
 	return true
 }
 

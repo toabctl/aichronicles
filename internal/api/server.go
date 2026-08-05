@@ -406,6 +406,17 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "Malformed envelope JSON", err.Error())
 		return
 	}
+	// The worker parses the staged body with json.Unmarshal, which
+	// rejects trailing bytes, while Decode ignores them. Left
+	// unchecked the two disagree: `{envelope}{"junk":1}` is accepted
+	// and acked here, then fails in the worker on every attempt.
+	// Reject at the boundary so a body we cannot fully process is
+	// never 200-acked.
+	if dec.More() {
+		writeProblem(w, http.StatusBadRequest, "Malformed envelope JSON",
+			"unexpected data after the JSON value")
+		return
+	}
 	if err := env.Validate(); err != nil {
 		writeProblem(w, http.StatusBadRequest, "Envelope validation failed", err.Error())
 		return
