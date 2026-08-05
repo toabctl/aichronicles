@@ -167,11 +167,16 @@ func (m resumeModel) View() string {
 	}
 	// Both panes are pinned to the same fixed height so navigating never
 	// changes the layout: the list pads short result sets, and the
-	// preview (whose length varies per session) is padded/clipped to fit.
+	// preview (whose length varies per session) is padded to fit.
+	//
+	// Note lipgloss.Height() only PADS — clipping lives in MaxHeight —
+	// so anything that overflows paneH is cut by the hard cap below,
+	// which slices from the bottom and takes the footer with it.
 	body := lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		resumeBoxStyle.Height(paneH).Render(m.list.View()),
-		resumeBoxStyle.Width(rightW).Height(paneH).Render(renderResumePreviewPane(m.cands[sel], rightW, bodyLines)),
+		resumeBoxStyle.Width(rightW).Height(paneH).
+			Render(renderResumePreviewPane(m.cands[sel], resumeBoxContentWidth(rightW), bodyLines)),
 	)
 	footer := resumeFooterStyle.Render("↑/↓ move · enter resume · q quit")
 	out := body + "\n" + footer
@@ -198,6 +203,30 @@ func resumePaneContentH(termH int) int {
 // resumePaneWidths splits the terminal into a narrower list column and a
 // wider preview column, leaving room for the two boxes' borders and
 // padding so the joined layout fits within total columns.
+// resumeBoxContentWidth converts a resumeBoxStyle box width into the
+// column budget its contents actually get.
+//
+// lipgloss.Width() sets the block width INCLUDING padding, and
+// resumeBoxStyle carries Padding(0, 1). Rendering content at the full
+// box width therefore overflows by exactly two columns, and lipgloss
+// soft-wraps every such line into two — roughly doubling the pane's
+// height. With a realistic 8-message tail that pushed the frame past
+// the terminal height at every size tested, and the hard cap in View
+// then sliced the footer and both bottom borders off the bottom.
+//
+// The arithmetic lives here rather than inline because the layout is
+// split across resumePaneWidths, resumePaneContentH, the bodyLines
+// computation and the renderer, each previously holding its own
+// partial model of the border/padding accounting.
+func resumeBoxContentWidth(boxWidth int) int {
+	const horizontalPadding = 2 // Padding(0, 1) → one column each side
+	w := boxWidth - horizontalPadding
+	if w < 1 {
+		return 1
+	}
+	return w
+}
+
 func resumePaneWidths(total int) (left, right int) {
 	if total < 50 {
 		total = 50

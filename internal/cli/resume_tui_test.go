@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -244,5 +245,75 @@ func TestResumeModel_QuittingViewIsEmpty(t *testing.T) {
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if got := m.View(); got != "" {
 		t.Errorf("view after quit = %q, want empty", got)
+	}
+}
+
+// TestResumeModel_FooterSurvivesTallPreviews is the assertion the
+// frame-height test could not make.
+//
+// The preview was rendered at the box's full width while
+// resumeBoxStyle carries Padding(0, 1), so every content line
+// overflowed by two columns and lipgloss soft-wrapped it into two —
+// roughly doubling the pane height. lipgloss.Height() only pads
+// (clipping lives in MaxHeight), so the overflow reached View's hard
+// terminal-height cap, which slices from the bottom and took the
+// footer and both bottom borders with it.
+//
+// TestResumeModel_FrameHeightIsStable passed throughout, because the
+// hard cap makes the line count correct unconditionally. Only the
+// footer's presence distinguishes "fits" from "was truncated", and
+// with a realistic 8-message tail it was missing at every terminal
+// height tested.
+func TestResumeModel_FooterSurvivesTallPreviews(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("word ", 80)
+	// resumePreviewPaneMessages is what RunResume actually fetches.
+	tail := make([]wire.SessionEvent, 0, 8)
+	for i := 0; i < 8; i++ {
+		kind := events.KindUserPrompt
+		if i%2 == 1 {
+			kind = events.KindAssistantMessage
+		}
+		tail = append(tail, msg(kind, long))
+	}
+	cands := []resumeCandidate{
+		tuiCand("aaaa-1", "/w/a", "pa", tail),
+		tuiCand("bbbb-2", "/w/b", "pb", tail),
+	}
+
+	for _, termH := range []int{24, 30, 40, 50, 60} {
+		t.Run(fmt.Sprintf("height-%d", termH), func(t *testing.T) {
+			t.Parallel()
+			next, _ := newResumeModel(cands).Update(
+				tea.WindowSizeMsg{Width: 120, Height: termH})
+			m := next.(resumeModel)
+			view := m.View()
+
+			if !strings.Contains(view, "enter resume") {
+				t.Errorf("footer clipped at height %d; frame:\n%s", termH, view)
+			}
+			if got := len(strings.Split(view, "\n")); got > termH {
+				t.Errorf("frame is %d lines, over the %d-line terminal", got, termH)
+			}
+		})
+	}
+}
+
+// TestResumeBoxContentWidth_AccountsForPadding pins the arithmetic
+// the layout depends on, so a future padding change fails here rather
+// than silently eating the footer again.
+func TestResumeBoxContentWidth_AccountsForPadding(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ box, want int }{
+		{66, 64},
+		{24, 22},
+		{3, 1},
+		{2, 1}, // clamped, never zero or negative
+		{0, 1},
+	}
+	for _, tc := range cases {
+		if got := resumeBoxContentWidth(tc.box); got != tc.want {
+			t.Errorf("resumeBoxContentWidth(%d) = %d, want %d", tc.box, got, tc.want)
+		}
 	}
 }
