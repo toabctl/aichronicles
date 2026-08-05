@@ -1,6 +1,10 @@
 package textfmt
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
 
 func TestCollapseWhitespace(t *testing.T) {
 	t.Parallel()
@@ -84,6 +88,55 @@ func TestLowerFirst(t *testing.T) {
 	for in, want := range cases {
 		if got := LowerFirst(in); got != want {
 			t.Errorf("LowerFirst(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestClipToRunes_WordBoundaryUsesRuneCounts pins the guard that
+// decides whether to break at a word boundary.
+//
+// LastIndexAny returns a BYTE index, and it was compared against
+// max/2, a RUNE count. For multi-byte text the byte index runs up to
+// 3x the rune index, so the "only break past the halfway mark" test
+// passed for boundaries far earlier than intended and the result came
+// back much shorter than max allows. The slice itself was safe — the
+// boundary characters are ASCII — only the length was wrong.
+func TestClipToRunes_WordBoundaryUsesRuneCounts(t *testing.T) {
+	t.Parallel()
+	// Each 'ü' is two bytes, so a byte index is ~2x the rune index.
+	// The only space sits at rune 4 — under the halfway mark of 10 —
+	// so it must NOT be used as a break point.
+	in := "üüüü üüüüüüüüüüüüüüüü"
+	got := ClipToRunes(in, 20)
+	body := strings.TrimSuffix(got, "…")
+
+	// With a byte-index comparison the sole space (byte 8, rune 4)
+	// cleared the `> max/2` test and the result collapsed to "üüüü…".
+	// Comparing rune counts rejects it, so the full budget is used.
+	if n := utf8.RuneCountInString(body); n < 10 {
+		t.Errorf("clipped at an early word boundary the rune guard should reject: "+
+			"%d runes, want close to 20: %q", n, got)
+	}
+}
+
+// TestClipToRunes_NeverSplitsARune is the property that matters most:
+// a byte slice through a multi-byte rune emits U+FFFD.
+func TestClipToRunes_NeverSplitsARune(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{
+		strings.Repeat("→", 50),
+		strings.Repeat("ü", 50),
+		"go test ./... → ≥90% coverage " + strings.Repeat("é", 40),
+		strings.Repeat("🎉", 30),
+	} {
+		for _, max := range []int{1, 5, 10, 25, 49, 50, 100} {
+			got := ClipToRunes(in, max)
+			if !utf8.ValidString(got) {
+				t.Errorf("ClipToRunes(%q, %d) produced invalid UTF-8: %q", in, max, got)
+			}
+			if strings.ContainsRune(got, '�') {
+				t.Errorf("ClipToRunes(%q, %d) split a rune: %q", in, max, got)
+			}
 		}
 	}
 }

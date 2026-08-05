@@ -19,6 +19,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/textfmt"
 	"github.com/toabctl/aichronicles/internal/timefmt"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -776,8 +777,11 @@ func formatInductionOutcome(r *prompts.InductionResult) string {
 // truncateForList trims `s` to fit a list cell. Suffix with `…`
 // when truncated so the reader knows there's more.
 func truncateForList(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max-1] + "…"
+	// Rune-aware: this trims model-authored prose (when_to_use,
+	// task_shape, workflow_change) that routinely contains →, … and
+	// ≥, and a byte slice through a multi-byte rune emits U+FFFD.
+	// The byte-length guard was also wrong in the other direction —
+	// it truncated well before `max` display columns for any
+	// non-ASCII text.
+	return textfmt.OneLineN(s, max)
 }

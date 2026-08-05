@@ -16,6 +16,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/textfmt"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -652,14 +653,11 @@ func writeSummaries(w io.Writer, rows []wire.LLMOutput, format OutputFormat) err
 // doesn't fit the expected schema — survival mode for legacy rows or
 // post-schema-bump drift.
 func extractTopic(kind store.LLMOutputKind, body string) string {
+	// Rune-aware, and flattening is part of the job: these labels go
+	// into a single-line list. Byte slicing here split multi-byte
+	// runes in model-authored prose.
 	const maxLen = 80
-	truncate := func(s string) string {
-		s = strings.ReplaceAll(s, "\n", " ")
-		if len(s) > maxLen {
-			return s[:maxLen] + "…"
-		}
-		return s
-	}
+	truncate := func(s string) string { return textfmt.OneLineN(s, maxLen) }
 	switch kind {
 	case store.LLMKindSummary:
 		var r struct {

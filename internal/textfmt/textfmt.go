@@ -7,7 +7,10 @@
 // reach without an import cycle.
 package textfmt
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 // CollapseWhitespace squashes runs of whitespace (newlines,
 // multiple spaces) into single spaces so a multi-line value fits on
@@ -59,7 +62,15 @@ func ClipToRunes(s string, max int) string {
 		return s
 	}
 	cut := string(r[:max])
-	if i := strings.LastIndexAny(cut, " ,;:"); i > max/2 {
+	// Compare a RUNE count against a rune count. LastIndexAny returns
+	// a BYTE index, which for multi-byte text runs up to 3x the rune
+	// index — so the "only break at a word boundary past the halfway
+	// mark" guard passed for boundaries far earlier than intended and
+	// the result came back much shorter than max allows. The slice
+	// itself was safe (the boundary chars are ASCII); only the length
+	// was wrong.
+	if i := strings.LastIndexAny(cut, " ,;:"); i >= 0 &&
+		utf8.RuneCountInString(cut[:i]) > max/2 {
 		cut = cut[:i]
 	}
 	return strings.TrimRight(cut, " ,;:") + "…"
