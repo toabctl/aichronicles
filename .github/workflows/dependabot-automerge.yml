@@ -1,0 +1,44 @@
+# Auto-merge Dependabot PRs.
+#
+# Enables GitHub's native auto-merge on every non-major Dependabot PR,
+# so the PR merges (squash) as soon as the required `pre-commit` check
+# from ci.yml passes. Major version bumps are left open for manual
+# review.
+#
+# Relies on two repo settings (both already enabled):
+#   - "Allow auto-merge" in the repository settings
+#   - branch protection on main requiring the `pre-commit` status check
+#     — without a required check, enabling auto-merge would merge the
+#     PR immediately, before CI has run.
+#
+# Note: the merge is performed with GITHUB_TOKEN, so the resulting push
+# to main does not trigger the `on: push` ci run (GitHub suppresses
+# workflow-from-workflow recursion). The same checks already ran on the
+# PR head, which branch protection required to be green.
+
+name: dependabot-automerge
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge for minor and patch bumps
+        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
