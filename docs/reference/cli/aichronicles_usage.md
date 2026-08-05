@@ -19,6 +19,16 @@ Schema for prices.toml:
   [models."claude-sonnet-4-6"]
   input_per_mtok  = 3.00
   output_per_mtok = 15.00
+  # Optional. Anthropic prompt-cache rates; when omitted
+  # they default to 1.25x and 0.1x input_per_mtok, which
+  # are Anthropic's published multipliers.
+  cache_write_per_mtok = 3.75
+  cache_read_per_mtok  = 0.30
+
+Cached prompt tokens are counted and priced separately from
+uncached input. Every request marks its system prompt
+cacheable, so for repeat runs the cache columns can dominate
+— a COST that ignored them would understate real spend.
 
 --format=json emits the rows + totals as a structured
 payload suitable for jq.

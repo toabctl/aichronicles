@@ -208,3 +208,31 @@ func TestRunUsage_EndToEnd(t *testing.T) {
 			report.Totals.InputTokens, report.Totals.OutputTokens)
 	}
 }
+
+// TestUsageReport_PricesCacheTokens closes the gap migration 031 left
+// in the CLI.
+//
+// The columns, wire fields and API handler all carried the
+// prompt-cache counters, but the report still called CostUSD with
+// only input/output — so the COST column silently understated every
+// cached call. Since every request marks its system prompt cacheable,
+// that is most of them, and "silently low" is the confidently-wrong
+// result CLAUDE.md §7 exists to prevent.
+func TestUsageReport_PricesCacheTokens(t *testing.T) {
+	t.Parallel()
+	prices := pricing.Prices{"m": {InputPerMTok: 10, OutputPerMTok: 20}}
+
+	// 1M of each class: 10 + 20 + 12.5 (write @1.25x) + 1 (read @0.1x)
+	withCache, known := prices.CostUSDWithCache("m", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
+	if !known {
+		t.Fatal("expected a known price")
+	}
+	noCache, _ := prices.CostUSDWithCache("m", 1_000_000, 1_000_000, 0, 0)
+
+	if withCache <= noCache {
+		t.Errorf("cache tokens must add cost: with=%v without=%v", withCache, noCache)
+	}
+	if diff := withCache - 43.5; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("cost = %v, want 43.5", withCache)
+	}
+}

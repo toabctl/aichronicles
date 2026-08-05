@@ -44,7 +44,16 @@ func newUsageCmd() *cobra.Command {
 			"Schema for prices.toml:\n\n" +
 			"  [models.\"claude-sonnet-4-6\"]\n" +
 			"  input_per_mtok  = 3.00\n" +
-			"  output_per_mtok = 15.00\n\n" +
+			"  output_per_mtok = 15.00\n" +
+			"  # Optional. Anthropic prompt-cache rates; when omitted\n" +
+			"  # they default to 1.25x and 0.1x input_per_mtok, which\n" +
+			"  # are Anthropic's published multipliers.\n" +
+			"  cache_write_per_mtok = 3.75\n" +
+			"  cache_read_per_mtok  = 0.30\n\n" +
+			"Cached prompt tokens are counted and priced separately from\n" +
+			"uncached input. Every request marks its system prompt\n" +
+			"cacheable, so for repeat runs the cache columns can dominate\n" +
+			"— a COST that ignored them would understate real spend.\n\n" +
 			"--format=json emits the rows + totals as a structured\n" +
 			"payload suitable for jq.\n\n" +
 			"Talks to aichronicles-api over its UDS (override with\n" +
@@ -135,6 +144,13 @@ type UsageRowJSON struct {
 	OutputTokens int64    `json:"output_tokens"`
 	RowCount     int      `json:"row_count"`
 	CostUSD      *float64 `json:"cost_usd,omitempty"`
+
+	// Prompt-cache counters. Reported separately because they bill at
+	// different rates (write 1.25x the base input rate, read 0.1x),
+	// which is also why CostUSD cannot be recovered from
+	// input_tokens alone.
+	CacheWriteTokens int64 `json:"cache_write_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens"`
 }
 
 // UsageReportJSON is the top-level payload — rows + totals — so jq
@@ -169,14 +185,17 @@ func renderUsageJSON(out io.Writer, resp wire.UsageResponse, prices pricing.Pric
 	var anyCost bool
 	for _, r := range resp.Days {
 		jr := UsageRowJSON{
-			Day:          r.Day,
-			Kind:         r.Kind,
-			Model:        r.Model,
-			InputTokens:  r.InputTokens,
-			OutputTokens: r.OutputTokens,
-			RowCount:     r.RowCount,
+			Day:              r.Day,
+			Kind:             r.Kind,
+			Model:            r.Model,
+			InputTokens:      r.InputTokens,
+			OutputTokens:     r.OutputTokens,
+			RowCount:         r.RowCount,
+			CacheWriteTokens: r.CacheWriteTokens,
+			CacheReadTokens:  r.CacheReadTokens,
 		}
-		if cost, known := prices.CostUSD(r.Model, r.InputTokens, r.OutputTokens); known {
+		if cost, known := prices.CostUSDWithCache(r.Model, r.InputTokens, r.OutputTokens,
+			r.CacheWriteTokens, r.CacheReadTokens); known {
 			c := cost
 			jr.CostUSD = &c
 			totalCost += cost
@@ -207,7 +226,8 @@ func renderUsageTable(out io.Writer, resp wire.UsageResponse, prices pricing.Pri
 	var grandCost float64
 	var anyCost bool
 	for _, r := range rows {
-		if _, known := prices.CostUSD(r.Model, r.InputTokens, r.OutputTokens); known {
+		if _, known := prices.CostUSDWithCache(r.Model, r.InputTokens, r.OutputTokens,
+			r.CacheWriteTokens, r.CacheReadTokens); known {
 			anyCost = true
 			break
 		}
@@ -220,7 +240,8 @@ func renderUsageTable(out io.Writer, resp wire.UsageResponse, prices pricing.Pri
 	}
 	for _, r := range rows {
 		if anyCost {
-			cost, known := prices.CostUSD(r.Model, r.InputTokens, r.OutputTokens)
+			cost, known := prices.CostUSDWithCache(r.Model, r.InputTokens, r.OutputTokens,
+				r.CacheWriteTokens, r.CacheReadTokens)
 			costCol := "-"
 			if known {
 				costCol = fmt.Sprintf("$%.2f", cost)
