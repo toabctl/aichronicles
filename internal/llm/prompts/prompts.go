@@ -2450,10 +2450,37 @@ func excerptForVerify(sk ProposedSkill) string {
 			strings.TrimSpace(sk.Examples[0].Input),
 			strings.TrimSpace(sk.Examples[0].Output))
 	}
+	// Show the steps and the body, not just the script's stated
+	// purpose.
+	//
+	// The system prompt's rule 4 tells the critic to refuse when "the
+	// proposed steps would actively mislead — e.g. a 'use git rebase
+	// -i to fix the commits' steps section when the cited sessions
+	// never actually used rebase", and rule 5 says to "read the
+	// candidate's prompt body / steps carefully". Neither was
+	// possible: this excerpt emitted one `script "name": purpose`
+	// line and nothing else, while the template labelled the whole
+	// thing "prompt body excerpt:" — so the critic reasonably assumed
+	// it had seen the body.
+	//
+	// That made the last gate before an executable 0755 write blind
+	// to the two things most worth judging. A candidate carrying
+	// `git push --force origin main` under the purpose "sync the
+	// branch" was approved on the purpose alone.
 	for _, sc := range sk.Scripts {
 		fmt.Fprintf(&b, "script %q: %s\n", sc.Name, strings.TrimSpace(sc.Purpose))
+		for i, st := range sc.Steps {
+			fmt.Fprintf(&b, "  step %d: %s\n", i+1, strings.TrimSpace(st.Cmd))
+		}
+		if body := strings.TrimSpace(sc.Body); body != "" {
+			fmt.Fprintf(&b, "  body:\n%s\n", indentBlock(body, "    "))
+		}
 	}
-	const maxRunes = 600
+	// Raised from 600: the old cap predates steps and bodies being
+	// included, and truncating them away would reintroduce the exact
+	// blindness this change exists to fix. Still bounded so one
+	// pathological candidate cannot dominate the critic's context.
+	const maxRunes = 4000
 	r := []rune(b.String())
 	if len(r) > maxRunes {
 		return string(r[:maxRunes]) + "…"

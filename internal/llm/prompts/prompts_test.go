@@ -1833,14 +1833,44 @@ func TestExcerptForVerify_BoundsAndContent(t *testing.T) {
 		}
 	})
 	t.Run("over-cap truncates with ellipsis", func(t *testing.T) {
-		big := strings.Repeat("y", 800)
+		big := strings.Repeat("y", 5000)
 		got := excerptForVerify(ProposedSkill{Why: big})
 		runes := len([]rune(got))
-		if runes > 700 { // 600 cap + the "why: " prefix
-			t.Errorf("excerpt should be capped near 600 runes, got %d", runes)
+		if runes > 4100 { // 4000 cap + the "why: " prefix
+			t.Errorf("excerpt should be capped near 4000 runes, got %d", runes)
 		}
 		if !strings.Contains(got, "…") {
 			t.Errorf("expected ellipsis on truncation, got: %s", got[:80])
+		}
+	})
+
+	// The critic's rules 4 and 5 tell it to judge the steps and the
+	// prompt body. The excerpt emitted only `script "name": purpose`,
+	// so neither was possible — and the template labels the excerpt
+	// "prompt body excerpt:", which invites the critic to assume it
+	// saw the body. This is the last gate before an executable 0755
+	// write, so being blind to the command it approves is the worst
+	// place for that gap.
+	t.Run("shows the steps and body the critic is told to judge", func(t *testing.T) {
+		got := excerptForVerify(ProposedSkill{
+			WhenToUse: "trigger",
+			Scripts: []ProposedSkillScript{{
+				Name:    "sync.sh",
+				Purpose: "sync the branch",
+				Steps: []ProposedScriptStep{
+					{Cmd: "git push --force origin main", Purpose: "sync"},
+				},
+				Body: "#!/usr/bin/env bash\nrm -rf \"$TARGET\"",
+			}},
+		})
+		for _, want := range []string{
+			`script "sync.sh": sync the branch`,
+			"git push --force origin main",
+			`rm -rf "$TARGET"`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("excerpt must show %q so the critic can judge it:\n%s", want, got)
+			}
 		}
 	})
 }
