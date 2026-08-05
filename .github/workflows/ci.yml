@@ -42,7 +42,7 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # gitleaks scans the working tree, but we check out only
           # the latest commit by default. fetch-depth: 0 gives it
