@@ -864,6 +864,28 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#030_ingest_dead_lettersql" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        030_ingest_dead_letter.sql
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#031_llm_outputs_cache_tokenssql" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        031_llm_outputs_cache_tokens.sql
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1390,6 +1412,28 @@
     <span class="md-ellipsis">
       
         029_semantic_facts_quote_invariant.sql
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#030_ingest_dead_lettersql" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        030_ingest_dead_letter.sql
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#031_llm_outputs_cache_tokenssql" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        031_llm_outputs_cache_tokens.sql
       
     </span>
   </a>
@@ -2931,6 +2975,92 @@
 </span><span id="__span-28-58"><a id="__codelineno-28-58" name="__codelineno-28-58" href="#__codelineno-28-58"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_semantic_facts_recent</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">semantic_facts</span><span class="p">(</span><span class="n">asserted_at_ms</span><span class="w"> </span><span class="k">DESC</span><span class="p">);</span>
 </span><span id="__span-28-59"><a id="__codelineno-28-59" name="__codelineno-28-59" href="#__codelineno-28-59"></a>
 </span><span id="__span-28-60"><a id="__codelineno-28-60" name="__codelineno-28-60" href="#__codelineno-28-60"></a><span class="k">UPDATE</span><span class="w"> </span><span class="n">meta</span><span class="w"> </span><span class="k">SET</span><span class="w"> </span><span class="n">value</span><span class="o">=</span><span class="s1">&#39;29&#39;</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="k">key</span><span class="o">=</span><span class="s1">&#39;schema_version&#39;</span><span class="p">;</span>
+</span></code></pre></div>
+<h2 id="030_ingest_dead_lettersql"><code>030_ingest_dead_letter.sql</code><a class="headerlink" href="#030_ingest_dead_lettersql" title="Permanent link">&para;</a></h2>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-29-1"><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="c1">-- Terminal state for pending rows that can never be processed.</span>
+</span><span id="__span-29-2"><a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="c1">--</span>
+</span><span id="__span-29-3"><a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="c1">-- ingest_pending stores the raw POST body PRE-redaction (see the</span>
+</span><span id="__span-29-4"><a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a><span class="c1">-- column comment in 027) because redaction happens in the worker, not</span>
+</span><span id="__span-29-5"><a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a><span class="c1">-- at the accept boundary. That is the right trade for durability —</span>
+</span><span id="__span-29-6"><a id="__codelineno-29-6" name="__codelineno-29-6" href="#__codelineno-29-6"></a><span class="c1">-- the daemon acks only after the bytes are on disk — but it makes a</span>
+</span><span id="__span-29-7"><a id="__codelineno-29-7" name="__codelineno-29-7" href="#__codelineno-29-7"></a><span class="c1">-- row that never drains a permanent plaintext liability.</span>
+</span><span id="__span-29-8"><a id="__codelineno-29-8" name="__codelineno-29-8" href="#__codelineno-29-8"></a><span class="c1">--</span>
+</span><span id="__span-29-9"><a id="__codelineno-29-9" name="__codelineno-29-9" href="#__codelineno-29-9"></a><span class="c1">-- Two failure modes made that reachable:</span>
+</span><span id="__span-29-10"><a id="__codelineno-29-10" name="__codelineno-29-10" href="#__codelineno-29-10"></a><span class="c1">--</span>
+</span><span id="__span-29-11"><a id="__codelineno-29-11" name="__codelineno-29-11" href="#__codelineno-29-11"></a><span class="c1">--   * The accept path used json.Decoder.Decode, which ignores bytes</span>
+</span><span id="__span-29-12"><a id="__codelineno-29-12" name="__codelineno-29-12" href="#__codelineno-29-12"></a><span class="c1">--     after the first JSON value, while the worker used</span>
+</span><span id="__span-29-13"><a id="__codelineno-29-13" name="__codelineno-29-13" href="#__codelineno-29-13"></a><span class="c1">--     json.Unmarshal, which rejects them. A body with trailing junk</span>
+</span><span id="__span-29-14"><a id="__codelineno-29-14" name="__codelineno-29-14" href="#__codelineno-29-14"></a><span class="c1">--     was therefore 200-acked and enqueued, then failed forever.</span>
+</span><span id="__span-29-15"><a id="__codelineno-29-15" name="__codelineno-29-15" href="#__codelineno-29-15"></a><span class="c1">--   * recordFailure only ever incremented attempt_count. Nothing</span>
+</span><span id="__span-29-16"><a id="__codelineno-29-16" name="__codelineno-29-16" href="#__codelineno-29-16"></a><span class="c1">--     removed a row, and PendingBatch is strict FIFO, so a full batch</span>
+</span><span id="__span-29-17"><a id="__codelineno-29-17" name="__codelineno-29-17" href="#__codelineno-29-17"></a><span class="c1">--     of poison rows starved every healthy row behind it. The queue</span>
+</span><span id="__span-29-18"><a id="__codelineno-29-18" name="__codelineno-29-18" href="#__codelineno-29-18"></a><span class="c1">--     wedged permanently and no restart cleared it.</span>
+</span><span id="__span-29-19"><a id="__codelineno-29-19" name="__codelineno-29-19" href="#__codelineno-29-19"></a><span class="c1">--</span>
+</span><span id="__span-29-20"><a id="__codelineno-29-20" name="__codelineno-29-20" href="#__codelineno-29-20"></a><span class="c1">-- This table is the terminal state. A row that exhausts max_attempts</span>
+</span><span id="__span-29-21"><a id="__codelineno-29-21" name="__codelineno-29-21" href="#__codelineno-29-21"></a><span class="c1">-- is summarised here and DELETEd from ingest_pending, which unblocks</span>
+</span><span id="__span-29-22"><a id="__codelineno-29-22" name="__codelineno-29-22" href="#__codelineno-29-22"></a><span class="c1">-- the queue and drops the unredacted body in the same step.</span>
+</span><span id="__span-29-23"><a id="__codelineno-29-23" name="__codelineno-29-23" href="#__codelineno-29-23"></a><span class="c1">--</span>
+</span><span id="__span-29-24"><a id="__codelineno-29-24" name="__codelineno-29-24" href="#__codelineno-29-24"></a><span class="c1">-- Deliberately NO body column. The operator needs to know that an</span>
+</span><span id="__span-29-25"><a id="__codelineno-29-25" name="__codelineno-29-25" href="#__codelineno-29-25"></a><span class="c1">-- event was dropped and why; keeping the bytes would reintroduce</span>
+</span><span id="__span-29-26"><a id="__codelineno-29-26" name="__codelineno-29-26" href="#__codelineno-29-26"></a><span class="c1">-- exactly the liability this migration exists to end. CLAUDE.md §7:</span>
+</span><span id="__span-29-27"><a id="__codelineno-29-27" name="__codelineno-29-27" href="#__codelineno-29-27"></a><span class="c1">-- capture the bare fact, drop what you cannot store safely.</span>
+</span><span id="__span-29-28"><a id="__codelineno-29-28" name="__codelineno-29-28" href="#__codelineno-29-28"></a><span class="c1">--</span>
+</span><span id="__span-29-29"><a id="__codelineno-29-29" name="__codelineno-29-29" href="#__codelineno-29-29"></a><span class="c1">-- last_error is already truncated to 512 chars by MarkPendingFailed</span>
+</span><span id="__span-29-30"><a id="__codelineno-29-30" name="__codelineno-29-30" href="#__codelineno-29-30"></a><span class="c1">-- and is a decoder message (&quot;unmarshal: invalid character ...&quot;), not</span>
+</span><span id="__span-29-31"><a id="__codelineno-29-31" name="__codelineno-29-31" href="#__codelineno-29-31"></a><span class="c1">-- payload — it names the syntax problem, not the content.</span>
+</span><span id="__span-29-32"><a id="__codelineno-29-32" name="__codelineno-29-32" href="#__codelineno-29-32"></a>
+</span><span id="__span-29-33"><a id="__codelineno-29-33" name="__codelineno-29-33" href="#__codelineno-29-33"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">ingest_dead_letter</span><span class="w"> </span><span class="p">(</span>
+</span><span id="__span-29-34"><a id="__codelineno-29-34" name="__codelineno-29-34" href="#__codelineno-29-34"></a><span class="w">    </span><span class="n">id</span><span class="w">                 </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
+</span><span id="__span-29-35"><a id="__codelineno-29-35" name="__codelineno-29-35" href="#__codelineno-29-35"></a><span class="w">    </span><span class="n">event_id</span><span class="w">           </span><span class="nb">TEXT</span><span class="w">    </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+</span><span id="__span-29-36"><a id="__codelineno-29-36" name="__codelineno-29-36" href="#__codelineno-29-36"></a><span class="w">    </span><span class="n">received_at_ms</span><span class="w">     </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+</span><span id="__span-29-37"><a id="__codelineno-29-37" name="__codelineno-29-37" href="#__codelineno-29-37"></a><span class="w">    </span><span class="n">dead_lettered_at_ms</span><span class="w"> </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+</span><span id="__span-29-38"><a id="__codelineno-29-38" name="__codelineno-29-38" href="#__codelineno-29-38"></a><span class="w">    </span><span class="n">attempt_count</span><span class="w">      </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+</span><span id="__span-29-39"><a id="__codelineno-29-39" name="__codelineno-29-39" href="#__codelineno-29-39"></a><span class="w">    </span><span class="n">last_error</span><span class="w">         </span><span class="nb">TEXT</span>
+</span><span id="__span-29-40"><a id="__codelineno-29-40" name="__codelineno-29-40" href="#__codelineno-29-40"></a><span class="p">);</span>
+</span><span id="__span-29-41"><a id="__codelineno-29-41" name="__codelineno-29-41" href="#__codelineno-29-41"></a>
+</span><span id="__span-29-42"><a id="__codelineno-29-42" name="__codelineno-29-42" href="#__codelineno-29-42"></a><span class="c1">-- Retention/inspection both scan by time, and the admin stats handler</span>
+</span><span id="__span-29-43"><a id="__codelineno-29-43" name="__codelineno-29-43" href="#__codelineno-29-43"></a><span class="c1">-- wants &quot;how many recently&quot;.</span>
+</span><span id="__span-29-44"><a id="__codelineno-29-44" name="__codelineno-29-44" href="#__codelineno-29-44"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_ingest_dead_letter_time</span>
+</span><span id="__span-29-45"><a id="__codelineno-29-45" name="__codelineno-29-45" href="#__codelineno-29-45"></a><span class="w">    </span><span class="k">ON</span><span class="w"> </span><span class="n">ingest_dead_letter</span><span class="p">(</span><span class="n">dead_lettered_at_ms</span><span class="p">);</span>
+</span><span id="__span-29-46"><a id="__codelineno-29-46" name="__codelineno-29-46" href="#__codelineno-29-46"></a>
+</span><span id="__span-29-47"><a id="__codelineno-29-47" name="__codelineno-29-47" href="#__codelineno-29-47"></a><span class="c1">-- event_id is NOT unique: the same event can legitimately be</span>
+</span><span id="__span-29-48"><a id="__codelineno-29-48" name="__codelineno-29-48" href="#__codelineno-29-48"></a><span class="c1">-- re-POSTed by a retrying hook, fail again, and be dead-lettered</span>
+</span><span id="__span-29-49"><a id="__codelineno-29-49" name="__codelineno-29-49" href="#__codelineno-29-49"></a><span class="c1">-- again. Uniqueness here would turn a second failure into an</span>
+</span><span id="__span-29-50"><a id="__codelineno-29-50" name="__codelineno-29-50" href="#__codelineno-29-50"></a><span class="c1">-- INSERT error inside the worker&#39;s cleanup path — the last place</span>
+</span><span id="__span-29-51"><a id="__codelineno-29-51" name="__codelineno-29-51" href="#__codelineno-29-51"></a><span class="c1">-- that should be able to fail.</span>
+</span><span id="__span-29-52"><a id="__codelineno-29-52" name="__codelineno-29-52" href="#__codelineno-29-52"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_ingest_dead_letter_event</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">ingest_dead_letter</span><span class="p">(</span><span class="n">event_id</span><span class="p">);</span>
+</span><span id="__span-29-53"><a id="__codelineno-29-53" name="__codelineno-29-53" href="#__codelineno-29-53"></a>
+</span><span id="__span-29-54"><a id="__codelineno-29-54" name="__codelineno-29-54" href="#__codelineno-29-54"></a><span class="k">UPDATE</span><span class="w"> </span><span class="n">meta</span><span class="w"> </span><span class="k">SET</span><span class="w"> </span><span class="n">value</span><span class="o">=</span><span class="s1">&#39;30&#39;</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="k">key</span><span class="o">=</span><span class="s1">&#39;schema_version&#39;</span><span class="p">;</span>
+</span></code></pre></div>
+<h2 id="031_llm_outputs_cache_tokenssql"><code>031_llm_outputs_cache_tokens.sql</code><a class="headerlink" href="#031_llm_outputs_cache_tokenssql" title="Permanent link">&para;</a></h2>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-30-1"><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="c1">-- Record Anthropic prompt-cache token counts alongside the base</span>
+</span><span id="__span-30-2"><a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a><span class="c1">-- input/output counts.</span>
+</span><span id="__span-30-3"><a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a><span class="c1">--</span>
+</span><span id="__span-30-4"><a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a><span class="c1">-- Every request marks its system prompt cacheable, and those prompts</span>
+</span><span id="__span-30-5"><a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a><span class="c1">-- are the large constants (proposeSystem and verifyProposalSystem are</span>
+</span><span id="__span-30-6"><a id="__codelineno-30-6" name="__codelineno-30-6" href="#__codelineno-30-6"></a><span class="c1">-- ~4 KB each). Anthropic reports cache_creation_input_tokens and</span>
+</span><span id="__span-30-7"><a id="__codelineno-30-7" name="__codelineno-30-7" href="#__codelineno-30-7"></a><span class="c1">-- cache_read_input_tokens SEPARATELY from input_tokens, and the</span>
+</span><span id="__span-30-8"><a id="__codelineno-30-8" name="__codelineno-30-8" href="#__codelineno-30-8"></a><span class="c1">-- adapter mapped neither — so llm_outputs.input_tokens recorded only</span>
+</span><span id="__span-30-9"><a id="__codelineno-30-9" name="__codelineno-30-9" href="#__codelineno-30-9"></a><span class="c1">-- the uncached remainder.</span>
+</span><span id="__span-30-10"><a id="__codelineno-30-10" name="__codelineno-30-10" href="#__codelineno-30-10"></a><span class="c1">--</span>
+</span><span id="__span-30-11"><a id="__codelineno-30-11" name="__codelineno-30-11" href="#__codelineno-30-11"></a><span class="c1">-- For a call like `propose verify`, a few hundred user tokens against</span>
+</span><span id="__span-30-12"><a id="__codelineno-30-12" name="__codelineno-30-12" href="#__codelineno-30-12"></a><span class="c1">-- a 4 KB cached system block, that is an undercount by a large</span>
+</span><span id="__span-30-13"><a id="__codelineno-30-13" name="__codelineno-30-13" href="#__codelineno-30-13"></a><span class="c1">-- multiple. It propagated to `aichronicles usage` and to every cost</span>
+</span><span id="__span-30-14"><a id="__codelineno-30-14" name="__codelineno-30-14" href="#__codelineno-30-14"></a><span class="c1">-- figure derived from these rows.</span>
+</span><span id="__span-30-15"><a id="__codelineno-30-15" name="__codelineno-30-15" href="#__codelineno-30-15"></a><span class="c1">--</span>
+</span><span id="__span-30-16"><a id="__codelineno-30-16" name="__codelineno-30-16" href="#__codelineno-30-16"></a><span class="c1">-- Two columns rather than one because the three classes bill at</span>
+</span><span id="__span-30-17"><a id="__codelineno-30-17" name="__codelineno-30-17" href="#__codelineno-30-17"></a><span class="c1">-- different rates: a cache write costs 1.25x the base input rate, a</span>
+</span><span id="__span-30-18"><a id="__codelineno-30-18" name="__codelineno-30-18" href="#__codelineno-30-18"></a><span class="c1">-- read 0.1x. Summing them into input_tokens would fix the count and</span>
+</span><span id="__span-30-19"><a id="__codelineno-30-19" name="__codelineno-30-19" href="#__codelineno-30-19"></a><span class="c1">-- break the cost.</span>
+</span><span id="__span-30-20"><a id="__codelineno-30-20" name="__codelineno-30-20" href="#__codelineno-30-20"></a><span class="c1">--</span>
+</span><span id="__span-30-21"><a id="__codelineno-30-21" name="__codelineno-30-21" href="#__codelineno-30-21"></a><span class="c1">-- Nullable with no default: NULL means &quot;written before this column</span>
+</span><span id="__span-30-22"><a id="__codelineno-30-22" name="__codelineno-30-22" href="#__codelineno-30-22"></a><span class="c1">-- existed, genuinely unknown&quot;, which is distinct from a real 0 on a</span>
+</span><span id="__span-30-23"><a id="__codelineno-30-23" name="__codelineno-30-23" href="#__codelineno-30-23"></a><span class="c1">-- call that used no cache. Backfilling zeros would erase that.</span>
+</span><span id="__span-30-24"><a id="__codelineno-30-24" name="__codelineno-30-24" href="#__codelineno-30-24"></a>
+</span><span id="__span-30-25"><a id="__codelineno-30-25" name="__codelineno-30-25" href="#__codelineno-30-25"></a><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">llm_outputs</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">cache_write_tokens</span><span class="w"> </span><span class="nb">INTEGER</span><span class="p">;</span>
+</span><span id="__span-30-26"><a id="__codelineno-30-26" name="__codelineno-30-26" href="#__codelineno-30-26"></a><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">llm_outputs</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">cache_read_tokens</span><span class="w">  </span><span class="nb">INTEGER</span><span class="p">;</span>
+</span><span id="__span-30-27"><a id="__codelineno-30-27" name="__codelineno-30-27" href="#__codelineno-30-27"></a>
+</span><span id="__span-30-28"><a id="__codelineno-30-28" name="__codelineno-30-28" href="#__codelineno-30-28"></a><span class="k">UPDATE</span><span class="w"> </span><span class="n">meta</span><span class="w"> </span><span class="k">SET</span><span class="w"> </span><span class="n">value</span><span class="o">=</span><span class="s1">&#39;31&#39;</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="k">key</span><span class="o">=</span><span class="s1">&#39;schema_version&#39;</span><span class="p">;</span>
 </span></code></pre></div>
 
 

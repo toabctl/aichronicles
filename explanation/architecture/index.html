@@ -1278,7 +1278,7 @@ rearchitecture collapsed that into a single store-owning process.)</p>
 <tr>
 <td><code>aichronicles induction sweep</code></td>
 <td>Short-lived periodic</td>
-<td><code>aichronicles-cron-induction.timer</code> (15min default)</td>
+<td><code>aichronicles-cron-induction.timer</code> (<code>OnCalendar=*-*-* 09,21:00:00</code>, twice daily)</td>
 <td>Single-session induction across idle sessions</td>
 </tr>
 <tr>
@@ -1290,8 +1290,14 @@ rearchitecture collapsed that into a single store-owning process.)</p>
 <tr>
 <td><code>aichronicles digest weekly</code></td>
 <td>Short-lived periodic</td>
-<td><code>aichronicles-cron-weekly-digest.timer</code> (<code>OnCalendar=Mon 06:00:00</code>)</td>
+<td><code>aichronicles-cron-weekly-digest.timer</code> (<code>OnCalendar=Mon 06:00:00 UTC</code>)</td>
 <td>Weekly retrospective digest</td>
+</tr>
+<tr>
+<td><code>aichronicles prune --yes</code></td>
+<td>Short-lived periodic</td>
+<td><code>aichronicles-cron-prune.timer</code> (<code>OnCalendar=Sun 04:00:00 UTC</code>)</td>
+<td>Retention: drops sessions past <code>--older-than</code> (six months by default) and their cascade. Sunday so it never contends with the Monday digest for the write lock.</td>
 </tr>
 <tr>
 <td><code>aichronicles &lt;other&gt;</code></td>
@@ -1341,15 +1347,17 @@ Today that's <code>aichronicles backfill-extractions</code> (rewrites the
 extractions table). <code>aichronicles scrub</code> is in the same conceptual
 class but routes through <code>POST /v1/scrub</code> instead of opening the
 store, so it inherits the daemon's write lock.</p>
-<p><strong>Class 2 — LLM-cache writers</strong> (<code>propose</code>, <code>propose add/merge/
-discard</code>, <code>induction</code>, <code>summaries</code>, <code>meta sweep</code>) open the store
-directly and INSERT into <code>llm_outputs</code> / <code>skill_candidates</code> /
-<code>semantic_facts</code> while the daemon runs. This is intentional:
-funneling many-MB LLM outputs through the UDS one row at a time
-would waste bandwidth and fight the daemon's HTTP request budget,
-and the affected tables carry UNIQUE constraints that turn
-race-condition duplicates into ON CONFLICT idempotency rather than
-data corruption.</p>
+<p>There is no Class 2. This document previously described the LLM
+commands (<code>propose</code>, <code>propose add/merge/discard</code>, <code>induction</code>,
+<code>summaries</code>, <code>meta sweep</code>) as opening the store directly to INSERT
+into <code>llm_outputs</code> / <code>skill_candidates</code> / <code>semantic_facts</code>, and
+justified it on bandwidth grounds. That was already false when
+written: <code>runCachedLLM</code> persists via <code>POST /v1/llm-outputs</code>, and
+depcheck's call-rule would fail CI on a direct <code>store.Save*</code> from
+<code>internal/cli</code>.</p>
+<p>The honest statement is: <strong>the api daemon owns every write.</strong>
+<code>backfill-extractions</code> is the single exception, and it refuses to
+run while the daemon is up.</p>
 <h3 id="read-side-through-apiclient">Read-side: through apiclient<a class="headerlink" href="#read-side-through-apiclient" title="Permanent link">&para;</a></h3>
 <p>Every non-test file under <code>internal/cli/</code>, <code>internal/mcp/</code>, and
 <code>internal/web/</code> reads through <code>internal/apiclient</code>. "Every read
@@ -1365,9 +1373,14 @@ goes through the api" is a hard invariant, enforced by
   for fixture setup and state assertions; doc-comment lines are
   also skipped.</li>
 </ul>
-<p>CLI subcommands no longer accept a <code>--db</code> flag (they don't open
-the SQLite file). They take <code>--socket</code> to point at the
-aichronicles-api UDS instead. <code>internal/cli</code> still imports
+<p>Most CLI subcommands no longer accept a <code>--db</code> flag; they take
+<code>--socket</code> to point at the aichronicles-api UDS instead. The
+exceptions are <code>backfill-extractions</code> and <code>scrub</code>, the two
+maintenance commands that genuinely open the file — both refuse to
+run while the daemon is up.</p>
+<p>A depcheck call-rule forbids <code>.DB()</code> anywhere under <code>internal/cli</code>
+outside those two files, so the invariant is checked rather than
+asserted. <code>internal/cli</code> still imports
 <code>internal/store</code> for type/enum constants (<code>LLMOutputKind</code>,
 <code>SkillKind</code>, <code>OutcomeLabel</code>, error sentinels) — those are
 package-level values, not CRUD calls, and the depcheck regex
@@ -1684,8 +1697,14 @@ internal/api naming clash).</p>
 </tr>
 </tbody>
 </table>
-<p>Phase D will lift these from "asserted in this doc" to
-"checked in CI" via a small dependency-direction guard.</p>
+<p>All of the above are checked in CI by <code>tools/depcheck</code>, not merely
+asserted here — with one caveat: "<code>internal/store</code> is the only
+SQL-aware package" is currently true of every package except
+<code>internal/skills</code>, which mixes filesystem discovery with raw SQL
+against <code>events</code> / <code>extractions</code>. depcheck cannot see it because
+the call-rules match on the <code>store.</code> qualifier. Moving those three
+functions into <code>internal/store</code> would leave <code>internal/skills</code> a
+pure filesystem leaf and let the rule be made absolute.</p>
 <p>Mixed read-side discipline (currently): some types are
 domain-clean (<code>EventView</code>, <code>Episode</code> in <code>internal/events</code>); most
 read-side types (<code>SessionDigestRow</code>, <code>LiveEvent</code>, <code>SubagentSpan</code>,
