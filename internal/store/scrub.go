@@ -88,7 +88,7 @@ func Scrub(ctx context.Context, db *sql.DB, scanner redact.Scanner, opts ScrubOp
 	}
 	report := &ScrubReport{PatternHits: map[string]int{}, DryRun: opts.DryRun}
 
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := beginImmediate(ctx, db)
 	if err != nil {
 		return report, fmt.Errorf("begin scrub tx: %w", err)
 	}

@@ -84,7 +84,7 @@ func Prune(ctx context.Context, db *sql.DB, opts PruneOptions) (PruneReport, err
 	//
 	// Dry-runs roll back at the end; live runs commit. The counts
 	// land in `report` either way.
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := beginImmediate(ctx, db)
 	if err != nil {
 		return report, fmt.Errorf("begin: %w", err)
 	}
