@@ -8,7 +8,7 @@
 
 mkdocs==1.6.1
 mkdocs-material==9.7.7
-mkdocs-include-markdown-plugin==6.2.2
+mkdocs-include-markdown-plugin==7.3.0
 # pymdown-extensions 10.11.2 + pygments 2.19 raised:
 #   AttributeError: 'NoneType' object has no attribute 'replace'
 # from pygments.HtmlFormatter when an unspecified `filename=` was
