@@ -288,7 +288,8 @@ func TestMergeProposedSkill_RefusesSelfMerge(t *testing.T) {
 	var out bytes.Buffer
 	err = mergeProposedSkill(
 		t.Context(), s, apiForStore(t, s), result, id, 0, "build-test", root,
-		true, // noVerify — the refusal must fire before any LLM work
+		true,  // noVerify — the refusal must fire before any LLM work
+		false, // force
 		nilLLMClient, &out,
 	)
 	if err == nil {
@@ -342,5 +343,48 @@ func TestProposeMergeHash_StableOnIdenticalInputs(t *testing.T) {
 	e := proposeMergeHash(42, "deploy-staging", "---\nname: x\n---\nbody", "v0.1.2")
 	if a == e {
 		t.Errorf("hash collided across different next_version values")
+	}
+}
+
+// TestWriteMergedSkill_RefusesToClobberScripts covers a silent
+// data-loss path.
+//
+// `propose add` has always guarded existing files with
+// refuseExistingUnlessForce, but merge had no such check and declared
+// no --force flag at all — so it overwrote any existing
+// scripts/<name> with model-authored bash, mode 0755, no prompt and
+// no opt-out.
+//
+// Merge is the riskier of the two: merged.Scripts comes from a second
+// LLM call the critic gate never inspects, and the target is a skill
+// the user already trusts and may have hand-edited.
+func TestWriteMergedSkill_RefusesToClobberScripts(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "deploy")
+	scriptsDir := filepath.Join(skillDir, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	const handWritten = "#!/bin/sh\n# written by the user, do not clobber\n"
+	scriptPath := filepath.Join(scriptsDir, "run.sh")
+	if err := os.WriteFile(scriptPath, []byte(handWritten), 0o755); err != nil {
+		t.Fatalf("seed script: %v", err)
+	}
+
+	if err := refuseExistingUnlessForce(scriptPath, false); err == nil {
+		t.Error("expected a refusal for an existing script without --force")
+	}
+	if err := refuseExistingUnlessForce(scriptPath, true); err != nil {
+		t.Errorf("--force must permit the overwrite, got: %v", err)
+	}
+
+	// The guard must not have touched the file either way.
+	got, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(got) != handWritten {
+		t.Errorf("hand-written script was modified:\n%s", got)
 	}
 }

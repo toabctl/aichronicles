@@ -46,6 +46,7 @@ func newProposeMergeCmd() *cobra.Command {
 		outputID  int64
 		skillsDir string
 		noVerify  bool
+		force     bool
 	)
 	cmd := &cobra.Command{
 		Use:   "merge --skill <name>",
@@ -96,7 +97,7 @@ func newProposeMergeCmd() *cobra.Command {
 			}
 
 			return mergeProposedSkill(ctx, s, c, result, output.ID, output.CreatedAtMs, skillName,
-				resolveSkillsDir(skillsDir), noVerify,
+				resolveSkillsDir(skillsDir), noVerify, force,
 				newClient, cmd.OutOrStdout())
 		},
 	}
@@ -108,6 +109,8 @@ func newProposeMergeCmd() *cobra.Command {
 		"specific llm_outputs row id (default: latest propose row)")
 	cmd.Flags().StringVar(&skillsDir, "skills-dir", "",
 		"override target directory (default: ~/.claude/skills)")
+	cmd.Flags().BoolVar(&force, "force", false,
+		"overwrite existing helper scripts under the skill's scripts/ directory")
 	cmd.Flags().BoolVar(&noVerify, "no-verify", false,
 		"skip the critic-LLM verification gate")
 	return cmd
@@ -131,6 +134,7 @@ func mergeProposedSkill(
 	outputCreatedAtMs int64,
 	name, root string,
 	noVerify bool,
+	force bool,
 	newClient func() (llm.Client, error),
 	out io.Writer,
 ) error {
@@ -217,8 +221,23 @@ func mergeProposedSkill(
 		if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
 			return fmt.Errorf("ensure %s: %w", scriptsDir, err)
 		}
+		// Refuse to clobber an existing script unless asked. `propose
+		// add` has always guarded this; merge did not, and merge is
+		// the riskier of the two — merged.Scripts comes from a second
+		// LLM call that the critic gate never sees, and the target is
+		// a skill the user already trusts and may have hand-edited.
+		// Overwriting a hand-written 0755 script with model-authored
+		// bash, silently and with no opt-out, is not a merge.
 		for _, sc := range merged.Scripts {
+			// merged.Scripts is a fresh LLM emission, so its names
+			// need the same grammar check as the add path's.
+			if err := skillscaffold.ValidateScriptName(sc.Name); err != nil {
+				return fmt.Errorf("merge: refusing to write: %w", err)
+			}
 			target := filepath.Join(scriptsDir, sc.Name)
+			if err := refuseExistingUnlessForce(target, force); err != nil {
+				return fmt.Errorf("merge: %w", err)
+			}
 			scriptBody := renderMergedScriptScaffold(&sc, candidate.Name, outputID)
 			if werr := os.WriteFile(target, []byte(scriptBody), 0o755); werr != nil {
 				return fmt.Errorf("write %s: %w", target, werr)
