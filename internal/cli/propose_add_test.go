@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -942,4 +943,74 @@ func saveInductionOutput(t *testing.T, s *store.Store, body string) int64 {
 		t.Fatalf("commit: %v", err)
 	}
 	return id
+}
+
+// TestAddSkillCandidate_RefusesTraversingNames is the end-to-end
+// guard: no file may be written anywhere when the model supplies a
+// name that escapes the skills root.
+//
+// Reachable without a crafted transcript being unusual — session
+// content is attacker-influenceable, and --skill resolves by unique
+// case-insensitive prefix, so a user typing `--skill deploy` can
+// select a candidate literally named
+// "deploy-staging/../../../../.config/systemd/user/x" without ever
+// seeing the traversal.
+func TestAddSkillCandidate_RefusesTraversingNames(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		skillName  string
+		scriptName string
+	}{
+		{"traversing skill name", "deploy/../../../../etc/evil", "ok.sh"},
+		{"parent-dir skill name", "..", "ok.sh"},
+		{"traversing script name", "deploy", "../../evil.sh"},
+		{"absolute script name", "deploy", "/tmp/evil.sh"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := openTempCLIStore(t)
+			root := t.TempDir()
+			sentinel := filepath.Join(root, "sentinel")
+
+			r := &prompts.ProposalResult{Skills: []prompts.ProposedSkill{{
+				Name:      tc.skillName,
+				WhenToUse: "whenever",
+				Why:       "because",
+				Scripts: []prompts.ProposedSkillScript{{
+					Name:    tc.scriptName,
+					Purpose: "do a thing",
+					Body:    "echo hi",
+				}},
+			}}}
+
+			err := addSkillCandidate(
+				context.Background(), s, apiForStore(t, s), r,
+				1, time.Now().UnixMilli(),
+				tc.skillName, root,
+				false, true, // force=false, noVerify=true (skip the LLM gate)
+				nil, io.Discard,
+			)
+			if err == nil {
+				t.Fatal("expected a refusal, got nil")
+			}
+			if !strings.Contains(err.Error(), "refusing to write") {
+				t.Errorf("error should say the write was refused, got: %v", err)
+			}
+
+			// Nothing may exist under the root, and nothing may have
+			// been created outside it either.
+			entries, readErr := os.ReadDir(root)
+			if readErr != nil {
+				t.Fatalf("read root: %v", readErr)
+			}
+			if len(entries) != 0 {
+				t.Errorf("refusal still wrote %d entries under the root", len(entries))
+			}
+			if _, statErr := os.Stat(sentinel); statErr == nil {
+				t.Error("refusal wrote outside the intended path")
+			}
+		})
+	}
 }

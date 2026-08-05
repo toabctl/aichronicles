@@ -138,6 +138,9 @@ func mergeProposedSkill(
 	if err != nil {
 		return err
 	}
+	if err := skillscaffold.ValidateSkillName(candidate.Name); err != nil {
+		return fmt.Errorf("refusing to merge: %w", err)
+	}
 
 	skillMd := filepath.Join(root, candidate.Name, "SKILL.md")
 	existingBytes, err := os.ReadFile(skillMd)

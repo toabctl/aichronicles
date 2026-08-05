@@ -338,6 +338,21 @@ func addSkillCandidate(
 		return err
 	}
 
+	// Validate before any path is built. sk.Name and each script name
+	// come straight out of the model's tool call, and filepath.Join
+	// resolves ".." rather than rejecting it — so an unvalidated name
+	// escapes the skills tree, and scripts land mode 0755.
+	//
+	// --skill also resolves by unique case-insensitive prefix, so the
+	// user never has to see or type the full name they are approving.
+	scriptNames := make([]string, 0, len(sk.Scripts))
+	for _, sc := range sk.Scripts {
+		scriptNames = append(scriptNames, sc.Name)
+	}
+	if err := skillscaffold.ValidateProposedSkillNames(sk.Name, scriptNames); err != nil {
+		return fmt.Errorf("refusing to write proposal (id=%d): %w", outputID, err)
+	}
+
 	dir := filepath.Join(root, sk.Name)
 	skillMd := filepath.Join(dir, "SKILL.md")
 
