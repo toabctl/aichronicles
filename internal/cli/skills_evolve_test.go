@@ -2,7 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -213,5 +216,80 @@ func TestSkillsEvolve_NoFailureEvidenceShortCircuits(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "no failure evidence") {
 		t.Errorf("expected no-evidence message:\n%s", errOut.String())
+	}
+}
+
+// TestRunSkillsEvolve_MissingSkillMdIsNotAFailure pins that an
+// uninstalled skill is a normal condition, not an error.
+//
+// The staleness signal is derived from historical skill_load
+// extractions, which outlive the file: uninstall or rename a skill and
+// its usage history stays in the store forever. So the meta sweep
+// regularly sees stale-looking skills with no SKILL.md, and treating
+// that as a failure made the hourly sweep exit non-zero forever on one
+// deleted skill — a permanent WARN per hour for something needing no
+// action. Observed in production on `image-testing`.
+//
+// The sentinel is what lets the caller distinguish that from a genuine
+// read failure (permissions, I/O), which still must surface.
+func TestRunSkillsEvolve_MissingSkillMdIsNotAFailure(t *testing.T) {
+	t.Parallel()
+	err := RunSkillsEvolve(context.Background(), nil, nil, SkillsEvolveOptions{
+		SkillName: "gone-skill",
+		SkillsDir: t.TempDir(), // exists, but holds no skills
+	}, io.Discard, io.Discard)
+
+	if err == nil {
+		t.Fatal("expected an error so the caller can distinguish the case")
+	}
+	if !errors.Is(err, ErrSkillNotInstalled) {
+		t.Errorf("error must wrap ErrSkillNotInstalled so callers can skip it; got %v", err)
+	}
+	// The path is worth carrying — an operator seeing this wants to
+	// know which directory was checked.
+	if !strings.Contains(err.Error(), "gone-skill") {
+		t.Errorf("error should name the skill path, got %v", err)
+	}
+}
+
+// TestRunSkillsEvolve_UnreadableSkillMdStillFails is the other half:
+// the sentinel must not swallow real I/O problems, or a permissions
+// mistake would silently stop revisions for that skill.
+func TestRunSkillsEvolve_UnreadableSkillMdStillFails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "locked-skill")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A directory where the file should be: readable path, unreadable
+	// as a file. Portable stand-in for a permissions failure that
+	// doesn't depend on running as non-root.
+	if err := os.MkdirAll(filepath.Join(skillDir, "SKILL.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := RunSkillsEvolve(context.Background(), nil, nil, SkillsEvolveOptions{
+		SkillName: "locked-skill",
+		SkillsDir: dir,
+	}, io.Discard, io.Discard)
+
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if errors.Is(err, ErrSkillNotInstalled) {
+		t.Errorf("a genuine read failure must NOT be classified as uninstalled: %v", err)
+	}
+}
+
+// TestSkillMarkdownPath keeps the sweep's existence pre-check and the
+// command's read pointing at the same file. If these ever diverge the
+// sweep skips work it could have done, or dispatches work that fails.
+func TestSkillMarkdownPath(t *testing.T) {
+	t.Parallel()
+	got := skillMarkdownPath("/home/u/.claude/skills", "deploy")
+	want := filepath.Join("/home/u/.claude/skills", "deploy", "SKILL.md")
+	if got != want {
+		t.Errorf("skillMarkdownPath = %q, want %q", got, want)
 	}
 }

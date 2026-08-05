@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
@@ -468,6 +469,22 @@ func runSkillRevisionForSweep(
 		if st.RateLowerBound < minRate {
 			continue
 		}
+		// Skip skills with no SKILL.md before dispatching.
+		//
+		// The staleness signal comes from historical skill_load
+		// extractions, which outlive the file — uninstall or rename a
+		// skill and its usage history stays in the store forever. So a
+		// stale-looking skill with no file is the user having already
+		// dealt with it, not a fault.
+		//
+		// Checking here rather than only handling the error from
+		// RunSkillsEvolve keeps the log honest: we no longer print
+		// "dispatching" for work that cannot happen.
+		if _, statErr := os.Stat(skillMarkdownPath(skillsDir, st.Name)); errors.Is(statErr, os.ErrNotExist) {
+			_, _ = fmt.Fprintf(errOut,
+				"meta sweep: skill_revision: skipping %s (no SKILL.md — uninstalled)\n", st.Name)
+			continue
+		}
 		_, _ = fmt.Fprintf(errOut,
 			"meta sweep: dispatching skill_revision skill=%s rate=%.0f%% lb=%.0f%%\n",
 			st.Name, st.Rate*100, st.RateLowerBound*100)
@@ -479,6 +496,14 @@ func runSkillRevisionForSweep(
 			Window:    window,
 			Model:     opts.Model,
 		}, out, errOut); err != nil {
+			// Lost a race with an uninstall between the Stat above and
+			// the read. Same normal condition, same handling: skip
+			// without marking the sweep failed.
+			if errors.Is(err, ErrSkillNotInstalled) {
+				_, _ = fmt.Fprintf(errOut,
+					"meta sweep: skill_revision: skipping %s (uninstalled during the run)\n", st.Name)
+				continue
+			}
 			slog.Warn("meta sweep: skill revision failed",
 				"skill", st.Name, "err", err)
 			if firstErr == nil {

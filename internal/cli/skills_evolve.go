@@ -134,6 +134,27 @@ type SkillsEvolveOptions = skillsEvolveOptions
 // Cache-idempotent on (skill name, current SKILL.md body, failure
 // context) — re-running on an unchanged SKILL hits the cache for
 // free.
+// ErrSkillNotInstalled reports that a skill named by the staleness
+// signal has no SKILL.md on disk.
+//
+// This is a NORMAL state, not a failure. The staleness signal is
+// derived from historical skill_load extractions, which outlive the
+// file: uninstall or rename a skill and its usage history stays in the
+// store forever. So "this skill looks stale and has no file" means the
+// user already dealt with it.
+//
+// Treating it as an error made the hourly meta sweep fail forever on
+// one deleted skill — a permanent non-zero exit and a WARN per hour
+// for a condition that needs no action.
+var ErrSkillNotInstalled = errors.New("skill is not installed")
+
+// skillMarkdownPath is the single place the on-disk SKILL.md location
+// is derived, so the sweep's existence pre-check and this command's
+// read cannot disagree about where to look.
+func skillMarkdownPath(skillsDir, skillName string) string {
+	return filepath.Join(skillsDir, skillName, "SKILL.md")
+}
+
 func RunSkillsEvolve(
 	ctx context.Context,
 	c *apiclient.Client,
@@ -165,8 +186,15 @@ func runSkillsEvolve(
 	}
 
 	// Locate the SKILL.md on disk.
-	skillPath := filepath.Join(opts.SkillsDir, opts.SkillName, "SKILL.md")
+	skillPath := skillMarkdownPath(opts.SkillsDir, opts.SkillName)
 	skillBody, err := os.ReadFile(skillPath)
+	if errors.Is(err, os.ErrNotExist) {
+		// The skill is not installed. Wrap in a sentinel so callers
+		// can tell "user uninstalled this" from "the read broke",
+		// because the two want opposite handling — see
+		// ErrSkillNotInstalled.
+		return fmt.Errorf("%w: %s", ErrSkillNotInstalled, skillPath)
+	}
 	if err != nil {
 		return fmt.Errorf("read SKILL.md: %w", err)
 	}
