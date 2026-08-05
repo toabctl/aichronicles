@@ -77,7 +77,10 @@ func listSkillsHandler(c *apiclient.Client) ToolHandler {
 		var b strings.Builder
 		fmt.Fprintf(&b, "Installed skills (%d):\n", len(installed))
 		for _, s := range installed {
-			fmt.Fprintf(&b, "  %s [%s]: %s\n", s.Name, s.Source, s.Description)
+			// Description comes from a SKILL.md on disk — free text
+			// that would otherwise be able to forge another entry.
+			fmt.Fprintf(&b, "  %s [%s]: %s\n",
+				mcpField(s.Name), mcpField(s.Source), mcpField(s.Description))
 		}
 		if len(installed) == 0 {
 			b.WriteString("  (none — neither global ~/.claude/skills/ nor any project-local .claude/skills/ has SKILL.md files)\n")

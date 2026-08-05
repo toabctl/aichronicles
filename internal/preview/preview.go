@@ -102,16 +102,32 @@ func ShortID(id string) string {
 //
 // Empty input returns empty string. Caller is responsible for
 // the empty-state token (typically "-").
-func OneLine(s string) string {
+func OneLine(s string) string { return OneLineN(s, MaxOneLineRunes) }
+
+// OneLineN is OneLine with a caller-chosen rune cap.
+//
+// Flattening is the load-bearing half, not the truncation. Any
+// renderer that splices stored text into a line-structured or
+// tab-structured format — an SSE data: frame, a Markdown list, a TSV
+// row in an MCP tool result — is forgeable if the text can carry its
+// own newline or tab. Callers that need a different budget should
+// reach for this rather than growing another local copy of the loop;
+// there were three such copies before it existed.
+//
+// n <= 0 flattens without truncating.
+func OneLineN(s string, n int) string {
 	if s == "" {
 		return ""
 	}
 	for _, r := range "\n\r\t" {
 		s = strings.ReplaceAll(s, string(r), " ")
 	}
-	runes := []rune(s)
-	if len(runes) <= MaxOneLineRunes {
+	if n <= 0 {
 		return s
 	}
-	return string(runes[:MaxOneLineRunes]) + "…"
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n]) + "…"
 }

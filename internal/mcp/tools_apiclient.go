@@ -182,10 +182,10 @@ func getFactsForSubjectAPIHandler(c *apiclient.Client) ToolHandler {
 		fmt.Fprintf(&b, "subject: %s\n", req.Subject)
 		for _, f := range resp.Facts {
 			fmt.Fprintf(&b, "%s\t%s\t%.2f\t%s\n",
-				f.Predicate, f.Object, f.Confidence,
+				mcpField(f.Predicate), mcpField(f.Object), f.Confidence,
 				formatTS(f.AssertedAtMs))
 			if f.EvidenceQuote != nil && *f.EvidenceQuote != "" {
-				fmt.Fprintf(&b, "  quote: %s\n", *f.EvidenceQuote)
+				fmt.Fprintf(&b, "  quote: %s\n", mcpField(*f.EvidenceQuote))
 			}
 		}
 		return TextResult(strings.TrimRight(b.String(), "\n")), nil
@@ -486,7 +486,7 @@ func findEpisodesAPIHandler(c *apiclient.Client) ToolHandler {
 				short, ep.Ordinal,
 				formatTS(ep.StartedAtMs),
 				formatTS(ep.EndedAtMs),
-				cwd, intent)
+				mcpField(cwd), mcpField(intent))
 		}
 		return TextResult(b.String()), nil
 	}
@@ -877,7 +877,7 @@ func listWorkflowsAPIHandler(c *apiclient.Client) ToolHandler {
 				continue
 			}
 			w := e.ind.Workflow
-			fmt.Fprintf(&b, "%s\t%s\t%s\n", sessShort, when, w.TaskShape)
+			fmt.Fprintf(&b, "%s\t%s\t%s\n", sessShort, when, mcpField(w.TaskShape))
 			for i, step := range w.Procedure {
 				fmt.Fprintf(&b, "  %d. %s\n", i+1, step.Action)
 			}
@@ -1015,7 +1015,7 @@ func renderRecentSessionsForCwdAPI(ctx context.Context, c *apiclient.Client, b *
 	for _, s := range resp.Sessions {
 		title := "-"
 		if s.LatestSummary != nil && *s.LatestSummary != "" {
-			title = *s.LatestSummary
+			title = mcpField(*s.LatestSummary)
 		} else if s.FirstPrompt != nil && *s.FirstPrompt != "" {
 			title = preview.OneLine(*s.FirstPrompt)
 		}
@@ -1029,6 +1029,32 @@ func renderRecentSessionsForCwdAPI(ctx context.Context, c *apiclient.Client, b *
 	return nil
 }
 
+// mcpField prepares one stored value for interpolation into a tool
+// result.
+//
+// Tool results are line- and tab-structured — Markdown "## " sections
+// and "- " bullets in get_project_context, TSV rows in
+// get_facts_for_subject and find_episodes. Every value spliced into
+// them is transcript-derived text that an agent will read as
+// established project memory, so a value carrying its own newline or
+// tab can forge an additional fact row, or an entire section
+// indistinguishable from the real one.
+//
+// That closes the self-improving loop in the wrong direction: hostile
+// repo content lands in a transcript, the summariser copies it into
+// an unresolved item, and get_project_context — documented as "use
+// FIRST in a new session" — replays it into every future session in
+// that cwd, with the user never seeing it.
+//
+// mcpMaxFieldRunes is generous rather than tight: truncation is not
+// the point here, flattening is, and clipping an evidence quote mid
+// sentence would cost real information.
+func mcpField(s string) string { return preview.OneLineN(s, mcpMaxFieldRunes) }
+
+// mcpMaxFieldRunes bounds a single interpolated field so one
+// pathological row cannot dominate a tool result.
+const mcpMaxFieldRunes = 2000
+
 func renderUnresolvedSectionAPI(b *strings.Builder, items []wire.UnresolvedItem) {
 	fmt.Fprintf(b, "\n## Open unresolved threads\n")
 	if len(items) == 0 {
@@ -1037,7 +1063,7 @@ func renderUnresolvedSectionAPI(b *strings.Builder, items []wire.UnresolvedItem)
 	}
 	for _, it := range items {
 		fmt.Fprintf(b, "- [%s] %s — %s\n",
-			it.SessionShort, it.Topic, it.Item)
+			it.SessionShort, mcpField(it.Topic), mcpField(it.Item))
 	}
 }
 
@@ -1049,7 +1075,7 @@ func renderFactsSectionAPI(b *strings.Builder, facts []wire.SemanticFact) {
 	}
 	for _, f := range facts {
 		fmt.Fprintf(b, "- %s = %s  (conf=%.2f)\n",
-			f.Predicate, f.Object, f.Confidence)
+			mcpField(f.Predicate), mcpField(f.Object), f.Confidence)
 	}
 }
 
@@ -1071,19 +1097,17 @@ func renderWorkflowsSectionAPI(b *strings.Builder, rows []wire.LLMOutput, limit 
 			continue
 		}
 		w := ind.Workflow
-		fmt.Fprintf(b, "- %s\n", w.TaskShape)
+		fmt.Fprintf(b, "- %s\n", mcpField(w.TaskShape))
 		if len(w.Procedure) > 0 {
 			steps := make([]string, 0, len(w.Procedure))
 			for _, s := range w.Procedure {
 				steps = append(steps, s.Action)
 			}
-			procPreview := strings.Join(steps, " → ")
-			const maxRunes = 200
-			rs := []rune(procPreview)
-			if len(rs) > maxRunes {
-				procPreview = string(rs[:maxRunes]) + "…"
-			}
-			fmt.Fprintf(b, "  procedure: %s\n", procPreview)
+			// Flatten before joining: a newline inside one action
+			// would otherwise break the "  procedure: " line and let
+			// the remainder pose as a new bullet.
+			fmt.Fprintf(b, "  procedure: %s\n",
+				preview.OneLineN(strings.Join(steps, " → "), 200))
 		}
 		rendered++
 	}

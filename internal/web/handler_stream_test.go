@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"html"
 	"net/http"
 	"strings"
 	"sync"
@@ -475,4 +476,40 @@ func TestStream_RefusesOverCap(t *testing.T) {
 
 	cancel()
 	wg.Wait()
+}
+
+// TestStreamFrame_CwdCannotSplitTheSSEFrame closes an SSE injection.
+//
+// The snippet went through truncateForStream (which flattens), but
+// cwd only got html.EscapeString — and that leaves newlines alone.
+// The fragment is then written into a single-line SSE "data:" field,
+// so a newline in cwd terminates the frame mid-markup and lets the
+// remainder emit arbitrary further frames, including an
+// "event: session-<other-id>" that htmx routes to a different
+// session's row.
+//
+// Not XSS — the payload is still escaped, so tags render as text —
+// but it corrupts the stream and spoofs other rows. Reachable
+// because directory names may contain newlines (mkdir $'a\nb' is
+// legal) and cwd is not validated at ingest the way Kind is.
+//
+// writeSessionFrame already applied sanitiseEventName to the session
+// id for exactly this reason; the defence just was not extended here.
+func TestStreamFrame_CwdCannotSplitTheSSEFrame(t *testing.T) {
+	t.Parallel()
+	hostile := "/tmp/x\ndata: INJECTED-FRAME\n\nevent: session-victim\ndata: PWNED"
+
+	got := truncateForStream(hostile)
+	if strings.ContainsAny(got, "\n\r") {
+		t.Fatalf("truncateForStream left a frame terminator in place: %q", got)
+	}
+
+	// The escaped-and-flattened form must occupy exactly one line.
+	line := html.EscapeString(got)
+	if strings.Contains(line, "\n") {
+		t.Errorf("rendered cwd spans multiple lines: %q", line)
+	}
+	if !strings.Contains(line, "INJECTED-FRAME") {
+		t.Errorf("content should survive as inert text, got %q", line)
+	}
 }

@@ -238,23 +238,26 @@ func renderLiveEventFragment(e wire.Event) string {
 		`<span class="ts">` + html.EscapeString(time.UnixMilli(e.TsSourceMs).UTC().Format("15:04:05")) + `</span> ` +
 		`<span class="badge badge-` + kind + `">` + kind + `</span> ` +
 		`<a class="sid" href="/sessions/` + html.EscapeString(e.SessionID) + `">` + html.EscapeString(short) + `</a> ` +
-		`<span class="cwd">` + html.EscapeString(cwd) + `</span> ` +
+		// Flatten as well as escape: html.EscapeString leaves newlines
+		// alone, and a bare newline here terminates the SSE data:
+		// field mid-markup, letting the remainder emit arbitrary
+		// further frames (including event: names htmx routes to
+		// another session's row). Directory names may contain
+		// newlines — mkdir $'a\nb' is legal — and cwd is not
+		// validated at ingest the way Kind is.
+		`<span class="cwd">` + html.EscapeString(truncateForStream(cwd)) + `</span> ` +
 		`<span class="snippet">` + html.EscapeString(snippet) + `</span>` +
 		`</li>`
 }
 
-// truncateForStream flattens whitespace and rune-caps the snippet
-// to keep one SSE write under the frontend's parse budget.
+// truncateForStream flattens whitespace and rune-caps a value so one
+// SSE write stays inside the frontend's parse budget — and, more
+// importantly, so it cannot terminate the frame.
+//
+// Delegates to preview.OneLineN rather than repeating the loop: this
+// was a byte-for-byte copy of it with a different constant, and
+// having two copies is how cwd ended up going out HTML-escaped but
+// unflattened while the snippet beside it was flattened.
 func truncateForStream(s string) string {
-	if s == "" {
-		return ""
-	}
-	for _, r := range "\n\r\t" {
-		s = strings.ReplaceAll(s, string(r), " ")
-	}
-	runes := []rune(s)
-	if len(runes) > streamSnippetMaxRunes {
-		return string(runes[:streamSnippetMaxRunes]) + "…"
-	}
-	return s
+	return preview.OneLineN(s, streamSnippetMaxRunes)
 }
