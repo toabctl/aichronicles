@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/toabctl/aichronicles/internal/nullable"
 	"github.com/toabctl/aichronicles/internal/redact"
@@ -167,24 +168,43 @@ func auditSnippet(content string, f redact.Finding) string {
 	if end > len(content) {
 		end = len(content)
 	}
-	prefix := content[:start]
-	suffix := content[end:]
-	pre := []rune(prefix)
-	post := []rune(suffix)
-	padding := auditSnippetRunes / 2
+	if start > end {
+		start = end
+	}
+
+	// The marker is substituted for the matched bytes HERE, while the
+	// offsets still address the original string — never afterwards.
+	// Building the buffer around the raw hit and replacing it at the
+	// end (as this once did) is unsound: the whitespace rewrites and
+	// the rune cap below both mutate the buffer, so the needle stops
+	// matching and strings.Replace silently returns the secret. A
+	// multi-line PEM leaked via the newline swap; any hit longer than
+	// the rune cap leaked via truncation.
+	marker := "<" + f.Pattern + ">"
+	budget := auditSnippetRunes - utf8.RuneCountInString(marker)
+	if budget < 0 {
+		budget = 0
+	}
+	padding := budget / 2
+
+	pre := []rune(content[:start])
+	post := []rune(content[end:])
 	if len(pre) > padding {
 		pre = append([]rune{'…'}, pre[len(pre)-padding:]...)
 	}
 	if len(post) > padding {
 		post = append(post[:padding], '…')
 	}
-	hit := []rune(content[start:end])
-	combined := string(pre) + string(hit) + string(post)
+
+	combined := string(pre) + marker + string(post)
 	combined = strings.ReplaceAll(combined, "\n", " ")
 	combined = strings.ReplaceAll(combined, "\r", " ")
 	combined = strings.ReplaceAll(combined, "\t", " ")
+	// Safety net only. The buffer already carries no raw secret, so a
+	// tail trim can cost context but never confidentiality; the
+	// padding budget above keeps the marker itself inside the cap.
 	if r := []rune(combined); len(r) > auditSnippetRunes {
 		combined = string(r[:auditSnippetRunes]) + "…"
 	}
-	return strings.Replace(combined, string(hit), "<"+f.Pattern+">", 1)
+	return combined
 }
