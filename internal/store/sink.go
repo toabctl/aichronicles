@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/events"
@@ -27,8 +28,18 @@ type Sink struct {
 	store *Store
 	now   func() time.Time
 
-	imported int
-	deduped  int
+	// Counters are atomic because one Sink is shared: NewServer
+	// builds a single Pipeline holding a single *Sink, and both the
+	// HTTP handler goroutines (POST /v1/import) and the ingest
+	// worker goroutine call Write on it. Two concurrent imports were
+	// enough to trip the race detector on a plain int++.
+	//
+	// The values only feed Pipeline.Run's end-of-run report, so the
+	// impact was bounded — but it is undefined behaviour on a hot
+	// path, and it fires in CI the moment anyone adds a concurrent
+	// test.
+	imported atomic.Int64
+	deduped  atomic.Int64
 }
 
 // NewSink wraps a *Store as an events.Sink with one-tx-per-Write
@@ -70,9 +81,9 @@ func (s *Sink) Write(ctx context.Context, e events.Event) (events.Result, error)
 		return events.Result{}, err
 	}
 	if deduped {
-		s.deduped++
+		s.deduped.Add(1)
 	} else {
-		s.imported++
+		s.imported.Add(1)
 	}
 	return events.Result{
 		EventID:   e.Envelope.EventID,
@@ -91,7 +102,10 @@ func (s *Sink) Close(_ context.Context) error { return nil }
 // Stats returns the running totals. Single-tx sinks update on every
 // successful Write.
 func (s *Sink) Stats() events.SinkStats {
-	return events.SinkStats{Imported: s.imported, Deduped: s.deduped}
+	return events.SinkStats{
+		Imported: int(s.imported.Load()),
+		Deduped:  int(s.deduped.Load()),
+	}
 }
 
 // BufferedSinkOpts tunes when BufferedSink auto-flushes. Both caps

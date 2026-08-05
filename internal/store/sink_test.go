@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -240,5 +241,45 @@ func TestBufferedSink_ParityWithIngestEnvelope(t *testing.T) {
 	if rawCount != N || eventCount != N {
 		t.Errorf("BufferedSink rows: raw=%d events=%d, want %d/%d",
 			rawCount, eventCount, N, N)
+	}
+}
+
+// TestSink_ConcurrentWritesAreRaceFree pins that the shared Sink's
+// counters are safe under the concurrency it actually sees.
+//
+// NewServer builds one Pipeline holding one *Sink and shares it
+// between the HTTP handler goroutines (POST /v1/import) and the
+// ingest worker goroutine. The counters were plain ints, so two
+// concurrent imports were enough to trip the race detector.
+//
+// Run this with -race; without it the test still checks that no
+// increment is lost, which a torn read-modify-write would cause.
+func TestSink_ConcurrentWritesAreRaceFree(t *testing.T) {
+	t.Parallel()
+	s := openTestStore(t)
+	sink := NewSink(s)
+
+	const writers, perWriter = 4, 10
+	var wg sync.WaitGroup
+	for w := 0; w < writers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < perWriter; i++ {
+				env, raw := newValidEnvelope(t)
+				if _, err := sink.Write(context.Background(),
+					events.Event{Envelope: env, Raw: raw}); err != nil {
+					t.Errorf("Write: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	stats := sink.Stats()
+	if got := stats.Imported + stats.Deduped; got != writers*perWriter {
+		t.Errorf("counted %d writes, want %d — an increment was lost",
+			got, writers*perWriter)
 	}
 }
