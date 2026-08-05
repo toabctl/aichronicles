@@ -13,9 +13,16 @@ process that opens the SQLite file. Runs as its own service
 query can't tear down the ingest worker.
 
 Default bind is 127.0.0.1; pass --bind to change. Binding to
-a non-loopback address surfaces a startup warning. The server
-has no authentication; the localhost-only boundary is the
-trust model, mirroring the daemon's 0600 UDS.
+a non-loopback address surfaces a startup warning.
+
+There is NO authentication. Be precise about what the bind
+does and does not buy: it stops other machines, but a
+loopback TCP port is readable by every local user, unlike
+the daemon's 0600 UDS which the kernel restricts to one uid.
+On a shared host, treat the corpus as readable by anyone
+with an account. Requests are additionally Host-checked in
+process, so a web page you visit cannot reach the UI by
+re-resolving its own hostname to 127.0.0.1.
 
 Socket activation: when launched by systemd via
 aichronicles-web.socket (LISTEN_FDS in env), the server

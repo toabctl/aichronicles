@@ -47,9 +47,15 @@ func NewCommand() *cobra.Command {
 			"(aichronicles-web.service) so a wedged template or runaway view\n" +
 			"query can't tear down the ingest worker.\n\n" +
 			"Default bind is 127.0.0.1; pass --bind to change. Binding to\n" +
-			"a non-loopback address surfaces a startup warning. The server\n" +
-			"has no authentication; the localhost-only boundary is the\n" +
-			"trust model, mirroring the daemon's 0600 UDS.\n\n" +
+			"a non-loopback address surfaces a startup warning.\n\n" +
+			"There is NO authentication. Be precise about what the bind\n" +
+			"does and does not buy: it stops other machines, but a\n" +
+			"loopback TCP port is readable by every local user, unlike\n" +
+			"the daemon's 0600 UDS which the kernel restricts to one uid.\n" +
+			"On a shared host, treat the corpus as readable by anyone\n" +
+			"with an account. Requests are additionally Host-checked in\n" +
+			"process, so a web page you visit cannot reach the UI by\n" +
+			"re-resolving its own hostname to 127.0.0.1.\n\n" +
 			"Socket activation: when launched by systemd via\n" +
 			"aichronicles-web.socket (LISTEN_FDS in env), the server\n" +
 			"adopts the inherited fd, ignores --bind/--port, and enables\n" +
