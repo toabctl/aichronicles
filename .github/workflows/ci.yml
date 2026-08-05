@@ -55,7 +55,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           # No cache: pip — the only Python dep is `pre-commit` itself,
