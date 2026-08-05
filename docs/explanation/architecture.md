@@ -76,7 +76,7 @@ rearchitecture collapsed that into a single store-owning process.)
 | `aichronicles induction sweep` | Short-lived periodic | `aichronicles-cron-induction.timer` (`OnCalendar=*-*-* 09,21:00:00`, twice daily) | Single-session induction across idle sessions |
 | `aichronicles meta sweep` | Short-lived periodic | `aichronicles-cron-meta-analysis.timer` (1h poll, per-kind cadences in SQLite) | Cadence-gated meta-analyses (propose / reflect / challenge / digest_weekly / skill_revision) |
 | `aichronicles digest weekly` | Short-lived periodic | `aichronicles-cron-weekly-digest.timer` (`OnCalendar=Mon 06:00:00 UTC`) | Weekly retrospective digest |
-| `aichronicles prune --yes` | Short-lived periodic | `aichronicles-cron-prune.timer` (`OnCalendar=Sun 04:00:00 UTC`) | Retention: drops sessions past `--older-than` (six months by default) and their cascade. Sunday so it never contends with the Monday digest for the write lock. |
+| `aichronicles prune --yes` | Short-lived periodic | `aichronicles-cron-prune.timer` (`OnCalendar=Sun 04:00:00 UTC`) | Retention: drops sessions past `--older-than` (five years by default — a backstop against pathological growth, not routine hygiene; the corpus is what the LLM pipelines reason over) and their cascade. Sunday so it never contends with the Monday digest for the write lock. |
 | `aichronicles <other>` | Short-lived user CLI | Forked per command | Read paths, imports, summarize, MCP server (`mcp serve`), web (`web serve`) |
 
 Why this shape:

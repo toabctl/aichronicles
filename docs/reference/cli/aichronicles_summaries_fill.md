@@ -30,7 +30,7 @@ aichronicles summaries fill [flags]
   -h, --help             help for fill
       --limit int        max sessions to summarize in this run (default 100)
       --model string     LLM model id (default: provider's default)
-      --since duration   only consider sessions whose ended_at is within this window (e.g. 24h, 7d) (default 72h0m0s)
+      --since duration   only consider sessions whose ended_at is within this window (e.g. 24h, 7d) (default 3d)
       --socket string    aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 ```
 

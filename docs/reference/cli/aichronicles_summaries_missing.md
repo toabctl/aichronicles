@@ -26,7 +26,7 @@ aichronicles summaries missing [flags]
       --format string    output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help             help for missing
       --limit int        max sessions to list (default 200)
-      --since duration   only consider sessions whose ended_at is within this window (e.g. 24h, 7d) (default 72h0m0s)
+      --since duration   only consider sessions whose ended_at is within this window (e.g. 24h, 7d) (default 3d)
       --socket string    aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 ```
 

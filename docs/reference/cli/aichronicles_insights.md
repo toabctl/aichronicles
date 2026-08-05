@@ -24,7 +24,7 @@ aichronicles insights [flags]
 ```
       --format string    output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help             help for insights
-      --since duration   only consider sessions/events within this window (e.g. 24h, 7d, 30d) (default 720h0m0s)
+      --since duration   only consider sessions/events within this window (e.g. 24h, 7d, 30d) (default 30d)
       --socket string    aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 ```
 

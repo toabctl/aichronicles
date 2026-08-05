@@ -46,7 +46,7 @@ aichronicles usage [flags]
       --format string    output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help             help for usage
       --prices string    path to prices.toml (default: $XDG_CONFIG_HOME/aichronicles/prices.toml)
-      --since duration   only consider llm_outputs within this window (e.g. 7d, 30d, 24h) (default 720h0m0s)
+      --since duration   only consider llm_outputs within this window (e.g. 7d, 30d, 24h) (default 30d)
       --socket string    aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 ```
 

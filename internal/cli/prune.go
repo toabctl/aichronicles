@@ -12,10 +12,21 @@ import (
 )
 
 // defaultPruneAge is the lower bound the CLI applies when
-// `--older-than` is unset. Six months balances "keep recent
-// history searchable" against "single-developer DBs grow without
-// bound." Easy to override.
-const defaultPruneAge = 180 * 24 * time.Hour
+// `--older-than` is unset.
+//
+// Five years, deliberately. This is a backstop against pathological
+// growth, NOT routine hygiene — and the difference matters here more
+// than in most stores, because in a memory system the old rows ARE
+// the product. reflect, propose and induction reason over the whole
+// corpus, so a session from two years ago is still doing work; the
+// value of a retrospective grows with the window it covers.
+//
+// The earlier default was six months, chosen to stop
+// "single-developer DBs growing without bound". That traded the
+// system's purpose for disk that isn't scarce: a couple of years of
+// heavy use is a few GB, which is noise on any modern disk. If disk
+// ever does bind, `--older-than` is one flag away.
+const defaultPruneAge = 5 * 365 * 24 * time.Hour
 
 func newPruneCmd() *cobra.Command {
 	var (
@@ -61,7 +72,7 @@ func newPruneCmd() *cobra.Command {
 		},
 	}
 	addFlexDurationFlag(cmd, &olderThan, "older-than", defaultPruneAge,
-		"prune sessions whose ended_at is older than this (e.g. 30d, 180d, 24h)")
+		"prune sessions whose ended_at is older than this (e.g. 30d, 365d, 24h)")
 	cmd.Flags().BoolVar(&yes, "yes", false,
 		"actually delete; without --yes the command runs as dry-run")
 	cmd.Flags().BoolVar(&includeLLMOuts, "include-llm-outputs", false,

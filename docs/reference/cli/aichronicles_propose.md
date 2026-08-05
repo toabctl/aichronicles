@@ -35,7 +35,7 @@ aichronicles propose [flags]
   -h, --help             help for propose
       --limit int        max sessions to feed the LLM, newest first (default 25)
       --model string     LLM model id (default: provider's default)
-      --since duration   only consider sessions whose ended_at is within this window (e.g. 24h, 7d) (default 168h0m0s)
+      --since duration   only consider sessions whose ended_at is within this window (e.g. 24h, 7d) (default 7d)
       --socket string    aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 ```
 

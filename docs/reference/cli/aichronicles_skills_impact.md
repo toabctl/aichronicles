@@ -33,7 +33,7 @@ aichronicles skills impact [flags]
 ```
       --format string     output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help              help for impact
-      --since duration    only consider skill loads within this window (e.g. 24h, 7d, 30d) (default 720h0m0s)
+      --since duration    only consider skill loads within this window (e.g. 24h, 7d, 30d) (default 30d)
       --socket string     aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
       --window duration   how long after a skill load to look for a tool_failure (e.g. 5m, 10m, 30m) (default 10m0s)
 ```

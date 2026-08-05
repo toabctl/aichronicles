@@ -73,7 +73,24 @@ func parseFlexDuration(s string) (time.Duration, error) {
 // register one with default sensible help text.
 type flexDuration time.Duration
 
-func (d *flexDuration) String() string { return time.Duration(*d).String() }
+// String renders whole-day durations as "Nd" so help text echoes the
+// unit the flag actually advertises.
+//
+// time.Duration.String() alone made every default unreadable: the
+// flag says "e.g. 30d, 180d", then cobra printed
+// "(default 4320h0m0s)" and left the reader to divide by 24 to check
+// whether the default even matched an example. The five-year prune
+// default would have rendered as "43800h0m0s".
+//
+// Sub-day values fall through unchanged ("30m0s"), and parseFlexDuration
+// accepts the "Nd" form, so Set(String()) round-trips.
+func (d *flexDuration) String() string {
+	v := time.Duration(*d)
+	if v != 0 && v%(24*time.Hour) == 0 {
+		return strconv.FormatInt(int64(v/(24*time.Hour)), 10) + "d"
+	}
+	return v.String()
+}
 
 func (d *flexDuration) Set(s string) error {
 	v, err := parseFlexDuration(s)

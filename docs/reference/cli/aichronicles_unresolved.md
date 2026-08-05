@@ -34,7 +34,7 @@ aichronicles unresolved [flags]
   -h, --help               help for unresolved
       --max-items int      cap on the number of unresolved items per session (default 5)
       --max-sessions int   cap on the number of prior sessions to draw from (default 5)
-      --since duration     only consider sessions whose ended_at is within this window (e.g. 7d, 30d) (default 720h0m0s)
+      --since duration     only consider sessions whose ended_at is within this window (e.g. 7d, 30d) (default 30d)
       --socket string      aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 ```
 

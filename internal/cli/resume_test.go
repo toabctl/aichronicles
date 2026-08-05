@@ -221,7 +221,7 @@ func TestResumeCmd_DefaultSinceIsSixWeeks(t *testing.T) {
 	}
 	// 6 weeks = 1008h; pinned so the default can't silently regress to
 	// "no limit" (0s) or some other window.
-	if got, want := f.DefValue, "1008h0m0s"; got != want {
+	if got, want := f.DefValue, "42d"; got != want {
 		t.Errorf("--since default = %q, want %q (6 weeks)", got, want)
 	}
 }

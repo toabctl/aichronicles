@@ -39,7 +39,7 @@ aichronicles skills evolve --skill <name> [flags]
       --force               bypass the cache and re-call the LLM even if a revision was already drafted
   -h, --help                help for evolve
       --model string        LLM model id (default: provider's default)
-      --since duration      only consider failures within this window (e.g. 14d, 30d) (default 720h0m0s)
+      --since duration      only consider failures within this window (e.g. 14d, 30d) (default 30d)
       --skill string        name of the SKILL to revise (must exist under --skills-dir)
       --skills-dir string   override target directory (default: ~/.claude/skills)
       --socket string       aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
