@@ -447,7 +447,15 @@ func TestIngestWorker_RunInitialDrainPicksUpExistingRows(t *testing.T) {
 	t.Fatal("initial drain did not clear the backlog")
 }
 
-func TestIngestWorker_FailureEscalatesToErrorAtMaxAttempts(t *testing.T) {
+// TestIngestWorker_FailureEscalatesAndRetiresAtMaxAttempts pins the
+// two-stage failure contract: a transient failure keeps its retry
+// budget and logs at Warn, and exhausting that budget logs at Error
+// AND removes the row.
+//
+// The retirement half matters as much as the log level. Leaving the
+// row in place — the old behaviour — starved the strict-FIFO queue
+// behind it and kept an unredacted body on disk indefinitely.
+func TestIngestWorker_FailureEscalatesAndRetiresAtMaxAttempts(t *testing.T) {
 	t.Parallel()
 	w, s, _ := newTestWorker(t)
 	w.maxAttempts = 2 // make the escalation observable in two drains
@@ -469,20 +477,153 @@ func TestIngestWorker_FailureEscalatesToErrorAtMaxAttempts(t *testing.T) {
 
 	var sawWarn, sawError bool
 	for _, r := range rec.snapshot() {
-		if r.Message != "ingest worker: row failed" {
-			continue
-		}
-		switch r.Level {
-		case slog.LevelWarn:
+		switch {
+		case r.Message == "ingest worker: row failed" && r.Level == slog.LevelWarn:
 			sawWarn = true
-		case slog.LevelError:
+		case r.Message == "ingest worker: row retired after max attempts" && r.Level == slog.LevelError:
 			sawError = true
 		}
 	}
 	if !sawWarn {
-		t.Error("first failure should log at Warn")
+		t.Error("first failure should log at Warn and keep its retry budget")
 	}
 	if !sawError {
-		t.Error("max-attempt failure should escalate to Error")
+		t.Error("exhausting max attempts should log retirement at Error")
 	}
+
+	// The row must actually be gone, not merely logged about.
+	n, err := store.CountPending(t.Context(), s.DB())
+	if err != nil {
+		t.Fatalf("CountPending: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("retired row still in ingest_pending (%d rows) — the queue stays wedged", n)
+	}
+}
+
+// TestIngestWorker_PoisonRowsDoNotWedgeTheQueue is the regression gate
+// for a permanent ingest outage that was reachable with well-formed
+// HTTP requests, every one of which returned 200.
+//
+// The accept path used json.Decoder.Decode, which stops at the first
+// JSON value and ignores trailing bytes; the worker used
+// json.Unmarshal, which rejects them. So `{envelope}{"junk":1}` was
+// acked, enqueued, and then failed forever. recordFailure only ever
+// incremented attempt_count, PendingBatch is strict FIFO on
+// received_at_ms, and processBatch returns early once every row in
+// the batch fails — so a batch-sized run of poison rows starved every
+// healthy row behind it, permanently and across restarts.
+//
+// Staging exactly defaultWorkerBatchSize poison rows ahead of one
+// good row reproduces the starvation precisely.
+func TestIngestWorker_PoisonRowsDoNotWedgeTheQueue(t *testing.T) {
+	t.Parallel()
+	w, s, _ := newTestWorker(t)
+
+	poison := append(validEnvelopeBytes(t, uuid.Must(uuid.NewV7()).String()), []byte(`{"junk":1}`)...)
+	for i := 0; i < defaultWorkerBatchSize; i++ {
+		enqueueDirect(t, s, uuid.Must(uuid.NewV7()).String(), poison)
+	}
+	goodID := uuid.Must(uuid.NewV7()).String()
+	enqueueDirect(t, s, goodID, validEnvelopeBytes(t, goodID))
+
+	// Enough passes to exhaust every poison row's retry budget.
+	for i := 0; i < defaultWorkerMaxAttempts+2; i++ {
+		if err := w.drain(t.Context()); err != nil {
+			t.Fatalf("drain %d: %v", i, err)
+		}
+	}
+
+	var stored int
+	if err := s.DB().QueryRow(
+		`SELECT COUNT(*) FROM events WHERE event_id = ?`, goodID).Scan(&stored); err != nil {
+		t.Fatalf("count good event: %v", err)
+	}
+	if stored != 1 {
+		t.Errorf("healthy event behind the poison batch was never processed (found %d)", stored)
+	}
+
+	var pending int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM ingest_pending`).Scan(&pending); err != nil {
+		t.Fatalf("count pending: %v", err)
+	}
+	if pending != 0 {
+		t.Errorf("queue still holds %d rows; poison rows were never retired", pending)
+	}
+}
+
+// TestIngestWorker_DeadLetterDropsTheUnredactedBody pins the other
+// half of retirement. ingest_pending stores the raw POST body
+// pre-redaction, so a row that parks forever is a permanent plaintext
+// liability that neither Scrub nor /v1/audit can see. Retiring must
+// record that the event was dropped without keeping the bytes.
+func TestIngestWorker_DeadLetterDropsTheUnredactedBody(t *testing.T) {
+	t.Parallel()
+	w, s, _ := newTestWorker(t)
+
+	secret := "ghp_" + strings.Repeat("a", 36)
+	eventID := uuid.Must(uuid.NewV7()).String()
+	body := append(validEnvelopeBytes(t, eventID), []byte(`{"leak":"`+secret+`"}`)...)
+	enqueueDirect(t, s, eventID, body)
+
+	for i := 0; i < defaultWorkerMaxAttempts+1; i++ {
+		if err := w.drain(t.Context()); err != nil {
+			t.Fatalf("drain %d: %v", i, err)
+		}
+	}
+
+	var pending int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM ingest_pending`).Scan(&pending); err != nil {
+		t.Fatalf("count pending: %v", err)
+	}
+	if pending != 0 {
+		t.Fatalf("row was not retired; %d still pending with an unredacted body", pending)
+	}
+
+	var deadLettered int
+	var lastErr sql.NullString
+	if err := s.DB().QueryRow(
+		`SELECT COUNT(*), MAX(last_error) FROM ingest_dead_letter WHERE event_id = ?`,
+		eventID).Scan(&deadLettered, &lastErr); err != nil {
+		t.Fatalf("read dead letter: %v", err)
+	}
+	if deadLettered != 1 {
+		t.Errorf("expected one dead-letter row, got %d", deadLettered)
+	}
+	if !strings.Contains(lastErr.String, "unmarshal") {
+		t.Errorf("last_error should name the decode failure, got %q", lastErr.String)
+	}
+	if strings.Contains(lastErr.String, secret) {
+		t.Errorf("last_error carried payload content: %q", lastErr.String)
+	}
+
+	// The decisive check: the secret must be gone from the database
+	// entirely, not merely moved.
+	if hits := scanDBForNeedle(t, s, secret); len(hits) > 0 {
+		t.Errorf("secret survived retirement in: %v", hits)
+	}
+}
+
+// scanDBForNeedle reports which table.column pairs still contain
+// needle. Small local sweep — the store package has a fuller one, but
+// api can't import test helpers across packages.
+func scanDBForNeedle(t *testing.T, s *store.Store, needle string) []string {
+	t.Helper()
+	var hits []string
+	for _, probe := range []struct{ table, col string }{
+		{"ingest_pending", "body"},
+		{"ingest_dead_letter", "last_error"},
+		{"raw_envelopes", "envelope_json"},
+		{"events", "content_text"},
+	} {
+		var n int
+		q := `SELECT COUNT(*) FROM "` + probe.table + `" WHERE CAST("` + probe.col + `" AS TEXT) LIKE ?`
+		if err := s.DB().QueryRow(q, "%"+needle+"%").Scan(&n); err != nil {
+			t.Fatalf("probe %s.%s: %v", probe.table, probe.col, err)
+		}
+		if n > 0 {
+			hits = append(hits, probe.table+"."+probe.col)
+		}
+	}
+	return hits
 }

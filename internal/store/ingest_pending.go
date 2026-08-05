@@ -208,6 +208,64 @@ func MarkPendingFailed(ctx context.Context, db *sql.DB, id int64, tsServerMs int
 	return nil
 }
 
+// DeadLetterPending retires a pending row that has exhausted its
+// retries: it records a body-less summary in ingest_dead_letter and
+// deletes the ingest_pending row, both in one transaction.
+//
+// Two problems end here. The queue unblocks — PendingBatch is strict
+// FIFO, so a permanently-failing row starved every healthy row behind
+// it and no restart cleared the jam. And the row's raw POST body,
+// which is stored PRE-redaction because redaction happens in the
+// worker, stops being a permanent plaintext liability.
+//
+// The summary deliberately carries no body. An operator needs to know
+// that an event was dropped and why, and keeping the bytes to answer
+// "what was in it?" would reintroduce the exact exposure this closes.
+//
+// Returns ErrPendingRowMissing if the row is already gone, so a
+// caller racing a manual cleanup can treat that as benign.
+func DeadLetterPending(ctx context.Context, db *sql.DB, row IngestPendingRow, tsServerMs int64, errMsg string) error {
+	if len(errMsg) > 512 {
+		errMsg = errMsg[:512]
+	}
+	return WithTx(ctx, db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO ingest_dead_letter(
+				event_id, received_at_ms, dead_lettered_at_ms,
+				attempt_count, last_error
+			) VALUES (?, ?, ?, ?, ?)
+		`, row.EventID, row.ReceivedAtMs, tsServerMs, row.AttemptCount+1, errMsg); err != nil {
+			return fmt.Errorf("dead-letter pending: insert: %w", err)
+		}
+		res, err := tx.ExecContext(ctx, `DELETE FROM ingest_pending WHERE id = ?`, row.ID)
+		if err != nil {
+			return fmt.Errorf("dead-letter pending: delete: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("dead-letter pending: rows affected: %w", err)
+		}
+		if n != 1 {
+			return fmt.Errorf("%w: id=%d", ErrPendingRowMissing, row.ID)
+		}
+		return nil
+	})
+}
+
+// CountDeadLettered returns how many rows have been retired since
+// sinceMs (0 means "all time"). Feeds the admin stats endpoint so a
+// silently-dropping daemon is visible without grepping the journal.
+func CountDeadLettered(ctx context.Context, db *sql.DB, sinceMs int64) (int, error) {
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM ingest_dead_letter WHERE dead_lettered_at_ms >= ?`,
+		sinceMs).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count dead-lettered: %w", err)
+	}
+	return n, nil
+}
+
 // IngestPendingStats is what the admin stats handler returns:
 // a snapshot of the queue's depth, the oldest row's age, and
 // the worst row's attempt count. Cheap-to-compute aggregate so

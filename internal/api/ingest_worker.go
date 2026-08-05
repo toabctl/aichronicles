@@ -429,20 +429,56 @@ func (w *IngestWorker) processOne(ctx context.Context, row store.IngestPendingRo
 	}
 }
 
-// recordFailure stamps the failure on the pending row and logs at
-// a level that escalates from Warn to Error once the row has hit
-// maxAttempts. Operators looking for "stuck rows" should filter
-// the journal on Level=ERROR + component=ingest_worker.
+// recordFailure stamps the failure on the pending row, and retires
+// the row entirely once it has exhausted maxAttempts.
+//
+// Retiring is not optional bookkeeping. PendingBatch is strict FIFO
+// on received_at_ms and MarkPendingFailed updates last_attempt_at_ms
+// rather than received_at_ms, so a permanently-failing row is handed
+// back on every pass forever. A full batch of them (defaultWorkerBatchSize)
+// makes processBatch return before it reaches any healthy row behind
+// them, and the queue never drains again — not across a restart
+// either, since the rows live in SQLite. Retiring also drops the
+// row's raw body, which is stored pre-redaction.
+//
+// A row is only ever retired after maxAttempts, so a transient
+// failure (a busy database, a downstream hiccup) still gets its full
+// retry budget.
 func (w *IngestWorker) recordFailure(ctx context.Context, row store.IngestPendingRow, msg string) {
 	now := time.Now().UnixMilli()
+	exhausted := row.AttemptCount+1 >= w.maxAttempts
+
+	if exhausted {
+		if err := store.DeadLetterPending(ctx, w.store.DB(), row, now, msg); err != nil {
+			// Fall back to a plain failure stamp so the attempt is
+			// still recorded; the next pass retries the retirement.
+			w.log.Error("ingest worker: dead-letter failed",
+				"id", row.ID, "event_id", row.EventID, "err", err)
+			if err := store.MarkPendingFailed(ctx, w.store.DB(), row.ID, now, msg); err != nil {
+				w.log.Error("ingest worker: mark failed", "id", row.ID, "err", err)
+			}
+			return
+		}
+		// Decrement only after the row is actually gone, matching the
+		// ordering the processed path uses: a crash between the two
+		// leaves the counter over-stated by one, which the next
+		// daemon start heals via CountPending.
+		if w.pendingDepth != nil {
+			w.pendingDepth.Add(-1)
+		}
+		w.log.Error("ingest worker: row retired after max attempts",
+			"id", row.ID,
+			"event_id", row.EventID,
+			"attempts", row.AttemptCount+1,
+			"max_attempts", w.maxAttempts,
+			"err", msg)
+		return
+	}
+
 	if err := store.MarkPendingFailed(ctx, w.store.DB(), row.ID, now, msg); err != nil {
 		w.log.Error("ingest worker: mark failed", "id", row.ID, "err", err)
 	}
-	level := slog.LevelWarn
-	if row.AttemptCount+1 >= w.maxAttempts {
-		level = slog.LevelError
-	}
-	w.log.Log(ctx, level, "ingest worker: row failed",
+	w.log.Log(ctx, slog.LevelWarn, "ingest worker: row failed",
 		"id", row.ID,
 		"event_id", row.EventID,
 		"attempt", row.AttemptCount+1,
