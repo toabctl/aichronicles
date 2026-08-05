@@ -536,9 +536,14 @@ func TestBuildSummary_HashChangesWhenCandidatesChange(t *testing.T) {
 
 // --- BuildReflect ---
 
+var (
+	testPeriodStart = time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	testPeriodEnd   = time.Date(2026, 5, 8, 0, 0, 0, 0, time.UTC)
+)
+
 func TestBuildReflect_RequiresSessions(t *testing.T) {
 	t.Parallel()
-	if _, err := BuildReflect(nil, 24*time.Hour); err == nil {
+	if _, err := BuildReflect(nil, testPeriodStart, testPeriodEnd); err == nil {
 		t.Error("empty digests: expected error")
 	}
 }
@@ -546,7 +551,7 @@ func TestBuildReflect_RequiresSessions(t *testing.T) {
 func TestBuildReflect_SetsForcedTool(t *testing.T) {
 	t.Parallel()
 	digests := []SessionDigest{{ID: "s1", FirstPrompt: "hi"}}
-	built, err := BuildReflect(digests, time.Hour)
+	built, err := BuildReflect(digests, testPeriodStart, testPeriodEnd)
 	if err != nil {
 		t.Fatalf("BuildReflect: %v", err)
 	}
@@ -573,7 +578,7 @@ func TestBuildReflect_RendersAllDigestFields(t *testing.T) {
 			Summary:     "Refactored session middleware; 3 tests added.",
 		},
 	}
-	built, err := BuildReflect(digests, 7*24*time.Hour)
+	built, err := BuildReflect(digests, testPeriodStart, testPeriodEnd)
 	if err != nil {
 		t.Fatalf("BuildReflect: %v", err)
 	}
@@ -600,7 +605,7 @@ func TestBuildReflect_RendersOutcomeCueWhenPresent(t *testing.T) {
 		},
 		{ID: "s-no-outcome", Summary: "Other stuff.", Outcome: nil},
 	}
-	built, err := BuildReflect(digests, time.Hour)
+	built, err := BuildReflect(digests, testPeriodStart, testPeriodEnd)
 	if err != nil {
 		t.Fatalf("BuildReflect: %v", err)
 	}
@@ -982,7 +987,7 @@ func TestBuildReflect_OutcomeSuccessRendersScaleNotFailureCounters(t *testing.T)
 			},
 		},
 	}
-	built, err := BuildReflect(digests, time.Hour)
+	built, err := BuildReflect(digests, testPeriodStart, testPeriodEnd)
 	if err != nil {
 		t.Fatalf("BuildReflect: %v", err)
 	}
@@ -1008,7 +1013,7 @@ func TestBuildReflect_RendersPerSessionLinks(t *testing.T) {
 			Links: []string{"https://docs.example.com/a", "https://issues.example.com/42"},
 		},
 	}
-	built, err := BuildReflect(digests, time.Hour)
+	built, err := BuildReflect(digests, testPeriodStart, testPeriodEnd)
 	if err != nil {
 		t.Fatalf("BuildReflect: %v", err)
 	}
@@ -1028,7 +1033,7 @@ func TestBuildReflect_ScrubsSecretsInCwd(t *testing.T) {
 	digests := []SessionDigest{
 		{ID: "s-cwd", Cwd: "/home/AKIAIOSFODNN7EXAMPLE/proj"},
 	}
-	built, err := BuildReflect(digests, time.Hour)
+	built, err := BuildReflect(digests, testPeriodStart, testPeriodEnd)
 	if err != nil {
 		t.Fatalf("BuildReflect: %v", err)
 	}
@@ -1049,7 +1054,7 @@ func TestBuildReflect_ScrubsSecretsInDigestFields(t *testing.T) {
 			FirstPrompt: "use sk-ant-" + strings.Repeat("a", 40),
 		},
 	}
-	built, err := BuildReflect(digests, time.Hour)
+	built, err := BuildReflect(digests, testPeriodStart, testPeriodEnd)
 	if err != nil {
 		t.Fatalf("BuildReflect: %v", err)
 	}
@@ -2116,22 +2121,31 @@ func TestRenderOutcomeCue_FailureAppendsErrorCountAndTerminator(t *testing.T) {
 	}
 }
 
+// TestRenderInvokedSkills_RendersLastLoadedAnnotation pins the
+// recency annotation, which is now relative to the newest load in the
+// set rather than to the wall clock.
+//
+// The previous wall-clock form ("2h ago") bucketed at minute
+// granularity under an hour, so the propose and challenge prompts
+// re-hashed at least once a minute for any real corpus and their
+// caches never hit. Day granularity is also what the surrounding
+// header actually asks for — it contrasts "loaded N times yesterday"
+// with "N times five days ago".
 func TestRenderInvokedSkills_RendersLastLoadedAnnotation(t *testing.T) {
 	t.Parallel()
-	now := time.Now().UnixMilli()
-	twoHoursAgo := now - 2*int64(time.Hour/time.Millisecond)
-	threeDaysAgo := now - 3*24*int64(time.Hour/time.Millisecond)
+	const day = 24 * 60 * 60 * 1000
+	newest := int64(1_700_000_000_000)
 	skills := []InvokedSkill{
-		{Name: "fresh-impact", Count: 6, TotalLoads: 6, FailedLoads: 0, SuccessRate: 1.0, LastLoadedMs: twoHoursAgo},
-		{Name: "stale-impact", Count: 12, TotalLoads: 12, FailedLoads: 3, SuccessRate: 0.75, LastLoadedMs: threeDaysAgo},
-		{Name: "no-impact-with-recency", Count: 2, LastLoadedMs: twoHoursAgo},
+		{Name: "fresh-impact", Count: 6, TotalLoads: 6, FailedLoads: 0, SuccessRate: 1.0, LastLoadedMs: newest},
+		{Name: "stale-impact", Count: 12, TotalLoads: 12, FailedLoads: 3, SuccessRate: 0.75, LastLoadedMs: newest - 3*day},
+		{Name: "one-day", Count: 2, LastLoadedMs: newest - day},
 		{Name: "no-impact-no-recency", Count: 1},
 	}
 	out := renderInvokedSkills(skills, patternSet{})
 	for _, want := range []string{
-		"fresh-impact × 6  (success: 100%, 0/6 loads followed by tool_failure, last loaded 2h ago)",
-		"stale-impact × 12  (success: 75%, 3/12 loads followed by tool_failure, last loaded 3d ago)",
-		"no-impact-with-recency × 2  (last loaded 2h ago)",
+		"fresh-impact × 6  (success: 100%, 0/6 loads followed by tool_failure, last loaded most recently)",
+		"stale-impact × 12  (success: 75%, 3/12 loads followed by tool_failure, last loaded 3 days earlier)",
+		"one-day × 2  (last loaded 1 day earlier)",
 		"no-impact-no-recency × 1\n",
 	} {
 		if !strings.Contains(out, want) {
@@ -2143,6 +2157,24 @@ func TestRenderInvokedSkills_RendersLastLoadedAnnotation(t *testing.T) {
 	// a number on the line.
 	if !strings.Contains(out, "loaded N times yesterday is a stronger signal") {
 		t.Errorf("renderInvokedSkills must teach the LLM how to read the recency annotation; got:\n%s", out)
+	}
+}
+
+// TestRenderInvokedSkills_OutputIsWallClockIndependent is the point
+// of the change: the same rows must render identical text regardless
+// of when they are rendered, or the prompt hash churns and the cache
+// never hits.
+func TestRenderInvokedSkills_OutputIsWallClockIndependent(t *testing.T) {
+	t.Parallel()
+	skills := []InvokedSkill{
+		{Name: "a", Count: 3, LastLoadedMs: 1_700_000_000_000},
+		{Name: "b", Count: 1, LastLoadedMs: 1_699_000_000_000},
+	}
+	first := renderInvokedSkills(skills, patternSet{})
+	time.Sleep(1100 * time.Millisecond)
+	second := renderInvokedSkills(skills, patternSet{})
+	if first != second {
+		t.Errorf("render changed with wall-clock time:\n first: %q\nsecond: %q", first, second)
 	}
 }
 
@@ -2526,4 +2558,60 @@ func containsString(hay []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// TestBuildReflect_HashIsStableAcrossCalls is the cache contract both
+// `aichronicles reflect` and `digest weekly` advertise in their help
+// text ("same digest list = same prompt_hash = same cached body").
+//
+// It never held. BuildReflect rendered its header from time.Now() at
+// RFC3339 second resolution and hashRequest hashes the message
+// content, so two calls a second apart produced different hashes.
+// Every run paid for a full completion over a ~25-session prompt and
+// wrote a duplicate llm_outputs row — a standing cost on every
+// meta-analysis tick, not a rare miss.
+func TestBuildReflect_HashIsStableAcrossCalls(t *testing.T) {
+	t.Parallel()
+	digests := []SessionDigest{{
+		ID:          "s1",
+		FirstPrompt: "hi",
+		StartedAtMs: 1_700_000_000_000,
+		EndedAtMs:   1_700_000_500_000,
+	}}
+
+	first, err := BuildReflect(digests, testPeriodStart, testPeriodEnd)
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	second, err := BuildReflect(digests, testPeriodStart, testPeriodEnd)
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if first.Hash != second.Hash {
+		t.Errorf("hash changed with wall-clock time:\n first: %s\nsecond: %s", first.Hash, second.Hash)
+	}
+}
+
+// TestBuildReflect_HeaderReflectsTheRequestedPeriod guards the
+// correctness half. digest weekly bounds its query to the requested
+// week but used to pass only the duration, so the header was always
+// rendered from "now" — regenerating January's digest in August told
+// the model it was looking at last week.
+func TestBuildReflect_HeaderReflectsTheRequestedPeriod(t *testing.T) {
+	t.Parallel()
+	digests := []SessionDigest{{ID: "s1", FirstPrompt: "hi"}}
+	start := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 1, 12, 0, 0, 0, 0, time.UTC)
+
+	built, err := BuildReflect(digests, start, end)
+	if err != nil {
+		t.Fatalf("BuildReflect: %v", err)
+	}
+	msg := built.Request.Messages[0].Content
+	for _, want := range []string{"2026-01-05T00:00:00Z", "2026-01-12T00:00:00Z"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("header must name the requested period %q; got:\n%s", want, msg)
+		}
+	}
 }

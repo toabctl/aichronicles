@@ -890,19 +890,35 @@ const reflectTemplate = `Below are %d sessions from %s to %s.
 `
 
 // BuildReflect composes the meta-prompt for multi-session reflection.
-// digests must be non-empty; the caller sets the window.
-func BuildReflect(digests []SessionDigest, window time.Duration) (Built, error) {
+// digests must be non-empty. periodStart/periodEnd bound the window
+// the prompt describes and MUST come from the caller.
+//
+// This used to take a Duration and render the header from
+// time.Now(), which broke two things at once.
+//
+// Caching: hashRequest hashes the message content, so a
+// second-resolution timestamp in the header meant the hash changed on
+// every call. Both `aichronicles reflect` and `digest weekly`
+// document a cache hit for identical input ("same digest list = same
+// prompt_hash = same cached body") and neither ever got one — every
+// run paid for a full completion over a ~25-session prompt and wrote
+// a duplicate llm_outputs row.
+//
+// Correctness: digest weekly bounds its query to the requested week
+// but passed only the duration here, so regenerating January's digest
+// in August told the model it was looking at last week. Even the
+// default path was skewed by however far into Monday the timer fired.
+func BuildReflect(digests []SessionDigest, periodStart, periodEnd time.Time) (Built, error) {
 	if len(digests) == 0 {
 		return Built{}, fmt.Errorf("BuildReflect: no sessions")
 	}
 	pats := patternSet{}
 	body := renderDigests(digests, pats)
 
-	now := time.Now().UTC()
 	userMsg := fmt.Sprintf(reflectTemplate,
 		len(digests),
-		now.Add(-window).Format(time.RFC3339),
-		now.Format(time.RFC3339),
+		periodStart.UTC().Format(time.RFC3339),
+		periodEnd.UTC().Format(time.RFC3339),
 		body)
 
 	req := llm.Request{
@@ -3121,7 +3137,6 @@ func renderInvokedSkills(skills []InvokedSkill, pats patternSet) string {
 	if len(skills) == 0 {
 		return ""
 	}
-	now := time.Now().UTC()
 	var b strings.Builder
 	b.WriteString("\nSkills invoked recently (count = times loaded in the window — these are working for the user; a low success rate suggests the existing skill needs a revision rather than displacement by a brand-new proposal; \"last loaded\" is the most recent invocation in the window — a skill loaded N times yesterday is a stronger signal than one loaded N times five days ago):\n")
 	for _, s := range skills {
@@ -3133,14 +3148,14 @@ func renderInvokedSkills(skills []InvokedSkill, pats patternSet) string {
 		case s.TotalLoads > 0 && s.LastLoadedMs > 0:
 			pct := int(s.SuccessRate * 100)
 			_, _ = fmt.Fprintf(&b, "- %s × %d  (success: %d%%, %d/%d loads followed by tool_failure, last loaded %s)\n",
-				name, s.Count, pct, s.FailedLoads, s.TotalLoads, humanAgo(now, s.LastLoadedMs))
+				name, s.Count, pct, s.FailedLoads, s.TotalLoads, lastLoadedLabel(s.LastLoadedMs, latestLoadMs(skills)))
 		case s.TotalLoads > 0:
 			pct := int(s.SuccessRate * 100)
 			_, _ = fmt.Fprintf(&b, "- %s × %d  (success: %d%%, %d/%d loads followed by tool_failure)\n",
 				name, s.Count, pct, s.FailedLoads, s.TotalLoads)
 		case s.LastLoadedMs > 0:
 			_, _ = fmt.Fprintf(&b, "- %s × %d  (last loaded %s)\n",
-				name, s.Count, humanAgo(now, s.LastLoadedMs))
+				name, s.Count, lastLoadedLabel(s.LastLoadedMs, latestLoadMs(skills)))
 		default:
 			_, _ = fmt.Fprintf(&b, "- %s × %d\n", name, s.Count)
 		}
@@ -3566,6 +3581,45 @@ func daysSince(now time.Time, ms int64) int {
 //
 // Future or zero/negative timestamps collapse to "just now" so the
 // rendering stays sensible without a guard at every call site.
+// latestLoadMs returns the newest LastLoadedMs across the set, used
+// as the reference point for relative "last loaded" labels.
+//
+// Anchoring on the data rather than on time.Now() is what keeps the
+// propose/challenge prompt hash stable: the same rows must render the
+// same text, or the cache never hits. humanAgo buckets at minute
+// granularity under an hour, so a wall-clock anchor re-hashed the
+// prompt at least once a minute for any real corpus.
+func latestLoadMs(skills []InvokedSkill) int64 {
+	var newest int64
+	for _, s := range skills {
+		if s.LastLoadedMs > newest {
+			newest = s.LastLoadedMs
+		}
+	}
+	return newest
+}
+
+// lastLoadedLabel renders "how long before the most recent load in
+// this set" at day granularity.
+//
+// Day granularity is what the surrounding prompt text actually asks
+// for — it contrasts "loaded N times yesterday" with "N times five
+// days ago". Minute precision bought nothing and cost the cache.
+func lastLoadedLabel(ms, reference int64) string {
+	if ms <= 0 || reference <= 0 {
+		return "unknown"
+	}
+	days := int((reference - ms) / (24 * 60 * 60 * 1000))
+	switch {
+	case days <= 0:
+		return "most recently"
+	case days == 1:
+		return "1 day earlier"
+	default:
+		return fmt.Sprintf("%d days earlier", days)
+	}
+}
+
 func humanAgo(now time.Time, ms int64) string {
 	if ms <= 0 {
 		return "just now"

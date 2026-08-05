@@ -207,7 +207,10 @@ func RunDigestWeekly(
 			opts.PeriodStart.Format("2006-01-02"), ErrEmptyWindow)
 	}
 
-	built, err := prompts.BuildReflect(digests, opts.PeriodEnd.Sub(opts.PeriodStart))
+	// Pass the requested week explicitly. Deriving the header from
+	// the wall clock told the model "last week" no matter which week
+	// --week-of selected, and re-hashed the prompt on every run.
+	built, err := prompts.BuildReflect(digests, opts.PeriodStart, opts.PeriodEnd)
 	if err != nil {
 		return 0, fmt.Errorf("digest weekly: build prompt: %w", err)
 	}

@@ -121,7 +121,10 @@ func RunReflect(
 		window = defaultReflectWindow
 	}
 
-	sinceMs := time.Now().Add(-window).UnixMilli()
+	// windowStart is both the query bound and the window the prompt
+	// header describes, so the two cannot drift.
+	windowStart := time.Now().Add(-window)
+	sinceMs := windowStart.UnixMilli()
 	// Unbounded upper end: ad-hoc reflect wants everything from the
 	// window start up to now.
 	resp, err := c.SessionDigests(ctx, sinceMs, 0, opts.Limit)
@@ -136,7 +139,13 @@ func RunReflect(
 	if err != nil {
 		return 0, fmt.Errorf("reflect: enrich digests: %w", err)
 	}
-	built, err := prompts.BuildReflect(digests, window)
+	// Bound the header by the data, not by the wall clock: identical
+	// digests must render an identical prompt or the cache this
+	// command documents ("same digest list = same prompt_hash") never
+	// hits. digestWindowBounds falls back to the requested window
+	// when the digests carry no usable timestamps.
+	periodStart, periodEnd := digestWindowBounds(digests, windowStart, time.Now())
+	built, err := prompts.BuildReflect(digests, periodStart, periodEnd)
 	if err != nil {
 		return 0, fmt.Errorf("reflect: build prompt: %w", err)
 	}
@@ -386,4 +395,36 @@ func runCachedLLM(
 		return saveResp.ID, fmt.Errorf("%s: render body: %w", in.kind, renderErr)
 	}
 	return saveResp.ID, nil
+}
+
+// digestWindowBounds returns the time span the supplied digests
+// actually cover, falling back to the caller's requested window when
+// the digests carry no usable timestamps.
+//
+// Deriving the prompt header from the data rather than from
+// time.Now() is what makes the reflect/digest prompt hash stable:
+// hashRequest hashes the rendered message, so a wall-clock timestamp
+// meant every run produced a new hash and the documented cache
+// ("same digest list = same prompt_hash = same cached body") never
+// hit once. It is also the more honest header — it describes the
+// window the model is actually being shown.
+func digestWindowBounds(digests []prompts.SessionDigest, fallbackStart, fallbackEnd time.Time) (time.Time, time.Time) {
+	var minMs, maxMs int64
+	for _, d := range digests {
+		for _, ms := range []int64{d.StartedAtMs, d.EndedAtMs} {
+			if ms <= 0 {
+				continue
+			}
+			if minMs == 0 || ms < minMs {
+				minMs = ms
+			}
+			if ms > maxMs {
+				maxMs = ms
+			}
+		}
+	}
+	if minMs == 0 || maxMs == 0 {
+		return fallbackStart, fallbackEnd
+	}
+	return time.UnixMilli(minMs).UTC(), time.UnixMilli(maxMs).UTC()
 }
