@@ -536,3 +536,122 @@ func TestLoadFactsForSubject_RejectsEmptySubject(t *testing.T) {
 		t.Errorf("expected error for empty subject")
 	}
 }
+
+// TestSaveSemanticFact_OlderAssertionDoesNotWin pins the
+// last-write-wins semantics the doc comment promises.
+//
+// The upsert unconditionally overwrote asserted_at_ms, confidence,
+// source_llm_output_id and the evidence pointer, so a write carrying
+// an OLDER timestamp moved the fact backwards in time. Because
+// LoadFactsForSubject resolves competing objects by asserted_at_ms
+// DESC, that silently changed which value the retrieval layer treats
+// as current.
+//
+// The in-tree induce path always passes time.Now(), so this is not
+// reachable from today's CLI — but POST /v1/facts takes a
+// client-supplied asserted_at_ms with no validation, and any replay
+// or backfill writer would hit it.
+func TestSaveSemanticFact_OlderAssertionDoesNotWin(t *testing.T) {
+	t.Parallel()
+	s := openTestStore(t)
+	ctx := context.Background()
+	sessionID := ingestForScrub(t, s, "no-secret", nil)
+	outputID := insertLLMOutputForTest(t, s, sessionID)
+
+	newQuote := "the newer evidence"
+	oldQuote := "the older evidence"
+	base := SemanticFact{
+		SourceLLMOutputID: outputID,
+		Subject:           "/tmp/proj",
+		Predicate:         "runs_tests_via",
+		Object:            "go test ./...",
+	}
+
+	newer := base
+	newer.Confidence = 0.9
+	newer.EvidenceQuote = &newQuote
+	newer.AssertedAtMs = 2_000
+	if _, err := SaveSemanticFact(ctx, s.DB(), newer); err != nil {
+		t.Fatalf("save newer: %v", err)
+	}
+
+	older := base
+	older.Confidence = 0.1
+	older.EvidenceQuote = &oldQuote
+	older.AssertedAtMs = 1_000
+	if _, err := SaveSemanticFact(ctx, s.DB(), older); err != nil {
+		t.Fatalf("save older must not error: %v", err)
+	}
+
+	var gotTs int64
+	var gotConf float64
+	var gotQuote string
+	if err := s.DB().QueryRow(
+		`SELECT asserted_at_ms, confidence, COALESCE(evidence_quote, '')
+		   FROM semantic_facts
+		  WHERE subject = ? AND predicate = ? AND object = ?`,
+		base.Subject, base.Predicate, base.Object,
+	).Scan(&gotTs, &gotConf, &gotQuote); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+
+	if gotTs != 2_000 {
+		t.Errorf("asserted_at_ms moved backwards: got %d, want 2000", gotTs)
+	}
+	if gotConf != 0.9 {
+		t.Errorf("confidence was rebound to the older assertion: got %v, want 0.9", gotConf)
+	}
+	if gotQuote != newQuote {
+		t.Errorf("evidence pointer was rebound: got %q, want %q", gotQuote, newQuote)
+	}
+}
+
+// TestSaveSemanticFact_EqualOrNewerStillWins guards the other
+// direction: the guard must not block a legitimate refresh, including
+// a same-millisecond re-assertion.
+func TestSaveSemanticFact_EqualOrNewerStillWins(t *testing.T) {
+	t.Parallel()
+	s := openTestStore(t)
+	ctx := context.Background()
+	sessionID := ingestForScrub(t, s, "no-secret", nil)
+	outputID := insertLLMOutputForTest(t, s, sessionID)
+
+	base := SemanticFact{
+		SourceLLMOutputID: outputID,
+		Subject:           "/tmp/proj",
+		Predicate:         "runs_tests_via",
+		Object:            "go test ./...",
+		Confidence:        0.5,
+		AssertedAtMs:      1_000,
+	}
+	if _, err := SaveSemanticFact(ctx, s.DB(), base); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		ts   int64
+		conf float64
+	}{
+		{"same timestamp", 1_000, 0.6},
+		{"newer timestamp", 3_000, 0.8},
+	} {
+		f := base
+		f.AssertedAtMs = tc.ts
+		f.Confidence = tc.conf
+		if _, err := SaveSemanticFact(ctx, s.DB(), f); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		var conf float64
+		if err := s.DB().QueryRow(
+			`SELECT confidence FROM semantic_facts
+			  WHERE subject = ? AND predicate = ? AND object = ?`,
+			base.Subject, base.Predicate, base.Object).Scan(&conf); err != nil {
+			t.Fatalf("read back: %v", err)
+		}
+		if conf != tc.conf {
+			t.Errorf("%s should have been applied: confidence %v, want %v",
+				tc.name, conf, tc.conf)
+		}
+	}
+}

@@ -71,12 +71,25 @@ var RecommendedFactPredicates = []string{
 // SaveSemanticFact upserts one fact into semantic_facts. PK is the
 // (subject, predicate, object) UNIQUE constraint; on conflict the
 // asserted_at_ms / confidence / evidence pointer / source_llm_output_id
-// are all refreshed (latest evidence wins). Conflicting object values
-// for the same (subject, predicate) coexist as separate rows so the
-// truth is never silently overwritten — the caller picks by
-// asserted_at_ms when retrieving.
+// are refreshed ONLY when the incoming assertion is at least as new
+// as the stored one. Conflicting object values for the same
+// (subject, predicate) coexist as separate rows so the truth is never
+// silently overwritten — the caller picks by asserted_at_ms when
+// retrieving.
 //
-// Returns the row id of the inserted-or-updated fact.
+// The monotonicity guard is what makes "latest evidence wins" true.
+// Without it any write carrying an older timestamp moved the fact
+// BACKWARDS in time and rebound confidence, source_llm_output_id and
+// the evidence pointer to the older assertion — and because
+// LoadFactsForSubject resolves competing objects by
+// asserted_at_ms DESC, that silently changed which value the
+// retrieval layer treats as current. The in-tree induce path always
+// passes time.Now(), but POST /v1/facts accepts a client-supplied
+// asserted_at_ms unvalidated, and any future replay or backfill
+// writer would hit it.
+//
+// A suppressed update is success, not an error: the stored row is
+// already the one we wanted. The id is returned either way.
 func SaveSemanticFact(ctx context.Context, db *sql.DB, f SemanticFact) (int64, error) {
 	if f.SourceLLMOutputID <= 0 {
 		return 0, errors.New("SaveSemanticFact: source_llm_output_id is required")
@@ -119,12 +132,29 @@ ON CONFLICT(subject, predicate, object) DO UPDATE SET
     evidence_session_id  = excluded.evidence_session_id,
     evidence_quote       = excluded.evidence_quote,
     asserted_at_ms       = excluded.asserted_at_ms
+  WHERE excluded.asserted_at_ms >= semantic_facts.asserted_at_ms
 RETURNING id`
 	var id int64
-	if err := db.QueryRowContext(ctx, q,
+	err := db.QueryRowContext(ctx, q,
 		f.SourceLLMOutputID, scrubStored(f.Subject), f.Predicate, scrubStored(f.Object),
 		f.Confidence, f.EvidenceSessionID, scrubStoredPtr(f.EvidenceQuote), f.AssertedAtMs,
-	).Scan(&id); err != nil {
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		// The WHERE on the DO UPDATE suppressed the write because a
+		// NEWER assertion already exists, so RETURNING yields no row.
+		// That is success, not failure: the stored fact is the one we
+		// wanted to end up with. Look up its id so the caller still
+		// gets a usable handle.
+		if err := db.QueryRowContext(ctx,
+			`SELECT id FROM semantic_facts
+			  WHERE subject = ? AND predicate = ? AND object = ?`,
+			scrubStored(f.Subject), f.Predicate, scrubStored(f.Object),
+		).Scan(&id); err != nil {
+			return 0, fmt.Errorf("save semantic_fact: look up newer row: %w", err)
+		}
+		return id, nil
+	}
+	if err != nil {
 		return 0, fmt.Errorf("save semantic_fact: %w", err)
 	}
 	return id, nil
