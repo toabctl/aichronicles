@@ -1,11 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"reflect"
 	"testing"
 
 	"github.com/toabctl/aichronicles/internal/events"
@@ -368,4 +371,68 @@ func TestHandleSessionsGet_ErrorShape(t *testing.T) {
 	// kept this assertion server-side so an error-path bug
 	// shows in this file's tests too.
 	_ = errors.New
+}
+
+// TestSessionsList_ProjectionIsIdenticalFilteredOrNot pins the
+// endpoint's shape against the branch that used to change it.
+//
+// GET /v1/sessions dispatched to a different loader when no facet was
+// set, and the two projected different columns: the unfiltered one
+// omitted event_count entirely (so every row reported 0) and returned
+// the whole summary JSON body in latest_summary instead of the topic.
+// Adding ?cwd= made the numbers appear, which is a confusing way to
+// discover a bug.
+//
+// Asserting the two responses agree — rather than hardcoding one
+// shape — is what keeps a future re-split honest.
+func TestSessionsList_ProjectionIsIdenticalFilteredOrNot(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+
+	env := validEnvelope(t)
+	env.Cwd = "/tmp/projection-probe"
+	body, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/ingest", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("ingest: status %d", rr.Code)
+	}
+
+	get := func(path string) wire.SessionListResponse {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("GET %s: status %d", path, rr.Code)
+		}
+		var out wire.SessionListResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+		return out
+	}
+
+	unfiltered := get("/v1/sessions")
+	filtered := get("/v1/sessions?cwd=" + url.QueryEscape("/tmp/projection-probe"))
+
+	if len(unfiltered.Sessions) != 1 || len(filtered.Sessions) != 1 {
+		t.Fatalf("expected 1 session each, got %d unfiltered / %d filtered",
+			len(unfiltered.Sessions), len(filtered.Sessions))
+	}
+	u, f := unfiltered.Sessions[0], filtered.Sessions[0]
+
+	if u.EventCount == 0 {
+		t.Error("unfiltered list reported event_count 0; the column was not selected")
+	}
+	if u.EventCount != f.EventCount {
+		t.Errorf("event_count differs by filter: unfiltered %d, filtered %d",
+			u.EventCount, f.EventCount)
+	}
+	if !reflect.DeepEqual(u, f) {
+		t.Errorf("projection differs by filter:\nunfiltered: %+v\n  filtered: %+v", u, f)
+	}
 }

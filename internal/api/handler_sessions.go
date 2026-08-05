@@ -42,23 +42,35 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 
 	// When any filter is set we run the rich list query that
 	// supports faceted EXISTS clauses + event_count + first_prompt.
-	// The plain LoadRecentSessionDigests path stays the default for
-	// the unfiltered case (the cheapest read).
-	var rows []store.SessionDigestRow
-	var err error
-	if facets.Any() {
-		rows, err = store.LoadSessionsForListFaceted(r.Context(), s.store.DB(), facets, req.SinceMs, req.Limit, offset)
-		if err != nil {
-			s.storeError(w, "LoadSessionsForListFaceted", err)
-			return
-		}
-	} else {
-		// Paginated browse list: no upper bound on the window.
-		rows, err = store.LoadRecentSessionDigests(r.Context(), s.store.DB(), req.SinceMs, 0, req.Limit, offset)
-		if err != nil {
-			s.storeError(w, "LoadRecentSessionDigests", err)
-			return
-		}
+	// One loader for every request, filtered or not.
+	//
+	// This used to branch to LoadRecentSessionDigests when no facet
+	// was set, on the theory that it was the cheaper read. The two
+	// loaders project different columns, so the endpoint silently
+	// changed shape depending on whether the caller happened to pass
+	// a filter: event_count came back 0 for every row (the plain
+	// loader does not select it at all) and latest_summary carried
+	// the whole summary JSON body instead of just the topic.
+	//
+	// The consequence was visible everywhere the default list is
+	// rendered — `aichronicles sessions` printed 0 in its EVENTS
+	// column until you added --cwd, and the web sessions page and MCP
+	// list_sessions did the same. It also made
+	// wire.SessionDigest.EventCount's "populated by GET /v1/sessions"
+	// doc exactly backwards for that endpoint's default shape.
+	//
+	// The faceted loader with no facets is also the cheaper query: it
+	// reads materialised columns where the plain one runs a
+	// correlated subquery for latest_summary.
+	//
+	// Note /v1/sessions/digests is a different endpoint with a
+	// different contract — it feeds reflect/digest, which need the
+	// full summary body — and still uses LoadRecentSessionDigests.
+	rows, err := store.LoadSessionsForListFaceted(
+		r.Context(), s.store.DB(), facets, req.SinceMs, req.Limit, offset)
+	if err != nil {
+		s.storeError(w, "LoadSessionsForListFaceted", err)
+		return
 	}
 
 	out := wire.SessionListResponse{Sessions: make([]wire.SessionDigest, 0, len(rows))}
