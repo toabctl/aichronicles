@@ -26,7 +26,6 @@ import (
 // candidates as a prior; an explicit discard tightens that signal.
 func newProposeDiscardCmd() *cobra.Command {
 	var (
-		dbPath    string
 		sockFlag  string
 		skillName string
 		outputID  int64
@@ -43,11 +42,6 @@ func newProposeDiscardCmd() *cobra.Command {
 			"flips to 'discard' with the current timestamp; nothing\n" +
 			"on disk changes.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, err := openStore(dbPath)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = s.Close() }()
 			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
@@ -65,7 +59,6 @@ func newProposeDiscardCmd() *cobra.Command {
 			return discardProposedSkill(cmd.Context(), c, result, output.ID, output.CreatedAtMs, skillName, cmd.OutOrStdout())
 		},
 	}
-	addDBFlag(cmd, &dbPath)
 	addSocketFlag(cmd, &sockFlag)
 	cmd.Flags().StringVar(&skillName, "skill", "",
 		"name of a skill from the proposal to discard")

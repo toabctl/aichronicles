@@ -196,7 +196,7 @@ func mergeProposedSkill(
 	}
 
 	if !noVerify {
-		if err := verifyProposalOrAbort(ctx, st, c, candidate, outputID, newClient, out); err != nil {
+		if err := verifyProposalOrAbort(ctx, c, candidate, outputID, newClient, out); err != nil {
 			return err
 		}
 	}

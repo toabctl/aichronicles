@@ -25,7 +25,6 @@ aichronicles propose verify --skill <name> [flags]
 ### Options
 
 ```
-      --db string       SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
   -h, --help            help for verify
       --output-id int   specific llm_outputs row id (default: latest propose row)
       --skill string    name of a skill from the proposal to verify

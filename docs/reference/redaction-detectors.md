@@ -23,9 +23,13 @@ Detectors are listed in registration order. On overlap, the first match wins —
 | 15 | `slack_token` | `\bxox[abprs]-[0-9]{10,}-[0-9a-zA-Z-]{24,}\b` |
 | 16 | `stripe_key` | `\b(?:sk\|pk\|rk)_(?:live\|test)_[A-Za-z0-9]{24,}\b` |
 | 17 | `twilio_sid` | `\b(?:AC\|SK)[a-f0-9]{32}\b` |
-| 18 | `pem_private_key` | `-----BEGIN (?:RSA \|EC \|OPENSSH \|PGP \|DSA \|ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----` |
-| 19 | `jwt` | `\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b` |
-| 20 | `bearer_token` | `(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{20,}\b` |
-| 21 | `db_connection_string` | `(?i)\b(?:postgres(?:ql)?\|mysql\|mongodb(?:\+srv)?\|redis(?:s)?\|amqp)://[^:@\s]+:[^@\s]+@[^\s]+` |
-| 22 | `basic_auth_url` | `\bhttps?://[^:@\s/]+:[^@\s/]+@[^\s]+` |
-| 23 | `aws_secret_key_assignment` | `(?i)\baws_?secret(?:_access)?_?key\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}["']?` |
+| 18 | `pem_private_key` | `-----BEGIN (?:RSA \|EC \|OPENSSH \|DSA \|ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----` |
+| 19 | `pgp_private_key` | `-----BEGIN PGP PRIVATE KEY[ ]BLOCK-----[\s\S]*?-----END PGP PRIVATE KEY[ ]BLOCK-----` |
+| 20 | `jwt` | `\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b` |
+| 21 | `bearer_token` | `(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{20,}\b` |
+| 22 | `db_connection_string` | `(?i)\b(?:postgres(?:ql)?\|mysql\|mongodb(?:\+srv)?\|redis(?:s)?\|amqp)://[^:@\s]+:[^@\s]+@[^\s]+` |
+| 23 | `basic_auth_url` | `\bhttps?://[^:@\s/]+:[^@\s/]+@[^\s]+` |
+| 24 | `slack_webhook` | `\bhttps://hooks\.slack\.com/services/T[A-Za-z0-9_-]+/B[A-Za-z0-9_-]+/[A-Za-z0-9]{16,}` |
+| 25 | `aws_secret_key_assignment` | `(?i)\baws_?secret(?:_access)?_?key\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}["']?` |
+| 26 | `aws_session_token_assignment` | `(?i)\baws_?session_?token\s*[:=]\s*["']?[A-Za-z0-9/+=_-]{20,}["']?` |
+| 27 | `basic_auth_header` | `(?i)\bauthorization\s*:\s*basic\s+[A-Za-z0-9+/]{8,}={0,2}` |

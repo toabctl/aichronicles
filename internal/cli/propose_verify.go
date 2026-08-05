@@ -18,7 +18,6 @@ import (
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
-	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -35,7 +34,6 @@ import (
 // add` is free for the second call.
 func newProposeVerifyCmd() *cobra.Command {
 	var (
-		dbPath    string
 		sockFlag  string
 		skillName string
 		outputID  int64
@@ -55,11 +53,6 @@ func newProposeVerifyCmd() *cobra.Command {
 			"the concern + recommendation on refusal. Requires " + llm.APIKeyEnv + "\n" +
 			"on a cache miss.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, err := openStore(dbPath)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = s.Close() }()
 			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
@@ -89,10 +82,9 @@ func newProposeVerifyCmd() *cobra.Command {
 			newClient := func() (llm.Client, error) {
 				return llm.FromConfig(ctx, llmCfg)
 			}
-			return verifyProposalOrAbort(ctx, s, c, sk, output.ID, newClient, cmd.OutOrStdout())
+			return verifyProposalOrAbort(ctx, c, sk, output.ID, newClient, cmd.OutOrStdout())
 		},
 	}
-	addDBFlag(cmd, &dbPath)
 	addSocketFlag(cmd, &sockFlag)
 	cmd.Flags().StringVar(&skillName, "skill", "",
 		"name of a skill from the proposal to verify")
@@ -117,7 +109,6 @@ func newProposeVerifyCmd() *cobra.Command {
 // retried (or bypassed via --no-verify) rather than blocking forever.
 func verifyProposalOrAbort(
 	ctx context.Context,
-	st *store.Store,
 	c *apiclient.Client,
 	skill *prompts.ProposedSkill,
 	outputID int64,
@@ -150,16 +141,8 @@ func verifyProposalOrAbort(
 	// stays — the api doesn't expose CollectInstalled, and the
 	// scan is a read-only filesystem traversal that has no bearing
 	// on the writer invariant.
-	installed, ierr := skills.CollectInstalled(ctx, st.DB(),
-		time.Now().Add(-90*24*time.Hour).UnixMilli())
-	if ierr != nil {
-		// Non-fatal: critic still runs, just without the
-		// installed-skills enrichment. A propose run that just
-		// finished probably has those baked into its prompt, so
-		// the critic can still reason about duplicates from
-		// what's in the proposal.
-		slog.Warn("propose verify: skipping installed-skills enrichment", "err", ierr)
-	}
+	installed := loadInstalledSkills(ctx, c,
+		time.Now().Add(-90*24*time.Hour).UnixMilli(), "propose verify")
 
 	built, err := prompts.BuildVerifyProposal(prompts.VerifyProposalInputs{
 		Skill:           *skill,

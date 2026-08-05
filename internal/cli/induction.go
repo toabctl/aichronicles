@@ -17,7 +17,6 @@ import (
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
 	"github.com/toabctl/aichronicles/internal/preview"
-	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/textfmt"
 	"github.com/toabctl/aichronicles/internal/timefmt"
@@ -602,11 +601,8 @@ func RunInductionForSession(
 	// repropose a skill that already exists. Best-effort: a
 	// failure here downgrades the prompt rather than blocking
 	// the run.
-	installed, ierr := skills.CollectInstalled(ctx, s.DB(),
-		time.Now().Add(-30*24*time.Hour).UnixMilli())
-	if ierr != nil {
-		slog.Warn("induction: skipping installed-skills enrichment", "err", ierr)
-	}
+	installed := loadInstalledSkills(ctx, c,
+		time.Now().Add(-30*24*time.Hour).UnixMilli(), "induction")
 
 	built, err := prompts.BuildInduce(prompts.InduceFromSessionInputs{
 		Digest:          digest,

@@ -44,7 +44,7 @@ func TestRunPropose_ChallengeFlagPersistsWithKindChallenge(t *testing.T) {
 	f := &fakeLLM{toolInput: body}
 
 	var out bytes.Buffer
-	id, err := RunPropose(context.Background(), s, apiForStore(t, s),
+	id, err := RunPropose(context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		ProposeOptions{
 			Since:     10 * time.Hour,
@@ -92,12 +92,12 @@ func TestRunPropose_ChallengeAndProposeCacheIndependently(t *testing.T) {
 		return &fakeLLM{reply: "x"}, nil
 	}
 
-	if _, err := RunPropose(context.Background(), s, apiForStore(t, s), newClient,
+	if _, err := RunPropose(context.Background(), apiForStore(t, s), newClient,
 		ProposeOptions{Since: 10 * time.Hour, Limit: 10},
 		&bytes.Buffer{}); err != nil {
 		t.Fatalf("propose: %v", err)
 	}
-	if _, err := RunPropose(context.Background(), s, apiForStore(t, s), newClient,
+	if _, err := RunPropose(context.Background(), apiForStore(t, s), newClient,
 		ProposeOptions{Since: 10 * time.Hour, Limit: 10, Challenge: true},
 		&bytes.Buffer{}); err != nil {
 		t.Fatalf("challenge: %v", err)
@@ -154,7 +154,7 @@ func TestRunPropose_ChallengeReusesUnresolvedEnrichment(t *testing.T) {
 	}
 
 	f := &fakeLLM{}
-	if _, err := RunPropose(context.Background(), s, apiForStore(t, s),
+	if _, err := RunPropose(context.Background(), apiForStore(t, s),
 		func() (llm.Client, error) { return f, nil },
 		ProposeOptions{
 			Since:     10 * time.Hour,

@@ -314,7 +314,7 @@ func runProposeForSweep(
 		limit = defaultProposeLimit
 	}
 	_, _ = fmt.Fprintln(errOut, "meta sweep: dispatching propose")
-	_, err := RunPropose(ctx, s, c, newClient, ProposeOptions{
+	_, err := RunPropose(ctx, c, newClient, ProposeOptions{
 		Since:    since,
 		Limit:    limit,
 		Model:    opts.Model,
@@ -374,7 +374,7 @@ func runChallengeForSweep(
 		limit = defaultProposeLimit
 	}
 	_, _ = fmt.Fprintln(errOut, "meta sweep: dispatching challenge")
-	_, err := RunPropose(ctx, s, c, newClient, ProposeOptions{
+	_, err := RunPropose(ctx, c, newClient, ProposeOptions{
 		Since:     since,
 		Limit:     limit,
 		Model:     opts.Model,

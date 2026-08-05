@@ -141,6 +141,12 @@ type callRule struct {
 	Dir       string         // directory relative to repo root
 	Forbidden *regexp.Regexp // pattern that signals a violation
 	Reason    string
+
+	// ExemptFiles are base filenames within Dir that the rule does
+	// not apply to. Kept as an explicit short list rather than a
+	// pattern so every exemption is a deliberate, reviewable entry
+	// rather than something a filename can drift into.
+	ExemptFiles []string
 }
 
 var callRules = []callRule{
@@ -162,6 +168,24 @@ var callRules = []callRule{
 		Forbidden: regexp.MustCompile(
 			`\bstore\.(Load|Save|Insert|Update|Delete|Has|Last|Query|Vacuum|Segment)\w*\(`),
 		Reason: "internal/mcp must read/write through apiclient (cross-process); test files exempt",
+	},
+	{
+		// The CLI must not hold its own SQLite handle. Every
+		// LLM command used to open one — a second writer
+		// connection against the database the daemon already owns —
+		// solely to reach skills.CollectInstalled / LoadInvoked,
+		// which have equivalent daemon endpoints that web and mcp
+		// were already using.
+		//
+		// Two maintenance commands are exempt and must stay that
+		// way deliberately: backfill re-derives extractions from
+		// raw_envelopes with its own SQL, and scrub rewrites rows
+		// in place. Both refuse to run while the daemon is up, so
+		// there is no concurrent-writer question.
+		Dir:         "internal/cli",
+		Forbidden:   regexp.MustCompile(`\.DB\(\)`),
+		Reason:      "internal/cli must reach the store through apiclient, not a direct *sql.DB",
+		ExemptFiles: []string{"backfill.go", "scrub.go", "store.go"},
 	},
 	{
 		// internal/web is a separate process (aichronicles-web.service),
@@ -204,7 +228,7 @@ func run() error {
 		return fmt.Errorf("locate module root: %w", err)
 	}
 	for _, r := range callRules {
-		hits, err := scanForbiddenCalls(filepath.Join(root, r.Dir), r.Forbidden)
+		hits, err := scanForbiddenCalls(filepath.Join(root, r.Dir), r.Forbidden, r.ExemptFiles)
 		if err != nil {
 			return fmt.Errorf("scan %s: %w", r.Dir, err)
 		}
@@ -252,7 +276,11 @@ func moduleRoot() (string, error) {
 // every line that matches the forbidden pattern. Test files are
 // exempt because they exercise the store directly to set up
 // fixtures and verify state.
-func scanForbiddenCalls(dir string, pat *regexp.Regexp) ([]callHit, error) {
+func scanForbiddenCalls(dir string, pat *regexp.Regexp, exempt []string) ([]callHit, error) {
+	exemptSet := make(map[string]struct{}, len(exempt))
+	for _, e := range exempt {
+		exemptSet[e] = struct{}{}
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("read dir %s: %w", dir, err)
@@ -264,6 +292,9 @@ func scanForbiddenCalls(dir string, pat *regexp.Regexp) ([]callHit, error) {
 		}
 		name := e.Name()
 		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		if _, ok := exemptSet[name]; ok {
 			continue
 		}
 		path := filepath.Join(dir, name)

@@ -136,7 +136,7 @@ func TestRunMetaAnalysisSweep_RecentRowSkipsKind(t *testing.T) {
 	f := &fakeLLM{reply: "ok"}
 	newClient := func() (llm.Client, error) { return f, nil }
 
-	if _, err := RunPropose(t.Context(), s, apiForStore(t, s), newClient,
+	if _, err := RunPropose(t.Context(), apiForStore(t, s), newClient,
 		ProposeOptions{Since: 10 * time.Hour, Limit: 10},
 		&bytes.Buffer{}); err != nil {
 		t.Fatalf("seed propose: %v", err)

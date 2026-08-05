@@ -15,7 +15,6 @@ import (
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/llm"
 	"github.com/toabctl/aichronicles/internal/llm/prompts"
-	"github.com/toabctl/aichronicles/internal/skills"
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -42,7 +41,6 @@ func newProposeCmd() *cobra.Command {
 		limit     int
 		model     string
 		force     bool
-		dbPath    string
 		sockFlag  string
 		formatIn  string
 		challenge bool
@@ -69,11 +67,6 @@ func newProposeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := openStore(dbPath)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = s.Close() }()
 			c, err := openAPIClient(sockFlag)
 			if err != nil {
 				return err
@@ -103,7 +96,7 @@ func newProposeCmd() *cobra.Command {
 					providerLabel(llmCfg))
 			}
 
-			_, err = RunPropose(ctx, s, c,
+			_, err = RunPropose(ctx, c,
 				func() (llm.Client, error) {
 					return llm.FromConfig(ctx, llmCfg)
 				},
@@ -123,7 +116,6 @@ func newProposeCmd() *cobra.Command {
 	addForceLLMCacheFlag(cmd, &force)
 	cmd.Flags().BoolVar(&challenge, "challenge", false,
 		"forward-looking mode: propose what to tackle NEXT (Voyager-style curriculum)")
-	addDBFlag(cmd, &dbPath)
 	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)
 	cmd.AddCommand(newProposeAddCmd())
@@ -164,7 +156,6 @@ type ProposeOptions struct {
 // LLM round-trip lands. Pass io.Discard or leave nil to silence.
 func RunPropose(
 	ctx context.Context,
-	s *store.Store,
 	c *apiclient.Client,
 	newClient func() (llm.Client, error),
 	opts ProposeOptions,
@@ -206,14 +197,7 @@ func RunPropose(
 	// per-skill invocation counts so it knows which ones the user
 	// actively uses. Discovery errors are non-fatal — propose runs
 	// without the enrichment rather than refusing to proceed.
-	installed, err := skills.CollectInstalled(ctx, s.DB(), sinceMs)
-	if err != nil {
-		slog.Warn("propose: skipping installed-skills enrichment", "err", err)
-	}
-	invoked, err := skills.LoadInvoked(ctx, s.DB(), sinceMs)
-	if err != nil {
-		slog.Warn("propose: skipping invoked-skills enrichment", "err", err)
-	}
+	installed, invoked := loadSkillsEnrichment(ctx, c, sinceMs, "propose")
 	// Skill-impact enrichment: per-skill success rate over the
 	// same window so the model can see which invoked skills are
 	// actually working vs. correlated with tool_failure. Failures

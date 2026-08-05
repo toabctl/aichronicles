@@ -378,7 +378,7 @@ func addSkillCandidate(
 	}
 
 	if !noVerify {
-		if err := verifyProposalOrAbort(ctx, st, c, sk, outputID, newClient, out); err != nil {
+		if err := verifyProposalOrAbort(ctx, c, sk, outputID, newClient, out); err != nil {
 			return err
 		}
 	}

@@ -72,7 +72,7 @@ func TestScanForbiddenCalls_DetectsViolation(t *testing.T) {
 		t.Fatalf("write doc.go: %v", err)
 	}
 	pat := regexp.MustCompile(`\bstore\.(Load|Save)\w*\(`)
-	hits, err := scanForbiddenCalls(dir, pat)
+	hits, err := scanForbiddenCalls(dir, pat, nil)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -84,5 +84,71 @@ func TestScanForbiddenCalls_DetectsViolation(t *testing.T) {
 	}
 	if hits[0].match != "store.LoadLLMOutputs(" {
 		t.Errorf("expected match %q, got %q", "store.LoadLLMOutputs(", hits[0].match)
+	}
+}
+
+// TestScanForbiddenCalls_HonoursExemptions pins the escape hatch the
+// .DB() rule depends on.
+//
+// Two maintenance commands legitimately hold their own SQLite handle
+// (backfill re-derives extractions with its own SQL; scrub rewrites
+// rows in place) and both refuse to run while the daemon is up. The
+// exemption list is explicit filenames rather than a pattern so each
+// entry is a deliberate, reviewable decision.
+func TestScanForbiddenCalls_HonoursExemptions(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	const body = "package p\n\nfunc f() { _ = s.DB() }\n"
+	for _, name := range []string{"guarded.go", "exempt.go"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	pat := regexp.MustCompile(`\.DB\(\)`)
+
+	all, err := scanForbiddenCalls(dir, pat, nil)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected both files to hit, got %d", len(all))
+	}
+
+	partial, err := scanForbiddenCalls(dir, pat, []string{"exempt.go"})
+	if err != nil {
+		t.Fatalf("scan with exemption: %v", err)
+	}
+	if len(partial) != 1 {
+		t.Fatalf("expected 1 hit after exempting, got %d", len(partial))
+	}
+	if !strings.Contains(partial[0].location, "guarded.go") {
+		t.Errorf("wrong file reported: %s", partial[0].location)
+	}
+}
+
+// TestCLIHasNoDirectDBHandle is the live assertion: the rule must
+// actually hold against the tree, not merely be expressible.
+func TestCLIHasNoDirectDBHandle(t *testing.T) {
+	t.Parallel()
+	root, err := moduleRoot()
+	if err != nil {
+		t.Fatalf("moduleRoot: %v", err)
+	}
+	var rule *callRule
+	for i := range callRules {
+		if callRules[i].Dir == "internal/cli" &&
+			callRules[i].Forbidden.String() == `\.DB\(\)` {
+			rule = &callRules[i]
+		}
+	}
+	if rule == nil {
+		t.Fatal("the internal/cli .DB() rule is missing from callRules")
+	}
+	hits, err := scanForbiddenCalls(filepath.Join(root, rule.Dir), rule.Forbidden, rule.ExemptFiles)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	for _, h := range hits {
+		t.Errorf("internal/cli holds a direct *sql.DB at %s (%s)", h.location, h.match)
 	}
 }

@@ -28,6 +28,7 @@ aichronicles propose merge --skill <name> [flags]
 
 ```
       --db string           SQLite DB path (overrides $AICHRONICLES_DB; defaults to XDG_STATE_HOME)
+      --force               overwrite existing helper scripts under the skill's scripts/ directory
   -h, --help                help for merge
       --no-verify           skip the critic-LLM verification gate
       --output-id int       specific llm_outputs row id (default: latest propose row)
