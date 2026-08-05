@@ -103,10 +103,18 @@ func TestLowerFirst(t *testing.T) {
 // boundary characters are ASCII — only the length was wrong.
 func TestClipToRunes_WordBoundaryUsesRuneCounts(t *testing.T) {
 	t.Parallel()
-	// Each 'ü' is two bytes, so a byte index is ~2x the rune index.
-	// The only space sits at rune 4 — under the halfway mark of 10 —
-	// so it must NOT be used as a break point.
-	in := "üüüü üüüüüüüüüüüüüüüü"
+	// Each 'ü' is two bytes, so the byte index runs at ~2x the rune
+	// index. The sole space sits at rune 6 (byte 12). Against max=20
+	// the halfway mark is 10, so:
+	//
+	//   byte index 12 > 10  → the old guard accepted it and clipped
+	//                          the result down to 6 runes
+	//   rune index  6 !> 10 → the fixed guard rejects it and uses the
+	//                          full 20-rune budget
+	//
+	// Any input where those two disagree exercises the bug; this is
+	// the smallest one.
+	in := "üüüüüü üüüüüüüüüüüüüü"
 	got := ClipToRunes(in, 20)
 	body := strings.TrimSuffix(got, "…")
 
