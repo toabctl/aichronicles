@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/events"
+	"github.com/toabctl/aichronicles/internal/searchquery"
 )
 
 // ingestText is a shorthand that drops one envelope into the store
@@ -261,4 +262,67 @@ func TestLoadSubagentSpans_DoesNotFragmentOnTypeChange(t *testing.T) {
 func tempStorePath(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), "store.db")
+}
+
+// TestToFTS5Output_ParsesAgainstRealFTS5 is the end-to-end half of
+// the search-500 fix: internal/searchquery pins the translation, this
+// pins that SQLite actually accepts what it produces.
+//
+// Before the fix these inputs became bare tokens with a '*' appended
+// — `don't* panic*`, `foo,bar*`, `AND*` — and SQLite answered
+// "fts5: syntax error". ToFTS5 returns a nil error, so the expression
+// flowed past the handler's parse guard and surfaced as a 500 with an
+// empty detail. The user saw `search: apiclient: 500 Storage error`
+// for typing an apostrophe.
+//
+// Lives in internal/store because it needs a real FTS5 table;
+// internal/searchquery has no SQLite dependency and should keep none.
+func TestToFTS5Output_ParsesAgainstRealFTS5(t *testing.T) {
+	t.Parallel()
+	s := openTestStore(t)
+
+	inputs := []string{
+		"don't panic",
+		"foo,bar",
+		"what?",
+		"50%",
+		"AND",
+		"OR",
+		"NOT",
+		"a;b",
+		"x@y",
+		"100$",
+		"a&b",
+		"k=v",
+		"a<b>c",
+		"pipe|sep",
+		"back\\slash",
+		"tilde~thing",
+		"arr[0]",
+		"obj{key}",
+		"tick`quote",
+		"plain",
+		"kebab-case",
+		"snake_case",
+		"path/to/file.go",
+		"ünïcöde",
+		"emoji 🎉 here",
+	}
+
+	for _, in := range inputs {
+		t.Run(in, func(t *testing.T) {
+			t.Parallel()
+			expr, err := searchquery.ToFTS5(in)
+			if err != nil {
+				t.Fatalf("ToFTS5(%q): %v", in, err)
+			}
+			var n int
+			if err := s.DB().QueryRow(
+				`SELECT COUNT(*) FROM events_fts WHERE events_fts MATCH ?`, expr,
+			).Scan(&n); err != nil {
+				t.Errorf("SQLite rejected the generated expression\n input: %q\n  expr: %q\n   err: %v",
+					in, expr, err)
+			}
+		})
+	}
 }

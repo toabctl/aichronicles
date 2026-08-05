@@ -38,16 +38,6 @@ var ErrEmpty = errors.New("search query is empty")
 // e.g. an unclosed double quote.
 var ErrSyntax = errors.New("search query has invalid syntax")
 
-// separators are the characters the SQLite FTS5 tokenizer treats as
-// token separators in our schema (see migration 004). Tokens that
-// contain any of them must be wrapped in quotes to survive parsing
-// and to let the tokenizer split them itself.
-const separators = "_-./"
-
-// fts5Specials are characters with special meaning in an FTS5 MATCH
-// expression. Tokens containing any of these are wrapped as a phrase.
-const fts5Specials = `"():*^+`
-
 // ToFTS5 transforms a user-facing query string into an FTS5 MATCH
 // expression. See the package doc comment for the rules.
 func ToFTS5(input string) (string, error) {
@@ -170,27 +160,36 @@ func transform(p part) (string, error) {
 // would still confuse the FTS5 parser if pasted into a MATCH
 // expression unwrapped.
 func needsQuoting(s string) bool {
+	// FTS5 keywords are recognised only in uppercase. A bare AND/OR/
+	// NOT is parsed as an operator, and appending the prefix '*' the
+	// caller adds turns it into a syntax error outright.
+	switch s {
+	case "AND", "OR", "NOT":
+		return true
+	}
 	for _, r := range s {
-		// Specials and separators are documented as ASCII; the
-		// fast path is `r < MaxASCII && IndexByte`. For non-ASCII
-		// runes, fall through to the strings.ContainsRune path so
-		// any future expansion of the special set (e.g. a
-		// non-ASCII quote-like char) is matched as well.
 		if r <= unicode.MaxASCII {
-			c := byte(r)
-			if strings.IndexByte(fts5Specials, c) >= 0 {
-				return true
+			// Allowlist, not denylist. FTS5's bareword grammar admits
+			// only letters, digits, '_' and codepoints > 127 —
+			// EVERY other ASCII byte is a parse error, not just the
+			// handful with documented special meaning. Enumerating
+			// the special ones missed ' , ; ! ? @ # $ % & = < > | \
+			// ~ [ ] { } and backtick, so `aichronicles search "don't
+			// panic"` produced `don't* panic*` and SQLite answered
+			// with a syntax error the API surfaced as a 500.
+			//
+			// '_' is deliberately absent from the safe set even
+			// though FTS5 accepts it bare: our tokenizer (migration
+			// 004) treats it as a separator, so quoting lets the
+			// tokenizer split inside the resulting phrase.
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+				continue
 			}
-			if strings.IndexByte(separators, c) >= 0 {
-				return true
-			}
-			continue
+			return true
 		}
-		// Defensive: also check for Unicode characters classified
-		// as quotation marks or other punctuation that an FTS5
-		// parser might choke on. unicode.IsPunct is permissive,
-		// but for safety we wrap any non-ASCII punctuation as a
-		// phrase rather than letting it through as-is.
+		// Non-ASCII letters are valid barewords; punctuation and
+		// symbols are wrapped so a Unicode quote or dash cannot
+		// reach the parser unquoted.
 		if unicode.IsPunct(r) || unicode.IsSymbol(r) {
 			return true
 		}

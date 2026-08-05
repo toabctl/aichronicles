@@ -184,3 +184,83 @@ func TestToFTS5_LongInput(t *testing.T) {
 		t.Errorf("got %q (truncated): want trailing word*", got[:80])
 	}
 }
+
+// TestToFTS5_ASCIIPunctuationIsQuoted is the regression gate for
+// `aichronicles search "don't panic"` returning HTTP 500.
+//
+// needsQuoting was a denylist of characters with documented special
+// meaning in FTS5 (`"():*^+`) plus our tokenizer's separators. But
+// FTS5's bareword grammar is an allowlist — letters, digits, '_' and
+// codepoints > 127 — so every other ASCII byte is a parse error. The
+// unlisted ones fell through and got the prefix '*' appended, and
+// SQLite answered with a syntax error.
+//
+// ToFTS5 returns nil error either way, so the bad expression flowed
+// past the handler's "parse here so consumers get a clean 400"
+// guard and surfaced as a generic 500 with an empty detail.
+//
+// The companion test in internal/store runs these through a real FTS5
+// table; this one pins the translation itself.
+func TestToFTS5_ASCIIPunctuationIsQuoted(t *testing.T) {
+	t.Parallel()
+	// Every ASCII punctuation mark that is not a bareword character.
+	// '"' is excluded: it is the query language's own phrase
+	// delimiter, so an unbalanced one is rejected up front with a
+	// clean ErrSyntax rather than reaching FTS5.
+	const punct = "',;:!?@#$%&=<>|\\~[]{}()*^+-./_`"
+	for _, r := range punct {
+		tok := "ab" + string(r) + "cd"
+		t.Run(string(r), func(t *testing.T) {
+			t.Parallel()
+			got, err := ToFTS5(tok)
+			if err != nil {
+				t.Fatalf("ToFTS5(%q): %v", tok, err)
+			}
+			if !strings.HasPrefix(got, `"`) {
+				t.Errorf("ToFTS5(%q) = %q; token containing %q must be quoted, "+
+					"otherwise FTS5 fails to parse it", tok, got, string(r))
+			}
+		})
+	}
+}
+
+// TestToFTS5_KeywordsAreQuoted covers the other syntax-error class:
+// FTS5 recognises AND/OR/NOT as operators in uppercase, and the
+// prefix '*' appended to a bare operator is an outright parse error.
+// The package doc promises operators are treated as content tokens.
+func TestToFTS5_KeywordsAreQuoted(t *testing.T) {
+	t.Parallel()
+	for _, kw := range []string{"AND", "OR", "NOT"} {
+		got, err := ToFTS5(kw)
+		if err != nil {
+			t.Fatalf("ToFTS5(%q): %v", kw, err)
+		}
+		if !strings.HasPrefix(got, `"`) {
+			t.Errorf("ToFTS5(%q) = %q; must be quoted to stay a content token", kw, got)
+		}
+	}
+	// Lowercase is not a keyword and stays a bare prefix term.
+	got, err := ToFTS5("and")
+	if err != nil {
+		t.Fatalf("ToFTS5(and): %v", err)
+	}
+	if strings.HasPrefix(got, `"`) {
+		t.Errorf("lowercase \"and\" should stay a bare term, got %q", got)
+	}
+}
+
+// TestToFTS5_PlainWordsStayBare guards against over-quoting: the
+// prefix-match behaviour users rely on must survive the stricter
+// rule.
+func TestToFTS5_PlainWordsStayBare(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{"deploy", "Deploy2", "ünïcöde", "abc123"} {
+		got, err := ToFTS5(in)
+		if err != nil {
+			t.Fatalf("ToFTS5(%q): %v", in, err)
+		}
+		if !strings.HasSuffix(got, "*") || strings.HasPrefix(got, `"`) {
+			t.Errorf("ToFTS5(%q) = %q; plain words must stay bare prefix terms", in, got)
+		}
+	}
+}
