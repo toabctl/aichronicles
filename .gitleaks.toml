@@ -6,9 +6,15 @@ useDefault = true
 # the patterns gitleaks looks for. Allowlisting the single file avoids
 # us having to obfuscate the fixtures (which would dilute their value
 # as test data). Fixtures must remain synthetic — no live secrets.
+#
+# The path below said pkg/redact/... long after the package moved to
+# internal/, so the entry matched nothing and the intent above was not
+# actually in force. Prefer internal/redact/redacttest builders for new
+# fixtures; this allowlist is the fallback for cases where a literal
+# genuinely reads better than an assembled one.
 [[allowlists]]
 paths = [
-  '''pkg/redact/redact_test\.go''',
+  '''internal/redact/redact_test\.go''',
   # Auto-generated detector reference reproduces our own regex
   # patterns inline so users can inspect what each one catches. The
   # patterns themselves match the same shapes gitleaks looks for —
