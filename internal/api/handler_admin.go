@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/store"
@@ -23,7 +24,25 @@ import (
 // the operator should run during quiet windows; the api accepts
 // long requests because the http.Server's WriteTimeout is bounded
 // only by the scan time once the response actually starts.
+// clearWriteDeadlineForLongOp lifts the server-wide WriteTimeout for a
+// handler whose work is unbounded by design.
+//
+// Scrub rescans every raw envelope, extraction and LLM output; Prune
+// and Vacuum rewrite the file. On a multi-GB store those run for
+// minutes, well past the 30s WriteTimeout — so the response write
+// failed AFTER the work had already committed, and the operator saw an
+// error for an operation that had actually succeeded. Worse, they
+// would then likely run it again.
+//
+// Same technique the SSE handlers use, and safe for the same reason:
+// these endpoints are reachable only over the 0600 UDS, so a
+// deliberately slow client is not part of the threat model.
+func clearWriteDeadlineForLongOp(w http.ResponseWriter) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+}
+
 func (s *Server) handleScrub(w http.ResponseWriter, r *http.Request) {
+	clearWriteDeadlineForLongOp(w)
 	defer func() { _ = r.Body.Close() }()
 
 	var req wire.ScrubRequest
@@ -67,6 +86,7 @@ func (s *Server) handleScrub(w http.ResponseWriter, r *http.Request) {
 // handlePrune serves POST /v1/prune. Body: wire.PruneRequest.
 // Response: wire.PruneResponse.
 func (s *Server) handlePrune(w http.ResponseWriter, r *http.Request) {
+	clearWriteDeadlineForLongOp(w)
 	defer func() { _ = r.Body.Close() }()
 
 	var req wire.PruneRequest
@@ -131,7 +151,12 @@ func scrubReportToWire(r *store.ScrubReport) wire.ScrubResponse {
 		EnvelopesRewritten:  r.EnvelopesRewritten,
 		LLMOutputsScanned:   r.LLMOutputsScanned,
 		LLMOutputsRewritten: r.LLMOutputsRewritten,
-		PatternHits:         r.PatternHits,
-		DryRun:              r.DryRun,
+
+		ExtractionsScanned:   r.ExtractionsScanned,
+		ExtractionsRewritten: r.ExtractionsRewritten,
+		SessionsRederived:    r.SessionsRederived,
+
+		PatternHits: r.PatternHits,
+		DryRun:      r.DryRun,
 	}
 }

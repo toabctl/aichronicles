@@ -38,6 +38,7 @@ const auditMaxRowsCeiling = 5000
 // catch right now" check. Raw secret bytes never leave the server —
 // the snippet field always carries the marker form.
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
+	clearWriteDeadlineForLongOp(w)
 	req, ok := parseAuditRequest(w, r)
 	if !ok {
 		return

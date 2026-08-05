@@ -13,13 +13,23 @@ type ScrubRequest struct {
 
 // ScrubResponse mirrors store.ScrubReport on the wire.
 type ScrubResponse struct {
-	EventsScanned       int            `json:"events_scanned"`
-	EventsRewritten     int            `json:"events_rewritten"`
-	EnvelopesRewritten  int            `json:"envelopes_rewritten"`
-	LLMOutputsScanned   int            `json:"llm_outputs_scanned"`
-	LLMOutputsRewritten int            `json:"llm_outputs_rewritten"`
-	PatternHits         map[string]int `json:"pattern_hits"`
-	DryRun              bool           `json:"dry_run"`
+	EventsScanned       int `json:"events_scanned"`
+	EventsRewritten     int `json:"events_rewritten"`
+	EnvelopesRewritten  int `json:"envelopes_rewritten"`
+	LLMOutputsScanned   int `json:"llm_outputs_scanned"`
+	LLMOutputsRewritten int `json:"llm_outputs_rewritten"`
+
+	// ExtractionsScanned/Rewritten and SessionsRederived report the
+	// coverage beyond raw_envelopes + events.content_text. Surfaced
+	// because an operator has to be able to verify what a scrub
+	// actually reached — reporting only the two original tables is
+	// how a partial scrub previously read as a complete one.
+	ExtractionsScanned   int `json:"extractions_scanned"`
+	ExtractionsRewritten int `json:"extractions_rewritten"`
+	SessionsRederived    int `json:"sessions_rederived"`
+
+	PatternHits map[string]int `json:"pattern_hits"`
+	DryRun      bool           `json:"dry_run"`
 }
 
 // PruneRequest is the body shape for POST /v1/prune.

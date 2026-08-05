@@ -332,6 +332,7 @@ func (s *Server) handleSkillCandidateUpdate(w http.ResponseWriter, r *http.Reque
 // holds an exclusive lock and the operator wants to know it
 // finished before issuing follow-up work.
 func (s *Server) handleVacuum(w http.ResponseWriter, r *http.Request) {
+	clearWriteDeadlineForLongOp(w)
 	if err := store.Vacuum(r.Context(), s.store.DB()); err != nil {
 		s.storeError(w, "Vacuum", err)
 		return

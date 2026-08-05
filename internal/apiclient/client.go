@@ -23,10 +23,18 @@ import (
 	"time"
 )
 
-// defaultRequestTimeout caps every request's total wall time when
-// the caller hasn't supplied a deadline via context. Long enough
-// for a slow scrub or large search, short enough that a hung
-// daemon can't wedge the CLI indefinitely.
+// defaultRequestTimeout bounds a request when the caller supplied no
+// deadline of its own. Short enough that a hung daemon can't wedge the
+// CLI indefinitely.
+//
+// Applied via context in do(), NOT as http.Client.Timeout. That field
+// is absolute: it overrides a longer caller deadline instead of
+// deferring to it, so a 30s client timeout made the long admin
+// operations impossible to run. `aichronicles scrub` against a
+// multi-GB store failed with "Client.Timeout exceeded while awaiting
+// headers" no matter what context the caller passed — and scrub is the
+// command you reach for after adding a detector, so the tool was
+// unusable at exactly the size where it matters.
 const defaultRequestTimeout = 30 * time.Second
 
 // Client is the typed entry point. Methods are added per feature
@@ -51,11 +59,11 @@ func NewClient(sockPath string) *Client {
 		},
 	}
 	return &Client{
-		httpClient: &http.Client{
-			Transport: transport,
-			Timeout:   defaultRequestTimeout,
-		},
-		baseURL: "http://unix",
+		// No http.Client.Timeout — see defaultRequestTimeout. do()
+		// applies that bound through the request context so a caller
+		// with a legitimately longer deadline is respected.
+		httpClient: &http.Client{Transport: transport},
+		baseURL:    "http://unix",
 	}
 }
 
@@ -90,6 +98,13 @@ func (c *Client) do(ctx context.Context, method, path string, body, into any) er
 			return fmt.Errorf("apiclient: marshal request body: %w", err)
 		}
 		bodyReader = bytes.NewReader(buf)
+	}
+	// Bound the request only if the caller didn't. A caller that set
+	// its own deadline (the admin commands do) keeps it.
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, defaultRequestTimeout)
+		defer cancel()
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bodyReader)
 	if err != nil {

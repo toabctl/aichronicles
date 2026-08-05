@@ -54,7 +54,9 @@ func newScrubCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resp, err := c.Scrub(cmd.Context(), wire.ScrubRequest{DryRun: !yes})
+			ctx, cancel := withAdminTimeout(cmd.Context())
+			defer cancel()
+			resp, err := c.Scrub(ctx, wire.ScrubRequest{DryRun: !yes})
 			if err != nil {
 				return fmt.Errorf("scrub: %w", err)
 			}
@@ -74,9 +76,13 @@ func newScrubCmd() *cobra.Command {
 func renderScrubResponse(out io.Writer, r wire.ScrubResponse) {
 	_, _ = fmt.Fprintf(out,
 		"scanned=%d envelopes_rewritten=%d events_content_rewritten=%d "+
-			"llm_outputs_scanned=%d llm_outputs_rewritten=%d dry_run=%t\n",
+			"extractions_scanned=%d extractions_rewritten=%d "+
+			"llm_outputs_scanned=%d llm_outputs_rewritten=%d "+
+			"sessions_rederived=%d dry_run=%t\n",
 		r.EventsScanned, r.EnvelopesRewritten, r.EventsRewritten,
-		r.LLMOutputsScanned, r.LLMOutputsRewritten, r.DryRun)
+		r.ExtractionsScanned, r.ExtractionsRewritten,
+		r.LLMOutputsScanned, r.LLMOutputsRewritten,
+		r.SessionsRederived, r.DryRun)
 	keys := make([]string, 0, len(r.PatternHits))
 	for k := range r.PatternHits {
 		keys = append(keys, k)

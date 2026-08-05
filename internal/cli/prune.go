@@ -59,7 +59,9 @@ func newPruneCmd() *cobra.Command {
 			}
 			cutoff := time.Now().Add(-window).UnixMilli()
 
-			resp, err := c.Prune(cmd.Context(), wire.PruneRequest{
+			ctx, cancel := withAdminTimeout(cmd.Context())
+			defer cancel()
+			resp, err := c.Prune(ctx, wire.PruneRequest{
 				CutoffMs:          cutoff,
 				IncludeLLMOutputs: includeLLMOuts,
 				DryRun:            !yes,
@@ -142,7 +144,9 @@ func newVacuumCmd() *cobra.Command {
 				return nil
 			}
 
-			if err := c.Vacuum(cmd.Context()); err != nil {
+			ctx, cancel := withAdminTimeout(cmd.Context())
+			defer cancel()
+			if err := c.Vacuum(ctx); err != nil {
 				return fmt.Errorf("vacuum: %w", err)
 			}
 
