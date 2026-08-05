@@ -16,6 +16,16 @@ connect() actually returns ECONNREFUSED — which silently
 drops every hook fire and is invisible to `pgrep` or
 `systemctl status`.
 
+Also reports on the ANALYSIS pipeline, which is a separate
+failure domain from the daemon: whether the cron timers are
+installed, and how old the newest LLM artifact is. A healthy
+daemon keeps capturing events whether or not anything is
+summarising them, so those two can be broken for weeks
+without any other signal. These surface as WARN lines and do
+NOT change the exit code — the daemon probe alone decides
+that, so an existing status-bar or prompt integration keeps
+its meaning.
+
 ```
 aichronicles doctor [flags]
 ```
