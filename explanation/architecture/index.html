@@ -1297,7 +1297,7 @@ rearchitecture collapsed that into a single store-owning process.)</p>
 <td><code>aichronicles prune --yes</code></td>
 <td>Short-lived periodic</td>
 <td><code>aichronicles-cron-prune.timer</code> (<code>OnCalendar=Sun 04:00:00 UTC</code>)</td>
-<td>Retention: drops sessions past <code>--older-than</code> (six months by default) and their cascade. Sunday so it never contends with the Monday digest for the write lock.</td>
+<td>Retention: drops sessions past <code>--older-than</code> (five years by default — a backstop against pathological growth, not routine hygiene; the corpus is what the LLM pipelines reason over) and their cascade. Sunday so it never contends with the Monday digest for the write lock.</td>
 </tr>
 <tr>
 <td><code>aichronicles &lt;other&gt;</code></td>
