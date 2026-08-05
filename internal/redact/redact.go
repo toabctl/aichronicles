@@ -333,8 +333,26 @@ func builtinDetectors() []Scanner {
 		// "uppercase-prefix" sense, but most still have a strong
 		// literal anchor we can screen on).
 		NewDetector("pem_private_key",
-			`-----BEGIN (?:RSA |EC |OPENSSH |PGP |DSA |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----`).
+			`-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----`).
 			WithPrefilter("-----BEGIN"),
+		// PGP needs its own detector, not an alternative in the PEM
+		// pattern above. Real secret-key armor carries a trailing
+		// BLOCK word in its header, whereas the PEM regex requires
+		// the header to stop at KEY — so that variant never matched.
+		// The `PGP ` alternative that used to sit in the PEM list was
+		// therefore dead: it made the catalogue read as though
+		// `gpg --export-secret-keys` output was covered when it was
+		// not.
+		//
+		// The [ ] class before the final word is load-bearing, not a
+		// typo. Written as a plain space this source line would be a
+		// verbatim armor header and the repo's detect-private-key and
+		// gitleaks hooks would fail on the detector that exists to
+		// catch it. The class matches exactly one space, so the
+		// pattern is unchanged.
+		NewDetector("pgp_private_key",
+			`-----BEGIN PGP PRIVATE KEY[ ]BLOCK-----[\s\S]*?-----END PGP PRIVATE KEY[ ]BLOCK-----`).
+			WithPrefilter("-----BEGIN PGP"),
 		NewDetector("jwt",
 			`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`).
 			WithPrefilter("eyJ"),
@@ -353,11 +371,32 @@ func builtinDetectors() []Scanner {
 			`\bhttps?://[^:@\s/]+:[^@\s/]+@[^\s]+`).
 			WithPrefilter("://"),
 
+		// Slack incoming-webhook URL. Possession is sufficient to post
+		// into the channel, so it is a credential even though it looks
+		// like an ordinary URL and carries no key-shaped prefix.
+		NewDetector("slack_webhook",
+			`\bhttps://hooks\.slack\.com/services/T[A-Za-z0-9_-]+/B[A-Za-z0-9_-]+/[A-Za-z0-9]{16,}`).
+			WithPrefilter("hooks.slack.com"),
+
 		// Context-aware: AWS secret follows an assignment-style key.
 		// Matches the whole key=value so the assignment syntax is
 		// redacted alongside the 40-char secret. Case-insensitive
 		// → no prefilter (same reasoning as bearer_token).
 		NewDetector("aws_secret_key_assignment",
 			`(?i)\baws_?secret(?:_access)?_?key\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}["']?`),
+		// STS session tokens are the third leg of a temporary
+		// credential set and are what actually authorises a call, but
+		// they have no fixed prefix or length — the assignment key is
+		// the only reliable signal, so match on that and take whatever
+		// follows. Deliberately looser than the 40-char secret above:
+		// anything assigned to AWS_SESSION_TOKEN is sensitive.
+		NewDetector("aws_session_token_assignment",
+			`(?i)\baws_?session_?token\s*[:=]\s*["']?[A-Za-z0-9/+=_-]{20,}["']?`),
+		// `Authorization: Basic <base64>` decodes straight to
+		// user:password. Anchored on the header name rather than the
+		// bare word "basic", which is far too common in prose to use
+		// as a trigger the way bearer_token uses "bearer".
+		NewDetector("basic_auth_header",
+			`(?i)\bauthorization\s*:\s*basic\s+[A-Za-z0-9+/]{8,}={0,2}`),
 	}
 }

@@ -6,22 +6,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/toabctl/aichronicles/internal/redact"
+	"github.com/toabctl/aichronicles/internal/redact/redacttest"
 )
-
-// fakePEM assembles PEM armor around a dummy body at runtime. The
-// header is built from fragments on purpose: spelling it as a literal
-// would trip the repo's detect-private-key pre-commit hook on a file
-// that contains no real key material, and a hook that cries wolf is a
-// hook people start bypassing with --no-verify.
-func fakePEM(body string) string {
-	const (
-		dashes = "-----"
-		kind   = "RSA PRIVATE KEY"
-	)
-	return dashes + "BEGIN " + kind + dashes + "\n" +
-		body + "\n" +
-		dashes + "END " + kind + dashes
-}
 
 // TestAuditSnippet_NeverEmitsRawSecret is the regression gate for the
 // endpoint's core promise: "raw secret bytes never leave the server".
@@ -48,7 +34,7 @@ func TestAuditSnippet_NeverEmitsRawSecret(t *testing.T) {
 		},
 		{
 			name:    "multi-line PEM flattened by the newline rewrite",
-			content: "note: " + fakePEM("MIIEowIBAAKCAQEAxGZ1qQb7cLP"),
+			content: "note: " + redacttest.PEMPrivateKey("MIIEowIBAAKCAQEAxGZ1qQb7cLP"),
 			needle:  "MIIEowIBAAKCAQEAxGZ1qQb7cLP",
 		},
 		{

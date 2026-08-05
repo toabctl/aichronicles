@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/toabctl/aichronicles/internal/redact/redacttest"
 )
 
 // --- Detector: the primitive ---
@@ -311,14 +313,44 @@ var positiveCases = []struct {
 		"curl https://bob:letmein@internal.example.com/api",
 		"basic_auth_url"},
 	{"pem RSA private key",
-		"contents follow:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA\nABCDEF\n-----END RSA PRIVATE KEY-----\nend of blob",
+		"contents follow:\n" + redacttest.PEMPrivateKey("MIIEpAIBAAKCAQEA\nABCDEF") + "\nend of blob",
 		"pem_private_key"},
 	{"pem OpenSSH private key",
-		"-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjE\n-----END OPENSSH PRIVATE KEY-----",
+		redacttest.OpenSSHPrivateKey("b3BlbnNzaC1rZXktdjE"),
 		"pem_private_key"},
 	{"aws secret key assignment",
 		`aws_secret_access_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"`,
 		"aws_secret_key_assignment"},
+	// gpg --export-secret-keys -a output. The catalogue listed "PGP "
+	// as an alternative inside pem_private_key, but real armor carries
+	// a trailing BLOCK word that the PEM regex could not match, so the
+	// alternative was dead and secret keyrings pasted into a session
+	// were stored in the clear.
+	{"pgp private key block",
+		redacttest.PGPPrivateKeyBlock("lQOYBGXyz123"),
+		"pgp_private_key"},
+	{"pgp private key with version header",
+		redacttest.PGPPrivateKeyBlock("Version: GnuPG v2\n\nlQOYBGXyz123"),
+		"pgp_private_key"},
+	// The third leg of a temporary AWS credential set: no fixed
+	// prefix or length, so the assignment key is the only signal.
+	{"aws session token assignment",
+		`AWS_SESSION_TOKEN=FwoGZXIvYXdzEBYaDBmS1cExampleTokenValue123456`,
+		"aws_session_token_assignment"},
+	{"aws session token lowercase with quotes",
+		`aws_session_token: "IQoJb3JpZ2luX2VjEExampleSessionTokenValue"`,
+		"aws_session_token_assignment"},
+	// Basic auth decodes straight to user:password.
+	{"basic auth header",
+		"Authorization: Basic dXNlcjpzdXBlcnNlY3JldHBhc3N3b3Jk",
+		"basic_auth_header"},
+	{"basic auth header lowercase",
+		"authorization:basic YWxpY2U6aHVudGVyMg==",
+		"basic_auth_header"},
+	// Possession of the webhook URL is enough to post to the channel.
+	{"slack incoming webhook",
+		redacttest.SlackWebhook(),
+		"slack_webhook"},
 }
 
 func TestDefault_PositiveCases(t *testing.T) {
@@ -379,6 +411,22 @@ var negativeCases = []string{
 	"GOCSPX- is the prefix for OAuth client secrets",
 	"refresh tokens start with 1//0 but plain mention is fine",
 	"ya29. is the Google OAuth access-token prefix",
+	// PGP armor that is not a private key. The public block and the
+	// encrypted message are routinely pasted into sessions and are
+	// not credentials.
+	redacttest.PGPPublicKeyBlock("mQINBGXyz"),
+	redacttest.PGPMessage("hQIMAxyz"),
+	// "basic" is far too common in prose to trigger on by itself;
+	// basic_auth_header is anchored on the header name for this reason.
+	"a basic understanding of authentication is required",
+	"Basic authentication is disabled on this endpoint",
+	"basic configuration12345 lives in the config file",
+	// Discussing the variables without assigning them.
+	"set AWS_SESSION_TOKEN before running the deploy",
+	"the aws_session_token field is required for temporary creds",
+	// Slack docs URL, not a webhook.
+	"https://hooks.slack.com/services/ is the webhook base URL",
+	"see https://api.slack.com/messaging/webhooks for setup",
 }
 
 func TestDefault_NegativeCases(t *testing.T) {
