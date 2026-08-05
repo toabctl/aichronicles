@@ -11,13 +11,20 @@ import (
 // either way; live runs reflect actual deletes, dry-runs reflect
 // what would have been deleted.
 type PruneReport struct {
-	Sessions     int   `json:"sessions"`
-	RawEnvelopes int   `json:"raw_envelopes"`
-	Events       int   `json:"events"`
-	Extractions  int   `json:"extractions"`
-	LLMOutputs   int   `json:"llm_outputs"` // only non-zero if IncludeLLMOutputs was set
-	DryRun       bool  `json:"dry_run"`
-	CutoffMs     int64 `json:"cutoff_ms"`
+	Sessions     int `json:"sessions"`
+	RawEnvelopes int `json:"raw_envelopes"`
+	Events       int `json:"events"`
+	Extractions  int `json:"extractions"`
+	LLMOutputs   int `json:"llm_outputs"` // only non-zero if IncludeLLMOutputs was set
+
+	// DeadLettered counts retired ingest rows dropped by this prune.
+	// The table is pure history — the payload is already gone by the
+	// time a row lands there — so it is pruned on the same cutoff as
+	// everything else, with no opt-in flag.
+	DeadLettered int `json:"dead_lettered"`
+
+	DryRun   bool  `json:"dry_run"`
+	CutoffMs int64 `json:"cutoff_ms"`
 }
 
 // PruneOptions drives Prune.
@@ -127,6 +134,12 @@ func Prune(ctx context.Context, db *sql.DB, opts PruneOptions) (PruneReport, err
 			return report, fmt.Errorf("count llm_outputs: %w", err)
 		}
 	}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM ingest_dead_letter WHERE dead_lettered_at_ms < ?`,
+		opts.CutoffMs,
+	).Scan(&report.DeadLettered); err != nil {
+		return report, fmt.Errorf("count ingest_dead_letter: %w", err)
+	}
 
 	if opts.DryRun {
 		// Explicit rollback (the defer would handle it, but the
@@ -162,6 +175,16 @@ func Prune(ctx context.Context, db *sql.DB, opts PruneOptions) (PruneReport, err
 		); err != nil {
 			return report, fmt.Errorf("delete llm_outputs: %w", err)
 		}
+	}
+	// Retired ingest rows are history with no payload, so they age
+	// out unconditionally rather than behind IncludeLLMOutputs.
+	// Without this the table is append-only forever, which is the
+	// same unbounded-growth shape the rest of Prune exists to avoid.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM ingest_dead_letter WHERE dead_lettered_at_ms < ?`,
+		opts.CutoffMs,
+	); err != nil {
+		return report, fmt.Errorf("delete ingest_dead_letter: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return report, fmt.Errorf("commit: %w", err)

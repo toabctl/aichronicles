@@ -172,7 +172,21 @@ func openWithoutMigrate(path string) (*Store, error) {
 		"?_pragma=journal_mode(WAL)" +
 		"&_pragma=foreign_keys(ON)" +
 		"&_pragma=busy_timeout(5000)" +
-		"&_pragma=synchronous(NORMAL)"
+		"&_pragma=synchronous(NORMAL)" +
+		// FAST zeroes freed content within pages SQLite is already
+		// rewriting, so deleted rows stop lingering verbatim in the
+		// file. This matters here specifically because ingest_pending
+		// holds raw POST bodies pre-redaction, and Scrub rewrites
+		// rows that held secrets — without it, both leave the
+		// original bytes recoverable in free pages until a manual
+		// VACUUM, which on a multi-GB store needs 2x free space and
+		// so rarely happens.
+		//
+		// FAST rather than ON deliberately: ON also walks free pages
+		// that are not otherwise being touched, which is real write
+		// amplification on an append-heavy ingest path. FAST is the
+		// cheap 90% and costs essentially nothing.
+		"&_pragma=secure_delete(FAST)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)

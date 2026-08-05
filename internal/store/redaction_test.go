@@ -301,3 +301,66 @@ func TestScrubStoredHelpers(t *testing.T) {
 		}
 	})
 }
+
+// TestStoreDSN_SetsSecureDelete pins the pragma that stops deleted
+// row content from lingering verbatim in the database file.
+//
+// Two paths depend on it. ingest_pending holds raw POST bodies
+// pre-redaction, and retiring a row deletes it; Scrub rewrites rows
+// that held secrets. Without secure_delete the original bytes stay
+// recoverable in free pages until a manual VACUUM, which on a
+// multi-GB store needs 2x free space and so rarely happens.
+//
+// FAST (2) rather than ON (1) is deliberate — see the DSN comment.
+func TestStoreDSN_SetsSecureDelete(t *testing.T) {
+	t.Parallel()
+	s := openTestStore(t)
+	var mode int
+	if err := s.DB().QueryRow(`PRAGMA secure_delete`).Scan(&mode); err != nil {
+		t.Fatalf("read secure_delete: %v", err)
+	}
+	if mode == 0 {
+		t.Error("secure_delete is off; deleted secrets linger in free pages")
+	}
+	if mode != 2 {
+		t.Errorf("secure_delete = %d, want 2 (FAST); ON adds write amplification "+
+			"on the ingest path for little extra benefit", mode)
+	}
+}
+
+// TestPrune_AgesOutDeadLetterRows guards the new table against the
+// unbounded growth the rest of Prune exists to prevent. Retired rows
+// carry no payload, so they age out on the standard cutoff with no
+// opt-in flag.
+func TestPrune_AgesOutDeadLetterRows(t *testing.T) {
+	t.Parallel()
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	const oldMs, newMs = 1_000, 9_000_000
+	for _, ts := range []int64{oldMs, newMs} {
+		if _, err := s.DB().ExecContext(ctx,
+			`INSERT INTO ingest_dead_letter(
+				event_id, received_at_ms, dead_lettered_at_ms, attempt_count, last_error
+			) VALUES (?, ?, ?, ?, ?)`,
+			"evt", ts, ts, 5, "unmarshal: boom"); err != nil {
+			t.Fatalf("seed dead letter: %v", err)
+		}
+	}
+
+	report, err := Prune(ctx, s.DB(), PruneOptions{CutoffMs: 5_000})
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if report.DeadLettered != 1 {
+		t.Errorf("report.DeadLettered = %d, want 1", report.DeadLettered)
+	}
+
+	var remaining int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM ingest_dead_letter`).Scan(&remaining); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if remaining != 1 {
+		t.Errorf("expected only the newer row to survive, got %d rows", remaining)
+	}
+}
