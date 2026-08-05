@@ -75,7 +75,7 @@ rearchitecture collapsed that into a single store-owning process.)
 | `aichronicles hook` | Short-lived hook subprocess | Forked per Claude Code / Gemini CLI hook event | One envelope's worth of translation + POST to `aichronicles-api`. Translation is pure (post-Phase 0); the api applies redaction. Fire-and-forget: every error path logs and exits 0 so the hook never breaks the agent's prompt loop. |
 | `aichronicles induction sweep` | Short-lived periodic | `aichronicles-cron-induction.timer` (15min default) | Single-session induction across idle sessions |
 | `aichronicles meta sweep` | Short-lived periodic | `aichronicles-cron-meta-analysis.timer` (1h poll, per-kind cadences in SQLite) | Cadence-gated meta-analyses (propose / reflect / challenge / digest_weekly / skill_revision) |
-| `aichronicles digest weekly` | Short-lived periodic | `aichronicles-cron-weekly-digest.timer` (`OnCalendar=Mon 06:00:00`) | Weekly retrospective digest |
+| `aichronicles digest weekly` | Short-lived periodic | `aichronicles-cron-weekly-digest.timer` (`OnCalendar=Mon 06:00:00 UTC`) | Weekly retrospective digest |
 | `aichronicles <other>` | Short-lived user CLI | Forked per command | Read paths, imports, summarize, MCP server (`mcp serve`), web (`web serve`) |
 
 Why this shape:

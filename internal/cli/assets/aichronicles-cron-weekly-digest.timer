@@ -6,7 +6,15 @@ Description=aichronicles weekly digest
 # completed and the digest covers it cleanly. Persistent=true
 # makes systemd run a missed timer ASAP after wakeup, so a
 # powered-off laptop doesn't lose the run.
-OnCalendar=Mon 06:00:00
+#
+# The trailing " UTC" is required, not decorative. OnCalendar= without
+# a timezone is interpreted in LOCAL time (systemd.time(7)), while
+# resolveWeekBounds anchors the digest window in UTC. At local offsets
+# beyond +06:00, Monday 06:00 local is still Sunday in UTC, so
+# mondayOf() snapped to the previous Monday and the -7 landed two
+# weeks back: the just-completed week was skipped, every week,
+# permanently. Asia/Tokyo and Pacific/Auckland both hit this.
+OnCalendar=Mon 06:00:00 UTC
 Persistent=true
 Unit=aichronicles-cron-weekly-digest.service
 

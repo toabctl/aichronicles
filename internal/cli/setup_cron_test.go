@@ -202,3 +202,32 @@ func TestCronUnitContent_PanicsOnUnknownName(t *testing.T) {
 	}()
 	cronUnitContent("not-a-real-unit.timer")
 }
+
+// TestWeeklyDigestTimer_IsAnchoredInUTC guards a silent, permanent
+// data-correctness bug for users east of UTC+06:00.
+//
+// systemd.time(7): an OnCalendar= expression with no timezone is
+// interpreted in LOCAL time. resolveWeekBounds anchors the digest
+// window in UTC, so at a local offset beyond +06:00 the timer fires
+// while it is still Sunday in UTC. mondayOf() then snaps to the
+// previous Monday and the -7 lands two weeks back — the
+// just-completed week is skipped, and because the shift recurs every
+// Monday it is never picked up.
+func TestWeeklyDigestTimer_IsAnchoredInUTC(t *testing.T) {
+	t.Parallel()
+	var found bool
+	for _, line := range strings.Split(string(cronWeeklyDigestTimer), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "OnCalendar=") {
+			continue
+		}
+		found = true
+		if !strings.HasSuffix(line, " UTC") {
+			t.Errorf("OnCalendar must end in \" UTC\"; %q is interpreted in local time "+
+				"and skips a week for users east of UTC+06:00", line)
+		}
+	}
+	if !found {
+		t.Error("no OnCalendar= line in the weekly digest timer")
+	}
+}
