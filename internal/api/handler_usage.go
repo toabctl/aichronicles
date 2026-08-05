@@ -33,19 +33,23 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	out := wire.UsageResponse{
 		Days: make([]wire.UsageRow, 0, len(rows)),
 		Totals: wire.UsageTotals{
-			InputTokens:  totals.InputTokens,
-			OutputTokens: totals.OutputTokens,
-			RowCount:     totals.RowCount,
+			InputTokens:      totals.InputTokens,
+			OutputTokens:     totals.OutputTokens,
+			CacheWriteTokens: totals.CacheWriteTokens,
+			CacheReadTokens:  totals.CacheReadTokens,
+			RowCount:         totals.RowCount,
 		},
 	}
 	for _, r := range rows {
 		out.Days = append(out.Days, wire.UsageRow{
-			Day:          r.Day,
-			Kind:         r.Kind,
-			Model:        r.Model,
-			InputTokens:  r.InputTokens,
-			OutputTokens: r.OutputTokens,
-			RowCount:     r.RowCount,
+			Day:              r.Day,
+			Kind:             r.Kind,
+			Model:            r.Model,
+			InputTokens:      r.InputTokens,
+			OutputTokens:     r.OutputTokens,
+			CacheWriteTokens: r.CacheWriteTokens,
+			CacheReadTokens:  r.CacheReadTokens,
+			RowCount:         r.RowCount,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

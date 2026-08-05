@@ -84,3 +84,55 @@ func TestCostUSD(t *testing.T) {
 		t.Errorf("nil Prices: got cost=%v known=%v, want 0/false", cost, known)
 	}
 }
+
+// TestCostUSDWithCache_PricesEachClassSeparately pins that the three
+// token classes bill at their own rates.
+//
+// Anthropic reports cache_creation_input_tokens and
+// cache_read_input_tokens separately from input_tokens, and they bill
+// at 1.25x and 0.1x the base input rate respectively. Folding them
+// into inputTokens would fix the count and break the cost:
+// overcharging reads tenfold and undercharging writes by a quarter.
+func TestCostUSDWithCache_PricesEachClassSeparately(t *testing.T) {
+	t.Parallel()
+	p := Prices{"m": {InputPerMTok: 10, OutputPerMTok: 20}}
+
+	// 1M of each class, so the arithmetic reads directly.
+	got, known := p.CostUSDWithCache("m", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
+	if !known {
+		t.Fatal("expected a known price")
+	}
+	// 10 (input) + 20 (output) + 12.5 (write @1.25x) + 1 (read @0.1x)
+	const want = 43.5
+	if diff := got - want; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("cost = %v, want %v", got, want)
+	}
+}
+
+// TestCostUSDWithCache_ExplicitRatesWin lets a provider whose cache
+// pricing does not follow Anthropic's multipliers override them.
+func TestCostUSDWithCache_ExplicitRatesWin(t *testing.T) {
+	t.Parallel()
+	p := Prices{"m": {
+		InputPerMTok:      10,
+		OutputPerMTok:     20,
+		CacheWritePerMTok: 100,
+		CacheReadPerMTok:  5,
+	}}
+	got, _ := p.CostUSDWithCache("m", 0, 0, 1_000_000, 1_000_000)
+	const want = 105.0
+	if diff := got - want; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("cost = %v, want %v", got, want)
+	}
+}
+
+// TestCostUSD_StaysBackwardCompatible pins that the two-arg form is
+// unchanged for callers that have no cache counters.
+func TestCostUSD_StaysBackwardCompatible(t *testing.T) {
+	t.Parallel()
+	p := Prices{"m": {InputPerMTok: 10, OutputPerMTok: 20}}
+	got, known := p.CostUSD("m", 1_000_000, 1_000_000)
+	if !known || got != 30 {
+		t.Errorf("CostUSD = %v (known=%v), want 30", got, known)
+	}
+}

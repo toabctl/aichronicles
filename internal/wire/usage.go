@@ -5,21 +5,25 @@ package wire
 // string so jq pipelines can sort lexicographically and the
 // renderer doesn't have to reformat. Mirrors store.TokenUsageRow.
 type UsageRow struct {
-	Day          string `json:"day"`
-	Kind         string `json:"kind"`
-	Model        string `json:"model"`
-	InputTokens  int64  `json:"input_tokens"`
-	OutputTokens int64  `json:"output_tokens"`
-	RowCount     int    `json:"row_count"`
+	Day              string `json:"day"`
+	Kind             string `json:"kind"`
+	Model            string `json:"model"`
+	InputTokens      int64  `json:"input_tokens"`
+	OutputTokens     int64  `json:"output_tokens"`
+	CacheWriteTokens int64  `json:"cache_write_tokens"`
+	CacheReadTokens  int64  `json:"cache_read_tokens"`
+	RowCount         int    `json:"row_count"`
 }
 
 // UsageTotals is the headline summary across a UsageRow slice.
 // Computed server-side and shipped on the response so jq can grab
 // `.totals.input_tokens` without re-summing.
 type UsageTotals struct {
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
-	RowCount     int   `json:"row_count"`
+	InputTokens      int64 `json:"input_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
+	CacheWriteTokens int64 `json:"cache_write_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens"`
+	RowCount         int   `json:"row_count"`
 }
 
 // UsageRequest is the query-shape for GET /v1/usage. Zero

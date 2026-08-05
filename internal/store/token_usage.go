@@ -19,7 +19,17 @@ type TokenUsageRow struct {
 	Model        string `json:"model"`
 	InputTokens  int64  `json:"input_tokens"`
 	OutputTokens int64  `json:"output_tokens"`
-	RowCount     int    `json:"row_count"`
+
+	// CacheWriteTokens / CacheReadTokens are Anthropic's prompt-cache
+	// counters. They are reported separately from input_tokens, so
+	// they were previously invisible here — for a cache-heavy call
+	// like propose verify (a few hundred user tokens against a 4 KB
+	// cached system prompt) the reported usage was a small fraction
+	// of the real thing.
+	CacheWriteTokens int64 `json:"cache_write_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens"`
+
+	RowCount int `json:"row_count"`
 }
 
 // LoadTokenUsage aggregates llm_outputs.input_tokens / output_tokens
@@ -40,9 +50,11 @@ func LoadTokenUsage(ctx context.Context, db *sql.DB, sinceMs int64) ([]TokenUsag
 SELECT strftime('%Y-%m-%d', created_at_ms / 1000, 'unixepoch') AS day,
        kind,
        model,
-       COALESCE(SUM(input_tokens), 0)  AS input_tokens,
-       COALESCE(SUM(output_tokens), 0) AS output_tokens,
-       COUNT(*)                        AS row_count
+       COALESCE(SUM(input_tokens), 0)        AS input_tokens,
+       COALESCE(SUM(output_tokens), 0)       AS output_tokens,
+       COALESCE(SUM(cache_write_tokens), 0)  AS cache_write_tokens,
+       COALESCE(SUM(cache_read_tokens), 0)   AS cache_read_tokens,
+       COUNT(*)                              AS row_count
   FROM llm_outputs
  WHERE created_at_ms >= ?
  GROUP BY day, kind, model
@@ -56,7 +68,9 @@ SELECT strftime('%Y-%m-%d', created_at_ms / 1000, 'unixepoch') AS day,
 	var out []TokenUsageRow
 	for rows.Next() {
 		var r TokenUsageRow
-		if err := rows.Scan(&r.Day, &r.Kind, &r.Model, &r.InputTokens, &r.OutputTokens, &r.RowCount); err != nil {
+		if err := rows.Scan(&r.Day, &r.Kind, &r.Model,
+			&r.InputTokens, &r.OutputTokens,
+			&r.CacheWriteTokens, &r.CacheReadTokens, &r.RowCount); err != nil {
 			return nil, fmt.Errorf("scan token usage row: %w", err)
 		}
 		out = append(out, r)
@@ -70,9 +84,11 @@ SELECT strftime('%Y-%m-%d', created_at_ms / 1000, 'unixepoch') AS day,
 // days × 5 kinds × 3 models = 450) summing in Go is free and keeps
 // the aggregator query single-purpose.
 type TokenUsageTotals struct {
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
-	RowCount     int   `json:"row_count"`
+	InputTokens      int64 `json:"input_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
+	CacheWriteTokens int64 `json:"cache_write_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens"`
+	RowCount         int   `json:"row_count"`
 }
 
 // SumTokenUsage rolls a per-bucket slice up to grand totals. Pure
@@ -82,6 +98,8 @@ func SumTokenUsage(rows []TokenUsageRow) TokenUsageTotals {
 	for _, r := range rows {
 		t.InputTokens += r.InputTokens
 		t.OutputTokens += r.OutputTokens
+		t.CacheWriteTokens += r.CacheWriteTokens
+		t.CacheReadTokens += r.CacheReadTokens
 		t.RowCount += r.RowCount
 	}
 	return t

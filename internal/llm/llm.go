@@ -152,8 +152,34 @@ type ToolUse struct {
 // Kept provider-neutral; individual providers map their response
 // fields into these.
 type Usage struct {
+	// InputTokens is the provider's uncached prompt count. For
+	// Anthropic this EXCLUDES both cache fields below — the API
+	// reports them separately, so summing is the caller's job.
 	InputTokens  int
 	OutputTokens int
+
+	// CacheCreationInputTokens / CacheReadInputTokens are the
+	// Anthropic prompt-cache counters. Every request we send marks
+	// the system prompt cacheable, and those prompts are the large
+	// constants (proposeSystem and verifyProposalSystem are ~4 KB
+	// each), so for a call like propose verify — a few hundred user
+	// tokens against a 4 KB cached system block — these dominate.
+	//
+	// They were mapped nowhere, so llm_outputs.input_tokens,
+	// `aichronicles usage` and every cost figure undercounted by a
+	// large multiple. OpenAI is not affected the same way: its
+	// prompt_tokens already includes cached tokens, so only the
+	// discount rate was wrong there, not the count.
+	CacheCreationInputTokens int
+	CacheReadInputTokens     int
+}
+
+// TotalInputTokens is every prompt token the request consumed,
+// cached or not. Use this for "how big was this call"; use the
+// individual fields for cost, since the three bill at different
+// rates.
+func (u Usage) TotalInputTokens() int {
+	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
 }
 
 // Client is the single interface every Block B feature talks to. One

@@ -343,8 +343,10 @@ func convertAnthropicMessage(msg *anthropicsdk.Message, requestedModel string) *
 		ToolUses:   toolUses,
 		StopReason: mapAnthropicStopReason(msg.StopReason),
 		Usage: Usage{
-			InputTokens:  int(msg.Usage.InputTokens),
-			OutputTokens: int(msg.Usage.OutputTokens),
+			InputTokens:              int(msg.Usage.InputTokens),
+			OutputTokens:             int(msg.Usage.OutputTokens),
+			CacheCreationInputTokens: int(msg.Usage.CacheCreationInputTokens),
+			CacheReadInputTokens:     int(msg.Usage.CacheReadInputTokens),
 		},
 	}
 }

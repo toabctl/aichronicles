@@ -75,8 +75,16 @@ type LLMOutput struct {
 	PromptHash   string  `json:"prompt_hash"`
 	InputTokens  *int64  `json:"input_tokens,omitempty"`
 	OutputTokens *int64  `json:"output_tokens,omitempty"`
-	Body         string  `json:"body"`
-	CreatedAtMs  int64   `json:"created_at_ms"`
+
+	// CacheWriteTokens / CacheReadTokens are Anthropic's prompt-cache
+	// counters, which the API reports separately from input_tokens.
+	// Omitted (nil) for rows written before they were captured, which
+	// is distinct from a real 0 on a call that used no cache.
+	CacheWriteTokens *int64 `json:"cache_write_tokens,omitempty"`
+	CacheReadTokens  *int64 `json:"cache_read_tokens,omitempty"`
+
+	Body        string `json:"body"`
+	CreatedAtMs int64  `json:"created_at_ms"`
 }
 
 // SummariesBatchResponse is the body for GET /v1/summaries/batch.

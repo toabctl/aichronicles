@@ -370,14 +370,7 @@ func runCachedLLM(
 		sid := in.sessionID
 		saveReq.SessionID = &sid
 	}
-	if resp.Usage.InputTokens > 0 {
-		v := int64(resp.Usage.InputTokens)
-		saveReq.InputTokens = &v
-	}
-	if resp.Usage.OutputTokens > 0 {
-		v := int64(resp.Usage.OutputTokens)
-		saveReq.OutputTokens = &v
-	}
+	applyUsage(&saveReq, resp.Usage)
 	saveResp, err := c.SaveLLMOutput(ctx, saveReq)
 	if err != nil {
 		return 0, fmt.Errorf("%s: persist: %w", in.kind, err)

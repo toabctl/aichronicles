@@ -50,8 +50,21 @@ type LLMOutput struct {
 	PromptHash   string
 	InputTokens  *int64
 	OutputTokens *int64
-	Body         string
-	CreatedAtMs  int64
+
+	// CacheWriteTokens / CacheReadTokens are Anthropic's prompt-cache
+	// counters, reported separately from InputTokens. nil means the
+	// row predates the columns — distinct from a real 0 on a call
+	// that used no cache, which is why they are not defaulted.
+	//
+	// Kept separate rather than folded into InputTokens because the
+	// three classes bill at different rates (write 1.25x, read 0.1x
+	// of base input), so a single column would fix the count and
+	// break the cost.
+	CacheWriteTokens *int64
+	CacheReadTokens  *int64
+
+	Body        string
+	CreatedAtMs int64
 }
 
 // SaveLLMOutput inserts out and returns its id. Idempotent on
@@ -86,10 +99,14 @@ func SaveLLMOutput(ctx context.Context, tx *sql.Tx, out *LLMOutput) (id int64, i
 	res, err := tx.ExecContext(ctx,
 		`INSERT OR IGNORE INTO llm_outputs(
 			session_id, kind, model, prompt_hash,
-			input_tokens, output_tokens, body, created_at_ms
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			input_tokens, output_tokens,
+			cache_write_tokens, cache_read_tokens,
+			body, created_at_ms
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		out.SessionID, string(out.Kind), out.Model, out.PromptHash,
-		out.InputTokens, out.OutputTokens, scrubbedBody, out.CreatedAtMs,
+		out.InputTokens, out.OutputTokens,
+		out.CacheWriteTokens, out.CacheReadTokens,
+		scrubbedBody, out.CreatedAtMs,
 	)
 	if err != nil {
 		return 0, false, fmt.Errorf("insert llm_output: %w", err)
@@ -366,7 +383,8 @@ type rowScanner interface {
 // induction.go, and a hand-typed deviation would silently column-
 // shift the scan.
 const llmOutputColumns = `id, session_id, kind, model, prompt_hash,
-	input_tokens, output_tokens, body, created_at_ms`
+	input_tokens, output_tokens, cache_write_tokens, cache_read_tokens,
+	body, created_at_ms`
 
 func scanLLMOutput(r rowScanner) (*LLMOutput, error) {
 	var (
@@ -375,16 +393,21 @@ func scanLLMOutput(r rowScanner) (*LLMOutput, error) {
 		sessionID    sql.NullString
 		inputTokens  sql.NullInt64
 		outputTokens sql.NullInt64
+		cacheWrite   sql.NullInt64
+		cacheRead    sql.NullInt64
 	)
 	if err := r.Scan(
 		&o.ID, &sessionID, &kind, &o.Model, &o.PromptHash,
-		&inputTokens, &outputTokens, &o.Body, &o.CreatedAtMs,
+		&inputTokens, &outputTokens, &cacheWrite, &cacheRead,
+		&o.Body, &o.CreatedAtMs,
 	); err != nil {
 		return nil, err
 	}
 	o.SessionID = nullable.StringPtr(sessionID)
 	o.InputTokens = nullable.Int64Ptr(inputTokens)
 	o.OutputTokens = nullable.Int64Ptr(outputTokens)
+	o.CacheWriteTokens = nullable.Int64Ptr(cacheWrite)
+	o.CacheReadTokens = nullable.Int64Ptr(cacheRead)
 	o.Kind = LLMOutputKind(kind)
 	return &o, nil
 }

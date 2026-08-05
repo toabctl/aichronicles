@@ -39,8 +39,8 @@ func TestOpen_FreshCreatesSchema(t *testing.T) {
 	if err := s.DB().QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if v != "30" {
-		t.Errorf("schema_version: got %q, want 30", v)
+	if v != "31" {
+		t.Errorf("schema_version: got %q, want 31", v)
 	}
 
 	// Expected tables all exist. proposed_skills was renamed to

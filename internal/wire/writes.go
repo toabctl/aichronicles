@@ -10,8 +10,15 @@ type SaveLLMOutputRequest struct {
 	PromptHash   string  `json:"prompt_hash"`
 	InputTokens  *int64  `json:"input_tokens,omitempty"`
 	OutputTokens *int64  `json:"output_tokens,omitempty"`
-	Body         string  `json:"body"`
-	CreatedAtMs  int64   `json:"created_at_ms"`
+
+	// Anthropic's prompt-cache counters, reported separately from
+	// input_tokens. nil when not reported, which is distinct from a
+	// real 0 on a call that used no cache.
+	CacheWriteTokens *int64 `json:"cache_write_tokens,omitempty"`
+	CacheReadTokens  *int64 `json:"cache_read_tokens,omitempty"`
+
+	Body        string `json:"body"`
+	CreatedAtMs int64  `json:"created_at_ms"`
 }
 
 // SaveLLMOutputResponse echoes the assigned id and whether this

@@ -380,14 +380,7 @@ func runMergeLLM(
 		Body:        body,
 		CreatedAtMs: time.Now().UnixMilli(),
 	}
-	if resp.Usage.InputTokens > 0 {
-		v := int64(resp.Usage.InputTokens)
-		saveReq.InputTokens = &v
-	}
-	if resp.Usage.OutputTokens > 0 {
-		v := int64(resp.Usage.OutputTokens)
-		saveReq.OutputTokens = &v
-	}
+	applyUsage(&saveReq, resp.Usage)
 	if _, err := c.SaveLLMOutput(ctx, saveReq); err != nil {
 		slog.Warn("merge: persist failed (merge still applied)", "err", err)
 	}

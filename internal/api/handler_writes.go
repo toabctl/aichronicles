@@ -53,6 +53,8 @@ func (s *Server) handleLLMOutputSave(w http.ResponseWriter, r *http.Request) {
 	out.SessionID = req.SessionID
 	out.InputTokens = req.InputTokens
 	out.OutputTokens = req.OutputTokens
+	out.CacheWriteTokens = req.CacheWriteTokens
+	out.CacheReadTokens = req.CacheReadTokens
 
 	tx, err := s.store.DB().BeginTx(r.Context(), nil)
 	if err != nil {
