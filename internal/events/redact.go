@@ -1,6 +1,7 @@
 package events
 
 import (
+	"encoding/json"
 	"sort"
 
 	"github.com/toabctl/aichronicles/internal/redact"
@@ -112,10 +113,25 @@ func scrubString(s string, scanner redact.Scanner, patterns map[string]struct{})
 }
 
 // walkAny recurses into JSON-shaped values (maps, arrays, strings) and
-// scrubs every string leaf. Non-string scalars (numbers, bools, null)
-// are returned unchanged — they cannot carry a matching secret.
+// scrubs every string leaf.
+//
+// The default arm must NOT pass unrecognised values through. A Source
+// is free to put any Go value in Payload — the Gemini transcript
+// reader stores json.RawMessage for message content and a *toolCall
+// struct for tool events — and a pass-through default silently
+// exempted those subtrees from scrubbing. The failure was invisible
+// from the outside: the sibling ContentText scrubbed correctly and
+// Redaction.Applied was still set to true, so the Sink's "scrubber
+// ran" assertion passed and plaintext landed in raw_envelopes.
+//
+// Anything that is not already a JSON-generic value is therefore
+// normalised through a marshal/unmarshal round-trip and walked in its
+// generic form. Re-marshalling the generic form reproduces byte-identical
+// JSON, so this changes what we scan, not what we store.
 func walkAny(v any, scanner redact.Scanner, patterns map[string]struct{}) any {
 	switch x := v.(type) {
+	case nil:
+		return nil
 	case string:
 		return scrubString(x, scanner, patterns)
 	case map[string]any:
@@ -128,7 +144,38 @@ func walkAny(v any, scanner redact.Scanner, patterns map[string]struct{}) any {
 			x[i] = walkAny(vv, scanner, patterns)
 		}
 		return x
+	case bool, float64, float32,
+		int, int8, int16, int32, int64,
+		uint, uint16, uint32, uint64,
+		json.Number:
+		// Genuine JSON scalars: no string leaf, nothing to scrub.
+		// uint8 is deliberately absent — []uint8 is []byte, which
+		// belongs on the normalising path below, and a bare byte
+		// carries no secret either way.
+		return x
 	default:
-		return v
+		return normaliseAndWalk(v, scanner, patterns)
 	}
+}
+
+// normaliseAndWalk converts a non-JSON-generic value into generic form
+// and scrubs it. Used for json.RawMessage, []byte, and any concrete
+// struct a Source placed in Payload.
+//
+// A value that cannot be marshalled is dropped rather than returned
+// unscrubbed: we cannot inspect it, so we cannot claim it is
+// secret-free, and "returning nothing" beats storing something wrong.
+// In practice this is unreachable — Pipeline.Process marshals the
+// whole envelope immediately afterwards, so such a value would fail
+// the ingest anyway.
+func normaliseAndWalk(v any, scanner redact.Scanner, patterns map[string]struct{}) any {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	var generic any
+	if err := json.Unmarshal(raw, &generic); err != nil {
+		return nil
+	}
+	return walkAny(generic, scanner, patterns)
 }

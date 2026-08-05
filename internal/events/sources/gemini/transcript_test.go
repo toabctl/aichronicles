@@ -2,11 +2,14 @@ package gemini
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/toabctl/aichronicles/internal/events"
+	"github.com/toabctl/aichronicles/internal/redact"
 )
 
 const userMessageFixture = `{
@@ -43,6 +46,70 @@ const assistantWithToolCallFixture = `{
 		}
 	]
 }`
+
+// TestTranscriptSource_SecretsAreScrubbedAfterPipelineRedaction is the
+// end-to-end gate for the plaintext leak this source used to produce.
+//
+// The translator stores message content as json.RawMessage and the
+// tool call as a *geminiToolCall struct. walkAny's old default arm
+// returned both untouched, so ContentText scrubbed cleanly, Applied
+// was set to true, the Sink's assertion passed — and the raw secret
+// went into raw_envelopes.envelope_json anyway. The scrubbed sibling
+// field is exactly what made it invisible.
+//
+// Asserting on the marshalled envelope rather than on individual
+// fields is deliberate: those bytes are what actually get persisted.
+func TestTranscriptSource_SecretsAreScrubbedAfterPipelineRedaction(t *testing.T) {
+	t.Parallel()
+	secret := "ghp_" + strings.Repeat("a", 36)
+	fixture := `{
+		"sessionId":"sess-secret",
+		"messages":[
+			{
+				"id":"01970000-0000-7000-8000-000000000001",
+				"timestamp":"2026-05-02T12:00:00.000Z",
+				"type":"user",
+				"content":[{"text":"my token is ` + secret + `"}]
+			},
+			{
+				"id":"01970000-0000-7000-8000-000000000010",
+				"timestamp":"2026-05-02T12:01:00.000Z",
+				"type":"gemini",
+				"content":"running it",
+				"toolCalls":[
+					{
+						"id":"call-1",
+						"name":"run_shell_command",
+						"args":{"command":"echo ` + secret + `"},
+						"status":"success",
+						"timestamp":"2026-05-02T12:01:00.500Z",
+						"result":[{"functionResponse":{"id":"call-1","name":"run_shell_command",
+							"response":{"output":"printed ` + secret + `"}}}]
+					}
+				]
+			}
+		]
+	}`
+
+	path := writeJSON(t, fixture)
+	src := &TranscriptSource{Root: path, CwdMap: map[string]string{}}
+	got := collect(t, src)
+	if len(got) == 0 {
+		t.Fatal("no events produced")
+	}
+
+	for _, evt := range got {
+		env := evt.Envelope
+		events.ApplyRedaction(env, redact.Default())
+		out, err := json.Marshal(env)
+		if err != nil {
+			t.Fatalf("marshal envelope: %v", err)
+		}
+		if strings.Contains(string(out), secret) {
+			t.Errorf("kind=%s persisted the raw secret:\n%s", env.Kind, out)
+		}
+	}
+}
 
 func writeJSON(t *testing.T, body string) string {
 	t.Helper()

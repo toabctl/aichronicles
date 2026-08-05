@@ -1,6 +1,8 @@
 package events
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -22,6 +24,127 @@ func freshEnv() *Envelope {
 		Role:            "user",
 		TsSource:        time.Now().UTC(),
 		Payload:         map[string]any{},
+	}
+}
+
+// geminiToolCallShape mirrors the concrete struct the Gemini
+// transcript source places at Payload["tool_call"]. The exact fields
+// don't matter; what matters is that it is a struct rather than a
+// map[string]any, which is what the old walkAny default arm waved
+// through unscrubbed.
+type geminiToolCallShape struct {
+	Name   string   `json:"name"`
+	Result []string `json:"result"`
+}
+
+// TestApplyRedaction_ScrubsNonGenericPayloadValues is the regression
+// gate for the Gemini plaintext leak. walkAny's default arm returned
+// unrecognised values untouched, so json.RawMessage content and the
+// tool-call struct kept their secrets while ContentText scrubbed
+// cleanly and Applied was still set — the Sink's assertion passed and
+// the plaintext reached raw_envelopes.
+//
+// Table covers every non-generic shape a Source can realistically
+// store, so a new Source putting a fresh type in Payload is covered
+// by the mechanism rather than needing its own case.
+func TestApplyRedaction_ScrubsNonGenericPayloadValues(t *testing.T) {
+	t.Parallel()
+	secret := "ghp_" + strings.Repeat("a", 36)
+	cases := []struct {
+		name  string
+		value any
+	}{
+		{"json.RawMessage object", json.RawMessage(`{"text":"tok ` + secret + `"}`)},
+		{"json.RawMessage array", json.RawMessage(`[{"text":"tok ` + secret + `"}]`)},
+		{"json.RawMessage bare string", json.RawMessage(`"tok ` + secret + `"`)},
+		{"concrete struct", geminiToolCallShape{Name: "run", Result: []string{"tok " + secret}}},
+		{"pointer to struct", &geminiToolCallShape{Name: "run", Result: []string{"tok " + secret}}},
+		{"slice of structs", []geminiToolCallShape{{Name: "run", Result: []string{"tok " + secret}}}},
+		{"map with typed values", map[string]string{"out": "tok " + secret}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := freshEnv()
+			env.Payload = map[string]any{"value": tc.value}
+
+			ApplyRedaction(env, redact.Default())
+
+			// Marshal the whole envelope: that is what actually gets
+			// persisted, so it is the only honest place to assert.
+			out, err := json.Marshal(env)
+			if err != nil {
+				t.Fatalf("marshal envelope: %v", err)
+			}
+			if strings.Contains(string(out), secret) {
+				t.Errorf("secret survived redaction in persisted form:\n%s", out)
+			}
+			// Match without the angle brackets: encoding/json escapes
+			// < and > to < / > in the persisted bytes.
+			if !strings.Contains(string(out), "redacted:github_pat_classic") {
+				t.Errorf("expected redaction marker in persisted form:\n%s", out)
+			}
+			if env.Redaction == nil || len(env.Redaction.Patterns) == 0 {
+				t.Errorf("pattern list must record the hit, got %+v", env.Redaction)
+			}
+		})
+	}
+}
+
+// TestApplyRedaction_PlainByteSliceStaysOpaque documents a deliberate
+// limit rather than asserting a guarantee. encoding/json renders a
+// plain []byte as base64, so a []byte holding JSON never presents a
+// string leaf to scrub — before or after the normalisation change.
+// json.RawMessage is the type that declares "these bytes are JSON",
+// and that one IS walked (see the table above).
+//
+// No Source puts a plain []byte in Payload today; both real sources
+// use json.RawMessage or a struct. Sniffing []byte for parseable JSON
+// would be exactly the kind of heuristic that fails silently in a
+// corner, so we don't. If a Source ever needs raw JSON bytes in
+// Payload it must use json.RawMessage, and this test says why.
+func TestApplyRedaction_PlainByteSliceStaysOpaque(t *testing.T) {
+	t.Parallel()
+	secret := "ghp_" + strings.Repeat("a", 36)
+	env := freshEnv()
+	env.Payload = map[string]any{"value": []byte(`{"text":"tok ` + secret + `"}`)}
+
+	ApplyRedaction(env, redact.Default())
+
+	out, err := json.Marshal(env.Payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	if strings.Contains(string(out), secret) {
+		t.Errorf("plaintext secret must not appear even in the opaque form:\n%s", out)
+	}
+	if !strings.Contains(string(out), base64.StdEncoding.EncodeToString(
+		[]byte(`{"text":"tok `+secret+`"}`))) {
+		t.Errorf("expected the stdlib base64 rendering to be preserved:\n%s", out)
+	}
+}
+
+// TestApplyRedaction_PreservesNonSecretPayloadShape pins the other
+// half of the normalisation contract: round-tripping a value through
+// JSON must not change what gets stored.
+func TestApplyRedaction_PreservesNonSecretPayloadShape(t *testing.T) {
+	t.Parallel()
+	env := freshEnv()
+	env.Payload = map[string]any{
+		"raw":    json.RawMessage(`{"b":[1,2,{"c":"plain text"}],"a":true}`),
+		"scalar": 42,
+		"nilval": nil,
+	}
+
+	ApplyRedaction(env, redact.Default())
+
+	got, err := json.Marshal(env.Payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	want := `{"nilval":null,"raw":{"a":true,"b":[1,2,{"c":"plain text"}]},"scalar":42}`
+	if string(got) != want {
+		t.Errorf("payload shape changed\n got: %s\nwant: %s", got, want)
 	}
 }
 
