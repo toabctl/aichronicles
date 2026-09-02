@@ -122,7 +122,7 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&summarize, "summarize", false, "synthesise an LLM-written answer from the top hits instead of printing rows (requires "+llm.APIKeyEnv+")")
 	cmd.Flags().IntVar(&topN, "top", 5, "with --summarize: max hits fed to the LLM as grounding context")
 	cmd.Flags().StringVar(&model, "model", "", "with --summarize: LLM model id (default: provider's default)")
-	cmd.Flags().StringVar(&agent, "agent", "", "filter by source agent (claude-code | gemini-cli)")
+	cmd.Flags().StringVar(&agent, "agent", "", "filter by source agent (claude-code | gemini-cli | codex-cli)")
 	cmd.Flags().StringVar(&toolName, "tool", "", "filter by tool name (e.g. Bash, run_shell_command)")
 	cmd.Flags().StringVar(&skillName, "skill", "", "filter to sessions that loaded this skill")
 	cmd.Flags().StringVar(&fileMatch, "file", "", "filter to sessions that touched a file matching this substring")
@@ -155,7 +155,7 @@ type SearchOptions struct {
 	Model     string // with Summarize: model id override
 
 	// Faceted-search filters. All optional; multiple combine with AND.
-	SourceAgent       string // e.g. "claude-code", "gemini-cli"
+	SourceAgent       string // e.g. "claude-code", "gemini-cli", "codex-cli"
 	ToolName          string // e.g. "Bash", "run_shell_command"
 	SkillName         string // sessions that loaded this skill
 	FilePathSubstring string // sessions that touched a file matching this substring

@@ -69,6 +69,23 @@ func TestBuild(t *testing.T) {
 			wantOK:    false,
 		},
 		{
+			name:     "codex-cli resume is a subcommand, not a flag",
+			agent:    "codex-cli",
+			sourceID: "01a060a9-2017-7ec1-9ffc-19951ea1cdac",
+			cwd:      strptr("/home/tom/devel/aichronicles"),
+			wantOK:   true,
+			wantSpec: Spec{Cwd: "/home/tom/devel/aichronicles", Bin: "codex", Args: []string{"resume", "01a060a9-2017-7ec1-9ffc-19951ea1cdac"}},
+		},
+		{
+			name:      "codex-cli skip perms appends its own bypass flag",
+			agent:     "codex-cli",
+			sourceID:  "abc",
+			cwd:       strptr("/x"),
+			skipPerms: true,
+			wantOK:    true,
+			wantSpec:  Spec{Cwd: "/x", Bin: "codex", Args: []string{"resume", "abc", "--dangerously-bypass-approvals-and-sandbox"}},
+		},
+		{
 			name:     "unknown agent yields not-ok",
 			agent:    "some-future-agent",
 			sourceID: "abc",
@@ -116,6 +133,11 @@ func TestSpecShell(t *testing.T) {
 			name: "without cwd",
 			spec: Spec{Bin: "claude", Args: []string{"--resume", "abc"}},
 			want: "claude --resume abc",
+		},
+		{
+			name: "codex subcommand form",
+			spec: Spec{Cwd: "/x", Bin: "codex", Args: []string{"resume", "abc"}},
+			want: "cd /x && codex resume abc",
 		},
 		{
 			name: "dangerous flag",

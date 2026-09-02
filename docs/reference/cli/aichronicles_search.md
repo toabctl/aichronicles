@@ -21,7 +21,7 @@ aichronicles search <query> [flags]
 ### Options
 
 ```
-      --agent string     filter by source agent (claude-code | gemini-cli)
+      --agent string     filter by source agent (claude-code | gemini-cli | codex-cli)
       --file string      filter to sessions that touched a file matching this substring
       --format string    output format: table (human-readable) or json (for jq / scripts) (default "table")
   -h, --help             help for search

@@ -83,7 +83,7 @@ type SessionRow struct {
 	LastActivity   string // human-friendly relative time ("2h ago")
 	EventCount     int
 	Cwd            string // working directory at last event, or "-"
-	SourceAgent    string // claude-code | gemini-cli — drives the agent badge
+	SourceAgent    string // claude-code | gemini-cli | codex-cli — drives the agent badge
 	FirstPrompt    string // truncated first user_prompt content_text
 	HasSummary     bool   // an llm_outputs(kind='summary') row exists for this session
 	SummaryTopic   string // parsed `topic` field from the cached summary; empty when none
@@ -142,9 +142,11 @@ type SessionDetail struct {
 	// + source id) and is NOT what `claude --resume` accepts.
 	// ResumeCommand is the pre-rendered shell one-liner the
 	// "Resume" button copies — empty when SourceAgent is unknown.
-	// ResumeCommandDangerous appends --dangerously-skip-permissions
-	// for claude-code; empty for every other agent (the flag is
-	// Claude-Code-specific) so the second button stays hidden.
+	// ResumeCommandDangerous appends the agent's permission-bypass
+	// flag (--dangerously-skip-permissions for claude-code,
+	// --dangerously-bypass-approvals-and-sandbox for codex-cli);
+	// empty for agents with no flag we model, so the second button
+	// stays hidden.
 	SourceAgent            string
 	SourceSessionID        string
 	ResumeCommand          string

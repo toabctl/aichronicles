@@ -329,12 +329,12 @@ func buildResumeCommandPtr(agent, sourceSessionID string, cwd *string) string {
 	return spec.Shell()
 }
 
-// buildResumeCommandDangerousPtr renders the same one-liner with
-// --dangerously-skip-permissions appended, for the "skip perms"
-// resume button. The flag is Claude-Code-specific (gemini-cli has
-// its own bypass under a different name, codex none we model), so
-// for any other agent we return "" and the template hides the
-// second button rather than emit a flag the binary will reject.
+// buildResumeCommandDangerousPtr renders the same one-liner with the
+// agent's permission-bypass flag appended, for the "skip perms"
+// resume button. Only claude-code and codex-cli have one we model
+// (gemini-cli's bypass works differently), so for any other agent we
+// return "" and the template hides the second button rather than
+// emit a flag the binary will reject.
 func buildResumeCommandDangerousPtr(agent, sourceSessionID string, cwd *string) string {
 	spec, ok := resumecmd.Build(agent, sourceSessionID, cwd, true)
 	if !ok {

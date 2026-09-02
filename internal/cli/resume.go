@@ -80,9 +80,9 @@ func newResumeCmd() *cobra.Command {
 	}
 	cmd.Flags().IntVar(&limit, "limit", 10, "max matching sessions to list")
 	addFlexDurationFlag(cmd, &since, "since", defaultResumeWindow, "only sessions with events within this window (e.g. 24h, 7d); 0 = no limit")
-	cmd.Flags().StringVar(&agent, "agent", "", "filter by source agent (claude-code | gemini-cli)")
+	cmd.Flags().StringVar(&agent, "agent", "", "filter by source agent (claude-code | gemini-cli | codex-cli)")
 	cmd.Flags().BoolVarP(&printOnly, "print", "n", false, "print the resume command(s) instead of launching the agent")
-	cmd.Flags().BoolVarP(&skipPerms, "skip-permissions", "d", false, "(dangerous) resume with --dangerously-skip-permissions (claude-code only)")
+	cmd.Flags().BoolVarP(&skipPerms, "skip-permissions", "d", false, "(dangerous) resume with the agent's permission bypass (claude-code, codex-cli)")
 	addSocketFlag(cmd, &sockFlag)
 	return cmd
 }
@@ -95,7 +95,7 @@ type ResumeOptions struct {
 	SinceMs   int64
 	Agent     string
 	Print     bool // print the resume command instead of launching
-	SkipPerms bool // append --dangerously-skip-permissions (claude-code)
+	SkipPerms bool // append the agent's permission-bypass flag (claude-code, codex-cli)
 	// Interactive reports whether stdin is a terminal we can prompt on.
 	// When false, RunResume falls back to printing the commands rather
 	// than blocking on a read that will never get an answer.
@@ -341,10 +341,11 @@ func resumeWhen(d wire.SessionDigest, now time.Time) string {
 
 // skipPermsNote annotates the "none can be resumed" message when
 // --skip-permissions narrowed the field (gemini-cli / unknown agents
-// have no such flag, so they're excluded under it).
+// have no permission-bypass flag we model, so they're excluded
+// under it).
 func skipPermsNote(skip bool) string {
 	if skip {
-		return " with --skip-permissions (only claude-code supports it)"
+		return " with --skip-permissions (only claude-code and codex-cli support it)"
 	}
 	return ""
 }
