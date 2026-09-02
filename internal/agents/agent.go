@@ -6,8 +6,9 @@ import (
 )
 
 // Agent describes one source-agent integration aichronicles supports.
-// Today the registered agents are Claude Code (Anthropic) and Gemini
-// CLI (Google). Each follows the same operational story — install
+// Today the registered agents are Claude Code (Anthropic), Gemini
+// CLI (Google) and Codex CLI (OpenAI). Each follows the same
+// operational story — install
 // hooks into a JSON config file, map a hook payload into an
 // Envelope — so the shape is value-typed (not an interface): we
 // just need data + a thin layer of agent-specific glue. Adding a
@@ -28,6 +29,17 @@ type Agent struct {
 	// command for each event in this list.
 	HookEvents []string
 
+	// HookTimeoutsSec overrides the host's default per-hook
+	// timeout, in seconds, for the named events. Absent events get
+	// no `timeout` key at all, which means "whatever the host
+	// defaults to" — the right answer almost always, since a
+	// timeout we invent can only be wrong in one direction.
+	//
+	// It exists for the case where the host's default is tighter
+	// than our ingest budget and the host lets us say so. Only
+	// Codex needs it today (its SessionEnd default is 1s).
+	HookTimeoutsSec map[string]int
+
 	// DefaultSettingsPath returns the absolute path to the agent's
 	// hooks config file (e.g. ~/.claude/settings.json for Claude
 	// Code). Computed at runtime so $HOME changes between unit
@@ -37,7 +49,8 @@ type Agent struct {
 }
 
 // ClaudeCode is the Claude Code agent — Anthropic's coding agent.
-// The default and currently only registered integration.
+// The default integration: `aichronicles hook` assumes it when
+// invoked without --agent.
 //
 // Hook event names follow Claude Code's published list (see
 // https://docs.claude.com/en/docs/claude-code/hooks). The events
@@ -109,4 +122,73 @@ func geminiCLIDefaultPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, ".gemini", "settings.json"), nil
+}
+
+// CodexCLI is OpenAI's Codex CLI agent. Like Gemini CLI, its hook
+// system is a deliberate clone of Claude Code's — same
+// JSON-on-stdin wire shape, the same {session_id, transcript_path,
+// cwd, hook_event_name} base input, the same PascalCase event
+// names, and even Claude's PascalCase tool vocabulary on
+// PostToolUse (a shell call arrives as tool_name="Bash" with
+// tool_input={"command": ...}, not as Codex's internal "shell"
+// tool). Verified against codex-cli 0.149.1 by capturing live hook
+// payloads; the wire schemas are embedded in the binary as
+// draft-07 JSON Schema (`<event>.command.input`).
+//
+// Two Codex-specific operational notes:
+//
+//   - Hook config lives in its own file, $CODEX_HOME/hooks.json,
+//     not in config.toml alongside the rest of Codex's settings.
+//   - Codex hashes each hook command and refuses to run one it has
+//     not been told to trust. After `setup codex-cli` the next
+//     interactive `codex` run prompts to trust the new entries;
+//     until that is answered the hooks do not fire.
+//   - Codex's per-hook timeout defaults to 600s, but SessionEnd
+//     defaults to 1s and is hard-capped at 3s ("clamping SessionEnd
+//     hook timeout to 3s"). 1s is inside the range our own ingest
+//     budget has historically overrun on a loaded box, so we ask
+//     for the 3s maximum explicitly via HookTimeoutsSec. Losing a
+//     session_end costs the web UI's "ended" badge and nothing
+//     else — sessions.ended_at_ms is maintained by a trigger on
+//     every event — so this is insurance, not a load-bearing fix.
+//
+// Event selection mirrors claude-code's minus PostToolUseFailure,
+// which Codex has no equivalent for: its PostToolUse tool_response
+// is the raw tool output string with no error channel, so a failed
+// shell command is indistinguishable from a successful one at the
+// hook layer. We map every PostToolUse to tool_use rather than
+// sniff exit-code prose out of the output.
+var CodexCLI = Agent{
+	Slug:        "codex-cli",
+	Description: "OpenAI's Codex CLI agent",
+	HookEvents: []string{
+		"UserPromptSubmit",
+		"Stop",
+		"SessionStart",
+		"SessionEnd",
+		"PostToolUse",
+	},
+	HookTimeoutsSec:     map[string]int{"SessionEnd": codexSessionEndMaxTimeoutSec},
+	DefaultSettingsPath: codexCLIDefaultPath,
+}
+
+// codexSessionEndMaxTimeoutSec is the largest SessionEnd hook
+// timeout Codex honours. Asking for more is not an error — Codex
+// clamps it and warns — but asking for exactly the cap keeps that
+// warning out of the user's terminal on every single session.
+const codexSessionEndMaxTimeoutSec = 3
+
+// codexCLIDefaultPath resolves $CODEX_HOME/hooks.json, falling back
+// to ~/.codex/hooks.json. CODEX_HOME is Codex's documented root
+// override and every other piece of its state (auth.json,
+// config.toml, sessions/) moves with it, so hooks must follow.
+func codexCLIDefaultPath() (string, error) {
+	if home := os.Getenv("CODEX_HOME"); home != "" {
+		return filepath.Join(home, "hooks.json"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".codex", "hooks.json"), nil
 }
