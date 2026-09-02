@@ -15,9 +15,9 @@ mkdocs-include-markdown-plugin==7.3.0
 # forwarded as None. Bumping to 10.12+ where pymdownx coerces the
 # value before handing it to pygments fixes the build under
 # whatever pygments the runner pulls in.
-pymdown-extensions==11.0.1
+pymdown-extensions==11.0.2
 # Pin pygments too so a future-runner upgrade doesn't reopen the
 # same regression: 2.18 is the last version before the strictness
 # change that interacted with old pymdownx; 2.19 is the version
 # the failing runner used. Either is fine with pymdownx 10.12+.
-pygments==2.20.0
+pygments==2.21.0
