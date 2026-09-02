@@ -838,10 +838,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-claudeprojectsjsonl-is-out-of-scope" class="md-nav__link">
+  <a href="#1-the-agents-own-transcript-files-are-out-of-scope" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. ~/.claude/projects/*.jsonl is out of scope
+        1. The agents' own transcript files are out of scope
       
     </span>
   </a>
@@ -1129,10 +1129,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-claudeprojectsjsonl-is-out-of-scope" class="md-nav__link">
+  <a href="#1-the-agents-own-transcript-files-are-out-of-scope" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. ~/.claude/projects/*.jsonl is out of scope
+        1. The agents' own transcript files are out of scope
       
     </span>
   </a>
@@ -1338,12 +1338,15 @@ under NDA, anything subject to compliance regimes.</p>
 <li>aichronicles is <strong>single-user, single-machine</strong> software. Every
   piece of state — the daemon, the SQLite store, the Unix socket,
   your config — runs as your user, on your local disk.</li>
-<li>Secrets matching ~15 detectors are <strong>scrubbed at the edge</strong>
-  (before envelopes leave the hook subprocess) and verified at
-  the daemon. Egress to the LLM provider also scrubs.</li>
-<li>aichronicles <strong>does not</strong> prevent secrets from landing in
-  <code>~/.claude/projects/*.jsonl</code>. Claude Code writes those before any
-  hook fires; that file tree is out of our control.</li>
+<li>Secrets matching ~15 detectors are <strong>scrubbed server-side by the
+  api daemon</strong>, which is the single enforcement point: the hook
+  subprocess forwards raw bytes and the daemon refuses to persist
+  anything it has not scrubbed itself. Egress to the LLM provider
+  also scrubs.</li>
+<li>aichronicles <strong>does not</strong> prevent secrets from landing in the
+  agents' own transcript trees (<code>~/.claude/projects/*.jsonl</code>,
+  <code>~/.gemini/tmp/</code>, <code>~/.codex/sessions/</code>). Each agent writes those
+  before any hook fires; they are out of our control.</li>
 <li>The redactor is <strong>best-effort</strong> — pattern-based, not semantic.
   Anything not matching a detector survives. Run
   <code>aichronicles audit</code> periodically.</li>
@@ -1354,7 +1357,7 @@ that data.</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>┌─────────────────────────────────────────────────────────────┐
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>│  YOUR MACHINE — single user, local disk                     │
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│                                                             │
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│   Claude Code  ──hook──▶  aichronicles hook ──UDS──▶ api    │
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│   Claude/Gemini/Codex ─hook─▶ aichronicles hook ─UDS─▶ api  │
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>│                                                       │     │
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>│   MCP client  ◀──stdio─▶  mcp-serve  ──UDS──▶  aichronicles-api
 </span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>│                                                       │     │
@@ -1551,24 +1554,46 @@ rationale: the command is a trust boundary; if anyone else on the
 box can rewrite the config, they can redirect the key fetch to an
 attacker-controlled command. The mode check fires whenever any
 provider has a key command set.</p>
+<p>Agent hook config gets written atomically — temp file, <code>chmod
+0600</code>, rename — so a <code>setup</code> run leaves the settings file at <code>0600</code>
+whatever it was before. A missing parent directory is created
+<code>0700</code>; an existing one keeps its mode.</p>
+<p>One agent goes further, and it is worth knowing about
+because it changes what a <code>setup</code> run means. <strong>Codex CLI hashes
+every hook command and refuses to run one it has not been told to
+trust.</strong> So <code>aichronicles setup codex-cli</code> does not, by itself,
+arm anything: Codex prompts you to review the exact command on the
+next run, and records the decision as a <code>trusted_hash</code> under
+<code>[hooks.state]</code> in <code>~/.codex/config.toml</code>. The useful corollary is
+that anyone who later rewrites our entry in <code>hooks.json</code> — to point
+at their own binary, say — invalidates the hash and gets a fresh
+review prompt rather than silent execution. Claude Code and Gemini
+CLI have no equivalent, so for those two a write to the settings
+file is a write to your next session's execution path.</p>
 <h2 id="what-aichronicles-does-not-promise">What aichronicles does NOT promise<a class="headerlink" href="#what-aichronicles-does-not-promise" title="Permanent link">&para;</a></h2>
 <p>This is the load-bearing section. Read it twice.</p>
-<h3 id="1-claudeprojectsjsonl-is-out-of-scope">1. <code>~/.claude/projects/*.jsonl</code> is out of scope<a class="headerlink" href="#1-claudeprojectsjsonl-is-out-of-scope" title="Permanent link">&para;</a></h3>
-<p>Claude Code writes its own transcript files to disk <strong>before</strong> any
-hook runs. aichronicles consumes the hook events that fire <em>as a
-result</em> of Claude Code's actions — but it has no opportunity to
-intercept the bytes Claude Code writes to its JSONL files.</p>
-<p><strong>Practical consequence:</strong> anything you have ever typed into Claude
-Code is in those files, in plaintext, on your disk, regardless of
-what aichronicles does. Including:</p>
+<h3 id="1-the-agents-own-transcript-files-are-out-of-scope">1. The agents' own transcript files are out of scope<a class="headerlink" href="#1-the-agents-own-transcript-files-are-out-of-scope" title="Permanent link">&para;</a></h3>
+<p>Every supported agent writes its own transcript to disk <strong>before</strong>
+any hook runs:</p>
 <ul>
-<li>API keys you pasted into a prompt to ask Claude how to use them.</li>
-<li>Secrets that escaped your shell into Claude's tool-result blocks.</li>
-<li>Customer data you discussed in Claude.</li>
+<li>Claude Code → <code>~/.claude/projects/*.jsonl</code></li>
+<li>Gemini CLI → <code>~/.gemini/tmp/</code></li>
+<li>Codex CLI → <code>$CODEX_HOME/sessions/&lt;yyyy&gt;/&lt;mm&gt;/&lt;dd&gt;/rollout-*.jsonl</code></li>
+</ul>
+<p>aichronicles consumes the hook events that fire <em>as a result</em> of the
+agent's actions — but it has no opportunity to intercept the bytes
+the agent writes to those files.</p>
+<p><strong>Practical consequence:</strong> anything you have ever typed into any of
+these agents is in their files, in plaintext, on your disk,
+regardless of what aichronicles does. Including:</p>
+<ul>
+<li>API keys you pasted into a prompt to ask the agent how to use them.</li>
+<li>Secrets that escaped your shell into a tool-result block.</li>
+<li>Customer data you discussed with the agent.</li>
 </ul>
 <p>If you want those files cleaned, you have to clean them yourself.
 A <code>sanitize-claude-transcripts</code> subcommand that does this in-place
-is on the roadmap; until it lands, treat the JSONL tree as a
+is on the roadmap; until it lands, treat every transcript tree as a
 plaintext archive.</p>
 <h3 id="2-the-redactor-is-pattern-based-and-best-effort">2. The redactor is pattern-based and best-effort<a class="headerlink" href="#2-the-redactor-is-pattern-based-and-best-effort" title="Permanent link">&para;</a></h3>
 <p>We catch ~15 known credential shapes. We don't catch:</p>
@@ -1594,7 +1619,8 @@ on every release.</p>
 <li>Read the SQLite store directly with <code>sqlite3
   ~/.local/state/aichronicles/store.db</code>.</li>
 <li>Read your <code>~/.config/aichronicles/config.toml</code>.</li>
-<li>Read <code>~/.claude/projects/</code>.</li>
+<li>Read <code>~/.claude/projects/</code>, <code>~/.gemini/tmp/</code> and
+  <code>~/.codex/sessions/</code>.</li>
 </ul>
 <p>aichronicles does not authenticate peers on the UDS. We don't
 defend against an attacker already on your account. If you've been
@@ -1629,7 +1655,9 @@ subcommands</strong>. Capture-only (the daemon + ingest + MCP read paths)
 involves no outbound network and is safe under those constraints.</p>
 <h3 id="8-the-mcp-server-is-read-only-but-it-reads-everything">8. The MCP server is read-only — but it reads everything<a class="headerlink" href="#8-the-mcp-server-is-read-only-but-it-reads-everything" title="Permanent link">&para;</a></h3>
 <p><code>aichronicles mcp-serve</code> exposes three tools to whatever client
-connects to it (currently Claude Code via stdio). The tools are
+connects to it over stdio — Claude Code today; Codex CLI can
+register it too via <code>codex mcp</code>, though <code>setup codex-cli</code> does not
+do so. The tools are
 strictly read-only — no <code>INSERT</code>, no <code>DELETE</code>. But they expose:</p>
 <ul>
 <li>Full-text search across every event you've captured (<code>search_events</code>).</li>
@@ -1654,12 +1682,13 @@ truth" above).</p>
   irreversible, hence the backup.</li>
 <li><strong>Use <code>api_key_command</code> with <code>secret-tool</code>.</strong> Never paste a key
   on the command line.</li>
-<li><strong>Don't paste secrets into Claude Code prompts.</strong> Even one is
-  one too many — they end up in <code>~/.claude/projects</code> regardless of
-  any redaction we do.</li>
-<li><strong>Periodically review <code>~/.claude/projects/</code>.</strong> It grows
-  unbounded. Old transcripts are still plaintext archives of
-  whatever you typed at the time. Delete or archive aggressively.</li>
+<li><strong>Don't paste secrets into any agent's prompt.</strong> Even one is
+  one too many — they end up in that agent's own transcript tree
+  regardless of any redaction we do.</li>
+<li><strong>Periodically review the transcript trees</strong> (<code>~/.claude/projects/</code>,
+  <code>~/.gemini/tmp/</code>, <code>~/.codex/sessions/</code>). They grow unbounded. Old
+  transcripts are still plaintext archives of whatever you typed at
+  the time. Delete or archive aggressively.</li>
 <li><strong>Don't run <code>summarize</code> on sessions whose contents you can't
   legally send to Anthropic / OpenAI.</strong></li>
 </ul>

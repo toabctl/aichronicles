@@ -792,16 +792,17 @@
 <p>Read a hook payload on stdin and forward as an envelope to aichronicles-api</p>
 <h3 id="synopsis">Synopsis<a class="headerlink" href="#synopsis" title="Permanent link">&para;</a></h3>
 <p>hook is invoked by AI coding agent hooks (Claude Code by
-default; pass --agent gemini-cli to consume Gemini CLI hook
-payloads). It reads a JSON hook payload from stdin, wraps it
-in the canonical Envelope, and POSTs to aichronicles-api over
+default; pass --agent gemini-cli or --agent codex-cli to
+consume Gemini CLI / Codex CLI hook payloads). It reads a
+JSON hook payload from stdin, wraps it in the canonical
+Envelope, and POSTs to aichronicles-api over
 a Unix socket. The api daemon applies redaction server-side.</p>
 <p>Blocking policy: this command NEVER fails the hook. Errors are
 logged to stderr as structured records and the process exits 0.</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>aichronicles hook [flags]
 </span></code></pre></div>
 <h3 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>      --agent string    source agent slug (claude-code | gemini-cli) (default &quot;claude-code&quot;)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>      --agent string    source agent slug (claude-code | gemini-cli | codex-cli) (default &quot;claude-code&quot;)
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  -h, --help            help for hook
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>      --socket string   aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET; defaults to XDG_RUNTIME_DIR/aichronicles/api.sock)
 </span></code></pre></div>

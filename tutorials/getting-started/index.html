@@ -1051,31 +1051,42 @@ connects.</p>
 </span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c"># {&quot;status&quot;:&quot;ok&quot;}</span>
 </span></code></pre></div>
 <h2 id="3-wire-agent-hooks-15s">3. Wire agent hooks (≈15s)<a class="headerlink" href="#3-wire-agent-hooks-15s" title="Permanent link">&para;</a></h2>
-<p>Pick the agent(s) you actually use. Both commands are idempotent
-and preserve any existing hook entries other tools have written.</p>
+<p>Pick the agent(s) you actually use. All three commands are
+idempotent and preserve any existing hook entries other tools have
+written.</p>
 <div class="language-fish highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c"># Claude Code → ~/.claude/settings.json</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>aichronicles setup claude-code --yes
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>aichronicles setup claude-code
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
 </span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c"># Gemini CLI → ~/.gemini/settings.json</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>aichronicles setup gemini-cli --yes
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>aichronicles setup gemini-cli
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="c"># Codex CLI → ~/.codex/hooks.json  (or $CODEX_HOME/hooks.json)</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>aichronicles setup codex-cli
 </span></code></pre></div>
 <p>For Claude Code, this merges six hook entries
 (<code>UserPromptSubmit</code>, <code>PostToolUse</code>, <code>Stop</code>, <code>SessionStart</code>,
 <code>SessionEnd</code>, <code>PostToolUseFailure</code>). For Gemini, the event-name
 set is the agent's equivalent (<code>BeforeAgent</code>, <code>AfterModel</code>,
-<code>AfterTool</code>, <code>SessionStart</code>, <code>SessionEnd</code>). Each hook runs
-<code>aichronicles hook --agent &lt;slug&gt;</code> as a subprocess, which
-translates the hook payload to an envelope and POSTs it to the
-api over the UDS. Redaction runs server-side in the api — the
-hook subprocess sends raw bytes; the api scrubs secrets before
-the envelope hits disk.</p>
+<code>AfterTool</code>, <code>SessionStart</code>, <code>SessionEnd</code>). Codex reuses Claude's
+event names and gets five (<code>UserPromptSubmit</code>, <code>Stop</code>,
+<code>PostToolUse</code>, <code>SessionStart</code>, <code>SessionEnd</code>) — it has no
+<code>PostToolUseFailure</code> equivalent. Each hook runs <code>aichronicles hook
+--agent &lt;slug&gt;</code> as a subprocess, which translates the hook payload
+to an envelope and POSTs it to the api over the UDS. Redaction runs
+server-side in the api — the hook subprocess sends raw bytes; the
+api scrubs secrets before the envelope hits disk.</p>
+<p><strong>Codex needs one extra step.</strong> Codex hashes every hook command
+and refuses to run one it has not been told to trust. Start
+<code>codex</code> once after the install and accept the hook-trust prompt;
+until you do, nothing is captured. (Codex records the decision
+under <code>[hooks.state]</code> in <code>~/.codex/config.toml</code>.)</p>
 <p>The hook never fails the agent: it exits 0 even if the api is
 unreachable. Outages fire one desktop notification per outage so
 you find out without it blocking your session.</p>
 <h2 id="4-verify-capture-15s">4. Verify capture (≈15s)<a class="headerlink" href="#4-verify-capture-15s" title="Permanent link">&para;</a></h2>
-<p>Open Claude Code and type any prompt. As soon as the
-<code>UserPromptSubmit</code> hook fires, the daemon receives an envelope and
-stores it.</p>
+<p>Open one of the agents you just wired up and type any prompt. As
+soon as the <code>UserPromptSubmit</code> hook fires (Gemini calls it
+<code>BeforeAgent</code>), the daemon receives an envelope and stores it.</p>
 <div class="language-fish highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>aichronicles sessions --limit 1
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="c"># 1f5dd444  2026-04-25T08:21:07Z  2026-04-25T08:21:09Z  3  /home/you  hello world</span>
 </span></code></pre></div>
@@ -1089,8 +1100,8 @@ prompt</code>.</p>
 <p>This is FTS5 — query syntax follows
 <a href="https://www.sqlite.org/fts5.html#full_text_query_syntax">SQLite FTS5</a>.</p>
 <h2 id="youre-done">You're done<a class="headerlink" href="#youre-done" title="Permanent link">&para;</a></h2>
-<p>You now have a corpus that grows automatically as you use Claude
-Code. Every prompt, tool call, and response is in SQLite at
+<p>You now have a corpus that grows automatically as you use your
+agents. Every prompt, tool call, and response is in SQLite at
 <code>~/.local/state/aichronicles/store.db</code>, with secrets scrubbed
 server-side by the api before they hit disk.</p>
 <h2 id="whats-next">What's next<a class="headerlink" href="#whats-next" title="Permanent link">&para;</a></h2>

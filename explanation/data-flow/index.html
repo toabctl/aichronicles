@@ -1100,7 +1100,7 @@ outage feels the way it does.</p>
 </thead>
 <tbody>
 <tr>
-<td>Claude Code / Gemini CLI hook fires</td>
+<td>Claude Code / Gemini CLI / Codex CLI hook fires</td>
 <td><code>aichronicles hook</code> → daemon → <code>raw_envelopes</code> + <code>events</code> (+ FTS / extractions / sessions aggregates)</td>
 <td>Every event (prompt, tool call, response, …)</td>
 </tr>
@@ -1163,7 +1163,7 @@ subprocess sends the raw envelope.</p>
     participant SQ as SQLite&lt;br/&gt;(store.db)
 
     CC-&gt;&gt;HK: spawn + pipe hook JSON to stdin
-    HK-&gt;&gt;HK: claude.HookTranslator (or gemini.HookTranslator).Translate
+    HK-&gt;&gt;HK: claude.HookTranslator (or gemini./codex.HookTranslator).Translate
     Note over HK: builds Envelope (raw bytes — no redaction)
     HK-&gt;&gt;API: POST /v1/ingest (UDS, 250ms ctx deadline)
     API-&gt;&gt;API: validate envelope (V==1, slug, UUID)
