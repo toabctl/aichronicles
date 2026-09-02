@@ -1,9 +1,12 @@
 package events
 
+import "strings"
+
 // RenderToolContent produces a one-liner suitable for content_text
 // and FTS indexing, derived from a hook payload's tool_name and
-// tool_input. Shared between hook-shaped Sources (Claude, Gemini)
-// because both agents pass tool_input fields with identical names
+// tool_input. Shared between hook-shaped Sources (Claude,
+// Gemini, Codex) because all three pass tool_input fields with
+// identical names
 // (`{command, file_path, pattern, url, ...}`); the tool naming
 // differs (PascalCase vs snake_case) but the field shape doesn't.
 //
@@ -39,9 +42,12 @@ func RenderToolContent(hook map[string]any) string {
 // Both Claude Code's tool naming (PascalCase: Bash, Read, …) and
 // Gemini CLI's equivalents (snake_case: run_shell_command,
 // read_file, …) are handled here. The tool_input field names are
-// identical across the two agents — both pass `{command, ...}`
-// for shell, `{file_path, ...}` for file ops, etc. — so one
-// switch with both names per case keeps the renderer consistent.
+// identical across the agents — all pass `{command, ...}` for
+// shell, `{file_path, ...}` for file ops, etc. — so one switch
+// with every name per case keeps the renderer consistent. Codex
+// CLI reuses Claude's PascalCase names on the wire and needs no
+// aliases of its own; only apply_patch, which has no Claude or
+// Gemini counterpart, is Codex-specific.
 func toolDetail(toolName string, input map[string]any) string {
 	if input == nil {
 		return ""
@@ -72,6 +78,14 @@ func toolDetail(toolName string, input map[string]any) string {
 		return stringField(input, "url")
 	case "WebSearch", "google_web_search":
 		return stringField(input, "query")
+	case "apply_patch":
+		// Codex CLI's edit tool. tool_input is
+		// {"command": "*** Begin Patch\n*** Add File: …"} — the
+		// whole patch, body included. Rendering it verbatim would
+		// dump a multi-line diff into content_text; rendering the
+		// touched paths gives the one thing people actually search
+		// an edit by.
+		return applyPatchPaths(stringField(input, "command"))
 	case "Task":
 		// Sub-agent launch. Both fields are typically present;
 		// description is shorter and clearer for a one-line
@@ -153,4 +167,54 @@ func longestStringValue(m map[string]any) string {
 		return ""
 	}
 	return best
+}
+
+// applyPatchVerbs are the per-file headers in Codex's apply_patch
+// envelope. Each introduces one path; "*** Move to:" names the
+// destination of a rename, whose source came from the preceding
+// "*** Update File:". Taken from the format codex-cli validates
+// against ("The first line of the patch must be '*** Begin
+// Patch'"), not inferred from a sample.
+var applyPatchVerbs = []string{
+	"*** Add File: ",
+	"*** Update File: ",
+	"*** Delete File: ",
+	"*** Move to: ",
+}
+
+// applyPatchPaths returns the space-joined list of files a Codex
+// apply_patch envelope touches, in the order they appear and
+// without duplicates (a rename names its path twice — once to
+// update, once to move). Returns "" for anything that isn't
+// recognisably a patch envelope, which makes RenderToolContent
+// fall back to the bare tool name.
+//
+// Deliberately literal: only lines that begin with a known verb
+// count. A hunk body line that happens to start with "***" is not
+// a header, and a patch we can't parse yields nothing rather than
+// a half-read path list.
+func applyPatchPaths(patch string) string {
+	if patch == "" {
+		return ""
+	}
+	var paths []string
+	seen := make(map[string]struct{})
+	for _, line := range strings.Split(patch, "\n") {
+		for _, verb := range applyPatchVerbs {
+			rest, ok := strings.CutPrefix(line, verb)
+			if !ok {
+				continue
+			}
+			p := strings.TrimSpace(rest)
+			if p == "" {
+				break
+			}
+			if _, dup := seen[p]; !dup {
+				seen[p] = struct{}{}
+				paths = append(paths, p)
+			}
+			break
+		}
+	}
+	return strings.Join(paths, " ")
 }

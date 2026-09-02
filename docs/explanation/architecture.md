@@ -58,6 +58,7 @@ shape with three rings:
                                       │   sources/       │  ← concrete sources
                                       │     claude/      │
                                       │     gemini/      │
+                                      │     codex/       │
                                       └──────────────────┘
 ```
 
@@ -72,7 +73,7 @@ rearchitecture collapsed that into a single store-owning process.)
 |---|---|---|---|
 | `aichronicles-api` | Long-running daemon | systemd `--user` unit, socket-activated | The single SQLite-handling process. Serves `/v1/*` JSON read+write API and `/v1/stream` SSE live activity. Server-side redaction; the only point of "no unredacted bytes in storage" enforcement. |
 | `aichronicles-web` | Long-running daemon | systemd `--user` unit (`aichronicles-web.service`) | Renders `/` web HTML. Reads via `internal/apiclient` against `aichronicles-api`'s UDS — separate process so a web-handler bug can't take down ingest. |
-| `aichronicles hook` | Short-lived hook subprocess | Forked per Claude Code / Gemini CLI hook event | One envelope's worth of translation + POST to `aichronicles-api`. Translation is pure (post-Phase 0); the api applies redaction. Fire-and-forget: every error path logs and exits 0 so the hook never breaks the agent's prompt loop. |
+| `aichronicles hook` | Short-lived hook subprocess | Forked per Claude Code / Gemini CLI / Codex CLI hook event | One envelope's worth of translation + POST to `aichronicles-api`. Translation is pure (post-Phase 0); the api applies redaction. Fire-and-forget: every error path logs and exits 0 so the hook never breaks the agent's prompt loop. |
 | `aichronicles induction sweep` | Short-lived periodic | `aichronicles-cron-induction.timer` (`OnCalendar=*-*-* 09,21:00:00`, twice daily) | Single-session induction across idle sessions |
 | `aichronicles meta sweep` | Short-lived periodic | `aichronicles-cron-meta-analysis.timer` (1h poll, per-kind cadences in SQLite) | Cadence-gated meta-analyses (propose / reflect / challenge / digest_weekly / skill_revision) |
 | `aichronicles digest weekly` | Short-lived periodic | `aichronicles-cron-weekly-digest.timer` (`OnCalendar=Mon 06:00:00 UTC`) | Weekly retrospective digest |
@@ -197,7 +198,7 @@ internal/               private; only this binary imports
                         ApplyRedaction free function
     role.go             RoleForKind helper
     tool_rendering.go   RenderToolContent + tool-input field-mapping
-                        (shared between Claude and Gemini hooks)
+                        (shared by Claude, Gemini and Codex hooks)
     views.go            EventView (read shape for prompt builders)
     episode.go          Episode (episodic-memory unit)
     event.go            Event{Envelope, Raw, Extractions},
@@ -216,6 +217,9 @@ internal/               private; only this binary imports
       gemini/
         hook.go         HookTranslator
         transcript.go   TranscriptSource
+      codex/
+        hook.go         HookTranslator (hooks only — Codex's
+                        rollout files have no importer yet)
   redact/               detector library + scanner combinators
                         (no other internal/* deps)
   llm/                  provider-neutral interface
@@ -223,9 +227,10 @@ internal/               private; only this binary imports
     anthropic.go        adapter using anthropic-sdk-go
     openai.go           adapter using openai-go
     prompts/            BuildSummary / BuildReflect / BuildPropose
-  agents/               Claude Code / Gemini CLI integration metadata
-                        (slug, hook event names, settings.json paths
-                        — consumed only by `setup` / `teardown`)
+  agents/               Claude Code / Gemini CLI / Codex CLI metadata
+                        (slug, hook event names, per-event timeout
+                        overrides, settings.json paths — consumed
+                        only by `setup` / `teardown`)
   api/                  HTTP daemon: server, mux, handlers per feature,
                         SSE bus, redaction-server-side ingest path.
                         Replaces and absorbs the legacy internal/daemon.
@@ -346,12 +351,14 @@ integration/            //go:build integration tests
   The package has no stability promise but is intentionally
   embeddable.
 
-- **Sources are sub-packaged by agent.** `internal/events/sources/claude`
-  and `internal/events/sources/gemini` each export a `HookTranslator`
-  (single-shot, used by `aichronicles hook`) and a `JSONLSource`
-  / `TranscriptSource` (streaming, used by importers). Adding a
-  third agent = one new sub-package; nothing in `internal/events`
-  changes.
+- **Sources are sub-packaged by agent.** `internal/events/sources/claude`,
+  `internal/events/sources/gemini` and `internal/events/sources/codex`
+  each export a `HookTranslator` (single-shot, used by `aichronicles
+  hook`); claude and gemini also export a `JSONLSource` /
+  `TranscriptSource` (streaming, used by importers). Codex ships the
+  hook half only. Adding an agent = one new sub-package; nothing in
+  `internal/events` changes — the Codex integration bore this out,
+  needing only one new `case` in `translateHook`.
 
 - **The Sink interface lives in `internal/events`; the SQLite implementation
   lives in `internal/store`.** Two implementations: `Sink` (one tx
@@ -406,7 +413,7 @@ The arrow is "imports":
 ```
 cmd/aichronicles-api ──▶ internal/api
 cmd/aichronicles     ──▶ internal/cli
-internal/cli         ──▶ internal/events, internal/events/sources/{claude,gemini},
+internal/cli         ──▶ internal/events, internal/events/sources/{claude,gemini,codex},
                          internal/store, internal/apiclient, internal/wire,
                          internal/agents, internal/mcp, internal/llm,
                          internal/llm/prompts, internal/redact,
@@ -620,9 +627,11 @@ Where they're enforced in code:
   A buggy or malicious client cannot smuggle secrets past
   the gate by lying about pre-redaction.
 - **Sources are pure translators:** `internal/events/sources/{claude,
-  gemini}/{hook,jsonl,transcript}.go` no longer hold a Redactor
+  gemini,codex}/{hook,jsonl,transcript}.go` hold no Redactor
   field. Translation produces an unredacted envelope; the
-  consuming Pipeline scrubs.
+  consuming Pipeline scrubs. Each source carries a test asserting
+  its translator emits `Redaction == nil`, so a source that
+  re-acquires one fails rather than quietly double-scrubbing.
 - **Store enforcement (last line of defense):**
   `internal/store/ingest.go::IngestEnvelopeWithExtractions`
   returns `ErrRedactionRequired` even for callers that

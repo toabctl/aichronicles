@@ -11,12 +11,15 @@ under NDA, anything subject to compliance regimes.
 - aichronicles is **single-user, single-machine** software. Every
   piece of state — the daemon, the SQLite store, the Unix socket,
   your config — runs as your user, on your local disk.
-- Secrets matching ~15 detectors are **scrubbed at the edge**
-  (before envelopes leave the hook subprocess) and verified at
-  the daemon. Egress to the LLM provider also scrubs.
-- aichronicles **does not** prevent secrets from landing in
-  `~/.claude/projects/*.jsonl`. Claude Code writes those before any
-  hook fires; that file tree is out of our control.
+- Secrets matching ~15 detectors are **scrubbed server-side by the
+  api daemon**, which is the single enforcement point: the hook
+  subprocess forwards raw bytes and the daemon refuses to persist
+  anything it has not scrubbed itself. Egress to the LLM provider
+  also scrubs.
+- aichronicles **does not** prevent secrets from landing in the
+  agents' own transcript trees (`~/.claude/projects/*.jsonl`,
+  `~/.gemini/tmp/`, `~/.codex/sessions/`). Each agent writes those
+  before any hook fires; they are out of our control.
 - The redactor is **best-effort** — pattern-based, not semantic.
   Anything not matching a detector survives. Run
   `aichronicles audit` periodically.
@@ -30,7 +33,7 @@ that data.
 ┌─────────────────────────────────────────────────────────────┐
 │  YOUR MACHINE — single user, local disk                     │
 │                                                             │
-│   Claude Code  ──hook──▶  aichronicles hook ──UDS──▶ api    │
+│   Claude/Gemini/Codex ─hook─▶ aichronicles hook ─UDS─▶ api  │
 │                                                       │     │
 │   MCP client  ◀──stdio─▶  mcp-serve  ──UDS──▶  aichronicles-api
 │                                                       │     │
@@ -194,28 +197,52 @@ box can rewrite the config, they can redirect the key fetch to an
 attacker-controlled command. The mode check fires whenever any
 provider has a key command set.
 
+Agent hook config gets written atomically — temp file, `chmod
+0600`, rename — so a `setup` run leaves the settings file at `0600`
+whatever it was before. A missing parent directory is created
+`0700`; an existing one keeps its mode.
+
+One agent goes further, and it is worth knowing about
+because it changes what a `setup` run means. **Codex CLI hashes
+every hook command and refuses to run one it has not been told to
+trust.** So `aichronicles setup codex-cli` does not, by itself,
+arm anything: Codex prompts you to review the exact command on the
+next run, and records the decision as a `trusted_hash` under
+`[hooks.state]` in `~/.codex/config.toml`. The useful corollary is
+that anyone who later rewrites our entry in `hooks.json` — to point
+at their own binary, say — invalidates the hash and gets a fresh
+review prompt rather than silent execution. Claude Code and Gemini
+CLI have no equivalent, so for those two a write to the settings
+file is a write to your next session's execution path.
+
 ## What aichronicles does NOT promise
 
 This is the load-bearing section. Read it twice.
 
-### 1. `~/.claude/projects/*.jsonl` is out of scope
+### 1. The agents' own transcript files are out of scope
 
-Claude Code writes its own transcript files to disk **before** any
-hook runs. aichronicles consumes the hook events that fire *as a
-result* of Claude Code's actions — but it has no opportunity to
-intercept the bytes Claude Code writes to its JSONL files.
+Every supported agent writes its own transcript to disk **before**
+any hook runs:
 
-**Practical consequence:** anything you have ever typed into Claude
-Code is in those files, in plaintext, on your disk, regardless of
-what aichronicles does. Including:
+- Claude Code → `~/.claude/projects/*.jsonl`
+- Gemini CLI → `~/.gemini/tmp/`
+- Codex CLI → `$CODEX_HOME/sessions/<yyyy>/<mm>/<dd>/rollout-*.jsonl`
 
-- API keys you pasted into a prompt to ask Claude how to use them.
-- Secrets that escaped your shell into Claude's tool-result blocks.
-- Customer data you discussed in Claude.
+aichronicles consumes the hook events that fire *as a result* of the
+agent's actions — but it has no opportunity to intercept the bytes
+the agent writes to those files.
+
+**Practical consequence:** anything you have ever typed into any of
+these agents is in their files, in plaintext, on your disk,
+regardless of what aichronicles does. Including:
+
+- API keys you pasted into a prompt to ask the agent how to use them.
+- Secrets that escaped your shell into a tool-result block.
+- Customer data you discussed with the agent.
 
 If you want those files cleaned, you have to clean them yourself.
 A `sanitize-claude-transcripts` subcommand that does this in-place
-is on the roadmap; until it lands, treat the JSONL tree as a
+is on the roadmap; until it lands, treat every transcript tree as a
 plaintext archive.
 
 ### 2. The redactor is pattern-based and best-effort
@@ -245,7 +272,8 @@ Any process running as your UID can:
 - Read the SQLite store directly with `sqlite3
   ~/.local/state/aichronicles/store.db`.
 - Read your `~/.config/aichronicles/config.toml`.
-- Read `~/.claude/projects/`.
+- Read `~/.claude/projects/`, `~/.gemini/tmp/` and
+  `~/.codex/sessions/`.
 
 aichronicles does not authenticate peers on the UDS. We don't
 defend against an attacker already on your account. If you've been
@@ -292,7 +320,9 @@ involves no outbound network and is safe under those constraints.
 ### 8. The MCP server is read-only — but it reads everything
 
 `aichronicles mcp-serve` exposes three tools to whatever client
-connects to it (currently Claude Code via stdio). The tools are
+connects to it over stdio — Claude Code today; Codex CLI can
+register it too via `codex mcp`, though `setup codex-cli` does not
+do so. The tools are
 strictly read-only — no `INSERT`, no `DELETE`. But they expose:
 
 - Full-text search across every event you've captured (`search_events`).
@@ -319,12 +349,13 @@ If you adopt aichronicles, the following are reasonable defaults:
   irreversible, hence the backup.
 - **Use `api_key_command` with `secret-tool`.** Never paste a key
   on the command line.
-- **Don't paste secrets into Claude Code prompts.** Even one is
-  one too many — they end up in `~/.claude/projects` regardless of
-  any redaction we do.
-- **Periodically review `~/.claude/projects/`.** It grows
-  unbounded. Old transcripts are still plaintext archives of
-  whatever you typed at the time. Delete or archive aggressively.
+- **Don't paste secrets into any agent's prompt.** Even one is
+  one too many — they end up in that agent's own transcript tree
+  regardless of any redaction we do.
+- **Periodically review the transcript trees** (`~/.claude/projects/`,
+  `~/.gemini/tmp/`, `~/.codex/sessions/`). They grow unbounded. Old
+  transcripts are still plaintext archives of whatever you typed at
+  the time. Delete or archive aggressively.
 - **Don't run `summarize` on sessions whose contents you can't
   legally send to Anthropic / OpenAI.**
 

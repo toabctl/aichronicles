@@ -58,27 +58,39 @@ curl --silent --unix-socket /run/user/(id -u)/aichronicles/api.sock \
 
 ## 3. Wire agent hooks (≈15s)
 
-Pick the agent(s) you actually use. Both commands are idempotent
-and preserve any existing hook entries other tools have written.
+Pick the agent(s) you actually use. All three commands are
+idempotent and preserve any existing hook entries other tools have
+written.
 
 ```fish
 # Claude Code → ~/.claude/settings.json
-aichronicles setup claude-code --yes
+aichronicles setup claude-code
 
 # Gemini CLI → ~/.gemini/settings.json
-aichronicles setup gemini-cli --yes
+aichronicles setup gemini-cli
+
+# Codex CLI → ~/.codex/hooks.json  (or $CODEX_HOME/hooks.json)
+aichronicles setup codex-cli
 ```
 
 For Claude Code, this merges six hook entries
 (`UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionStart`,
 `SessionEnd`, `PostToolUseFailure`). For Gemini, the event-name
 set is the agent's equivalent (`BeforeAgent`, `AfterModel`,
-`AfterTool`, `SessionStart`, `SessionEnd`). Each hook runs
-`aichronicles hook --agent <slug>` as a subprocess, which
-translates the hook payload to an envelope and POSTs it to the
-api over the UDS. Redaction runs server-side in the api — the
-hook subprocess sends raw bytes; the api scrubs secrets before
-the envelope hits disk.
+`AfterTool`, `SessionStart`, `SessionEnd`). Codex reuses Claude's
+event names and gets five (`UserPromptSubmit`, `Stop`,
+`PostToolUse`, `SessionStart`, `SessionEnd`) — it has no
+`PostToolUseFailure` equivalent. Each hook runs `aichronicles hook
+--agent <slug>` as a subprocess, which translates the hook payload
+to an envelope and POSTs it to the api over the UDS. Redaction runs
+server-side in the api — the hook subprocess sends raw bytes; the
+api scrubs secrets before the envelope hits disk.
+
+**Codex needs one extra step.** Codex hashes every hook command
+and refuses to run one it has not been told to trust. Start
+`codex` once after the install and accept the hook-trust prompt;
+until you do, nothing is captured. (Codex records the decision
+under `[hooks.state]` in `~/.codex/config.toml`.)
 
 The hook never fails the agent: it exits 0 even if the api is
 unreachable. Outages fire one desktop notification per outage so
@@ -87,9 +99,9 @@ you find out without it blocking your session.
 
 ## 4. Verify capture (≈15s)
 
-Open Claude Code and type any prompt. As soon as the
-`UserPromptSubmit` hook fires, the daemon receives an envelope and
-stores it.
+Open one of the agents you just wired up and type any prompt. As
+soon as the `UserPromptSubmit` hook fires (Gemini calls it
+`BeforeAgent`), the daemon receives an envelope and stores it.
 
 ```fish
 aichronicles sessions --limit 1
@@ -112,8 +124,8 @@ This is FTS5 — query syntax follows
 
 ## You're done
 
-You now have a corpus that grows automatically as you use Claude
-Code. Every prompt, tool call, and response is in SQLite at
+You now have a corpus that grows automatically as you use your
+agents. Every prompt, tool call, and response is in SQLite at
 `~/.local/state/aichronicles/store.db`, with secrets scrubbed
 server-side by the api before they hit disk.
 

@@ -19,6 +19,7 @@ func newTeardownCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newTeardownClaudeCodeCmd())
 	cmd.AddCommand(newTeardownGeminiCLICmd())
+	cmd.AddCommand(newTeardownCodexCLICmd())
 	cmd.AddCommand(newTeardownSystemdCmd())
 	cmd.AddCommand(newTeardownCronCmd())
 	return cmd
@@ -256,6 +257,46 @@ func newTeardownGeminiCLICmd() *cobra.Command {
 	return cmd
 }
 
+func newTeardownCodexCLICmd() *cobra.Command {
+	var settingsPath string
+	var hookCommand string
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "codex-cli",
+		Short: "Remove aichronicles Codex CLI hooks from hooks.json",
+		Long: "Inverse of `setup codex-cli`. Strips every hook entry whose\n" +
+			"command matches ours from each Codex hook event. Other tools'\n" +
+			"entries are preserved; running twice is a no-op.\n\n" +
+			"Default path is $CODEX_HOME/hooks.json, or ~/.codex/hooks.json\n" +
+			"when CODEX_HOME is unset.\n\n" +
+			"Codex's own trust records (the [hooks.state] table in\n" +
+			"config.toml, keyed by file path + event + index) are left\n" +
+			"alone: they are Codex's bookkeeping, not ours, and a stale\n" +
+			"entry for a hook that no longer exists is inert.\n\n" +
+			"Dry-run by default: pass --yes to actually rewrite the file.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			path := settingsPath
+			if path == "" {
+				var err error
+				path, err = agents.CodexCLI.DefaultSettingsPath()
+				if err != nil {
+					return err
+				}
+			}
+			report, err := RemoveAgentHooks(agents.CodexCLI, path, hookCommand, !yes)
+			if err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), report)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&settingsPath, "settings", "", "path to Codex hooks.json (default: $CODEX_HOME/hooks.json, else ~/.codex/hooks.json)")
+	cmd.Flags().StringVar(&hookCommand, "command", defaultHookCommandFor(agents.CodexCLI), "command to strip from each hook")
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the removal (required to modify the file)")
+	return cmd
+}
+
 // RemoveAgentHooks is the inverse of InstallAgentHooks: it drops
 // every hook entry whose inner command matches, preserves entries
 // belonging to other tools, and rewrites the file only when
@@ -265,9 +306,10 @@ func newTeardownGeminiCLICmd() *cobra.Command {
 // the settings file. The returned report uses "would remove" phrasing
 // so cobra can relay it as a preview.
 //
-// Generic over the agent — call sites pass agents.ClaudeCode or
-// events.Codex and get the same merge / cleanup behaviour. The
-// agent supplies which hook event names to walk.
+// Generic over the agent — call sites pass agents.ClaudeCode,
+// agents.GeminiCLI or agents.CodexCLI and get the same merge /
+// cleanup behaviour. The agent supplies which hook event names to
+// walk.
 func RemoveAgentHooks(agent agents.Agent, path, command string, dryRun bool) (string, error) {
 	if command == "" {
 		command = defaultHookCommandFor(agent)

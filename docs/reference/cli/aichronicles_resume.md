@@ -34,12 +34,12 @@ aichronicles resume <query> [flags]
 ### Options
 
 ```
-      --agent string       filter by source agent (claude-code | gemini-cli)
+      --agent string       filter by source agent (claude-code | gemini-cli | codex-cli)
   -h, --help               help for resume
       --limit int          max matching sessions to list (default 10)
   -n, --print              print the resume command(s) instead of launching the agent
       --since duration     only sessions with events within this window (e.g. 24h, 7d); 0 = no limit (default 42d)
-  -d, --skip-permissions   (dangerous) resume with --dangerously-skip-permissions (claude-code only)
+  -d, --skip-permissions   (dangerous) resume with the agent's permission bypass (claude-code, codex-cli)
       --socket string      aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET)
 ```
 

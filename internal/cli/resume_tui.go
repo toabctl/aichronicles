@@ -305,8 +305,8 @@ func renderResumePreviewPane(c resumeCandidate, width, maxBodyLines int) string 
 }
 
 // resumeSpeaker returns the display label and colour style for a
-// message kind. The agent name (claude / gemini) is used for assistant
-// turns so the preview reads naturally per source.
+// message kind. The agent name (claude / gemini / codex) is used for
+// assistant turns so the preview reads naturally per source.
 func resumeSpeaker(kind, agent string) (string, lipgloss.Style) {
 	switch kind {
 	case events.KindUserPrompt:
@@ -326,6 +326,8 @@ func resumeAgentName(agent string) string {
 		return "claude"
 	case "gemini-cli":
 		return "gemini"
+	case "codex-cli":
+		return "codex"
 	default:
 		return "assistant"
 	}

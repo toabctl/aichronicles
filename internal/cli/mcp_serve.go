@@ -27,9 +27,9 @@ func newMCPServeCmd() *cobra.Command {
 		Use:   "mcp-serve",
 		Short: "Run an MCP server over stdio exposing the user's session history",
 		Long: "Starts a Model Context Protocol server on stdin/stdout that\n" +
-			"lets a model query the user's PAST Claude Code / Gemini CLI\n" +
-			"sessions. All tools read the local SQLite store; nothing\n" +
-			"writes back.\n\n" +
+			"lets a model query the user's PAST Claude Code / Gemini CLI /\n" +
+			"Codex CLI sessions. All tools read the local SQLite store;\n" +
+			"nothing writes back.\n\n" +
 			"Tools exposed:\n" +
 			"  search_events        — keyword search over past events\n" +
 			"  list_sessions        — recent past conversations\n" +

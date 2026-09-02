@@ -15,6 +15,7 @@ import (
 	"github.com/toabctl/aichronicles/internal/config"
 	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/events/sources/claude"
+	"github.com/toabctl/aichronicles/internal/events/sources/codex"
 	"github.com/toabctl/aichronicles/internal/events/sources/gemini"
 	"github.com/toabctl/aichronicles/internal/notify"
 	"github.com/toabctl/aichronicles/internal/paths"
@@ -59,9 +60,10 @@ func newHookCmd() *cobra.Command {
 		Use:   "hook",
 		Short: "Read a hook payload on stdin and forward as an envelope to aichronicles-api",
 		Long: "hook is invoked by AI coding agent hooks (Claude Code by\n" +
-			"default; pass --agent gemini-cli to consume Gemini CLI hook\n" +
-			"payloads). It reads a JSON hook payload from stdin, wraps it\n" +
-			"in the canonical Envelope, and POSTs to aichronicles-api over\n" +
+			"default; pass --agent gemini-cli or --agent codex-cli to\n" +
+			"consume Gemini CLI / Codex CLI hook payloads). It reads a\n" +
+			"JSON hook payload from stdin, wraps it in the canonical\n" +
+			"Envelope, and POSTs to aichronicles-api over\n" +
 			"a Unix socket. The api daemon applies redaction server-side.\n\n" +
 			"Blocking policy: this command NEVER fails the hook. Errors are\n" +
 			"logged to stderr as structured records and the process exits 0.",
@@ -71,7 +73,7 @@ func newHookCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&socketFlag, "socket", "",
 		"aichronicles-api UDS path (overrides $AICHRONICLES_API_SOCKET; defaults to XDG_RUNTIME_DIR/aichronicles/api.sock)")
-	cmd.Flags().StringVar(&agentSlug, "agent", defaultHookAgent, "source agent slug (claude-code | gemini-cli)")
+	cmd.Flags().StringVar(&agentSlug, "agent", defaultHookAgent, "source agent slug (claude-code | gemini-cli | codex-cli)")
 	return cmd
 }
 
@@ -265,6 +267,9 @@ func translateHook(agentSlug string, raw []byte) (events.Envelope, error) {
 		return tr.Translate(raw)
 	case "gemini-cli":
 		tr := &gemini.HookTranslator{Now: now}
+		return tr.Translate(raw)
+	case "codex-cli":
+		tr := &codex.HookTranslator{Now: now}
 		return tr.Translate(raw)
 	default:
 		return events.Envelope{}, fmt.Errorf("unknown agent slug %q", agentSlug)

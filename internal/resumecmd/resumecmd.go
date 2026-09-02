@@ -22,9 +22,11 @@ type Spec struct {
 	// Cwd is the workspace to enter before launching. Empty means
 	// "launch in the current directory" (no cd).
 	Cwd string
-	// Bin is the agent binary to exec ("claude", "gemini").
+	// Bin is the agent binary to exec ("claude", "gemini", "codex").
 	Bin string
-	// Args are the arguments after Bin, e.g. ["--resume", "<uuid>"].
+	// Args are the arguments after Bin, e.g. ["--resume", "<uuid>"]
+	// — or ["resume", "<uuid>"] for codex, whose resume is a
+	// subcommand rather than a flag on the root command.
 	Args []string
 }
 
@@ -38,11 +40,12 @@ func Build(agent, sourceSessionID string, cwd *string, skipPerms bool) (Spec, bo
 		return Spec{}, false
 	}
 
-	args := []string{"--resume", sourceSessionID}
 	var bin string
+	var args []string
 	switch agent {
 	case "claude-code":
 		bin = "claude"
+		args = []string{"--resume", sourceSessionID}
 		if skipPerms {
 			args = append(args, "--dangerously-skip-permissions")
 		}
@@ -57,9 +60,26 @@ func Build(agent, sourceSessionID string, cwd *string, skipPerms bool) (Spec, bo
 			return Spec{}, false
 		}
 		bin = "gemini"
+		args = []string{"--resume", sourceSessionID}
+	case "codex-cli":
+		// Codex is the odd one out: resume is a SUBCOMMAND taking a
+		// positional id ("codex resume <SESSION_ID>"), not a flag on
+		// the root command. Its help spells the argument as "session
+		// id (UUID) or session name. UUIDs take precedence" — and
+		// the id we capture from the hook payload is exactly the
+		// UUID Codex writes into the rollout's session_meta, so it
+		// resolves without a picker.
+		bin = "codex"
+		args = []string{"resume", sourceSessionID}
+		if skipPerms {
+			// Codex's equivalent of --dangerously-skip-permissions.
+			// Unlike gemini we can model it, so the "skip perms"
+			// affordance stays available.
+			args = append(args, "--dangerously-bypass-approvals-and-sandbox")
+		}
 	default:
-		// codex / other agents have their own resume invocations we
-		// haven't modelled yet; emit nothing rather than guess.
+		// Other agents have their own resume invocations we haven't
+		// modelled yet; emit nothing rather than guess.
 		return Spec{}, false
 	}
 

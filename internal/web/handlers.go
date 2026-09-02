@@ -29,7 +29,8 @@ const sessionsListLimit = 100
 // rows that already have a cached LLM summary in llm_outputs.
 //
 // Faceted-filter query params (all optional, all combine with AND):
-//   - agent          — exact source_agent (claude-code | gemini-cli)
+//   - agent          — exact source_agent (claude-code | gemini-cli |
+//     codex-cli)
 //   - project        — project-root cwd from /projects click-through
 //   - tool           — exact tool_name on some event in the session
 //   - skill          — sessions whose events loaded the named skill

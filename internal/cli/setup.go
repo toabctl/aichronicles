@@ -41,6 +41,7 @@ func newSetupCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newSetupClaudeCodeCmd())
 	cmd.AddCommand(newSetupGeminiCLICmd())
+	cmd.AddCommand(newSetupCodexCLICmd())
 	cmd.AddCommand(newSetupSystemdCmd())
 	cmd.AddCommand(newSetupCronCmd())
 	return cmd
@@ -164,6 +165,67 @@ func newSetupGeminiCLICmd() *cobra.Command {
 	return cmd
 }
 
+func newSetupCodexCLICmd() *cobra.Command {
+	var settingsPath string
+	var hookCommand string
+	cmd := &cobra.Command{
+		Use:   "codex-cli",
+		Short: "Install Codex CLI hooks that forward events to aichronicles-api",
+		Long: "Idempotently merges five hook entries (UserPromptSubmit, Stop,\n" +
+			"PostToolUse, SessionStart, SessionEnd) into Codex's hooks.json,\n" +
+			"each pointing at `aichronicles hook --agent codex-cli`.\n" +
+			"Existing hook entries from other tools are preserved; running\n" +
+			"twice is a no-op.\n\n" +
+			"Default path is $CODEX_HOME/hooks.json, or ~/.codex/hooks.json\n" +
+			"when CODEX_HOME is unset. Pass --settings to target a\n" +
+			"project-local <repo>/.codex/hooks.json instead.\n\n" +
+			"INSTALL AT ONE LAYER ONLY. Codex merges its hook layers (user,\n" +
+			"project, plugin, managed) rather than letting the nearest one\n" +
+			"win, so an entry in both ~/.codex/hooks.json and a repo's\n" +
+			".codex/hooks.json fires our hook twice and stores every event\n" +
+			"of that session twice. Codex also accepts hooks inline as\n" +
+			"[hooks] in config.toml; we neither read nor write that form,\n" +
+			"so a hand-written inline entry is a second layer too.\n\n" +
+			"Codex's hook protocol is a clone of Claude Code's, down to the\n" +
+			"PascalCase event names and the tool vocabulary (a shell call\n" +
+			"arrives as tool_name=\"Bash\"), so the same translator shape\n" +
+			"handles it. It has no tool-failure event and no error channel\n" +
+			"on tool_response, so every PostToolUse is recorded as a plain\n" +
+			"tool_use.\n\n" +
+			"The SessionEnd entry carries an explicit `timeout` of 3s —\n" +
+			"Codex defaults that one event to 1s (every other event gets\n" +
+			"600s) and caps it at 3s, which is tight enough that a busy\n" +
+			"machine can lose the event.\n\n" +
+			"ONE MANUAL STEP REMAINS: Codex will not run a hook command it\n" +
+			"has not been told to trust. The next interactive `codex` run\n" +
+			"prompts you to review and trust the new entries — or run\n" +
+			"/hooks inside Codex to review them on demand. Until you\n" +
+			"accept, nothing is captured.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			path := settingsPath
+			if path == "" {
+				var err error
+				path, err = agents.CodexCLI.DefaultSettingsPath()
+				if err != nil {
+					return err
+				}
+			}
+			report, err := InstallAgentHooks(agents.CodexCLI, path, hookCommand)
+			if err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), report)
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(),
+				"\nnext: start `codex` and accept the hook-trust prompt (or run "+
+					"/hooks inside Codex) — Codex ignores untrusted hooks")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&settingsPath, "settings", "", "path to Codex hooks.json (default: $CODEX_HOME/hooks.json, else ~/.codex/hooks.json)")
+	cmd.Flags().StringVar(&hookCommand, "command", defaultHookCommandFor(agents.CodexCLI), "command to run from each hook")
+	return cmd
+}
+
 // MCPServerEntry is the shape we merge into settings.json's
 // mcpServers map. Name is the key (e.g. "aichronicles"); Command
 // is the executable Claude Code invokes; Args are the subcommand
@@ -195,7 +257,7 @@ func InstallClaudeCodeFull(settingsPath, userConfigPath, hookCommand string, mcp
 	if err != nil {
 		return "", err
 	}
-	hooksAdded, hooksPresent := mergeAllHooks(settings, agents.ClaudeCode.HookEvents, hookCommand)
+	hooksAdded, hooksPresent := mergeAllHooks(settings, agents.ClaudeCode.HookEvents, hookCommand, agents.ClaudeCode.HookTimeoutsSec)
 	if len(hooksAdded) > 0 {
 		if err := writeSettingsAtomic(settingsPath, settings); err != nil {
 			return "", err
@@ -290,11 +352,11 @@ func formatClaudeCodeReport(settingsPath, userConfigPath string, hooksAdded, hoo
 // settings.json at path, creating the file if necessary. Returns a
 // human-readable summary of what changed. Safe to run repeatedly.
 //
-// The function is agent-neutral: a future Codex CLI integration calls
-// this with events.Codex (a sibling of agents.ClaudeCode) and gets
-// the same install logic for free. The agent supplies which event
-// names to register; everything else — JSON shape, file mode,
-// merge semantics — is shared.
+// The function is agent-neutral: call sites pass agents.GeminiCLI or
+// agents.CodexCLI and get the same install logic. The agent supplies
+// which event names to register and where the file lives; everything
+// else — JSON shape, file mode, merge semantics — is shared, because
+// all three agents use the same `hooks.<Event>[].hooks[]` container.
 func InstallAgentHooks(agent agents.Agent, path, command string) (string, error) {
 	if command == "" {
 		command = defaultHookCommand
@@ -304,7 +366,7 @@ func InstallAgentHooks(agent agents.Agent, path, command string) (string, error)
 		return "", err
 	}
 
-	added, alreadyPresent := mergeAllHooks(settings, agent.HookEvents, command)
+	added, alreadyPresent := mergeAllHooks(settings, agent.HookEvents, command, agent.HookTimeoutsSec)
 
 	if len(added) > 0 {
 		if err := writeSettingsAtomic(path, settings); err != nil {
@@ -391,9 +453,13 @@ func writeSettingsAtomic(path string, settings map[string]any) error {
 // mergeAllHooks walks every event name and inserts our hook entry where
 // missing. Returns the names that were newly added and those already
 // present so the caller can report accurately.
-func mergeAllHooks(settings map[string]any, events []string, command string) (added, present []string) {
+//
+// timeoutsSec is the agent's per-event timeout override map (see
+// agents.Agent.HookTimeoutsSec); events absent from it get no
+// `timeout` key and inherit the host's default.
+func mergeAllHooks(settings map[string]any, events []string, command string, timeoutsSec map[string]int) (added, present []string) {
 	for _, ev := range events {
-		if mergeOneHook(settings, ev, command) {
+		if mergeOneHook(settings, ev, command, timeoutsSec[ev]) {
 			added = append(added, ev)
 		} else {
 			present = append(present, ev)
@@ -407,7 +473,12 @@ func mergeAllHooks(settings map[string]any, events []string, command string) (ad
 // mergeOneHook inserts {type: command, command: <command>} under
 // settings.hooks[event], leaving any existing entries intact. Returns
 // true iff the settings map was mutated.
-func mergeOneHook(settings map[string]any, eventName, command string) bool {
+//
+// A positive timeoutSec adds a `timeout` key to the entry. Zero
+// omits it entirely rather than writing `"timeout": 0`, which the
+// hosts would read as "give up immediately" — the difference
+// between "no opinion" and "the tightest possible deadline".
+func mergeOneHook(settings map[string]any, eventName, command string, timeoutSec int) bool {
 	hooksRoot, ok := settings["hooks"].(map[string]any)
 	if !ok {
 		hooksRoot = map[string]any{}
@@ -419,11 +490,11 @@ func mergeOneHook(settings map[string]any, eventName, command string) bool {
 		return false
 	}
 
-	newEntry := map[string]any{
-		"hooks": []any{
-			map[string]any{"type": "command", "command": command},
-		},
+	exec := map[string]any{"type": "command", "command": command}
+	if timeoutSec > 0 {
+		exec["timeout"] = timeoutSec
 	}
+	newEntry := map[string]any{"hooks": []any{exec}}
 	hooksRoot[eventName] = append(entriesAny, newEntry)
 	return true
 }
