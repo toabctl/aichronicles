@@ -18,7 +18,7 @@ For the static view, two complementary docs:
 
 | Trigger                                                   | What runs                                                                                                  | Cadence                                                |
 | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Claude Code / Gemini CLI hook fires                       | `aichronicles hook` → daemon → `raw_envelopes` + `events` (+ FTS / extractions / sessions aggregates)     | Every event (prompt, tool call, response, …)           |
+| Claude Code / Gemini CLI / Codex CLI hook fires           | `aichronicles hook` → daemon → `raw_envelopes` + `events` (+ FTS / extractions / sessions aggregates)     | Every event (prompt, tool call, response, …)           |
 | `aichronicles-cron-induction.timer` fires                 | One sweep: phase 0 (segment stale episodes) → 1 (summarize) → 2 (induction) → 3 (facts), per candidate     | `OnUnitInactiveSec=15min` (configurable in the unit)   |
 | `aichronicles-cron-meta-analysis.timer` fires             | Cadence-gated dispatch of overdue propose / reflect / challenge / reflect_weekly / skill_revision           | `OnUnitInactiveSec=1h` (configurable in the unit)      |
 | `aichronicles summarize --session <id>`                   | One summarize LLM call → `llm_outputs(kind=summary)`                                                       | Manual, on demand                                      |
@@ -49,7 +49,7 @@ sequenceDiagram
     participant SQ as SQLite<br/>(store.db)
 
     CC->>HK: spawn + pipe hook JSON to stdin
-    HK->>HK: claude.HookTranslator (or gemini.HookTranslator).Translate
+    HK->>HK: claude.HookTranslator (or gemini./codex.HookTranslator).Translate
     Note over HK: builds Envelope (raw bytes — no redaction)
     HK->>API: POST /v1/ingest (UDS, 250ms ctx deadline)
     API->>API: validate envelope (V==1, slug, UUID)

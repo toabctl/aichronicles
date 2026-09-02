@@ -5,9 +5,9 @@ Run an MCP server over stdio exposing the user's session history
 ### Synopsis
 
 Starts a Model Context Protocol server on stdin/stdout that
-lets a model query the user's PAST Claude Code / Gemini CLI
-sessions. All tools read the local SQLite store; nothing
-writes back.
+lets a model query the user's PAST Claude Code / Gemini CLI /
+Codex CLI sessions. All tools read the local SQLite store;
+nothing writes back.
 
 Tools exposed:
   search_events        — keyword search over past events

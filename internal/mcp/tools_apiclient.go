@@ -304,7 +304,7 @@ func getSkillStalenessAPIHandler(c *apiclient.Client) ToolHandler {
 func registerGetInsights(s *Server, c *apiclient.Client) {
 	s.RegisterTool(Tool{
 		Name: "get_insights",
-		Description: "Cross-session usage report over the last N days of the user's Claude Code / Gemini CLI " +
+		Description: "Cross-session usage report over the last N days of the user's Claude Code / Gemini CLI / Codex CLI " +
 			"history: total sessions / events / tool calls, top tools (with %), top skills, " +
 			"activity-by-hour heatmap, busiest sessions. " +
 			"Use when the user asks 'what tools have I been using', 'how many sessions this month', " +
@@ -565,7 +565,7 @@ func listSubagentsAPIHandler(c *apiclient.Client) ToolHandler {
 func registerSearchEvents(s *Server, c *apiclient.Client) {
 	s.RegisterTool(Tool{
 		Name: "search_events",
-		Description: "Search the user's PAST Claude Code and Gemini CLI sessions by keyword. " +
+		Description: "Search the user's PAST Claude Code, Gemini CLI and Codex CLI sessions by keyword. " +
 			"Returns matching events with session id, timestamp, kind, and a snippet centred on " +
 			"the match. Use when the user asks 'when did I…?', 'find the session where…', " +
 			"'did I work on…'. The corpus is every captured hook event from past sessions, " +
@@ -654,7 +654,7 @@ func searchEventsAPIHandler(c *apiclient.Client) ToolHandler {
 func registerListSessions(s *Server, c *apiclient.Client) {
 	s.RegisterTool(Tool{
 		Name: "list_sessions",
-		Description: "List the user's recent past Claude Code / Gemini CLI conversations, newest first. " +
+		Description: "List the user's recent past Claude Code / Gemini CLI / Codex CLI conversations, newest first. " +
 			"Each row is one session: id, started/ended time, working directory, event count. " +
 			"Use when the user asks 'what was I doing yesterday', 'show me recent sessions'. " +
 			"For keyword search, use search_events instead.",
