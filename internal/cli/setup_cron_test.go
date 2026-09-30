@@ -238,7 +238,7 @@ func TestWeeklyDigestTimer_IsAnchoredInUTC(t *testing.T) {
 // actually scheduled.
 //
 // store.Prune has existed, and been reachable via
-// POST /v1/admin/prune, since retention landed — but no timer ever
+// POST /v1/prune, since retention landed — but no timer ever
 // invoked it. raw_envelopes is append-only and deliberately
 // "sacred", so on a daily-driver machine the database grew without
 // bound until someone happened to run `aichronicles prune --yes` by

@@ -3,7 +3,8 @@ package wire
 // StreamEvent is the wire shape of one SSE frame from
 // GET /v1/stream. Carries enough info for a client to render a
 // "new activity" line and decide whether to fetch full details
-// (the consumer can call /v1/events/{event_id} for the rest).
+// (GET /v1/events?since_seq=<ingest_seq − 1>&limit=1 returns the
+// event itself; there is no by-id event route).
 //
 // Encoded as JSON in the SSE `data:` line. Reserve room for
 // future fields: clients SHOULD ignore unknown ones.

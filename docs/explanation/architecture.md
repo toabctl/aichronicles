@@ -243,18 +243,41 @@ internal/               private; only this binary imports
                           systemd.go        ListenFromSystemd
                           watchdog.go       WATCHDOG_USEC handling
                           sse_bus.go        in-process pub/sub
-                          handler_events.go         GET /v1/events
-                          handler_sessions.go       GET /v1/sessions{,/{id},/{id}/related}
-                          handler_session_reads.go  GET /v1/sessions/{id}/{events,extractions,…}
+                          handler_events.go         GET /v1/events{,/latest}
+                          handler_sessions.go       GET /v1/sessions{,/resolve,/source-agents,
+                                                     /{id},/{id}/related}
+                          handler_session_reads.go  GET /v1/sessions/{id}/{events,message-tail,
+                                                     extractions,candidate-priors,outcome,
+                                                     start-cwd}, /v1/sessions/digests,
+                                                     /v1/session-links
                           handler_extractions.go    GET /v1/extractions (value → sessions)
                           handler_episodes.go       GET /v1/episodes
                           handler_search.go         GET /v1/search
                           handler_facts.go          GET /v1/facts{,/subjects}
-                          handler_skills.go         GET /v1/skills/staleness
-                          handler_misc.go           GET /v1/{summaries,llm-outputs,unresolved,
+                          handler_skills.go         GET /v1/skills/{staleness,impact,invoked,
+                                                     installed}
+                          handler_skill_candidates.go  GET+POST /v1/skill-candidates,
+                                                     POST /v1/skill-candidates/decision
+                          handler_discovery_reads.go   pipeline reads + small writes:
+                                                     /v1/skill-candidates/{added,effectiveness,
+                                                     pending,{id}/update},
+                                                     /v1/sessions/{missing-summary,
+                                                     needing-segmentation,completions,
+                                                     {id}/segment}, /v1/induction/candidates,
+                                                     /v1/proposals/failure-shapes,
+                                                     /v1/skills/failures,
+                                                     /v1/admin/{vacuum,db-info,stats}
+                          handler_misc.go           GET /v1/{summaries{,/batch},
+                                                     llm-outputs{,/{id},/by-hash,/exists,
+                                                     /last-created-at},
+                                                     sessions/{id}/llm-outputs,unresolved,
                                                      subagents,insights,projects/aggregates}
                           handler_writes.go         POST /v1/{llm-outputs,episodes,facts,
                                                       session-outcomes,session-links}
+                          handler_audit.go          GET /v1/audit (keyset-paged secret scan)
+                          handler_usage.go          GET /v1/usage
+                          handler_import.go         POST /v1/import (NDJSON bulk import)
+                          handler_admin.go          POST /v1/{scrub,prune}
                           handler_stream.go         GET /v1/stream (SSE)
 
   apiclient/            typed Go client for aichronicles-api.
