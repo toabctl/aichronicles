@@ -42,7 +42,8 @@ const streamReplayLimit = 1000
 // next read returns the zero value). The handler exits cleanly
 // in that case.
 //
-// Capacity: returns 429 when SSEMaxSubscribers is reached.
+// Capacity: returns 429 when SSEMaxSubscribers is reached, and 503
+// once Server.Close has started shutdown.
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -61,6 +62,11 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	sinceSeq := parseStreamResume(r)
 
 	ch, cancel, ok := s.sseBus.subscribe()
+	if !ok && s.sseBus.closed.Load() {
+		writeProblem(w, http.StatusServiceUnavailable,
+			"shutting down", "the daemon is stopping; reconnect after it restarts")
+		return
+	}
 	if !ok {
 		writeProblem(w, http.StatusTooManyRequests,
 			"too many streaming subscribers",

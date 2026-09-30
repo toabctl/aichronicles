@@ -239,3 +239,17 @@ func TestHandleStream_429WhenAtCapacity(t *testing.T) {
 		t.Errorf("expected 429; got %d", resp.StatusCode)
 	}
 }
+
+// TestHandleStream_503AfterClose pins the shutting-down response: a
+// stream request arriving after Close is told the daemon is stopping,
+// not that the subscriber cap was hit.
+func TestHandleStream_503AfterClose(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	srv.Close()
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/stream", nil))
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("status %d, want 503", rr.Code)
+	}
+}

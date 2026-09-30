@@ -182,10 +182,27 @@ func NewServer(s *store.Store, log *slog.Logger) *Server {
 }
 
 // Close terminates server-owned background subscribers (currently
-// the SSE bus). Called by daemon main on shutdown so SSE
-// goroutines exit before the listener closes.
+// the SSE bus), which makes every /v1/stream handler return.
+// Idempotent. Shutdown calls it before draining the listener; the
+// daemon also defers it as a backstop.
 func (s *Server) Close() {
 	s.sseBus.Close()
+}
+
+// Shutdown ends the server's long-lived streams, then runs
+// drainListener (the func returned by ListenAndServe / Serve) with
+// ctx to drain in-flight requests.
+//
+// The order is load-bearing. http.Server.Shutdown waits for active
+// connections to go idle but never cancels request contexts, and a
+// /v1/stream handler only returns when its context ends or the bus
+// closes its subscription. Draining first therefore let a single open
+// stream hold every shutdown for the full drain timeout and end in
+// "context deadline exceeded". Closing the bus first lets stream
+// handlers exit immediately while ordinary requests still drain.
+func (s *Server) Shutdown(ctx context.Context, drainListener func(context.Context) error) error {
+	s.Close()
+	return drainListener(ctx)
 }
 
 // WithMaxEnvelopeBytes overrides the body cap. Returns the
