@@ -47,9 +47,12 @@ func parseInt64Query(w http.ResponseWriter, r *http.Request, name string) (int64
 //                           max_skills, …): 0/negative → 400. NOT a
 //                           page size — a different parameter name.
 //   - parseNonNegativeIntQuery sweeper/discovery cap where 0 means
-//                           "no LIMIT clause" (fetch all). Used by the
-//                           internal reflect/propose/induction
-//                           pipeline, never by browse pagination.
+//                           "absent": the store applies its own
+//                           default (20, 50, …, per query) — never
+//                           "no LIMIT". Used by the internal
+//                           reflect/propose/induction pipeline, never
+//                           by browse pagination. A caller that wants
+//                           everything must ask for a large limit.
 
 // parseLimitQuery reads the optional "limit" query parameter,
 // capped at wire.MaxPageLimit. Returns (def, true) when missing,
@@ -229,7 +232,9 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 //
 // Distinct from parsePositiveIntQuery (which rejects 0) because
 // "?limit=0" on the audit / discovery-read endpoints legitimately
-// means "no LIMIT clause" rather than an ambiguous request.
+// means "use the default" — the store function (or the audit
+// handler's ceiling) substitutes its own value. It does not mean "no
+// LIMIT"; that reading was documented here once and was never true.
 func parseNonNegativeIntQuery(w http.ResponseWriter, r *http.Request, name string, def int) (int, bool) {
 	v := r.URL.Query().Get(name)
 	if v == "" {
