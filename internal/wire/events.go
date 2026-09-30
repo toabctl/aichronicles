@@ -17,7 +17,9 @@ type Event struct {
 	TsSourceMs int64   `json:"ts_source_ms"`
 	TsServerMs int64   `json:"ts_server_ms"`
 	Cwd        *string `json:"cwd,omitempty"`
-	Snippet    *string `json:"snippet,omitempty"`
+	// Snippet is the event's full content_text, not an excerpt —
+	// the name predates the field's use; clients truncate for display.
+	Snippet *string `json:"snippet,omitempty"`
 }
 
 // EventListRequest is the query-shape for GET /v1/events.
@@ -42,9 +44,13 @@ type EventListRequest struct {
 }
 
 // EventListResponse is the body shape for GET /v1/events.
-// LatestSeq is the maximum ingest_seq currently in the store —
-// useful for clients that want to know whether their fetch is
-// caught up without doing a separate query.
+//
+// LatestSeq is the maximum ingest_seq in the whole store, regardless
+// of the request's session_id filter: it is the store-wide watermark
+// a live tail starts from. It is NOT a caught-up signal for a
+// filtered walk — a session's own events usually end below it, so a
+// loop waiting for its last IngestSeq to reach LatestSeq never ends.
+// A page shorter than the requested limit is the caught-up signal.
 type EventListResponse struct {
 	Events    []Event `json:"events"`
 	LatestSeq int64   `json:"latest_seq"`
