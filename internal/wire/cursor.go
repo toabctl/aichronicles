@@ -76,6 +76,26 @@ func DecodePageCursor(c Cursor) (PageCursor, error) {
 	return decodeCursor[PageCursor]("page", c)
 }
 
+// AuditCursor is the decoded payload of a /v1/audit pagination
+// Cursor: a keyset position on raw_envelopes.ingest_seq. The next page
+// scans rows with ingest_seq strictly below BeforeSeq. ingest_seq is
+// unique, never reused and survives VACUUM (unlike rowid), so pages
+// neither overlap nor skip rows — rows ingested mid-scan land above
+// the first page and are simply not part of this scan.
+type AuditCursor struct {
+	BeforeSeq int64 `json:"b"`
+}
+
+// EncodeAuditCursor renders an AuditCursor as an opaque Cursor.
+func EncodeAuditCursor(c AuditCursor) (Cursor, error) {
+	return encodeCursor("audit", c)
+}
+
+// DecodeAuditCursor parses an opaque Cursor back into an AuditCursor.
+func DecodeAuditCursor(c Cursor) (AuditCursor, error) {
+	return decodeCursor[AuditCursor]("audit", c)
+}
+
 // encodeCursor is the one opaque-cursor wire format every cursor kind
 // shares: base64url-no-padding over the payload's JSON. what names the
 // kind in the error ("encode <what> cursor: …").

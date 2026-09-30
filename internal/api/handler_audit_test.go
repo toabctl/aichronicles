@@ -1,12 +1,23 @@
 package api
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
+
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/redact/redacttest"
+	"github.com/toabctl/aichronicles/internal/store"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // TestAuditSnippet_NeverEmitsRawSecret is the regression gate for the
@@ -207,18 +218,20 @@ func TestAuditSnippet_ClampsOutOfRangeOffsets(t *testing.T) {
 func TestBuildAuditQuery_AlwaysIncludesLIMIT(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name  string
-		since int64
-		limit int
+		name   string
+		since  int64
+		before int64
+		limit  int
 	}{
-		{"no since, ceiling limit", 0, auditMaxRowsCeiling},
-		{"with since, ceiling limit", 1_700_000_000_000, auditMaxRowsCeiling},
-		{"small client-supplied limit", 0, 10},
+		{"no since, ceiling limit", 0, 0, auditMaxRowsCeiling},
+		{"with since, ceiling limit", 1_700_000_000_000, 0, auditMaxRowsCeiling},
+		{"small client-supplied limit", 0, 0, 10},
+		{"keyset page with since", 1_700_000_000_000, 42, 10},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			q, args := buildAuditQuery(tc.since, tc.limit)
+			q, args := buildAuditQuery(tc.since, tc.before, tc.limit)
 			if !strings.Contains(q, "LIMIT ?") {
 				t.Errorf("query missing LIMIT clause:\n%s", q)
 			}
@@ -233,6 +246,206 @@ func TestBuildAuditQuery_AlwaysIncludesLIMIT(t *testing.T) {
 			}
 			if gotLimit != tc.limit {
 				t.Errorf("LIMIT bound: got %d want %d", gotLimit, tc.limit)
+			}
+		})
+	}
+}
+
+// seedAuditEvents writes one event per content string straight
+// through store.IngestEnvelope, bypassing the ingest redactor so the
+// audit has secrets to find (the "stored before the detector existed"
+// scenario). tsOffsets[i] is added to a fixed base for event i's
+// ts_source, so a test can decouple source-time order from ingest
+// order. Returns the ts_source_ms of each event.
+func seedAuditEvents(t *testing.T, srv *testServer, contents []string, tsOffsets []time.Duration) []int64 {
+	t.Helper()
+	base := time.UnixMilli(1_750_000_000_000).UTC()
+	out := make([]int64, len(contents))
+	for i, c := range contents {
+		ts := base.Add(tsOffsets[i])
+		env := events.Envelope{
+			V:               1,
+			EventID:         uuid.Must(uuid.NewV7()).String(),
+			SourceAgent:     "claude-code",
+			SourceSessionID: "sess-audit",
+			Kind:            "user_prompt",
+			TsSource:        ts,
+			ContentText:     c,
+			Payload:         map[string]any{"i": i},
+			Redaction:       &events.Redaction{Applied: true},
+		}
+		raw := mustJSON(t, env)
+		tx, err := srv.store.DB().Begin()
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		if _, _, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli()); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("seed ingest: %v", err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+		out[i] = ts.UnixMilli()
+	}
+	return out
+}
+
+func getAudit(t *testing.T, srv *testServer, query string) (int, wire.AuditResponse) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/v1/audit?"+query, nil)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	var resp wire.AuditResponse
+	if rr.Code == http.StatusOK {
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode: %v\n%s", err, rr.Body.String())
+		}
+	}
+	return rr.Code, resp
+}
+
+// TestHandleAudit_KeysetPagesCoverEveryRowOnce is the regression gate
+// for the scan cap: the endpoint used to return the newest 5000 rows
+// with no signal that more existed, so a "scan all" audit silently
+// covered a fraction of the store. Paging must visit every row exactly
+// once, in ingest order, independent of ts_source order, and stop on
+// an empty next_cursor.
+func TestHandleAudit_KeysetPagesCoverEveryRowOnce(t *testing.T) {
+	t.Parallel()
+	ghp := "ghp_" + strings.Repeat("b", 36)
+	cases := []struct {
+		name  string
+		rows  int
+		limit int
+		pages int // requests until next_cursor comes back empty
+	}{
+		{"uneven last page", 5, 2, 3},
+		{"exact multiple needs one empty page", 4, 2, 3},
+		{"single short page", 3, 10, 1},
+		{"page size one", 3, 1, 4},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := newTestServer(t)
+			contents := make([]string, tc.rows)
+			offsets := make([]time.Duration, tc.rows)
+			for i := range contents {
+				// Every row flags so each is identifiable in Findings;
+				// ts_source runs backwards so a ts-ordered scan would
+				// visit rows in the opposite order to ingest.
+				contents[i] = "row " + strconv.Itoa(i) + " " + ghp
+				offsets[i] = -time.Duration(i) * time.Minute
+			}
+			ts := seedAuditEvents(t, srv, contents, offsets)
+
+			var (
+				seen   []int64
+				cursor string
+				pages  int
+			)
+			for {
+				q := "limit=" + strconv.Itoa(tc.limit)
+				if cursor != "" {
+					q += "&cursor=" + cursor
+				}
+				code, resp := getAudit(t, srv, q)
+				if code != http.StatusOK {
+					t.Fatalf("page %d: status %d", pages, code)
+				}
+				pages++
+				if resp.Scanned != len(resp.Findings) {
+					t.Fatalf("page %d: scanned %d but %d findings; every seeded row flags", pages, resp.Scanned, len(resp.Findings))
+				}
+				for _, f := range resp.Findings {
+					seen = append(seen, *f.TsSourceMs)
+				}
+				if resp.NextCursor == "" {
+					break
+				}
+				cursor = string(resp.NextCursor)
+				if pages > tc.rows+1 {
+					t.Fatalf("pagination did not terminate after %d pages", pages)
+				}
+			}
+			if pages != tc.pages {
+				t.Errorf("pages: got %d, want %d", pages, tc.pages)
+			}
+			// Most-recently-ingested first: the reverse of seed order.
+			want := make([]int64, 0, len(ts))
+			for i := len(ts) - 1; i >= 0; i-- {
+				want = append(want, ts[i])
+			}
+			if !slices.Equal(seen, want) {
+				t.Errorf("visited rows (ts_source_ms) in wrong order or not exactly once:\n got %v\nwant %v", seen, want)
+			}
+		})
+	}
+}
+
+// TestHandleAudit_SinceFilterAppliesOnEveryPage pins that since_ms is
+// re-applied per page rather than only to the first.
+func TestHandleAudit_SinceFilterAppliesOnEveryPage(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	ghp := "ghp_" + strings.Repeat("b", 36)
+	// Alternate old/new source times across ingest order.
+	offsets := []time.Duration{0, -48 * time.Hour, time.Minute, -49 * time.Hour, 2 * time.Minute}
+	contents := make([]string, len(offsets))
+	for i := range contents {
+		contents[i] = "row " + strconv.Itoa(i) + " " + ghp
+	}
+	ts := seedAuditEvents(t, srv, contents, offsets)
+	since := ts[0] - int64(time.Hour/time.Millisecond)
+
+	total := 0
+	cursor := ""
+	for range 10 {
+		q := "limit=1&since_ms=" + strconv.FormatInt(since, 10)
+		if cursor != "" {
+			q += "&cursor=" + cursor
+		}
+		code, resp := getAudit(t, srv, q)
+		if code != http.StatusOK {
+			t.Fatalf("status %d", code)
+		}
+		for _, f := range resp.Findings {
+			if *f.TsSourceMs < since {
+				t.Errorf("row with ts %d older than since_ms %d leaked into a page", *f.TsSourceMs, since)
+			}
+		}
+		total += resp.Scanned
+		if resp.NextCursor == "" {
+			break
+		}
+		cursor = string(resp.NextCursor)
+	}
+	if total != 3 {
+		t.Errorf("scanned %d rows across pages, want the 3 inside the window", total)
+	}
+}
+
+func TestHandleAudit_RejectsBadCursor(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	zero, err := wire.EncodeAuditCursor(wire.AuditCursor{BeforeSeq: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	neg, err := wire.EncodeAuditCursor(wire.AuditCursor{BeforeSeq: -3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]string{
+		"not base64":   "!!!",
+		"zero seq":     string(zero),
+		"negative seq": string(neg),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if code, _ := getAudit(t, srv, "cursor="+c); code != http.StatusBadRequest {
+				t.Errorf("status: got %d, want 400", code)
 			}
 		})
 	}
