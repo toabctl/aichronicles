@@ -1,7 +1,8 @@
 package wire
 
 // SemanticFact is the wire shape for one semantic_facts row, as
-// returned by /v1/facts and /v1/facts/recent. Maps from
+// returned by /v1/facts (?subject= for one subject, none for the
+// most recent across subjects). Maps from
 // store.SemanticFact at the handler boundary.
 type SemanticFact struct {
 	ID                int64   `json:"id"`
@@ -20,8 +21,8 @@ type FactSubjectsResponse struct {
 	Subjects []string `json:"subjects"`
 }
 
-// FactsResponse is the body for /v1/facts (?subject=...) and
-// /v1/facts/recent. NextCursor (via PageResponse) pages forward.
+// FactsResponse is the body for /v1/facts (with or without
+// ?subject=). NextCursor (via PageResponse) pages forward.
 type FactsResponse struct {
 	Facts []SemanticFact `json:"facts"`
 	PageResponse

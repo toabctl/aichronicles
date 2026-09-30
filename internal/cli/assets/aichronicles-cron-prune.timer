@@ -7,7 +7,7 @@ Description=aichronicles retention prune
 # because prune holds that lock for the length of its transaction.
 #
 # store.Prune has existed (and been reachable via
-# POST /v1/admin/prune) since retention landed, but nothing ever
+# POST /v1/prune) since retention landed, but nothing ever
 # scheduled it. raw_envelopes is append-only and deliberately
 # "sacred", so on a daily-driver machine the database grew without
 # bound until someone happened to run `aichronicles prune --yes` by

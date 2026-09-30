@@ -2,42 +2,60 @@ openapi: 3.1.0
 
 info:
   title: aichronicles ingest API
-  version: "1.0.0"
+  version: "1.1.0"
   summary: Canonical contract for ingesting AI coding agent session events.
   description: |
-    The aichronicles daemon (`aichroniclesd`) accepts JSON envelopes describing
-    events from AI coding agents — user prompts, assistant replies, tool
-    invocations, session boundaries — and persists them to a local SQLite
-    store.
+    The aichronicles daemon (`aichronicles-api`) accepts JSON envelopes
+    describing events from AI coding agents — user prompts, assistant
+    replies, tool invocations, session boundaries — and persists them to a
+    local SQLite store.
 
     This spec exists so third-party agents (Crush, Cursor, Opencode,
-    Claude Code via the bundled `aichronicles ingest` CLI) can publish
-    events to the same daemon without reverse-engineering the Go types.
+    Claude Code via the bundled `aichronicles hook` CLI) can publish events
+    to the same daemon without reverse-engineering the Go types. It covers
+    the ingest contract (`/v1/ingest`, `/v1/healthz`) only; the daemon's
+    read and admin routes are an internal interface of the aichronicles
+    CLI, web UI and MCP server, documented in `internal/wire`.
 
     # Transport
 
     The daemon binds a Unix-domain socket at
-    `$XDG_RUNTIME_DIR/aichronicles/sock`, 0600, with systemd socket-activation
+    `$XDG_RUNTIME_DIR/aichronicles/api.sock` (override with
+    `$AICHRONICLES_API_SOCKET`), mode 0600, with systemd socket-activation
     support. There is no TCP listener by design: the per-user socket is the
-    authentication boundary. Requests are HTTP/1.1 over the UDS.
+    authentication boundary. Requests are HTTP/1.1 over the UDS; the paths
+    below are the full request paths.
 
-    # Redaction invariant
+    # Redaction
 
-    Every accepted envelope MUST carry `redaction.applied = true`. The daemon
-    responds `400 Bad Request` otherwise and does not persist anything. This
-    is defense-in-depth: the client CLI is expected to run a credential
-    scrubber before POSTing, but the daemon refuses to trust the client on
-    this point. See `internal/redact` for the reference detector set.
+    The daemon redacts every envelope server-side before anything reaches
+    the store, whatever the envelope's `redaction` field says. Clients MAY
+    scrub first and report it in `redaction`; the daemon neither requires
+    nor trusts that field, and records its own result.
+
+    # Acceptance is asynchronous
+
+    `200` means the envelope passed validation and is durably queued.
+    Redaction, extraction, storage and indexing happen in the background
+    shortly after. A queued envelope that keeps failing to process is
+    retried and, after 5 attempts, dead-lettered; that outcome is not
+    reported back to the client (see the daemon's admin stats).
 
     # Idempotency
 
-    `event_id` is the primary key. Re-POSTing an envelope with the same
-    `event_id` returns `200 OK` with `ack.deduped = true` and writes nothing.
-    Clients may safely retry.
+    `event_id` is the idempotency key. Re-POSTing an envelope whose
+    `event_id` is already queued or stored returns `200 OK` with
+    `ack.deduped = true` and writes nothing. Clients may safely retry.
+
+    # Errors
+
+    Every error the daemon produces is an RFC 7807 `application/problem+json`
+    document. A request for a path the daemon does not serve, or with the
+    wrong method, gets the HTTP router's plain-text 404 / 405 instead.
 
 servers:
-  - url: http://unix/v1
-    description: Unix-domain socket at $XDG_RUNTIME_DIR/aichronicles/sock
+  - url: http://unix
+    description: Unix-domain socket at $XDG_RUNTIME_DIR/aichronicles/api.sock
 
 paths:
   /v1/ingest:
@@ -45,8 +63,8 @@ paths:
       operationId: ingest
       summary: Accept one envelope
       description: |
-        Validates the envelope, enforces the redaction invariant, and persists
-        it across three storage layers (raw, structured events, FTS5 index).
+        Validates the envelope and queues it for asynchronous processing
+        (server-side redaction, extraction, storage, FTS indexing).
         Idempotent on `event_id`.
       requestBody:
         required: true
@@ -56,28 +74,39 @@ paths:
               $ref: "#/components/schemas/Envelope"
       responses:
         "200":
-          description: Accepted (or recognized as a duplicate)
+          description: Accepted and queued (or recognized as a duplicate)
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Ack"
         "400":
           description: |
-            Validation failure. Bodies that are not well-formed JSON,
-            carry unknown fields, fail `Envelope.Validate()`, or are
-            missing `redaction.applied = true`.
+            Validation failure: a body that is not well-formed JSON, has
+            data after the JSON value, carries unknown fields, or fails
+            `Envelope.Validate()`. Nothing is queued.
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Problem"
         "413":
-          description: Request body exceeds 128 MiB.
+          description: |
+            Request body exceeds the envelope size limit (128 MiB unless
+            `[limits].max_envelope_bytes` is configured).
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Problem"
         "500":
-          description: Storage error. Envelope was not persisted.
+          description: Storage error. The envelope was not queued; retry.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "503":
+          description: |
+            The ingest queue is full (`[limits].ingest_queue_max`, default
+            10000 pending envelopes): the daemon is far behind. Nothing is
+            queued; retry later.
           content:
             application/problem+json:
               schema:
@@ -109,9 +138,9 @@ components:
     Envelope:
       type: object
       description: |
-        The wire contract for a single event. Field tags match
-        `internal/ingest/envelope.go`; the Go struct is authoritative if
-        this spec drifts.
+        The wire contract for a single event. The daemon enforces it with
+        `events.Envelope.Validate` (`internal/events/envelope.go`); this
+        schema documents the same rules and is kept in lockstep with it.
       required:
         - v
         - event_id
@@ -120,7 +149,6 @@ components:
         - kind
         - ts_source
         - payload
-        - redaction
       additionalProperties: false
       properties:
         v:
@@ -131,9 +159,9 @@ components:
           type: string
           format: uuid
           description: |
-            Unique identifier for this event. UUIDv7 from hook-based clients
-            (time-ordered); UUIDv4 from transcript importers. Serves as the
-            idempotency key.
+            Unique identifier for this event, any UUID version (hook-based
+            clients use time-ordered UUIDv7; importers derive stable ids).
+            Serves as the idempotency key.
         source_agent:
           type: string
           pattern: "^[a-z][a-z0-9-]{1,31}$"
@@ -152,7 +180,7 @@ components:
           description: |
             The agent's own session identifier. Combined with `source_agent`
             it forms a stable UUIDv5 session identifier server-side (see
-            `ingest.DeriveSessionID`).
+            `events.DeriveSessionID`).
         kind:
           type: string
           minLength: 1
@@ -214,9 +242,12 @@ components:
             How the event reached the daemon. `hook` = pushed in real time
             by a running agent's hook system. `import` = bulk-loaded from
             an on-disk transcript. Used for query-time deduplication when
-            both paths supply the same conversation.
+            both paths supply the same conversation. Optional; any other
+            value is rejected.
         redaction:
           $ref: "#/components/schemas/Redaction"
+        subagent:
+          $ref: "#/components/schemas/Subagent"
         session_id:
           type: string
           format: uuid
@@ -243,18 +274,33 @@ components:
             Agent-assigned call identifier that pairs `tool_use` with its
             matching `tool_result` / `tool_failure`.
 
+    Subagent:
+      type: object
+      description: |
+        The sub-agent thread an event belongs to. Omit for top-level events
+        run by the main agent. Events sharing (session, `id`) form one
+        thread.
+      properties:
+        id:
+          type: string
+          description: Per-session sub-agent identifier emitted by the host.
+        type:
+          type: string
+          description: The sub-agent's role label (e.g. `planner`), when known.
+
     Redaction:
       type: object
       description: |
-        Declares that credential scrubbing has run against this envelope.
-        The daemon refuses any envelope with `applied != true`.
-      required: [applied]
+        Optional, informational: what credential scrubbing the client ran
+        before POSTing. The daemon redacts every envelope server-side
+        regardless and records its own result here; it neither requires
+        nor trusts this field.
       properties:
         applied:
           type: boolean
           description: |
-            Must be `true`. Signals that the client has run its redactor
-            against every string-valued field reachable from this envelope.
+            Whether the client ran a redactor against the string-valued
+            fields of this envelope.
         patterns:
           type: array
           items:
@@ -267,8 +313,9 @@ components:
     Ack:
       type: object
       description: |
-        Success response for /v1/ingest. `deduped = true` means the event
-        was already known and no rows were written.
+        Success response for /v1/ingest. `deduped = true` means an envelope
+        with this `event_id` was already queued or stored and nothing was
+        written; `false` means the envelope was queued.
       required: [event_id, session_id, deduped]
       additionalProperties: false
       properties:
@@ -287,8 +334,8 @@ components:
     Problem:
       type: object
       description: |
-        RFC 7807 problem document. The daemon returns this shape for all
-        non-2xx responses on /v1/ingest.
+        RFC 7807 problem document. The daemon returns this shape for every
+        error it produces (see "Errors" above).
       required: [title, status]
       properties:
         title:
