@@ -6,9 +6,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/toabctl/aichronicles/internal/store"
 )
 
 // readSSEEventsUntil consumes lines from the SSE response until
@@ -251,5 +254,63 @@ func TestHandleStream_503AfterClose(t *testing.T) {
 	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/stream", nil))
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("status %d, want 503", rr.Code)
+	}
+}
+
+// TestHandleStream_ReplaysWholeGapAcrossBatches is the regression
+// gate for the replay cap: resume used to load at most 1000 events,
+// emit them, then switch to live frames, so a larger gap lost
+// everything past the first 1000 with no signal. The replay must
+// deliver every missed event, in order, across batch boundaries.
+func TestHandleStream_ReplaysWholeGapAcrossBatches(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	defer srv.Close()
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	const total = 2*streamReplayBatch + 5
+	tx, err := srv.store.DB().Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < total; i++ {
+		env := validEnvelope(t)
+		if _, _, err := store.IngestEnvelope(t.Context(), tx, &env, mustJSON(t, env), time.Now().UnixMilli()); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("seed %d: %v", i, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, httpSrv.URL+"/v1/stream?since_seq=1", nil)
+	resp, err := httpSrv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	got := readSSEEventsUntil(t, resp.Body, total-1, 15*time.Second)
+	var ids []int
+	for _, line := range strings.Split(got, "\n") {
+		if v, ok := strings.CutPrefix(line, "id: "); ok {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				t.Fatalf("bad id line %q", line)
+			}
+			ids = append(ids, n)
+		}
+	}
+	if len(ids) != total-1 {
+		t.Fatalf("replayed %d frames, want %d", len(ids), total-1)
+	}
+	for i, id := range ids {
+		if id != i+2 {
+			t.Fatalf("frame %d has id %d, want %d (gap or reorder)", i, id, i+2)
+		}
 	}
 }
