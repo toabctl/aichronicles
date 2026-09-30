@@ -56,7 +56,7 @@ func (s *Server) handleScrub(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		s.slog.Error("scrub", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Scrub failed", err.Error())
+		writeProblem(w, http.StatusInternalServerError, "Scrub failed", storeFailureDetail)
 		return
 	}
 	writeJSON(w, http.StatusOK, scrubReportToWire(report))
@@ -95,7 +95,7 @@ func (s *Server) handlePrune(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		s.slog.Error("prune", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Prune failed", err.Error())
+		writeProblem(w, http.StatusInternalServerError, "Prune failed", storeFailureDetail)
 		return
 	}
 	writeJSON(w, http.StatusOK, wire.PruneResponse{
@@ -129,6 +129,13 @@ func scrubReportToWire(r *store.ScrubReport) wire.ScrubResponse {
 		DryRun:      r.DryRun,
 	}
 }
+
+// storeFailureDetail is the Detail of a 500 from the admin
+// operations. Like storeError, the underlying error (SQL text, row
+// ids, paths) stays in the daemon log rather than crossing the wire;
+// the detail tells the operator where to find it. Scrub and prune
+// used to echo err.Error() verbatim.
+const storeFailureDetail = "storage error; see the aichronicles-api log for the cause"
 
 // requireDryRun enforces the explicit-mode contract shared by the
 // destructive admin endpoints: dry_run must be present. Writes a 400
