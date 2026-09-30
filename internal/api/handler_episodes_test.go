@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -90,5 +91,31 @@ func TestHandleSegmentSession_ChunkedBodyHonored(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "bogus_field") {
 		t.Errorf("body should name the unknown field: %s", rr.Body.String())
+	}
+}
+
+// TestHandleSegmentSession_UnknownSessionIs404 pins the unknown-id
+// answer (it was 200 {"episodes":0}, indistinguishable from a real
+// run) and the trailing-data rule the other JSON handlers enforce.
+func TestHandleSegmentSession_UnknownSessionIs404(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	post := func(path, body string) int {
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, path, strings.NewReader(body)))
+		return rr.Code
+	}
+	if code := post("/v1/sessions/nope/segment", ""); code != http.StatusNotFound {
+		t.Errorf("unknown session: status %d, want 404", code)
+	}
+	env := validEnvelope(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(mustJSON(t, env))))
+	id := events.DeriveSessionID(env.SourceAgent, env.SourceSessionID)
+	if code := post("/v1/sessions/"+id+"/segment", ""); code != http.StatusOK {
+		t.Errorf("known session: status %d, want 200", code)
+	}
+	if code := post("/v1/sessions/"+id+"/segment", `{}{"x":1}`); code != http.StatusBadRequest {
+		t.Errorf("trailing data: status %d, want 400", code)
 	}
 }

@@ -235,7 +235,8 @@ func (s *Server) handleSkillCandidatesAdded(w http.ResponseWriter, r *http.Reque
 // handleSegmentSession serves POST /v1/sessions/{id}/segment.
 // Reads every event for the session, runs the segmenter, and
 // writes the resulting episodes via SaveEpisodes (the existing
-// /v1/episodes write path). Returns the count.
+// /v1/episodes write path). Returns the count; 404 for an unknown
+// session.
 //
 // Note: segmentation is pure (events → []Episode) at the store
 // layer; this handler is the only place that ties the segmenter
@@ -270,10 +271,31 @@ func (s *Server) handleSegmentSession(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "Invalid body", err.Error())
 		return
 	}
+	// Same trailing-data rule as decodeJSONBody: a request the server
+	// only half-understood is not acked as understood.
+	if dec.More() {
+		writeProblem(w, http.StatusBadRequest, "Invalid body",
+			"unexpected data after the JSON value")
+		return
+	}
 	evs, err := store.LoadEventsForSession(r.Context(), s.store.DB(), id, store.LoadEventsForSessionUnbounded)
 	if err != nil {
 		s.storeError(w, "LoadEventsForSession (segment)", err)
 		return
+	}
+	// No events is either an unknown session or (never in practice) a
+	// session without events. The former used to answer
+	// 200 {"episodes":0}, indistinguishable from a real segmentation.
+	if len(evs) == 0 {
+		exists, err := store.SessionExists(r.Context(), s.store.DB(), id)
+		if err != nil {
+			s.storeError(w, "SessionExists (segment)", err)
+			return
+		}
+		if !exists {
+			writeProblem(w, http.StatusNotFound, "Session not found", id)
+			return
+		}
 	}
 	episodes := store.SegmentSession(id, evs, req.IdleGapMs)
 	if _, err := store.SaveEpisodes(r.Context(), s.store.DB(), id, episodes); err != nil {
