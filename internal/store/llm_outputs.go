@@ -293,40 +293,14 @@ func LoadLLMOutputs(ctx context.Context, db *sql.DB, filter LLMOutputFilter) ([]
 	return out, rows.Err()
 }
 
-// LoadLLMOutputsForSession returns every output attached to a given
-// session, newest first. Empty slice when there are none.
-func LoadLLMOutputsForSession(ctx context.Context, db *sql.DB, sessionID string) ([]LLMOutput, error) {
-	rows, err := db.QueryContext(ctx,
-		`SELECT `+llmOutputColumns+`
-		 FROM llm_outputs
-		 WHERE session_id = ?
-		 ORDER BY created_at_ms DESC, id DESC`,
-		sessionID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("query llm_outputs: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var out []LLMOutput
-	for rows.Next() {
-		item, err := scanLLMOutput(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *item)
-	}
-	return out, rows.Err()
-}
-
 // LoadSummariesIndexedByID returns the most-recent kind='summary'
 // output for each session in sessionIDs, keyed by session_id.
 // Sessions without any cached summary are absent from the returned
 // map (no entry rather than a zero-value entry, so callers can
 // distinguish "not yet summarised" from "summary with empty body").
 //
-// One indexed query — the alternative of calling
-// LoadLLMOutputsForSession per session is N+1 and the sessions
+// One indexed query — the alternative of a per-session
+// LoadLLMOutputs call is N+1 and the sessions
 // list / search results call this on every render. ORDER BY
 // created_at_ms DESC, id DESC means the first row we see for any
 // given session wins, which is exactly the newest summary — with a

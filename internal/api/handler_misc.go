@@ -9,37 +9,44 @@ import (
 )
 
 // handleSessionLLMOutputs serves
-// GET /v1/sessions/{id}/llm-outputs?kind=&limit=. Returns every
-// llm_outputs row for the session, optionally filtered by kind.
-// Used by MCP get_summary (when kind != summary) and the
-// summarize CLI for cache hit-rate inspection.
+// GET /v1/sessions/{id}/llm-outputs?kind=&limit=&cursor=: the
+// session's llm_outputs rows, newest first, optionally filtered by
+// kind, paginated like every other browse list (next_cursor is set
+// whenever the page came back full). Used by MCP get_summary and the
+// summaries CLI.
+//
+// Same query as GET /v1/llm-outputs?session_id= — this is the
+// sub-resource spelling of it. It used to load every row for the
+// session (bodies included) on each call, filter kind in Go, and cut
+// the result at limit with no cursor, so the rest of an unfiltered
+// list was unreachable.
 func (s *Server) handleSessionLLMOutputs(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		writeProblem(w, http.StatusBadRequest, "Missing session id", "")
 		return
 	}
-	kind := r.URL.Query().Get("kind")
-	limit, ok := parseLimitQuery(w, r, wire.DefaultPageLimit)
+	limit, offset, ok := parsePage(w, r)
 	if !ok {
 		return
 	}
-	rows, err := store.LoadLLMOutputsForSession(r.Context(), s.store.DB(), id)
+	rows, err := store.LoadLLMOutputs(r.Context(), s.store.DB(), store.LLMOutputFilter{
+		SessionID: id,
+		Kind:      store.LLMOutputKind(r.URL.Query().Get("kind")),
+		Limit:     limit,
+		Offset:    offset,
+	})
 	if err != nil {
-		s.storeError(w, "LoadLLMOutputsForSession", err)
+		s.storeError(w, "LoadLLMOutputs", err)
 		return
 	}
 	out := make([]wire.LLMOutput, 0, len(rows))
 	for _, o := range rows {
-		if kind != "" && string(o.Kind) != kind {
-			continue
-		}
 		out = append(out, llmOutputToWire(o))
-		if len(out) >= limit {
-			break
-		}
 	}
-	writeJSON(w, http.StatusOK, wire.LLMOutputsListResponse{Outputs: out})
+	resp := wire.LLMOutputsListResponse{Outputs: out}
+	resp.NextCursor = nextCursor(offset, limit, len(rows))
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleLLMOutputsList serves
@@ -82,18 +89,20 @@ func (s *Server) handleSummariesGet(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "Missing session_id", "")
 		return
 	}
-	rows, err := store.LoadLLMOutputsForSession(r.Context(), s.store.DB(), sessionID)
+	rows, err := store.LoadLLMOutputs(r.Context(), s.store.DB(), store.LLMOutputFilter{
+		SessionID: sessionID,
+		Kind:      store.LLMKindSummary,
+		Limit:     1,
+	})
 	if err != nil {
-		s.storeError(w, "LoadLLMOutputsForSession", err)
+		s.storeError(w, "LoadLLMOutputs", err)
 		return
 	}
-	for _, o := range rows {
-		if o.Kind == store.LLMKindSummary {
-			writeJSON(w, http.StatusOK, llmOutputToWire(o))
-			return
-		}
+	if len(rows) == 0 {
+		writeProblem(w, http.StatusNotFound, "No summary for session", sessionID)
+		return
 	}
-	writeProblem(w, http.StatusNotFound, "No summary for session", sessionID)
+	writeJSON(w, http.StatusOK, llmOutputToWire(rows[0]))
 }
 
 // handleSummariesBatch serves GET /v1/summaries/batch?session_ids=id1,id2,id3.

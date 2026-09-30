@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -272,5 +274,89 @@ func TestLLMOutputReads_CarryCacheTokens(t *testing.T) {
 	}
 	for _, o := range list.Outputs {
 		check("list", o)
+	}
+}
+
+// TestHandleSessionLLMOutputs_FiltersInSQLAndPages is the regression
+// gate for the per-session list's silent cut: an unfiltered request
+// stopped at limit with no next_cursor, so rows past the first page
+// were unreachable. The kind filter must also still find an old row
+// behind a page of newer other-kind ones.
+func TestHandleSessionLLMOutputs_FiltersInSQLAndPages(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	env := validEnvelope(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(mustJSON(t, env))))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("seed: %d", rr.Code)
+	}
+	id := events.DeriveSessionID(env.SourceAgent, env.SourceSessionID)
+	save := func(kind, hash string, at int64) {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/llm-outputs", bytesReader(mustJSON(t, wire.SaveLLMOutputRequest{
+			SessionID: &id, Kind: kind, Model: "m", PromptHash: hash, Body: "{}", CreatedAtMs: at,
+		}))))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("save: %d %s", rr.Code, rr.Body.String())
+		}
+	}
+	save("summary", "the-summary", 1_000)
+	for i := range wire.DefaultPageLimit + 5 {
+		save("facts", "f"+strconv.Itoa(i), int64(2_000+i)) // all newer than the summary
+	}
+
+	get := func(q string) wire.LLMOutputsListResponse {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/sessions/"+id+"/llm-outputs?"+q, nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("GET %s: %d %s", q, rr.Code, rr.Body.String())
+		}
+		var out wire.LLMOutputsListResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if got := get("kind=summary"); len(got.Outputs) != 1 || got.Outputs[0].PromptHash != "the-summary" {
+		t.Errorf("kind=summary: got %d rows, want the one summary", len(got.Outputs))
+	}
+	// Unfiltered: a full first page with a cursor, and the cursor
+	// reaches every remaining row.
+	first := get("")
+	if len(first.Outputs) != wire.DefaultPageLimit || first.NextCursor == "" {
+		t.Fatalf("first page: %d rows, cursor %q", len(first.Outputs), first.NextCursor)
+	}
+	rest := get("cursor=" + string(first.NextCursor))
+	if total := len(first.Outputs) + len(rest.Outputs); total != wire.DefaultPageLimit+6 {
+		t.Errorf("paged %d rows in total, want %d", total, wire.DefaultPageLimit+6)
+	}
+}
+
+// TestHandleSummariesGet_PicksNewestSummary pins /v1/summaries after
+// its move to the SQL-filtered query.
+func TestHandleSummariesGet_PicksNewestSummary(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	id := "sess-summary-pick"
+	if _, err := srv.store.DB().Exec(`INSERT INTO sessions(id, source_agent, source_session_id) VALUES (?, 'claude-code', 'x')`, id); err != nil {
+		t.Fatal(err)
+	}
+	for i, kind := range []string{"summary", "summary", "facts"} {
+		if _, err := srv.store.DB().Exec(`INSERT INTO llm_outputs(session_id, kind, body, prompt_hash, model, created_at_ms) VALUES (?, ?, ?, ?, 'm', ?)`,
+			id, kind, kind+strconv.Itoa(i), "h"+strconv.Itoa(i), 100+i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/summaries?session_id="+id, nil))
+	var got wire.LLMOutput
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil || rr.Code != http.StatusOK {
+		t.Fatalf("status %d: %v %s", rr.Code, err, rr.Body.String())
+	}
+	if got.Body != "summary1" {
+		t.Errorf("got body %q, want the newest summary", got.Body)
 	}
 }
