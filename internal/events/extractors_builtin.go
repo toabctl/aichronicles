@@ -3,6 +3,7 @@ package events
 import (
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 // urlRE matches http/https URLs conservatively. The character class
@@ -191,6 +192,49 @@ func SkillLoadExtractor(env *Envelope) []Extraction {
 		ex.Extra = map[string]any{"args": args}
 	}
 	return []Extraction{ex}
+}
+
+// PRCreatedExtractor emits the URL of a pull request the session
+// opened, read from the structured gitOperation record Claude Code
+// attaches to a Bash tool result that performed a git/PR operation:
+//
+//	{"gitOperation": {"pr": {"action": "created", "number": 7, "url": "https://…/pull/7"}}}
+//
+// This is the only source trusted for "the PR this session created":
+// the generic URL pool can't tell a created PR from one that was
+// reviewed or merely mentioned, and parsing `gh pr create` stdout
+// would mean guessing from arbitrary command pipelines. Other actions
+// (edited, commented, closed, …) are skipped, as is a record without
+// a url — some actions carry only a number, and synthesising the URL
+// would need a repo we'd have to guess (CLAUDE.md §7).
+//
+// Registered as a Content extractor rather than under Tool["Bash"]
+// because imported transcripts carry the record on a tool_result
+// envelope, which has no tool name. Two payload shapes:
+//
+//   - hook events: payload.tool_response.gitOperation
+//   - imported transcripts: payload.toolUseResult.gitOperation
+func PRCreatedExtractor(env *Envelope) []Extraction {
+	if env.Payload == nil {
+		return nil
+	}
+	result, ok := env.Payload["tool_response"].(map[string]any)
+	if !ok {
+		result, ok = env.Payload["toolUseResult"].(map[string]any)
+	}
+	if !ok {
+		return nil
+	}
+	gitOp, _ := result["gitOperation"].(map[string]any)
+	pr, _ := gitOp["pr"].(map[string]any)
+	if action, _ := pr["action"].(string); action != "created" {
+		return nil
+	}
+	url, _ := pr["url"].(string)
+	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
+		return nil
+	}
+	return []Extraction{{Kind: ExtractionKindPRCreated, Value: url}}
 }
 
 // toolInput pulls the "tool_input" map out of an envelope's payload.

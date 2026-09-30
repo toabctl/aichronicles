@@ -29,6 +29,7 @@ const (
 	ExtractionKindFilePath     = "file_path"
 	ExtractionKindShellCommand = "shell_command"
 	ExtractionKindSkillLoad    = "skill_load"
+	ExtractionKindPRCreated    = "pr_created"
 )
 
 // ExtractorRegistry routes envelopes to extractors. The registry IS
@@ -75,7 +76,7 @@ func (r *ExtractorRegistry) Run(env *Envelope) []Extraction {
 // build their own ExtractorRegistry value rather than mutating this
 // one.
 var defaultRegistry = &ExtractorRegistry{
-	Content: []Extractor{URLExtractor},
+	Content: []Extractor{URLExtractor, PRCreatedExtractor},
 	Tool: map[string][]Extractor{
 		"Bash":         {ShellCommandExtractor},
 		"Read":         {FilePathExtractor},
