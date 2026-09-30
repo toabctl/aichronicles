@@ -2,6 +2,8 @@ package apiclient
 
 import (
 	"context"
+	"fmt"
+	"iter"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -64,18 +66,65 @@ func (c *Client) SessionLLMOutputs(ctx context.Context, sessionID, kind string, 
 	return out.Outputs, nil
 }
 
-// LLMOutputsList fetches a filtered list of LLM outputs across
-// sessions. Used by MCP list_workflows (kind=induction).
+// LLMOutputsList fetches the first page (newest first, at most limit
+// rows; 0 = the server default) of LLM outputs across sessions,
+// filtered by kind and/or session. For "every matching row" use
+// LLMOutputs, which follows the cursor.
 func (c *Client) LLMOutputsList(ctx context.Context, kind, sessionID string, limit int) ([]wire.LLMOutput, error) {
+	resp, err := c.llmOutputsPage(ctx, kind, sessionID, limit, "")
+	if err != nil {
+		return nil, err
+	}
+	return resp.Outputs, nil
+}
+
+func (c *Client) llmOutputsPage(ctx context.Context, kind, sessionID string, limit int, cursor wire.Cursor) (wire.LLMOutputsListResponse, error) {
 	var q qparams
 	q.SetString("kind", kind)
 	q.SetString("session_id", sessionID)
 	q.SetInt("limit", limit)
+	q.SetString("cursor", string(cursor))
 	var out wire.LLMOutputsListResponse
 	if err := c.do(ctx, http.MethodGet, q.URL("/v1/llm-outputs"), nil, &out); err != nil {
-		return nil, err
+		return wire.LLMOutputsListResponse{}, err
 	}
-	return out.Outputs, nil
+	return out, nil
+}
+
+// LLMOutputs yields every LLM output matching kind and/or session,
+// newest first, fetching pages lazily by following next_cursor. Stop
+// early by breaking out of the range loop; a fetch error is yielded
+// once and ends the sequence. Use it wherever a consumer filters rows
+// client-side (e.g. induction rows that carry a workflow): filtering
+// one page and reporting "none" when the match sits on page two is
+// the bug it replaces.
+//
+// The endpoint's offset pagination is bounded at wire.MaxOffset rows;
+// a walk that reaches it ends with that 400 as its error.
+func (c *Client) LLMOutputs(ctx context.Context, kind, sessionID string) iter.Seq2[wire.LLMOutput, error] {
+	return func(yield func(wire.LLMOutput, error) bool) {
+		var cursor wire.Cursor
+		for {
+			page, err := c.llmOutputsPage(ctx, kind, sessionID, wire.MaxPageLimit, cursor)
+			if err != nil {
+				yield(wire.LLMOutput{}, err)
+				return
+			}
+			for _, o := range page.Outputs {
+				if !yield(o, nil) {
+					return
+				}
+			}
+			if page.NextCursor == "" {
+				return
+			}
+			if page.NextCursor == cursor || len(page.Outputs) == 0 {
+				yield(wire.LLMOutput{}, fmt.Errorf("apiclient: llm-outputs cursor did not advance"))
+				return
+			}
+			cursor = page.NextCursor
+		}
+	}
 }
 
 // Summary fetches the cached summary for a session, or
