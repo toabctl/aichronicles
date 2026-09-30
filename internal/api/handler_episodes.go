@@ -55,7 +55,7 @@ func parseEpisodeListRequest(w http.ResponseWriter, r *http.Request) (wire.Episo
 	}
 	return wire.EpisodeListRequest{
 		SessionID:     q.Get("session_id"),
-		Cwd:           q.Get("cwd"),
+		Cwd:           pathQuery(r, "cwd"),
 		QueryContains: q.Get("query_contains"),
 		SinceMs:       sinceMs,
 		Limit:         limit,

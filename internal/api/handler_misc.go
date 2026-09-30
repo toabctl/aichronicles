@@ -155,8 +155,7 @@ func (s *Server) handleLLMOutputGet(w http.ResponseWriter, r *http.Request) {
 // handleUnresolvedForCwd serves GET /v1/unresolved?cwd=&since_ms=
 // &max_sessions=&max_items_per_session=. cwd is required.
 func (s *Server) handleUnresolvedForCwd(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	cwd := q.Get("cwd")
+	cwd := pathQuery(r, "cwd")
 	if cwd == "" {
 		writeProblem(w, http.StatusBadRequest, "Missing cwd", "")
 		return

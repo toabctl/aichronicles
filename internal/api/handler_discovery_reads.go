@@ -406,7 +406,7 @@ func parseSessionsMissingSummaryRequest(w http.ResponseWriter, r *http.Request) 
 		return wire.SessionsMissingSummaryRequest{}, false
 	}
 	return wire.SessionsMissingSummaryRequest{
-		SinceMs: sinceMs, Cwd: q.Get("cwd"), Agent: q.Get("agent"), Limit: limit,
+		SinceMs: sinceMs, Cwd: pathQuery(r, "cwd"), Agent: q.Get("agent"), Limit: limit,
 	}, true
 }
 

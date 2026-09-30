@@ -99,11 +99,11 @@ func parseSessionListRequest(w http.ResponseWriter, r *http.Request) (wire.Sessi
 	}
 	return wire.SessionListRequest{
 		SinceMs:           sinceMs,
-		Cwd:               q.Get("cwd"),
+		Cwd:               pathQuery(r, "cwd"),
 		Limit:             limit,
 		Cursor:            wire.Cursor(q.Get("cursor")),
 		SourceAgent:       q.Get("source_agent"),
-		Project:           q.Get("project"),
+		Project:           pathQuery(r, "project"),
 		ToolName:          q.Get("tool_name"),
 		SkillName:         q.Get("skill_name"),
 		FilePathSubstring: q.Get("file_path_substring"),

@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -177,5 +178,33 @@ func TestDecodeJSONBody_RejectsOversizedPayload(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "Payload too large") {
 		t.Errorf("body missing 413 title: %q", rr.Body.String())
+	}
+}
+
+// TestPathFiltersAreCleaned is the regression gate for uncleaned cwd
+// filters: stored cwds are clean paths matched exactly, so
+// "?cwd=/work/tsl/" (a trailing slash an agent or user easily adds)
+// returned nothing on every endpoint but the one consumer that
+// cleaned before calling.
+func TestPathFiltersAreCleaned(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	env := validEnvelope(t)
+	env.Cwd = "/work/tsl"
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(mustJSON(t, env))))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("seed: %d", rr.Code)
+	}
+	for _, q := range []string{"cwd=/work/tsl/", "cwd=/work/./tsl", "project=/work/"} {
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/sessions?"+q, nil))
+		var out wire.SessionListResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(out.Sessions) != 1 {
+			t.Errorf("?%s: got %d sessions, want 1", q, len(out.Sessions))
+		}
 	}
 }
