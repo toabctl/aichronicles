@@ -2,6 +2,8 @@ package apiclient
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 
@@ -40,16 +42,23 @@ func (c *Client) Session(ctx context.Context, id string) (wire.SessionDigest, er
 	return out, nil
 }
 
-// ResolveSession queries GET /v1/sessions/resolve?prefix=. Maps
-// an 8-or-more-character hex prefix to a canonical session_id;
-// ErrNotFound when no session matches and ErrConflict when the
-// prefix is ambiguous (multiple matches). Used by CLIs and the
-// MCP server to accept short prefixes from humans.
+// ResolveSession queries GET /v1/sessions/resolve?prefix=. Maps a
+// hex session-id prefix to a canonical session_id. When no session
+// matches the error wraps ErrNoSuchSession (and ErrNotFound); when the
+// prefix is ambiguous it wraps ErrAmbiguousSessionPrefix (and
+// ErrConflict). Used by CLIs and the MCP server to accept short
+// prefixes from humans.
 func (c *Client) ResolveSession(ctx context.Context, prefix string) (string, error) {
 	var q qparams
 	q.SetString("prefix", prefix)
 	var out wire.ResolveSessionResponse
 	if err := c.do(ctx, http.MethodGet, q.URL("/v1/sessions/resolve"), nil, &out); err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			return "", fmt.Errorf("%w: %w", ErrNoSuchSession, err)
+		case errors.Is(err, ErrConflict):
+			return "", fmt.Errorf("%w: %w", ErrAmbiguousSessionPrefix, err)
+		}
 		return "", err
 	}
 	return out.ID, nil

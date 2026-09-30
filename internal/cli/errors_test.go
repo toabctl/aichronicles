@@ -8,7 +8,6 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/llm"
-	"github.com/toabctl/aichronicles/internal/store"
 )
 
 func TestHintForError(t *testing.T) {
@@ -26,11 +25,11 @@ func TestHintForError(t *testing.T) {
 			wantContains: "",
 		},
 		"no-such-session points at sessions list": {
-			err:          fmt.Errorf("summarize: %w", store.ErrNoSuchSession),
+			err:          fmt.Errorf("summarize: %w", apiclient.ErrNoSuchSession),
 			wantContains: "aichronicles sessions",
 		},
 		"ambiguous prefix asks for more chars": {
-			err:          fmt.Errorf("foo: %w", store.ErrAmbiguousSessionPrefix),
+			err:          fmt.Errorf("foo: %w", apiclient.ErrAmbiguousSessionPrefix),
 			wantContains: "longer prefix",
 		},
 		"missing anthropic key explains both env and config knob": {
@@ -59,5 +58,21 @@ func TestHintForError(t *testing.T) {
 				t.Errorf("hint missing %q; got %q", tc.wantContains, got)
 			}
 		})
+	}
+}
+
+// TestHintForError_ThroughTheAPI is the regression gate for the dead
+// hints: they matched store sentinels, but session prefixes resolve
+// through the api, so `summaries show deadbeef` printed a bare 404
+// and never the hint.
+func TestHintForError_ThroughTheAPI(t *testing.T) {
+	t.Parallel()
+	c := apiForStore(t, testStore(t))
+	_, err := c.ResolveSession(t.Context(), "deadbeef")
+	if !errors.Is(err, apiclient.ErrNoSuchSession) || !errors.Is(err, apiclient.ErrNotFound) {
+		t.Fatalf("got %v, want ErrNoSuchSession wrapping ErrNotFound", err)
+	}
+	if got := hintForError(fmt.Errorf("summaries show: %w", err)); !strings.Contains(got, "aichronicles sessions") {
+		t.Errorf("no hint for an unknown session prefix: %q", got)
 	}
 }

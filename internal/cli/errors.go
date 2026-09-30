@@ -5,7 +5,6 @@ import (
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/llm"
-	"github.com/toabctl/aichronicles/internal/store"
 )
 
 // ErrEmptyWindow is the sentinel propose / reflect / digest commands
@@ -26,10 +25,13 @@ func hintForError(err error) string {
 	if err == nil {
 		return ""
 	}
-	if errors.Is(err, store.ErrNoSuchSession) {
+	// Session prefixes are resolved through the api, so these are the
+	// apiclient sentinels; matching the store's (as this once did) never
+	// fired once resolution moved behind the daemon.
+	if errors.Is(err, apiclient.ErrNoSuchSession) {
 		return "hint: run `aichronicles sessions` to list sessions; the first column is the prefix this command accepts."
 	}
-	if errors.Is(err, store.ErrAmbiguousSessionPrefix) {
+	if errors.Is(err, apiclient.ErrAmbiguousSessionPrefix) {
 		return "hint: pass a longer prefix to uniquely identify the session."
 	}
 	if errors.Is(err, llm.ErrNoAPIKey) {

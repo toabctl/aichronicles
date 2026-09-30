@@ -34,6 +34,15 @@ var (
 	// by write endpoints (e.g., concurrent admin operation,
 	// unique-key collision).
 	ErrConflict = errors.New("apiclient: conflict")
+
+	// ErrNoSuchSession is wrapped by ResolveSession when no session
+	// matches the prefix. It also matches ErrNotFound; this sentinel
+	// says which resource was missing, which a generic 404 cannot.
+	ErrNoSuchSession = errors.New("apiclient: no session matches the prefix")
+
+	// ErrAmbiguousSessionPrefix is wrapped by ResolveSession when the
+	// prefix matches several sessions. It also matches ErrConflict.
+	ErrAmbiguousSessionPrefix = errors.New("apiclient: session prefix is ambiguous")
 )
 
 // HTTPError carries the structured detail of a non-2xx response so
