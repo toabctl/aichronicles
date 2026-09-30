@@ -1772,10 +1772,12 @@ the two can't drift.</p>
   <code>events.ExtractorRegistry</code> inside the SQLite Sink; written in the
   same transaction as the event. Discriminated by <code>kind</code> (<code>url</code>,
   <code>file_path</code>, <code>shell_command</code>, <code>skill_load</code>, <code>pr_created</code>).
-  <code>pr_created</code> comes only from the structured <code>gitOperation</code> record
-  Claude Code attaches to a Bash result (<code>action: "created"</code> with a
-  <code>url</code>); it is never inferred from the generic URL pool or from
-  command output. Sessions ingested before a new extractor existed
+  <code>pr_created</code> comes only from the <code>gitOperation</code> record Claude Code
+  attaches to a Bash result (<code>action: "created"</code> with a <code>url</code>), and
+  only when that url is also a whole line of the result's stdout.
+  The record is Claude Code's own regex inference — it tags any
+  command that mentions <code>gh pr create</code> — so the stdout check is what
+  separates a real creation from a mention. Sessions ingested before a new extractor existed
   are recovered with <code>aichronicles backfill-extractions --only=&lt;kind&gt;</code>.</li>
 <li><strong><code>episodes</code> is the segmenter's output.</strong> Bounded session slices
   produced by <code>store.SegmentSession</code>, persisted via
