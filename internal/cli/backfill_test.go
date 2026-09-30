@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"reflect"
 	"testing"
 	"time"
 
@@ -166,6 +167,90 @@ func TestRunBackfillExtractions_IsIdempotent(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("after 3 backfills: got %d rows, want 1", n)
+	}
+}
+
+// TestRunBackfillExtractions_RecoversPRCreated covers the backfill
+// for pr_created: a Bash tool_use ingested before the extractor
+// existed still has its gitOperation record in raw_envelopes, so
+// --only=pr_created must recover the row — once, however often it
+// runs — without touching the event's other extractions.
+func TestRunBackfillExtractions_RecoversPRCreated(t *testing.T) {
+	t.Parallel()
+	s := openTempCLIStore(t)
+
+	const prURL = "https://github.com/acme/widgets/pull/7"
+	env := &events.Envelope{
+		V:               1,
+		EventID:         uuid.Must(uuid.NewV7()).String(),
+		SourceAgent:     "claude-code",
+		SourceSessionID: "sess-bf-pr",
+		Kind:            "tool_use",
+		Role:            "assistant",
+		TsSource:        time.Now(),
+		Tool:            &events.Tool{Name: "Bash"},
+		ContentText:     "Bash gh pr create --fill",
+		Payload: map[string]any{
+			"tool_input": map[string]any{"command": "gh pr create --fill"},
+			"tool_response": map[string]any{
+				"stdout": prURL,
+				"gitOperation": map[string]any{
+					"pr": map[string]any{"action": "created", "number": 7, "url": prURL},
+				},
+			},
+		},
+		Redaction: &events.Redaction{Applied: true},
+	}
+	raw, _ := json.Marshal(env)
+	tx, err := s.DB().Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, _, err := store.IngestEnvelope(t.Context(), tx, env, raw, env.TsSource.UnixMilli()); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("ingest: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	// Simulate ingest before the extractor existed.
+	if _, err := s.DB().Exec(`DELETE FROM extractions WHERE kind = ?`, events.ExtractionKindPRCreated); err != nil {
+		t.Fatalf("clear pr_created: %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		report, err := RunBackfillExtractions(t.Context(), s, events.ExtractionKindPRCreated, silentBackfillLogger())
+		if err != nil {
+			t.Fatalf("backfill #%d: %v", i, err)
+		}
+		if report.ByKind[events.ExtractionKindPRCreated] != 1 {
+			t.Errorf("backfill #%d ByKind[pr_created]: got %d, want 1", i, report.ByKind[events.ExtractionKindPRCreated])
+		}
+	}
+
+	rows, err := s.DB().Query(`SELECT kind, value FROM extractions WHERE event_id = ? ORDER BY kind`, env.EventID)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var got []string
+	for rows.Next() {
+		var kind, value string
+		if err := rows.Scan(&kind, &value); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, kind+"="+value)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	want := []string{
+		events.ExtractionKindPRCreated + "=" + prURL,
+		events.ExtractionKindShellCommand + "=gh pr create --fill",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("extractions: got %v, want %v", got, want)
 	}
 }
 
