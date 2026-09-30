@@ -66,3 +66,20 @@ func TestHandleFacts_RejectsBadLimit(t *testing.T) {
 		}
 	}
 }
+
+// TestHandleFactsSubjects_WhitespaceContainsIsUnset pins the
+// whitespace-only needle to the no-contains mode; it reached the
+// store's empty-needle guard and came back 500.
+func TestHandleFactsSubjects_WhitespaceContainsIsUnset(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/facts/subjects?contains=%20%20", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s, want 200", rr.Code, rr.Body.String())
+	}
+	var out wire.FactSubjectsResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+}
