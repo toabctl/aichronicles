@@ -13,7 +13,7 @@ import (
 // required; value is optional and matched exactly; pagination follows
 // the shared limit/cursor contract. Backed by store.FindExtractions.
 func (s *Server) handleExtractions(w http.ResponseWriter, r *http.Request) {
-	req, offset, ok := parseExtractionsRequest(w, r)
+	req, offset, ok := parseExtractionListRequest(w, r)
 	if !ok {
 		return
 	}
@@ -28,7 +28,7 @@ func (s *Server) handleExtractions(w http.ResponseWriter, r *http.Request) {
 		s.storeError(w, "FindExtractions", err)
 		return
 	}
-	out := wire.ExtractionsResponse{Extractions: make([]wire.ExtractionSighting, 0, len(rows))}
+	out := wire.ExtractionListResponse{Extractions: make([]wire.ExtractionSighting, 0, len(rows))}
 	for _, x := range rows {
 		out.Extractions = append(out.Extractions, wire.ExtractionSighting{
 			SessionID:  x.SessionID,
@@ -42,26 +42,26 @@ func (s *Server) handleExtractions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// parseExtractionsRequest decodes + validates the GET /v1/extractions
-// query into wire.ExtractionsRequest (server mirror of
+// parseExtractionListRequest decodes + validates the GET /v1/extractions
+// query into wire.ExtractionListRequest (server mirror of
 // apiclient.Client.Extractions). Returns the request, the decoded page
 // offset, and ok=false after a 400.
-func parseExtractionsRequest(w http.ResponseWriter, r *http.Request) (wire.ExtractionsRequest, int, bool) {
+func parseExtractionListRequest(w http.ResponseWriter, r *http.Request) (wire.ExtractionListRequest, int, bool) {
 	q := r.URL.Query()
 	kind := q.Get("kind")
 	if kind == "" {
 		writeProblem(w, http.StatusBadRequest, "Missing kind", "kind query param is required")
-		return wire.ExtractionsRequest{}, 0, false
+		return wire.ExtractionListRequest{}, 0, false
 	}
 	sinceMs, ok := parseInt64Query(w, r, "since_ms")
 	if !ok {
-		return wire.ExtractionsRequest{}, 0, false
+		return wire.ExtractionListRequest{}, 0, false
 	}
 	limit, offset, ok := parsePage(w, r)
 	if !ok {
-		return wire.ExtractionsRequest{}, 0, false
+		return wire.ExtractionListRequest{}, 0, false
 	}
-	return wire.ExtractionsRequest{
+	return wire.ExtractionListRequest{
 		Kind:    kind,
 		Value:   q.Get("value"),
 		SinceMs: sinceMs,

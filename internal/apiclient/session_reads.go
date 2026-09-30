@@ -60,16 +60,16 @@ func (c *Client) SessionExtractions(ctx context.Context, sessionID, kind string)
 // SessionExtractions: which sessions produced a value (e.g. which
 // session created a PR, with kind "pr_created"). req.Kind is required;
 // req.Value, when set, is matched exactly by the server.
-func (c *Client) Extractions(ctx context.Context, req wire.ExtractionsRequest) (wire.ExtractionsResponse, error) {
+func (c *Client) Extractions(ctx context.Context, req wire.ExtractionListRequest) (wire.ExtractionListResponse, error) {
 	var q qparams
 	q.SetString("kind", req.Kind)
 	q.SetString("value", req.Value)
 	q.SetInt64("since_ms", req.SinceMs)
 	q.SetInt("limit", req.Limit)
 	q.SetString("cursor", string(req.Cursor))
-	var out wire.ExtractionsResponse
+	var out wire.ExtractionListResponse
 	if err := c.do(ctx, http.MethodGet, q.URL("/v1/extractions"), nil, &out); err != nil {
-		return wire.ExtractionsResponse{}, err
+		return wire.ExtractionListResponse{}, err
 	}
 	return out, nil
 }

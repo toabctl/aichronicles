@@ -36,12 +36,12 @@ type SessionExtractionsResponse struct {
 	Extractions []Extraction `json:"extractions"`
 }
 
-// ExtractionsRequest is the query-shape for GET /v1/extractions, the
+// ExtractionListRequest is the query-shape for GET /v1/extractions, the
 // reverse of /v1/sessions/{id}/extractions: which sessions produced a
 // value. Kind is required; Value, when set, matches exactly. Without
 // Value the endpoint lists every value of Kind, newest first — bound
 // it with SinceMs on large kinds such as "url".
-type ExtractionsRequest struct {
+type ExtractionListRequest struct {
 	Kind    string `json:"kind"`
 	Value   string `json:"value,omitempty"`
 	SinceMs int64  `json:"since_ms,omitempty"`
@@ -61,8 +61,8 @@ type ExtractionSighting struct {
 	Cwd        *string `json:"cwd,omitempty"`
 }
 
-// ExtractionsResponse is the body for GET /v1/extractions.
-type ExtractionsResponse struct {
+// ExtractionListResponse is the body for GET /v1/extractions.
+type ExtractionListResponse struct {
 	Extractions []ExtractionSighting `json:"extractions"`
 	PageResponse
 }
