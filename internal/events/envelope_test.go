@@ -23,9 +23,12 @@ func validEnvelope() Envelope {
 
 func TestValidate_Valid(t *testing.T) {
 	t.Parallel()
-	e := validEnvelope()
-	if err := e.Validate(); err != nil {
-		t.Fatalf("expected valid envelope, got error: %v", err)
+	for _, transport := range []string{"", TransportHook, TransportImport} {
+		e := validEnvelope()
+		e.Transport = transport
+		if err := e.Validate(); err != nil {
+			t.Fatalf("transport %q: expected valid envelope, got error: %v", transport, err)
+		}
 	}
 }
 
@@ -48,6 +51,8 @@ func TestValidate_InvalidCases(t *testing.T) {
 		{"unknown role", func(e *Envelope) { e.Role = "USER" }, `role "USER" is not a known canonical role`},
 		{"zero ts_source", func(e *Envelope) { e.TsSource = time.Time{} }, "ts_source is required"},
 		{"nil payload", func(e *Envelope) { e.Payload = nil }, "payload is required"},
+		{"unknown transport", func(e *Envelope) { e.Transport = "bogus" }, `transport "bogus" must be`},
+		{"uppercase transport", func(e *Envelope) { e.Transport = "HOOK" }, "transport"},
 	}
 
 	for _, tc := range cases {
