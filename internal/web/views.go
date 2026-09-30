@@ -503,6 +503,11 @@ type ProposePage struct {
 	Title     string
 	Limit     int
 	Proposals []ProposeCard
+	// More is true when propose runs older than the Limit shown
+	// exist; NextLimit is the ?limit= for the "show more" link, 0 when
+	// Limit is already the maximum the page accepts.
+	More      bool
+	NextLimit int
 
 	// Lifecycle of past skill candidates, bucketed by AutoSkill
 	// (Yang et al., 2026) maintenance state. Empty slices when the
