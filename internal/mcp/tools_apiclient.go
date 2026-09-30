@@ -1022,7 +1022,10 @@ func renderRecentSessionsForCwdAPI(ctx context.Context, c *apiclient.Client, b *
 	}
 	fmt.Fprintf(b, "\n## Recent sessions in this cwd\n")
 	if len(resp.Sessions) == 0 {
-		fmt.Fprintln(b, "(none — this is the first session in this cwd)")
+		// Scoped to the window: sessions older than since_days are not
+		// asked for, so "first session in this cwd" (the old wording)
+		// was a false claim for any project with older history.
+		fmt.Fprintln(b, "(none in this window — older sessions may exist; widen since_days)")
 		return nil
 	}
 	for _, s := range resp.Sessions {

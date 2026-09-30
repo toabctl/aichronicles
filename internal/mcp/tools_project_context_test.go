@@ -104,7 +104,7 @@ func TestGetProjectContext_EmptyProjectShowsAllSectionsWithEmptyStateMessages(t 
 		}
 	}
 	for _, want := range []string{
-		"first session in this cwd",
+		"none in this window",
 		"wrapped up cleanly",
 		"facts induce --session",
 		"induction sweep", // workflow + skill share this hint after the Round 8 merge
@@ -308,5 +308,33 @@ func TestGetProjectContext_FiltersWorkflowsToFoundOnly(t *testing.T) {
 	}
 	if strings.Contains(out, "session was a one-off") {
 		t.Errorf("no-workflow induction row's rationale leaked into context:\n%s", out)
+	}
+}
+
+// TestGetProjectContext_OldHistoryIsNotFirstSession pins the empty
+// recent-sessions line to its window: a cwd whose sessions are all
+// older than since_days was reported as "(none — this is the first
+// session in this cwd)". list_sessions, which has no window unless
+// asked, must still find the old session (it used to inherit a hidden
+// 30-day server default and say "(no sessions)").
+func TestGetProjectContext_OldHistoryIsNotFirstSession(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	const cwd = "/work/oldproj"
+	seedSessionInCwd(t, st, cwd, "ancient work", "an old topic", time.Now().Add(-90*24*time.Hour))
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
+	registerAllTools(t, s, st)
+
+	body := callTool(t, s, "get_project_context", `{"cwd":"`+cwd+`"}`).Content[0].Text
+	if strings.Contains(body, "first session in this cwd") {
+		t.Errorf("claims first session despite 90-day-old history:\n%s", body)
+	}
+	wide := callTool(t, s, "get_project_context", `{"cwd":"`+cwd+`","since_days":120}`).Content[0].Text
+	if !strings.Contains(wide, "an old topic") {
+		t.Errorf("since_days=120 should include the 90-day-old session:\n%s", wide)
+	}
+	lres := callTool(t, s, "list_sessions", `{"cwd":"`+cwd+`"}`).Content[0].Text
+	if strings.Contains(lres, "(no sessions)") {
+		t.Errorf("list_sessions hides the 90-day-old session:\n%s", lres)
 	}
 }
