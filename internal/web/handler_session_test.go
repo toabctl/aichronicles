@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -567,5 +568,51 @@ func TestBuildResumeCommandDangerous(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestSessionDetail_FindsSummaryBehindNewerOutputs is the regression
+// gate for the client-side summary pick: the page fetched the first
+// page of outputs of every kind and looked for a summary in it, so a
+// session with a page of newer facts/induction outputs rendered as
+// never summarised.
+func TestSessionDetail_FindsSummaryBehindNewerOutputs(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	id := seedSession(t, st, "sess-buried-summary", "investigate", now)
+
+	tx, err := st.DB().Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	save := func(kind store.LLMOutputKind, hash, body string, at int64) {
+		t.Helper()
+		if _, _, err := store.SaveLLMOutput(t.Context(), tx, &store.LLMOutput{
+			SessionID: ptrTo(id), Kind: kind, Model: "m", PromptHash: hash, Body: body, CreatedAtMs: at,
+		}); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("seed %s: %v", hash, err)
+		}
+	}
+	save(store.LLMKindSummary, "summary", `{"topic":"The buried summary topic"}`, now.UnixMilli())
+	for i := range 60 {
+		save(store.LLMKindFacts, "facts-"+strconv.Itoa(i), `{}`, now.UnixMilli()+int64(i+1))
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	base, stop := startTestServer(t, st)
+	defer stop()
+	status, page := fetch(t, base+"/sessions/"+id)
+	if status != http.StatusOK {
+		t.Fatalf("status %d", status)
+	}
+	if !strings.Contains(page, "The buried summary topic") {
+		t.Errorf("summary not rendered behind 60 newer facts outputs")
+	}
+	if strings.Contains(page, "No cached summary yet") {
+		t.Errorf("page claims the session has no summary")
 	}
 }
