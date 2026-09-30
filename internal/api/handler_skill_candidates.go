@@ -44,7 +44,7 @@ func (s *Server) handleSkillCandidatesRecord(w http.ResponseWriter, r *http.Requ
 	}
 	if err := store.RecordSkillCandidateWithMetadata(r.Context(), s.store.DB(),
 		req.LLMOutputID, req.SkillName, req.ProposedAtMs, meta); err != nil {
-		s.storeError(w, "RecordSkillCandidate", err)
+		s.writeError(w, "RecordSkillCandidate", "llm_output_id", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wire.RecordSkillCandidateResponse{Inserted: true})
@@ -103,8 +103,7 @@ func (s *Server) handleSkillCandidatesDecision(w http.ResponseWriter, r *http.Re
 				"no row matches (llm_output_id, skill_name) — record it first")
 			return
 		}
-		s.slog.Error("MarkSkillCandidate", "decision", req.Decision, "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.writeError(w, "MarkSkillCandidate "+string(req.Decision), "merged_into_id", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wire.SkillCandidateDecisionResponse{})

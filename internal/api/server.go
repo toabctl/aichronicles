@@ -584,6 +584,26 @@ func (s *Server) storeError(w http.ResponseWriter, op string, err error) {
 	writeProblem(w, http.StatusInternalServerError, "Storage error", "")
 }
 
+// writeError answers a failed store write. Input the store rejected
+// — a foreign key naming an id that doesn't exist, or a value that
+// fails validation, a CHECK or a trigger — is the caller's fault and
+// gets a 400 with a detail they can act on; refs names the fields
+// that can point at a missing row. Anything else is a storage fault:
+// logged and answered 500 via storeError. Writes used to send all of
+// these to 500 "Storage error", so a typo'd id or an out-of-range
+// value looked like a daemon failure.
+func (s *Server) writeError(w http.ResponseWriter, op, refs string, err error) {
+	switch {
+	case store.IsUnknownReference(err):
+		writeProblem(w, http.StatusBadRequest, "Unknown reference",
+			"a referenced row does not exist; check "+refs)
+	case store.IsInvalidValue(err):
+		writeProblem(w, http.StatusBadRequest, "Invalid value", err.Error())
+	default:
+		s.storeError(w, op, err)
+	}
+}
+
 // writeJSON renders a 2xx JSON response.
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
