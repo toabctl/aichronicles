@@ -139,7 +139,7 @@ func LoadSessionsForCompletion(ctx context.Context, db *sql.DB, prefix string, l
 		        s.first_prompt_text AS first_prompt,
 		        (SELECT body FROM llm_outputs
 		           WHERE session_id = s.id AND kind = ?
-		           ORDER BY created_at_ms DESC LIMIT 1) AS summary_body
+		           ORDER BY created_at_ms DESC, id DESC LIMIT 1) AS summary_body
 		   FROM sessions s
 		  WHERE s.id LIKE ? || '%'
 		  ORDER BY `+EffectiveTsExpr+` DESC

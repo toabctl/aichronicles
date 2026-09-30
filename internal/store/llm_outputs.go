@@ -300,7 +300,7 @@ func LoadLLMOutputsForSession(ctx context.Context, db *sql.DB, sessionID string)
 		`SELECT `+llmOutputColumns+`
 		 FROM llm_outputs
 		 WHERE session_id = ?
-		 ORDER BY created_at_ms DESC`,
+		 ORDER BY created_at_ms DESC, id DESC`,
 		sessionID,
 	)
 	if err != nil {
@@ -328,8 +328,10 @@ func LoadLLMOutputsForSession(ctx context.Context, db *sql.DB, sessionID string)
 // One indexed query — the alternative of calling
 // LoadLLMOutputsForSession per session is N+1 and the sessions
 // list / search results call this on every render. ORDER BY
-// created_at_ms DESC means the first row we see for any given
-// session wins, which is exactly the newest summary.
+// created_at_ms DESC, id DESC means the first row we see for any
+// given session wins, which is exactly the newest summary — with a
+// same-millisecond tie going to the later insert, the rule every
+// "latest output" pick in this package follows.
 //
 // Empty input returns an empty map and no query.
 func LoadSummariesIndexedByID(ctx context.Context, db *sql.DB, sessionIDs []string) (map[string]LLMOutput, error) {
@@ -343,7 +345,7 @@ func LoadSummariesIndexedByID(ctx context.Context, db *sql.DB, sessionIDs []stri
 	q := `SELECT ` + llmOutputColumns + `
 		FROM llm_outputs
 		WHERE session_id IN (` + placeholders + `) AND kind = ?
-		ORDER BY created_at_ms DESC`
+		ORDER BY created_at_ms DESC, id DESC`
 
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
