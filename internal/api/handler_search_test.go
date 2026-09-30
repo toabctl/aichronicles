@@ -6,8 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -311,5 +314,53 @@ func TestHandleSearch_NULIs400(t *testing.T) {
 	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/search?q=foo%00bar", nil))
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status=%d body=%s, want 400", rr.Code, rr.Body.String())
+	}
+}
+
+// TestHandleSearch_OrderParam pins ?order=: recency returns newest
+// first regardless of relevance, rank (the default) lets a strongly
+// relevant older row lead, and an unknown value is a 400. Before the
+// parameter existed, callers that needed chronological order (MCP
+// search_events) silently got relevance order.
+func TestHandleSearch_OrderParam(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	seed := func(session, content string, ts time.Time) {
+		t.Helper()
+		env := validEnvelope(t)
+		env.SourceSessionID, env.ContentText, env.TsSource = session, content, ts
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(mustJSON(t, env))))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("seed: %d", rr.Code)
+		}
+	}
+	now := time.Now().UTC()
+	seed("sess-old-dense", strings.Repeat("orderToken ", 20)+"end", now.Add(-24*time.Hour))
+	seed("sess-new-sparse", "orderToken once among many other unrelated filler words here", now)
+
+	first := func(q string) string {
+		t.Helper()
+		out := searchPage(t, srv, "/v1/search?q=orderToken"+q)
+		if len(out.Hits) != 2 {
+			t.Fatalf("%s: got %d hits", q, len(out.Hits))
+		}
+		return out.Hits[0].SessionID
+	}
+	newest := events.DeriveSessionID("claude-code", "sess-new-sparse")
+	densest := events.DeriveSessionID("claude-code", "sess-old-dense")
+	if got := first("&order=recency"); got != newest {
+		t.Errorf("order=recency: first hit %s, want the newest", got)
+	}
+	if got := first(""); got != densest {
+		t.Errorf("default (rank): first hit %s, want the most relevant", got)
+	}
+	if got := first("&order=rank"); got != densest {
+		t.Errorf("order=rank: first hit %s, want the most relevant", got)
+	}
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/search?q=orderToken&order=oldest", nil))
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("order=oldest: status=%d, want 400", rr.Code)
 	}
 }

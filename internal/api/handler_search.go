@@ -21,6 +21,17 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var order store.SearchOrder
+	switch req.Order {
+	case "", wire.SearchOrderRank:
+		order = store.OrderRank
+	case wire.SearchOrderRecency:
+		order = store.OrderRecency
+	default:
+		writeProblem(w, http.StatusBadRequest, "Invalid order",
+			fmt.Sprintf("order must be %q or %q", wire.SearchOrderRank, wire.SearchOrderRecency))
+		return
+	}
 
 	opts := store.SearchEventOpts{
 		Query:             ftsQuery,
@@ -71,6 +82,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		opts.NoDedup = cur.Dedup
 	} else {
 		opts.NowMs = time.Now().UnixMilli()
+		opts.Order = order
 	}
 
 	// Resolve the effective page size the store will apply, so the
@@ -171,6 +183,7 @@ func parseSearchRequest(w http.ResponseWriter, r *http.Request) (wire.SearchRequ
 		SinceMs:           sinceMs,
 		WithFailures:      q.Get("with_failures") == "true",
 		NoDedup:           q.Get("no_dedup") == "true",
+		Order:             q.Get("order"),
 		Limit:             limit,
 		Cursor:            wire.Cursor(q.Get("cursor")),
 	}, ftsQuery, true

@@ -44,7 +44,11 @@ type SearchRequest struct {
 	// only when the caller wants to see every captured row, e.g.
 	// to debug ingest fan-out.
 	NoDedup bool `json:"no_dedup,omitempty"`
-	Limit   int  `json:"limit,omitempty"`
+	// Order is SearchOrderRank (the default when empty) or
+	// SearchOrderRecency; anything else is a 400. Like NoDedup it is
+	// pinned by the cursor, which wins over a re-sent value.
+	Order string `json:"order,omitempty"`
+	Limit int    `json:"limit,omitempty"`
 	// Cursor pages forward through a previous response's NextCursor.
 	// Empty means "first page." Pass it back verbatim with the SAME q
 	// and filters: the cursor carries only the page position, the
@@ -53,6 +57,14 @@ type SearchRequest struct {
 	// semantics on SearchResponse.
 	Cursor Cursor `json:"cursor,omitempty"`
 }
+
+// Search orders accepted by GET /v1/search?order=.
+const (
+	// SearchOrderRank sorts by recency-boosted FTS relevance.
+	SearchOrderRank = "rank"
+	// SearchOrderRecency sorts newest first, ignoring relevance.
+	SearchOrderRecency = "recency"
+)
 
 // QueryFingerprint hashes the fields that define a search's result
 // set — q and every filter — for SearchCursor.Query. Paging controls
