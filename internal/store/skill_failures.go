@@ -40,15 +40,20 @@ func LoadSkillFailures(ctx context.Context, db *sql.DB, skill string, sinceMs, w
 		limit = 10
 	}
 
-	// Find every (load_event, fail_event) pair in the window.
+	// One row per failure event in the window, attributed to the
+	// most recent load of the skill that precedes it. Joining
+	// loads to failures without the GROUP BY returned a failure
+	// once per qualifying load — two loads of the skill shortly
+	// before one failure reported it twice, inflating the evidence
+	// the evolve prompt sees and spending `limit` on duplicates.
 	// LIMIT applies after sorting newest-first so the evolve
 	// prompt sees the most-recent failures (the relevant ones
-	// for "is this skill stale right now").
+	// for "is this skill stale right now"); event_id breaks ties.
 	const pairsQuery = `
 SELECT x.session_id,
-       e.ts_source_ms     AS load_ts,
+       MAX(e.ts_source_ms) AS load_ts,
        f.event_id          AS fail_event_id,
-       f.ts_source_ms     AS fail_ts,
+       f.ts_source_ms      AS fail_ts,
        COALESCE(f.content_text, '') AS fail_body
   FROM extractions x
   JOIN events e ON e.event_id = x.event_id
@@ -57,7 +62,8 @@ SELECT x.session_id,
                  AND f.ts_source_ms >  e.ts_source_ms
                  AND f.ts_source_ms <= e.ts_source_ms + ?
  WHERE x.kind = ? AND x.value = ? AND e.ts_source_ms >= ?
- ORDER BY f.ts_source_ms DESC
+ GROUP BY f.event_id
+ ORDER BY f.ts_source_ms DESC, f.event_id DESC
  LIMIT ?`
 
 	rows, err := db.QueryContext(ctx, pairsQuery,

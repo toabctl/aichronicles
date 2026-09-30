@@ -3,6 +3,7 @@ package store
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadSkillFailures_ReturnsContextAroundFailure(t *testing.T) {
@@ -138,5 +139,29 @@ func TestLoadSkillFailures_NoFailureInWindowReturnsEmpty(t *testing.T) {
 	}
 	if len(failures) != 0 {
 		t.Errorf("expected 0 failures, got %v", failures)
+	}
+}
+
+// TestLoadSkillFailures_OneRowPerFailure is the regression gate for
+// the load×failure fan-out: a failure preceded by two loads of the
+// skill inside the window came back twice. It must appear once,
+// attributed to the most recent load.
+func TestLoadSkillFailures_OneRowPerFailure(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	t0 := time.Date(2026, 4, 26, 10, 0, 0, 0, time.UTC)
+	seedSkillLoadAt(t, s, "sess-fanout", "flaky-skill", t0)
+	seedSkillLoadAt(t, s, "sess-fanout", "flaky-skill", t0.Add(time.Minute))
+	seedToolFailureAt(t, s, "sess-fanout", t0.Add(2*time.Minute))
+
+	got, err := LoadSkillFailures(t.Context(), s.DB(), "flaky-skill", t0.Add(-time.Hour).UnixMilli(), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d rows for one failure, want 1: %+v", len(got), got)
+	}
+	if want := t0.Add(time.Minute).UnixMilli(); got[0].LoadTsMs != want {
+		t.Errorf("load_ts %d, want the most recent preceding load %d", got[0].LoadTsMs, want)
 	}
 }
