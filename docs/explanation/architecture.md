@@ -535,8 +535,13 @@ Load-bearing invariants:
   only when that url is also a whole line of the result's stdout.
   The record is Claude Code's own regex inference — it tags any
   command that mentions `gh pr create` — so the stdout check is what
-  separates a real creation from a mention. Sessions ingested before a new extractor existed
-  are recovered with `aichronicles backfill-extractions --only=<kind>`.
+  separates a real creation from a mention. Sessions ingested before
+  a new extractor existed are recovered with
+  `aichronicles backfill-extractions --only=<kind>`. Read paths:
+  `GET /v1/sessions/{id}/extractions?kind=` lists a session's values;
+  `GET /v1/extractions?kind=&value=` is the reverse — which sessions
+  produced a value (e.g. who created a PR), one row per session with
+  the first sighting's timestamp and cwd.
 - **`episodes` is the segmenter's output.** Bounded session slices
   produced by `store.SegmentSession`, persisted via
   `SaveEpisodes`. Re-segmentable: DELETE-then-INSERT on each

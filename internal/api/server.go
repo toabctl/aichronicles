@@ -239,6 +239,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sessions/{id}/start-cwd", s.handleSessionStartCwd)
 	mux.HandleFunc("GET /v1/sessions/digests", s.handleSessionDigests)
 	mux.HandleFunc("GET /v1/session-links", s.handleSessionLinks)
+	mux.HandleFunc("GET /v1/extractions", s.handleExtractions)
 	mux.HandleFunc("GET /v1/llm-outputs", s.handleLLMOutputsList)
 	mux.HandleFunc("GET /v1/llm-outputs/by-hash", s.handleLLMOutputGet)
 	mux.HandleFunc("GET /v1/llm-outputs/last-created-at", s.handleLLMOutputsLastCreated)

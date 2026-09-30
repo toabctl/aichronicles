@@ -1023,6 +1023,101 @@ func LoadExtractionsForSession(ctx context.Context, db *sql.DB, sessionID, kind 
 	return out, rows.Err()
 }
 
+// ExtractionSighting is one session's first sighting of an extraction
+// value: the reverse of LoadExtractionsForSession, answering "which
+// sessions produced this value?" (e.g. which session created a PR).
+type ExtractionSighting struct {
+	SessionID string
+	Kind      string
+	Value     string
+	// TsSourceMs is the source timestamp of the earliest matching
+	// event in the session (within FindExtractionsOpts.SinceMs).
+	TsSourceMs int64
+	// Cwd is that earliest event's cwd; nil when it wasn't captured.
+	Cwd *string
+}
+
+// FindExtractionsOpts filters FindExtractions. Kind is required;
+// Value, when set, must match exactly (byte-for-byte — no prefix,
+// substring or case folding).
+type FindExtractionsOpts struct {
+	Kind    string
+	Value   string
+	SinceMs int64 // only events at or after this source time; 0 = no bound
+	Limit   int   // <= 0 means DefaultFindExtractionsLimit
+	Offset  int
+}
+
+// DefaultFindExtractionsLimit caps a FindExtractions call when the
+// caller doesn't specify one; matches the API's default page size.
+const DefaultFindExtractionsLimit = 50
+
+// FindExtractions returns one row per (session, value) for extractions
+// of opts.Kind, newest first sighting first. Repeat sightings within a
+// session — the same URL mentioned twice, or a hook event and its
+// transcript-import duplicate — collapse to the earliest one, which is
+// the row whose timestamp and cwd are reported.
+//
+// Kind is required for the same reason as LoadExtractionsForSession,
+// and more so here: a value-only lookup across kinds would mix, say, a
+// PR merely mentioned (kind=url) with the PR a session created
+// (kind=pr_created). Backed by idx_extractions_kind_value.
+func FindExtractions(ctx context.Context, db *sql.DB, opts FindExtractionsOpts) ([]ExtractionSighting, error) {
+	if opts.Kind == "" {
+		return nil, errors.New("FindExtractions: kind is required")
+	}
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = DefaultFindExtractionsLimit
+	}
+
+	var where strings.Builder
+	args := []any{opts.Kind}
+	where.WriteString(`x.kind = ?`)
+	if opts.Value != "" {
+		where.WriteString(` AND x.value = ?`)
+		args = append(args, opts.Value)
+	}
+	if opts.SinceMs > 0 {
+		where.WriteString(` AND e.ts_source_ms >= ?`)
+		args = append(args, opts.SinceMs)
+	}
+	args = append(args, limit, opts.Offset)
+
+	// e.cwd is a bare column next to MIN(e.ts_source_ms): SQLite takes
+	// bare columns from the row that supplied the min() value, so cwd
+	// belongs to the earliest sighting. session_id and value break
+	// timestamp ties so LIMIT/OFFSET pages are deterministic.
+	rows, err := db.QueryContext(ctx,
+		`SELECT x.session_id, x.kind, x.value, MIN(e.ts_source_ms) AS first_ms, e.cwd
+		   FROM extractions x
+		   JOIN events e ON e.event_id = x.event_id
+		  WHERE `+where.String()+`
+		  GROUP BY x.session_id, x.value
+		  ORDER BY first_ms DESC, x.session_id, x.value
+		  LIMIT ? OFFSET ?`,
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query extractions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []ExtractionSighting
+	for rows.Next() {
+		var (
+			x   ExtractionSighting
+			cwd sql.NullString
+		)
+		if err := rows.Scan(&x.SessionID, &x.Kind, &x.Value, &x.TsSourceMs, &cwd); err != nil {
+			return nil, fmt.Errorf("scan extraction sighting: %w", err)
+		}
+		x.Cwd = nullable.StringPtr(cwd)
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
 // LoadSessionStartCwd returns the session's start cwd — the directory
 // the session was launched in. Distinct from sessions.cwd, which the
 // migration-001 AFTER INSERT trigger keeps as the *latest* non-null
