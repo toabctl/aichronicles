@@ -33,6 +33,17 @@ func (s *Server) handleLLMOutputSave(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "Missing kind", "")
 		return
 	}
+	if !wire.LLMOutputKind(req.Kind).Known() {
+		writeProblem(w, http.StatusBadRequest, "Invalid kind", req.Kind)
+		return
+	}
+	// created_at_ms anchors the row in time for every reader and for
+	// prune; 0 (an omitted field) would date it to 1970, and the next
+	// `prune --include-llm-outputs` would delete it.
+	if req.CreatedAtMs <= 0 {
+		writeProblem(w, http.StatusBadRequest, "Invalid created_at_ms", "must be > 0")
+		return
+	}
 	if req.PromptHash == "" {
 		writeProblem(w, http.StatusBadRequest, "Missing prompt_hash", "")
 		return

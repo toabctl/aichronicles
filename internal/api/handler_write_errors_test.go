@@ -247,3 +247,20 @@ func TestFactsSave_OmittedConfidenceDefaultsToOne(t *testing.T) {
 		}
 	}
 }
+
+func TestLLMOutputSave_RejectsUnknownKindAndZeroTime(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	for name, req := range map[string]wire.SaveLLMOutputRequest{
+		"unknown kind":    {Kind: "sumary", Model: "m", PromptHash: "h1", Body: "{}", CreatedAtMs: 1},
+		"zero created_at": {Kind: "summary", Model: "m", PromptHash: "h2", Body: "{}"},
+	} {
+		if code, body := postJSON(t, srv, "/v1/llm-outputs", req); code != http.StatusBadRequest {
+			t.Errorf("%s: %d %s, want 400", name, code, body)
+		}
+	}
+	var n int
+	if err := srv.store.DB().QueryRow(`SELECT COUNT(*) FROM llm_outputs`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("rejected saves stored %d rows (%v)", n, err)
+	}
+}
