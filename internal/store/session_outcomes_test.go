@@ -334,8 +334,8 @@ func TestComputeSessionOutcome_SessionNotFound(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
 	_, err := ComputeSessionOutcome(context.Background(), s.DB(), "00000000-0000-0000-0000-000000000099")
-	if !errors.Is(err, ErrSessionNotFound) {
-		t.Errorf("expected ErrSessionNotFound, got %v", err)
+	if !errors.Is(err, ErrNoSuchSession) {
+		t.Errorf("expected ErrNoSuchSession, got %v", err)
 	}
 }
 
@@ -740,8 +740,8 @@ func TestEnsureSessionOutcome_PropagatesNotFoundError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for unknown session id")
 	}
-	if !errors.Is(err, ErrSessionNotFound) {
-		t.Errorf("expected ErrSessionNotFound wrapped, got %v", err)
+	if !errors.Is(err, ErrNoSuchSession) {
+		t.Errorf("expected ErrNoSuchSession wrapped, got %v", err)
 	}
 }
 

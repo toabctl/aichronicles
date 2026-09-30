@@ -1,5 +1,11 @@
 package wire
 
+import (
+	"fmt"
+	"hash/fnv"
+	"strconv"
+)
+
 // SearchHit is the wire shape for a single search result row from
 // /v1/search. Snippet is the FTS5-computed match-centered excerpt;
 // Content is the full original event content_text. Both are
@@ -38,13 +44,43 @@ type SearchRequest struct {
 	// only when the caller wants to see every captured row, e.g.
 	// to debug ingest fan-out.
 	NoDedup bool `json:"no_dedup,omitempty"`
-	Limit   int  `json:"limit,omitempty"`
+	// Order is SearchOrderRank (the default when empty) or
+	// SearchOrderRecency; anything else is a 400. Like NoDedup it is
+	// pinned by the cursor, which wins over a re-sent value.
+	Order string `json:"order,omitempty"`
+	Limit int    `json:"limit,omitempty"`
 	// Cursor pages forward through a previous response's NextCursor.
 	// Empty means "first page." Pass it back verbatim with the SAME q
-	// and filters: the cursor carries only the page position plus the
-	// locked stage / as-of snapshot, not the query itself. See
-	// SearchCursor and the as-of semantics on SearchResponse.
+	// and filters: the cursor carries only the page position, the
+	// locked stage / as-of snapshot and a fingerprint of q + filters,
+	// and a mismatch is a 400. See SearchCursor and the as-of
+	// semantics on SearchResponse.
 	Cursor Cursor `json:"cursor,omitempty"`
+}
+
+// Search orders accepted by GET /v1/search?order=.
+const (
+	// SearchOrderRank sorts by recency-boosted FTS relevance.
+	SearchOrderRank = "rank"
+	// SearchOrderRecency sorts newest first, ignoring relevance.
+	SearchOrderRecency = "recency"
+)
+
+// QueryFingerprint hashes the fields that define a search's result
+// set — q and every filter — for SearchCursor.Query. Paging controls
+// (Limit, Cursor) are excluded, and so are NoDedup and the order,
+// which the cursor pins itself. Fields are length-prefixed so no two
+// different requests share an encoding.
+func (r SearchRequest) QueryFingerprint() uint64 {
+	h := fnv.New64a()
+	for _, v := range []string{
+		r.Q, r.Kind, r.SessionID, r.SubagentID, r.SourceAgent,
+		r.ToolName, r.SkillName, r.FilePathSubstring,
+		strconv.FormatInt(r.SinceMs, 10), strconv.FormatBool(r.WithFailures),
+	} {
+		_, _ = fmt.Fprintf(h, "%d:%s", len(v), v)
+	}
+	return h.Sum64()
 }
 
 // SearchResponse is the body shape for GET /v1/search.

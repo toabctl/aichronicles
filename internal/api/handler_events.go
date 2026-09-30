@@ -16,8 +16,9 @@ import (
 //     events with ingest_seq > since_seq are returned
 //   - limit:      page size, capped at wire.MaxPageLimit
 //
-// Response body is an wire.EventListResponse — a slice of
-// wire.Event plus the current LatestSeq watermark.
+// Response body is a wire.EventListResponse — a slice of
+// wire.Event plus the current store-wide LatestSeq watermark (not
+// narrowed by session_id; see the wire doc).
 func (s *Server) handleEventsList(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseEventListRequest(w, r)
 	if !ok {

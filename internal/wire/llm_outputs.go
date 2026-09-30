@@ -97,9 +97,9 @@ type SummariesBatchResponse struct {
 }
 
 // LLMOutputsListResponse is the body for GET /v1/llm-outputs and
-// GET /v1/sessions/{id}/llm-outputs. NextCursor (via PageResponse)
-// pages the cross-session list; it stays empty for the per-session
-// sub-resource, which returns a session's outputs in full.
+// GET /v1/sessions/{id}/llm-outputs. Both are paginated: NextCursor
+// (via PageResponse) is set whenever the page came back full, and an
+// empty NextCursor is the only end-of-list signal.
 type LLMOutputsListResponse struct {
 	Outputs []LLMOutput `json:"outputs"`
 	PageResponse
