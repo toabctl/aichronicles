@@ -519,13 +519,22 @@ type SessionDigestRow struct {
 	ID string
 	// All optional — Started/EndedAtMs nil for sessions that
 	// haven't completed yet, Cwd nil when no event captured one,
-	// FirstPrompt nil for sessions without a user_prompt event,
-	// LatestSummary nil when no summary llm_output exists.
-	StartedAtMs   *int64
-	EndedAtMs     *int64
-	Cwd           *string
-	FirstPrompt   *string
+	// FirstPrompt nil for sessions without a user_prompt event.
+	StartedAtMs *int64
+	EndedAtMs   *int64
+	Cwd         *string
+	FirstPrompt *string
+	// LatestSummary is the full body (JSON) of the session's most
+	// recent kind=summary llm_output, nil when none exists. Only the
+	// loaders that feed LLM prompts select it (it is a correlated
+	// subquery over llm_outputs); LoadSessionsForListFaceted leaves it
+	// nil and carries SummaryTopic instead.
 	LatestSummary *string
+	// SummaryTopic is sessions.summary_topic — the `topic` field of
+	// the latest summary, materialised by trigger. A one-line title,
+	// never the body; nil when the session has no summary (or the
+	// summary had no topic).
+	SummaryTopic *string
 	// StartCwd is sessions.start_cwd — the cwd captured on the
 	// session's first non-null event. nil when no event captured a
 	// cwd. Distinct from Cwd (which reflects the *latest* event's
@@ -814,7 +823,7 @@ func LoadSessionsForListFaceted(ctx context.Context, db *sql.DB, f SessionListFa
 		row.Cwd = nullable.StringPtr(cwd)
 		row.StartCwd = nullable.StringPtr(startCwd)
 		row.FirstPrompt = nullable.StringPtr(firstPrompt)
-		row.LatestSummary = nullable.StringPtr(summaryTopic)
+		row.SummaryTopic = nullable.StringPtr(summaryTopic)
 		row.SourceAgent = sourceAgent
 		row.SourceSessionID = sourceSessionID
 		out = append(out, row)

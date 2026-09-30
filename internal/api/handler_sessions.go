@@ -49,8 +49,10 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 	// loaders project different columns, so the endpoint silently
 	// changed shape depending on whether the caller happened to pass
 	// a filter: event_count came back 0 for every row (the plain
-	// loader does not select it at all) and latest_summary carried
-	// the whole summary JSON body instead of just the topic.
+	// loader does not select it at all) and the summary field carried
+	// the whole summary JSON body instead of just the topic. (The list
+	// now ships the topic as summary_topic; latest_summary always
+	// means the full body and the list omits it.)
 	//
 	// The consequence was visible everywhere the default list is
 	// rendered — `aichronicles sessions` printed 0 in its EVENTS
@@ -228,6 +230,7 @@ func sessionDigestRowToWire(row store.SessionDigestRow) wire.SessionDigest {
 		StartCwd:        row.StartCwd,
 		FirstPrompt:     row.FirstPrompt,
 		LatestSummary:   row.LatestSummary,
+		SummaryTopic:    row.SummaryTopic,
 		EventCount:      row.EventCount,
 		SourceAgent:     row.SourceAgent,
 		SourceSessionID: row.SourceSessionID,

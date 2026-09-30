@@ -472,3 +472,62 @@ func TestHandleSessionOutcome_UnknownIs404(t *testing.T) {
 		t.Errorf("session_id: got %q, want %q", out.SessionID, id)
 	}
 }
+
+// seedSessionWithSummary ingests one event and saves a kind=summary
+// llm_output for its session; returns the session id and the body.
+func seedSessionWithSummary(t *testing.T, srv *testServer, topic string) (string, string) {
+	t.Helper()
+	env := validEnvelope(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(mustJSON(t, env))))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("seed ingest: status=%d", rr.Code)
+	}
+	id := events.DeriveSessionID(env.SourceAgent, env.SourceSessionID)
+	body := `{"topic":"` + topic + `","outcome":"done"}`
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/llm-outputs", bytesReader(mustJSON(t, wire.SaveLLMOutputRequest{
+		SessionID: &id, Kind: "summary", Model: "m", PromptHash: "h-" + id,
+		Body: body, CreatedAtMs: 1_760_000_000_000,
+	}))))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("seed summary: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	return id, body
+}
+
+// TestSessionDigest_SummaryFieldsHaveOneMeaningEach is the regression
+// gate for latest_summary carrying the topic string on the list but
+// the full summary body on the detail route. Callers relied on both
+// meanings (MCP titles vs facts/induction prompts), so a consumer
+// reading the "wrong" endpoint got the other thing silently. Now
+// latest_summary is always the body and summary_topic the title.
+func TestSessionDigest_SummaryFieldsHaveOneMeaningEach(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	id, body := seedSessionWithSummary(t, srv, "fix the flaky test")
+
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/sessions?since_ms=1", nil))
+	var list wire.SessionListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &list); err != nil || len(list.Sessions) != 1 {
+		t.Fatalf("list: %v body=%s", err, rr.Body.String())
+	}
+	row := list.Sessions[0]
+	if row.SummaryTopic == nil || *row.SummaryTopic != "fix the flaky test" {
+		t.Errorf("list summary_topic: got %v, want the topic", row.SummaryTopic)
+	}
+	if row.LatestSummary != nil {
+		t.Errorf("list latest_summary must be omitted, not repurposed: got %q", *row.LatestSummary)
+	}
+
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/sessions/"+id, nil))
+	var detail wire.SessionDigest
+	if err := json.Unmarshal(rr.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("detail: %v", err)
+	}
+	if detail.LatestSummary == nil || *detail.LatestSummary != body {
+		t.Errorf("detail latest_summary: got %v, want the full body %q", detail.LatestSummary, body)
+	}
+}

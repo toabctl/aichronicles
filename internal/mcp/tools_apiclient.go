@@ -1014,8 +1014,8 @@ func renderRecentSessionsForCwdAPI(ctx context.Context, c *apiclient.Client, b *
 	}
 	for _, s := range resp.Sessions {
 		title := "-"
-		if s.LatestSummary != nil && *s.LatestSummary != "" {
-			title = mcpField(*s.LatestSummary)
+		if s.SummaryTopic != nil && *s.SummaryTopic != "" {
+			title = mcpField(*s.SummaryTopic)
 		} else if s.FirstPrompt != nil && *s.FirstPrompt != "" {
 			title = preview.OneLine(*s.FirstPrompt)
 		}

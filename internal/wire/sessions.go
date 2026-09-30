@@ -10,12 +10,22 @@ package wire
 // summary yet have missing latest_summary. Encode null vs "value"
 // rather than collapsing both to "" so callers can distinguish.
 type SessionDigest struct {
-	ID            string  `json:"id"`
-	StartedAtMs   *int64  `json:"started_at_ms,omitempty"`
-	EndedAtMs     *int64  `json:"ended_at_ms,omitempty"`
-	Cwd           *string `json:"cwd,omitempty"`
-	FirstPrompt   *string `json:"first_prompt,omitempty"`
+	ID          string  `json:"id"`
+	StartedAtMs *int64  `json:"started_at_ms,omitempty"`
+	EndedAtMs   *int64  `json:"ended_at_ms,omitempty"`
+	Cwd         *string `json:"cwd,omitempty"`
+	FirstPrompt *string `json:"first_prompt,omitempty"`
+	// LatestSummary is the full body (JSON) of the session's latest
+	// summary. Populated by GET /v1/sessions/{id} and
+	// /v1/sessions/digests, which feed facts/induction/reflect
+	// prompts. GET /v1/sessions (the list) omits it — too heavy per
+	// row — and carries SummaryTopic instead, so on a list row a nil
+	// LatestSummary does NOT mean "no summary".
 	LatestSummary *string `json:"latest_summary,omitempty"`
+	// SummaryTopic is the latest summary's one-line `topic`, for
+	// titles. nil when the session has no summary (or it had no
+	// topic).
+	SummaryTopic *string `json:"summary_topic,omitempty"`
 	// EventCount is populated by GET /v1/sessions only; the
 	// per-session detail endpoint leaves it 0. omitempty drops
 	// it from the wire when unset.
