@@ -736,13 +736,12 @@ func registerGetSummary(s *Server, c *apiclient.Client) {
 	s.RegisterTool(Tool{
 		Name: "get_summary",
 		Description: "Fetch the cached LLM-generated summary of one past session. " +
-			"Returns the structured summary body if one was generated. " +
-			"Pass kind=reflect or kind=propose for the multi-session analysis kinds.",
+			"Returns the structured summary body if one was generated.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"session_id": {"type": "string"},
-				"kind":       {"type": "string", "enum": ["summary", "reflect", "propose"], "default": "summary"}
+				"kind":       {"type": "string", "enum": ["summary"], "default": "summary"}
 			},
 			"required": ["session_id"]
 		}`),
@@ -765,6 +764,14 @@ func getSummaryAPIHandler(c *apiclient.Client) ToolHandler {
 		kind := req.Kind
 		if kind == "" {
 			kind = "summary"
+		}
+		// Only summaries are attached to one session. reflect and
+		// propose outputs span many sessions and are stored without a
+		// session id, so a per-session lookup can never find them;
+		// the tool used to advertise both kinds and then answer "no
+		// reflect output for session X" even when reflections existed.
+		if kind != string(wire.LLMKindSummary) {
+			return TextError("get_summary: kind %q is not per-session; only \"summary\" is (reflect/propose outputs span many sessions — see get_insights or `aichronicles summaries list --type %s`)", kind, kind), nil
 		}
 
 		// Resolve short prefixes to canonical id.

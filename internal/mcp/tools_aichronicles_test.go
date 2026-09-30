@@ -1179,3 +1179,21 @@ func TestSearchEvents_NewestFirst(t *testing.T) {
 		t.Errorf("first hit should be the newest session %s:\n%s", newest, res.Content[0].Text)
 	}
 }
+
+// TestGetSummary_MultiSessionKindsAreRejected pins get_summary to the
+// one per-session kind: reflect/propose outputs carry no session id,
+// so the tool advertised kinds it could never return and answered
+// "no reflect output for session …" even when reflections existed.
+func TestGetSummary_MultiSessionKindsAreRejected(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
+	registerAllTools(t, s, st)
+	sid := events.DeriveSessionID("claude-code", "sess-foo")
+	for _, kind := range []string{"reflect", "propose"} {
+		res := callTool(t, s, "get_summary", `{"session_id":"`+sid+`","kind":"`+kind+`"}`)
+		if !res.IsError || !strings.Contains(res.Content[0].Text, "not per-session") {
+			t.Errorf("kind=%s: got %+v, want a not-per-session user error", kind, res)
+		}
+	}
+}
