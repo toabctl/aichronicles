@@ -303,9 +303,12 @@ type StaleExample struct {
 // stays free of formatting helpers.
 type FactsPage struct {
 	Title    string
-	Subject  string    // when set, page shows facts for this subject only
-	Subjects []string  // index mode: distinct subjects to choose from
-	Facts    []FactRow // detail mode: facts for the selected subject
+	Subject  string   // when set, page shows facts for this subject only
+	Subjects []string // index mode: distinct subjects to choose from
+	// SubjectsCapped marks an index that hit the server's cap, so more
+	// subjects may exist than are listed.
+	SubjectsCapped bool
+	Facts          []FactRow // detail mode: facts for the selected subject
 	// NextCursor feeds the detail page's "Load more" control (shared
 	// "facts-rows" partial); empty on the last page.
 	NextCursor string

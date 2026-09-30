@@ -49,6 +49,10 @@
     <li><a href="/facts?subject={{. | urlquery}}"><code>{{.}}</code></a></li>
     {{end}}
   </ul>
+  {{if .SubjectsCapped}}
+  <p class="muted">The index is capped at {{len .Subjects}} subjects (alphabetical); more may exist.
+     Open one directly with <code>/facts?subject=…</code>.</p>
+  {{end}}
   {{else}}
   <p class="empty">No facts have been induced yet. Run
      <code>aichronicles facts induce --session &lt;id&gt;</code> on a past
