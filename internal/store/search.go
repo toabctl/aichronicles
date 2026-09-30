@@ -379,9 +379,9 @@ func appendCommonFilters(filter *strings.Builder, args *[]any, opts SearchEventO
 		// extractions are the canonical source — see
 		// internal/events/FilePathExtractor.
 		filter.WriteString(` AND e.session_id IN (
-			SELECT session_id FROM extractions WHERE kind = ? AND value LIKE ?
+			SELECT session_id FROM extractions WHERE kind = ? AND value LIKE ? ESCAPE '\'
 		)`)
-		*args = append(*args, events.ExtractionKindFilePath, "%"+opts.FilePathSubstring+"%")
+		*args = append(*args, events.ExtractionKindFilePath, likeContains(opts.FilePathSubstring))
 	}
 	if opts.WithFailures {
 		filter.WriteString(` AND e.session_id IN (

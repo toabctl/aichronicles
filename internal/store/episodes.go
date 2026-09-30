@@ -271,10 +271,10 @@ func FindEpisodes(ctx context.Context, db *sql.DB, opts FindEpisodesOpts) ([]eve
 		args = append(args, opts.SinceMs)
 	}
 	if q := strings.TrimSpace(opts.QueryContains); q != "" {
-		filter.WriteString(` AND lower(intent_summary) LIKE ?`)
+		filter.WriteString(` AND lower(intent_summary) LIKE ? ESCAPE '\'`)
 		// `%` wildcards on both sides → substring; lower() on both
 		// sides for case-insensitive match.
-		args = append(args, "%"+strings.ToLower(q)+"%")
+		args = append(args, likeContains(strings.ToLower(q)))
 	}
 	args = append(args, limit, opts.Offset)
 

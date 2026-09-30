@@ -232,10 +232,10 @@ func FactSubjectsLike(ctx context.Context, db *sql.DB, needle string, limit int)
 	rows, err := db.QueryContext(ctx,
 		`SELECT DISTINCT subject
 		   FROM semantic_facts
-		  WHERE subject LIKE ? COLLATE NOCASE
+		  WHERE subject LIKE ? ESCAPE '\'
 		  ORDER BY subject ASC
 		  LIMIT ?`,
-		"%"+needle+"%", limit,
+		likeContains(needle), limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query distinct subjects: %w", err)

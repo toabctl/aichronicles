@@ -759,8 +759,8 @@ func LoadSessionsForListFaceted(ctx context.Context, db *sql.DB, f SessionListFa
 		args = append(args, f.SourceAgent)
 	}
 	if f.Project != "" {
-		conds = append(conds, "(s.cwd = ? OR s.cwd LIKE ?)")
-		args = append(args, f.Project, f.Project+"/%")
+		conds = append(conds, `(s.cwd = ? OR s.cwd LIKE ? ESCAPE '\')`)
+		args = append(args, f.Project, likePrefix(f.Project+"/"))
 	}
 	if f.ToolName != "" {
 		conds = append(conds, `EXISTS (
@@ -779,9 +779,9 @@ func LoadSessionsForListFaceted(ctx context.Context, db *sql.DB, f SessionListFa
 	if f.FilePathSubstring != "" {
 		conds = append(conds, `EXISTS (
 			SELECT 1 FROM extractions x
-			 WHERE x.session_id = s.id AND x.kind = ? AND x.value LIKE ?
+			 WHERE x.session_id = s.id AND x.kind = ? AND x.value LIKE ? ESCAPE '\'
 		)`)
-		args = append(args, events.ExtractionKindFilePath, "%"+f.FilePathSubstring+"%")
+		args = append(args, events.ExtractionKindFilePath, likeContains(f.FilePathSubstring))
 	}
 	if f.WithFailures {
 		conds = append(conds, `EXISTS (
