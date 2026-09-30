@@ -268,3 +268,36 @@ func TestHandleSearch_RejectsForgedCursorFields(t *testing.T) {
 		})
 	}
 }
+
+// TestHandleSearch_CursorIsBoundToItsQuery is the regression gate for
+// cursors re-sent with a different q or filters: the old offset and
+// locked FTS stage were silently applied to the new query, skipping
+// rows or mixing corpora. The server must refuse the mismatch and
+// keep accepting the cursor with its own query.
+func TestHandleSearch_CursorIsBoundToItsQuery(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	for i := range 3 {
+		ingestSearchDoc(t, srv, fmt.Sprintf("sess-bind-%d", i), fmt.Sprintf("bindToken doc %d", i))
+	}
+	first := searchPage(t, srv, "/v1/search?q=bindToken&limit=1")
+	if first.NextCursor == "" {
+		t.Fatal("expected a next cursor")
+	}
+	cur := "&cursor=" + string(first.NextCursor)
+	for name, path := range map[string]string{
+		"different q":      "/v1/search?q=otherToken&limit=1" + cur,
+		"added filter":     "/v1/search?q=bindToken&kind=user_prompt&limit=1" + cur,
+		"changed since_ms": "/v1/search?q=bindToken&since_ms=5&limit=1" + cur,
+	} {
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("%s: status=%d, want 400", name, rr.Code)
+		}
+	}
+	// Same query, different page size: still the same result set.
+	if got := searchPage(t, srv, "/v1/search?q=bindToken&limit=2"+cur); len(got.Hits) != 2 {
+		t.Errorf("same query: got %d hits, want the remaining 2", len(got.Hits))
+	}
+}

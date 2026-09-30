@@ -59,6 +59,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 				"cursor fields are out of range")
 			return
 		}
+		if cur.Query != req.QueryFingerprint() {
+			writeProblem(w, http.StatusBadRequest, "Cursor does not match query",
+				"re-send the cursor with the same q and filters as the page that produced it, or drop it to start over")
+			return
+		}
 		opts.Offset = cur.Off
 		opts.Stage = cur.Stage
 		opts.NowMs = cur.Now
@@ -108,6 +113,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			Now:   opts.NowMs,
 			Ord:   int(opts.Order),
 			Dedup: opts.NoDedup,
+			Query: req.QueryFingerprint(),
 		})
 		if err != nil {
 			s.storeError(w, "EncodeSearchCursor", err)
