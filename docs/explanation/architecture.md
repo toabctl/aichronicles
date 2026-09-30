@@ -526,10 +526,15 @@ Load-bearing invariants:
 - **`events` is the queryable projection.** Typed columns extracted
   from the envelope JSON; FTS5 indexes `content_text`.
 - **`extractions` is the typed-fact layer.** URLs, file paths,
-  shell commands, skill loads. Computed by the `events.ExtractorRegistry`
-  inside the SQLite Sink; written in the same transaction as the
-  event. Discriminated by `kind` (`url`, `file_path`,
-  `shell_command`, `skill_load`).
+  shell commands, skill loads, created PRs. Computed by the
+  `events.ExtractorRegistry` inside the SQLite Sink; written in the
+  same transaction as the event. Discriminated by `kind` (`url`,
+  `file_path`, `shell_command`, `skill_load`, `pr_created`).
+  `pr_created` comes only from the structured `gitOperation` record
+  Claude Code attaches to a Bash result (`action: "created"` with a
+  `url`); it is never inferred from the generic URL pool or from
+  command output. Sessions ingested before a new extractor existed
+  are recovered with `aichronicles backfill-extractions --only=<kind>`.
 - **`episodes` is the segmenter's output.** Bounded session slices
   produced by `store.SegmentSession`, persisted via
   `SaveEpisodes`. Re-segmentable: DELETE-then-INSERT on each
