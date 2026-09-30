@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"net/http"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -89,7 +90,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 			TsSourceMs: nullable.Int64Ptr(tsMs),
 			Kind:       kind,
 			Patterns:   names,
-			Snippet:    auditSnippet(content.String, findings[0]),
+			Snippet:    auditSnippet(content.String, findings),
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -157,39 +158,29 @@ func uniquePatternNames(findings []redact.Finding) []string {
 }
 
 // auditSnippet renders a short context window around the first
-// finding so the operator can see where the match occurred. The
-// matched bytes are replaced with the marker form so the wire
-// payload never carries raw secrets — copy-pasting an audit
-// response into a ticket is safe.
-func auditSnippet(content string, f redact.Finding) string {
-	start, end := f.Start, f.End
-	if start < 0 {
-		start = 0
-	}
-	if end > len(content) {
-		end = len(content)
-	}
-	if start > end {
-		start = end
-	}
+// finding so the operator can see where the match occurred. EVERY
+// finding in the row is replaced with its marker form before the
+// window is cut, so the wire payload never carries raw secret bytes —
+// copy-pasting an audit response into a ticket is safe even when a
+// row holds several secrets side by side.
+func auditSnippet(content string, findings []redact.Finding) string {
+	masked, anchorStart, anchorEnd := maskFindings(content, findings)
 
-	// The marker is substituted for the matched bytes HERE, while the
-	// offsets still address the original string — never afterwards.
-	// Building the buffer around the raw hit and replacing it at the
-	// end (as this once did) is unsound: the whitespace rewrites and
-	// the rune cap below both mutate the buffer, so the needle stops
-	// matching and strings.Replace silently returns the secret. A
-	// multi-line PEM leaked via the newline swap; any hit longer than
-	// the rune cap leaked via truncation.
-	marker := "<" + f.Pattern + ">"
+	// The window is cut from the fully-masked text, never from the raw
+	// content. Windowing the raw content around the first hit (as this
+	// once did) leaked every other secret inside the ±padding context;
+	// building the buffer around a raw hit and replacing it at the end
+	// (as it did before that) leaked the hit itself once the
+	// whitespace rewrites or the rune cap below mutated the buffer.
+	marker := masked[anchorStart:anchorEnd]
 	budget := auditSnippetRunes - utf8.RuneCountInString(marker)
 	if budget < 0 {
 		budget = 0
 	}
 	padding := budget / 2
 
-	pre := []rune(content[:start])
-	post := []rune(content[end:])
+	pre := []rune(masked[:anchorStart])
+	post := []rune(masked[anchorEnd:])
 	if len(pre) > padding {
 		pre = append([]rune{'…'}, pre[len(pre)-padding:]...)
 	}
@@ -208,4 +199,51 @@ func auditSnippet(content string, f redact.Finding) string {
 		combined = string(r[:auditSnippetRunes]) + "…"
 	}
 	return combined
+}
+
+// maskFindings returns content with every finding's bytes replaced by
+// its "<pattern>" marker, plus the byte span of the first finding's
+// marker in the result (the snippet anchor).
+//
+// Findings are defended rather than trusted: offsets are clamped into
+// range, the list is sorted by Start, and a finding that overlaps an
+// earlier one extends the masked region instead of being dropped —
+// erring toward masking too much, never too little. With no usable
+// finding the anchor is an empty span at offset 0.
+func maskFindings(content string, findings []redact.Finding) (masked string, anchorStart, anchorEnd int) {
+	local := make([]redact.Finding, len(findings))
+	for i, f := range findings {
+		f.Start = max(f.Start, 0)
+		f.End = min(f.End, len(content))
+		if f.Start > f.End {
+			f.Start = f.End
+		}
+		local[i] = f
+	}
+	sort.SliceStable(local, func(i, j int) bool { return local[i].Start < local[j].Start })
+
+	var b strings.Builder
+	b.Grow(len(content))
+	anchored := false
+	prev := 0
+	for _, f := range local {
+		if f.Start < prev {
+			// Overlaps the previous masked span; its leading bytes are
+			// already hidden. Hide the tail too, under the same marker.
+			prev = max(prev, f.End)
+			continue
+		}
+		b.WriteString(content[prev:f.Start])
+		if !anchored {
+			anchorStart = b.Len()
+		}
+		b.WriteString("<" + f.Pattern + ">")
+		if !anchored {
+			anchorEnd = b.Len()
+			anchored = true
+		}
+		prev = f.End
+	}
+	b.WriteString(content[prev:])
+	return b.String(), anchorStart, anchorEnd
 }

@@ -55,7 +55,7 @@ func TestAuditSnippet_NeverEmitsRawSecret(t *testing.T) {
 			if len(findings) == 0 {
 				t.Fatalf("no finding for %q — test fixture no longer matches a detector", tc.content)
 			}
-			got := auditSnippet(tc.content, findings[0])
+			got := auditSnippet(tc.content, findings)
 			if strings.Contains(got, tc.needle) {
 				t.Errorf("snippet leaked raw secret bytes\n needle: %q\nsnippet: %q", tc.needle, got)
 			}
@@ -70,6 +70,99 @@ func TestAuditSnippet_NeverEmitsRawSecret(t *testing.T) {
 				if strings.Contains(got, ws) {
 					t.Errorf("snippet retained raw whitespace %q: %q", ws, got)
 				}
+			}
+		})
+	}
+}
+
+// TestAuditSnippet_MasksEverySecretInWindow pins the multi-secret
+// case: the window is cut around the first finding, so any later
+// finding within ±padding runes used to ship verbatim in the context.
+// Every finding in the row must appear only in marker form.
+func TestAuditSnippet_MasksEverySecretInWindow(t *testing.T) {
+	t.Parallel()
+	ghp := "ghp_" + strings.Repeat("b", 36)
+	aws := "AKIA" + strings.Repeat("C", 16)
+	cases := []struct {
+		name    string
+		content string
+		needles []string
+	}{
+		{
+			name:    "second secret right after the first",
+			content: "token " + ghp + " and key " + aws + " end",
+			needles: []string{"ghp_bbbbbbbbbb", "AKIACCCCCCCCCCCC"},
+		},
+		{
+			name:    "three secrets with the first pattern repeated",
+			content: aws + " x " + ghp + " y " + aws,
+			needles: []string{"ghp_bbbbbbbbbb", "AKIACCCCCCCCCCCC"},
+		},
+		{
+			name:    "adjacent secrets with no separator text",
+			content: ghp + " " + aws,
+			needles: []string{"ghp_bbbbbbbbbb", "AKIACCCCCCCCCCCC"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			findings := redact.Default().Scan(tc.content)
+			if len(findings) < 2 {
+				t.Fatalf("got %d findings for %q, want >=2 — fixture no longer matches the detectors", len(findings), tc.content)
+			}
+			got := auditSnippet(tc.content, findings)
+			for _, n := range tc.needles {
+				if strings.Contains(got, n) {
+					t.Errorf("snippet leaked raw secret bytes\n needle: %q\nsnippet: %q", n, got)
+				}
+			}
+			for _, f := range findings {
+				if marker := "<" + f.Pattern + ">"; !strings.Contains(got, marker) {
+					t.Errorf("snippet is missing the %q marker: %q", marker, got)
+				}
+			}
+		})
+	}
+}
+
+// TestAuditSnippet_UnsortedAndOverlappingFindings guards the
+// defensive path: findings handed over out of order, or overlapping,
+// must still mask every byte any finding covers.
+func TestAuditSnippet_UnsortedAndOverlappingFindings(t *testing.T) {
+	t.Parallel()
+	content := "aaa SECRETONE bbb SECRETTWO ccc"
+	one := strings.Index(content, "SECRETONE")
+	two := strings.Index(content, "SECRETTWO")
+	cases := []struct {
+		name     string
+		findings []redact.Finding
+	}{
+		{"reverse order", []redact.Finding{
+			{Pattern: "p2", Start: two, End: two + len("SECRETTWO")},
+			{Pattern: "p1", Start: one, End: one + len("SECRETONE")},
+		}},
+		{"overlap extends past the first span", []redact.Finding{
+			{Pattern: "p1", Start: one, End: one + 3},
+			{Pattern: "p2", Start: one + 1, End: one + len("SECRETONE")},
+			{Pattern: "p3", Start: two, End: two + len("SECRETTWO")},
+		}},
+		{"nested overlap", []redact.Finding{
+			{Pattern: "p1", Start: one, End: two + len("SECRETTWO")},
+			{Pattern: "p2", Start: two, End: two + 3},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := auditSnippet(content, tc.findings)
+			for _, frag := range []string{"SECRET", "ONE", "TWO"} {
+				if strings.Contains(got, frag) {
+					t.Errorf("snippet leaked %q: %q", frag, got)
+				}
+			}
+			if !strings.HasPrefix(got, "aaa <") || !strings.HasSuffix(got, " ccc") {
+				t.Errorf("surrounding context lost: %q", got)
 			}
 		})
 	}
@@ -93,11 +186,11 @@ func TestAuditSnippet_ClampsOutOfRangeOffsets(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := auditSnippet("short content", redact.Finding{
+			got := auditSnippet("short content", []redact.Finding{{
 				Pattern: "test_pattern",
 				Start:   tc.start,
 				End:     tc.end,
-			})
+			}})
 			if !strings.Contains(got, "<test_pattern>") {
 				t.Errorf("expected marker in %q", got)
 			}
