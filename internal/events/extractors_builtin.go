@@ -195,25 +195,33 @@ func SkillLoadExtractor(env *Envelope) []Extraction {
 }
 
 // PRCreatedExtractor emits the URL of a pull request the session
-// opened, read from the structured gitOperation record Claude Code
-// attaches to a Bash tool result that performed a git/PR operation:
+// opened, read from the gitOperation record Claude Code attaches to a
+// Bash tool result that performed a git/PR operation:
 //
 //	{"gitOperation": {"pr": {"action": "created", "number": 7, "url": "https://…/pull/7"}}}
 //
-// This is the only source trusted for "the PR this session created":
-// the generic URL pool can't tell a created PR from one that was
-// reviewed or merely mentioned, and parsing `gh pr create` stdout
-// would mean guessing from arbitrary command pipelines. Other actions
-// (edited, commented, closed, …) are skipped, as is a record without
-// a url — some actions carry only a number, and synthesising the URL
-// would need a repo we'd have to guess (CLAUDE.md §7).
+// The record is Claude Code's own inference, not ground truth: the
+// action comes from matching `gh pr create` anywhere in the command
+// string (heredocs and quoted text included) and the url is the last
+// PR-shaped URL anywhere in stdout. A command that merely mentions
+// `gh pr create` and prints an existing PR's URL is therefore
+// recorded as "created". To keep only genuine creations the claimed
+// url must also be a whole line of the result's stdout, which is how
+// `gh pr create` reports the PR it opened; a URL embedded in other
+// output is dropped. That also drops the rare genuine creation whose
+// output was reformatted (e.g. a script printing "name -> <url>") —
+// a missing PR beats a wrong one (CLAUDE.md §7).
+//
+// Other actions (edited, commented, closed, …) are skipped, as is a
+// record without a url — some actions carry only a number, and
+// synthesising the URL would need a repo we'd have to guess.
 //
 // Registered as a Content extractor rather than under Tool["Bash"]
 // because imported transcripts carry the record on a tool_result
 // envelope, which has no tool name. Two payload shapes:
 //
-//   - hook events: payload.tool_response.gitOperation
-//   - imported transcripts: payload.toolUseResult.gitOperation
+//   - hook events: payload.tool_response.{gitOperation,stdout}
+//   - imported transcripts: payload.toolUseResult.{gitOperation,stdout}
 func PRCreatedExtractor(env *Envelope) []Extraction {
 	if env.Payload == nil {
 		return nil
@@ -234,7 +242,22 @@ func PRCreatedExtractor(env *Envelope) []Extraction {
 	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
 		return nil
 	}
+	stdout, _ := result["stdout"].(string)
+	if !hasLine(stdout, url) {
+		return nil
+	}
 	return []Extraction{{Kind: ExtractionKindPRCreated, Value: url}}
+}
+
+// hasLine reports whether some line of s, trimmed of surrounding
+// whitespace (including a CRLF's \r), equals want.
+func hasLine(s, want string) bool {
+	for line := range strings.Lines(s) {
+		if strings.TrimSpace(line) == want {
+			return true
+		}
+	}
+	return false
 }
 
 // toolInput pulls the "tool_input" map out of an envelope's payload.
