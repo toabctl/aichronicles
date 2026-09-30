@@ -250,13 +250,13 @@ func RecordSkillCandidate(ctx context.Context, db *sql.DB, llmOutputID int64, sk
 // row converges to the metadata-rich form.
 func RecordSkillCandidateWithMetadata(ctx context.Context, db *sql.DB, llmOutputID int64, skillName string, proposedAtMs int64, meta SkillCandidateMetadata) error {
 	if llmOutputID <= 0 {
-		return errors.New("RecordSkillCandidate: llm_output_id is required")
+		return invalidf("RecordSkillCandidate: llm_output_id is required")
 	}
 	if skillName == "" {
-		return errors.New("RecordSkillCandidate: skill_name is required")
+		return invalidf("RecordSkillCandidate: skill_name is required")
 	}
 	if proposedAtMs <= 0 {
-		return errors.New("RecordSkillCandidate: proposed_at_ms is required")
+		return invalidf("RecordSkillCandidate: proposed_at_ms is required")
 	}
 
 	// Scrub the elements before marshalling, not the JSON afterwards:
@@ -401,7 +401,7 @@ func MarkSkillCandidateAdded(ctx context.Context, db *sql.DB, llmOutputID int64,
 // shape as a pre-migration-023 row.
 func MarkSkillCandidateAddedWithProvenance(ctx context.Context, db *sql.DB, llmOutputID int64, skillName, addPath string, decisionAtMs int64, bodySHA256 string) error {
 	if decisionAtMs <= 0 {
-		return errors.New("MarkSkillCandidateAdded: decision_at_ms is required")
+		return invalidf("MarkSkillCandidateAdded: decision_at_ms is required")
 	}
 	var hashArg any
 	if bodySHA256 != "" {
@@ -453,10 +453,10 @@ func MarkSkillCandidateAddedWithProvenance(ctx context.Context, db *sql.DB, llmO
 // a target; for hand-authored merges it's the only handle).
 func MarkSkillCandidateMerged(ctx context.Context, db *sql.DB, llmOutputID int64, skillName string, mergedIntoID int64, addPath string, decisionAtMs int64) error {
 	if decisionAtMs <= 0 {
-		return errors.New("MarkSkillCandidateMerged: decision_at_ms is required")
+		return invalidf("MarkSkillCandidateMerged: decision_at_ms is required")
 	}
 	if mergedIntoID < 0 {
-		return errors.New("MarkSkillCandidateMerged: merged_into_id must be ≥ 0 (use 0 for hand-authored merges)")
+		return invalidf("MarkSkillCandidateMerged: merged_into_id must be ≥ 0 (use 0 for hand-authored merges)")
 	}
 	var mergedArg any
 	if mergedIntoID > 0 {
@@ -495,7 +495,7 @@ func MarkSkillCandidateMerged(ctx context.Context, db *sql.DB, llmOutputID int64
 // from re-emitting the same kebab-name idea.
 func MarkSkillCandidateDiscarded(ctx context.Context, db *sql.DB, llmOutputID int64, skillName string, decisionAtMs int64) error {
 	if decisionAtMs <= 0 {
-		return errors.New("MarkSkillCandidateDiscarded: decision_at_ms is required")
+		return invalidf("MarkSkillCandidateDiscarded: decision_at_ms is required")
 	}
 	// Clear add_path / add_body_sha256 / merged_into_id on transition
 	// INTO `discard`: the user actively rejected the suggestion, so
@@ -642,7 +642,7 @@ func LoadSkillCandidatesByName(ctx context.Context, db *sql.DB, skillName string
 // Returns ErrSkillCandidateNotFound when the id doesn't exist.
 func UpdateSkillCandidateAddBodyHash(ctx context.Context, db *sql.DB, candidateID int64, addPath, bodySHA256 string) error {
 	if candidateID <= 0 {
-		return errors.New("UpdateSkillCandidateAddBodyHash: candidate_id is required")
+		return invalidf("UpdateSkillCandidateAddBodyHash: candidate_id is required")
 	}
 	var hashArg any
 	if bodySHA256 != "" {
@@ -685,10 +685,10 @@ func UpdateSkillCandidateAddBodyHash(ctx context.Context, db *sql.DB, candidateI
 // Returns ErrSkillCandidateNotFound when the id doesn't exist.
 func UpdateSkillCandidateKind(ctx context.Context, db *sql.DB, candidateID int64, kind SkillKind) error {
 	if candidateID <= 0 {
-		return errors.New("UpdateSkillCandidateKind: candidate_id is required")
+		return invalidf("UpdateSkillCandidateKind: candidate_id is required")
 	}
 	if kind != SkillKindPattern && kind != SkillKindPitfall {
-		return fmt.Errorf("UpdateSkillCandidateKind: kind must be %q or %q, got %q",
+		return invalidf("UpdateSkillCandidateKind: kind must be %q or %q, got %q",
 			SkillKindPattern, SkillKindPitfall, kind)
 	}
 	res, err := db.ExecContext(ctx,

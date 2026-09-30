@@ -85,13 +85,13 @@ func SaveLLMOutput(ctx context.Context, tx *sql.Tx, out *LLMOutput) (id int64, i
 		return 0, false, errors.New("SaveLLMOutput: nil output")
 	}
 	if out.Kind == "" {
-		return 0, false, errors.New("SaveLLMOutput: kind is required")
+		return 0, false, invalidf("SaveLLMOutput: kind is required")
 	}
 	if out.PromptHash == "" {
-		return 0, false, errors.New("SaveLLMOutput: prompt_hash is required")
+		return 0, false, invalidf("SaveLLMOutput: prompt_hash is required")
 	}
 	if out.Body == "" {
-		return 0, false, errors.New("SaveLLMOutput: body is required")
+		return 0, false, invalidf("SaveLLMOutput: body is required")
 	}
 
 	scrubbedBody := scrubStored(out.Body)

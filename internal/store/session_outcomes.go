@@ -184,10 +184,10 @@ func scanSessionOutcome(r rowScanner) (SessionOutcome, error) {
 // ComputeSessionOutcome again is the recompute path.
 func SaveSessionOutcome(ctx context.Context, db *sql.DB, o SessionOutcome) error {
 	if o.SessionID == "" {
-		return errors.New("SaveSessionOutcome: session_id is required")
+		return invalidf("SaveSessionOutcome: session_id is required")
 	}
 	if o.Outcome == "" {
-		return errors.New("SaveSessionOutcome: outcome label is required")
+		return invalidf("SaveSessionOutcome: outcome label is required")
 	}
 	_, err := db.ExecContext(ctx,
 		`INSERT INTO session_outcomes(
