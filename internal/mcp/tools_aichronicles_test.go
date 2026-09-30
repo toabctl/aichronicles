@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -1195,5 +1196,41 @@ func TestGetSummary_MultiSessionKindsAreRejected(t *testing.T) {
 		if !res.IsError || !strings.Contains(res.Content[0].Text, "not per-session") {
 			t.Errorf("kind=%s: got %+v, want a not-per-session user error", kind, res)
 		}
+	}
+}
+
+// seedManyFacts stores n facts about subject with predicates p000..
+// so their predicate order is predictable.
+func seedManyFacts(t *testing.T, st *store.Store, subject string, n int) {
+	t.Helper()
+	loID := seedFactsRow(t, st)
+	for i := range n {
+		if _, err := store.SaveSemanticFact(t.Context(), st.DB(), store.SemanticFact{
+			SourceLLMOutputID: loID, Subject: subject,
+			Predicate: fmt.Sprintf("p%03d", i), Object: "o",
+			Confidence: 1, AssertedAtMs: time.Now().UnixMilli(),
+		}); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+	}
+}
+
+// TestGetFactsForSubject_SaysWhenItTruncates is the regression gate
+// for the silent first page: the tool promised "every" fact but read
+// one page, so the predicates past the cut vanished without a trace.
+func TestGetFactsForSubject_SaysWhenItTruncates(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	seedManyFacts(t, st, "/work/big", 12)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
+	registerAllTools(t, s, st)
+
+	cut := callTool(t, s, "get_facts_for_subject", `{"subject":"/work/big","limit":5}`).Content[0].Text
+	if !strings.Contains(cut, "more exist") || strings.Contains(cut, "p005") {
+		t.Errorf("limit=5 of 12: want 5 facts and a truncation note:\n%s", cut)
+	}
+	whole := callTool(t, s, "get_facts_for_subject", `{"subject":"/work/big","limit":12}`).Content[0].Text
+	if strings.Contains(whole, "more exist") || !strings.Contains(whole, "p011") {
+		t.Errorf("limit=12 of 12: want every fact and no truncation note:\n%s", whole)
 	}
 }

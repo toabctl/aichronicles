@@ -140,7 +140,8 @@ func getUnresolvedForCwdAPIHandler(c *apiclient.Client) ToolHandler {
 func registerGetFactsForSubject(s *Server, c *apiclient.Client) {
 	s.RegisterTool(Tool{
 		Name: "get_facts_for_subject",
-		Description: "Return every persisted semantic fact about a subject. Subjects are " +
+		Description: "Return the persisted semantic facts about a subject, ordered by predicate, " +
+			"up to limit (the output says when more exist). Subjects are " +
 			"typically a project's cwd; predicates pick from a small recommended vocabulary " +
 			"(uses_language_version, runs_tests_via, runs_build_via, key_directory, ...). " +
 			"Use to recall what the agent has learned about a project across past sessions.",
@@ -148,7 +149,7 @@ func registerGetFactsForSubject(s *Server, c *apiclient.Client) {
 			"type": "object",
 			"properties": {
 				"subject": {"type": "string", "description": "exact subject (typically a cwd)"},
-				"limit":   {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}
+				"limit":   {"type": "integer", "minimum": 1, "maximum": 1000, "default": 50}
 			},
 			"required": ["subject"]
 		}`),
@@ -168,25 +169,31 @@ func getFactsForSubjectAPIHandler(c *apiclient.Client) ToolHandler {
 		if strings.TrimSpace(req.Subject) == "" {
 			return TextError("get_facts_for_subject: subject is required"), nil
 		}
-		req.Limit = clampLimit(req.Limit, 50, 200)
-		resp, err := c.Facts(ctx, req.Subject, req.Limit, "")
+		req.Limit = clampLimit(req.Limit, 50, 1000)
+		facts, truncated, err := c.FactsAll(ctx, req.Subject, req.Limit)
 		if r, e := mapAPIError("get_facts_for_subject: load:", err); r != nil || e != nil {
 			return r, e
 		}
-		if len(resp.Facts) == 0 {
+		if len(facts) == 0 {
 			return TextResult(fmt.Sprintf(
 				"(no facts known for %q yet — try `aichronicles facts induce --session <id>` on a past session in this project)",
 				req.Subject)), nil
 		}
 		var b strings.Builder
 		fmt.Fprintf(&b, "subject: %s\n", req.Subject)
-		for _, f := range resp.Facts {
+		for _, f := range facts {
 			fmt.Fprintf(&b, "%s\t%s\t%.2f\t%s\n",
 				mcpField(f.Predicate), mcpField(f.Object), f.Confidence,
 				formatTS(f.AssertedAtMs))
 			if f.EvidenceQuote != nil && *f.EvidenceQuote != "" {
 				fmt.Fprintf(&b, "  quote: %s\n", mcpField(*f.EvidenceQuote))
 			}
+		}
+		// The list is predicate-sorted, so a silent cut drops whole
+		// predicates (it used to stop at 200 of 430 facts, before the
+		// runs_* predicates the description names). Say so.
+		if truncated {
+			fmt.Fprintf(&b, "(showing the first %d facts by predicate; more exist — raise limit, max 1000)\n", req.Limit)
 		}
 		return TextResult(strings.TrimRight(b.String(), "\n")), nil
 	}
