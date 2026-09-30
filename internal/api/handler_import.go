@@ -104,6 +104,21 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			stats.DurationM = time.Since(start).Milliseconds()
+			// The client hung up (or the daemon is stopping): the
+			// write was aborted by our own request context, not by a
+			// storage failure. Nobody is left to read a response, and
+			// a 500 "Storage error" sends the operator after the wrong
+			// problem. Keyed on the context rather than on err: the
+			// driver reports an interrupted statement as ctx.Err(), but
+			// database/sql can surface a context-triggered rollback as
+			// sql.ErrTxDone. err stays in the record so a coincident
+			// real fault is still visible. Rows committed so far stay;
+			// re-running the import dedups them.
+			if r.Context().Err() != nil {
+				s.slog.Warn("import: request context ended mid-import",
+					"line", stats.LinesRead, "err", err, "stats", partialStatsDetail(stats))
+				return
+			}
 			s.slog.Error("import: pipeline process",
 				"line", stats.LinesRead, "event_id", env.EventID, "err", err)
 			writeProblem(w, http.StatusInternalServerError,

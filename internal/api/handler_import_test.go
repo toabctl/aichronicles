@@ -2,8 +2,10 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -365,5 +367,32 @@ func TestHandleImport_PublishesIngestSeq(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("no frame published for an imported event")
 		}
+	}
+}
+
+// TestHandleImport_ClientGoneIsNotAStorageError pins the cancelled-
+// request path: a context that ends mid-import aborts the write, and
+// that must not be reported (or logged) as a storage failure.
+func TestHandleImport_ClientGoneIsNotAStorageError(t *testing.T) {
+	t.Parallel()
+	var logs bytes.Buffer
+	s := newTestServer(t)
+	srv := &testServer{Server: NewServer(s.store, slog.New(slog.NewTextHandler(&logs, nil)))}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	env := validEnvelope(t)
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/import", bytes.NewReader(envelopeNDJSON(t, env)))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if strings.Contains(rr.Body.String(), "Storage error") {
+		t.Errorf("cancelled import reported as a storage error: %s", rr.Body.String())
+	}
+	if strings.Contains(logs.String(), "level=ERROR") {
+		t.Errorf("cancelled import logged at ERROR:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "request context ended mid-import") {
+		t.Errorf("expected the context-ended record, got:\n%s", logs.String())
 	}
 }
