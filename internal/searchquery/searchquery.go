@@ -89,8 +89,14 @@ func tokenize(input string) ([]part, error) {
 			cur.Reset()
 		}
 	}
-	for i := 0; i < len(input); i++ {
-		c := input[i]
+	// Walk runes, not bytes. A byte loop fed each byte of a
+	// multi-byte character to unicode.IsSpace as if it were a rune:
+	// the continuation bytes 0x85 and 0xA0 read as NEL and NBSP, so
+	// "voilà" (… C3 A0) split into "voil\xc3" and invalid UTF-8
+	// reached FTS5, returning no hits or wrong ones.
+	rs := []rune(input)
+	for i := 0; i < len(rs); i++ {
+		c := rs[i]
 		switch {
 		case c == '"' && !inQ:
 			flush()
@@ -99,18 +105,18 @@ func tokenize(input string) ([]part, error) {
 			// FTS5 phrase-escape rule: a literal `"` inside a phrase
 			// is written as two consecutive quotes. Treat `""` as a
 			// single literal quote in the body rather than a close.
-			if i+1 < len(input) && input[i+1] == '"' {
-				cur.WriteByte('"')
+			if i+1 < len(rs) && rs[i+1] == '"' {
+				cur.WriteRune('"')
 				i++
 				continue
 			}
 			parts = append(parts, part{body: cur.String(), quoted: true})
 			cur.Reset()
 			inQ = false
-		case unicode.IsSpace(rune(c)) && !inQ:
+		case unicode.IsSpace(c) && !inQ:
 			flush()
 		default:
-			cur.WriteByte(c)
+			cur.WriteRune(c)
 		}
 	}
 	if inQ {

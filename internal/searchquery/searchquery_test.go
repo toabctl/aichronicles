@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestToFTS5(t *testing.T) {
@@ -262,5 +263,40 @@ func TestToFTS5_PlainWordsStayBare(t *testing.T) {
 		if !strings.HasSuffix(got, "*") || strings.HasPrefix(got, `"`) {
 			t.Errorf("ToFTS5(%q) = %q; plain words must stay bare prefix terms", in, got)
 		}
+	}
+}
+
+// TestToFTS5_MultiByteRunesStayWhole is the regression gate for the
+// byte-wise tokenizer: continuation bytes 0x85/0xA0 inside a UTF-8
+// character were classified as whitespace (NEL/NBSP), splitting the
+// character and sending invalid UTF-8 to FTS5. Real Unicode
+// whitespace must still separate tokens.
+func TestToFTS5_MultiByteRunesStayWhole(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, in, want string
+	}{
+		{"à ends in 0xA0", "voilà", "voilà*"},
+		{"Å starts with 0xC3 0x85", "Åse", "Åse*"},
+		{"CJK with 0xA0 continuation", "你好", "你好*"},
+		{"German umlauts", "Überarbeite die Doku", "Überarbeite* die* Doku*"},
+		{"quoted multibyte phrase", `"voilà là"`, `"voilà là"`},
+		{"NBSP separates tokens", "foo\u00a0bar", "foo* bar*"},
+		{"ideographic space separates tokens", "你好\u3000世界", "你好* 世界*"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := ToFTS5(tc.in)
+			if err != nil {
+				t.Fatalf("ToFTS5(%q): %v", tc.in, err)
+			}
+			if got != tc.want {
+				t.Errorf("ToFTS5(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			if !utf8.ValidString(got) {
+				t.Errorf("ToFTS5(%q) produced invalid UTF-8: %q", tc.in, got)
+			}
+		})
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/toabctl/aichronicles/internal/wire"
@@ -213,6 +214,30 @@ func TestHandleSearch_RejectsBadParams(t *testing.T) {
 		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, p, nil))
 		if rr.Code != http.StatusBadRequest {
 			t.Errorf("path %q: status=%d, want 400", p, rr.Code)
+		}
+	}
+}
+
+// TestHandleSearch_FindsNonASCIIWords proves the tokenizer fix end to
+// end: a bare non-ASCII word used to reach FTS5 as a split, invalid-
+// UTF-8 fragment and matched nothing.
+func TestHandleSearch_FindsNonASCIIWords(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	ingestSearchDoc(t, srv, "sess-fr", "voilà ça marche enfin")
+	ingestSearchDoc(t, srv, "sess-zh", "你好 世界")
+	for _, q := range []string{"voilà", "你好"} {
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/search?q="+url.QueryEscape(q), nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("q=%q: status=%d body=%s", q, rr.Code, rr.Body.String())
+		}
+		var got wire.SearchResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Hits) != 1 {
+			t.Errorf("q=%q: got %d hits, want 1", q, len(got.Hits))
 		}
 	}
 }
