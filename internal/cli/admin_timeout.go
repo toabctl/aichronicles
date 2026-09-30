@@ -6,7 +6,9 @@ import (
 )
 
 // adminOpTimeout bounds the maintenance operations that rescan or
-// rewrite the whole store: scrub, prune, vacuum, audit.
+// rewrite the whole store in one request: scrub, prune, vacuum.
+// (audit is not one of them: /v1/audit answers bounded pages, so each
+// page call keeps the apiclient's default per-request bound.)
 //
 // Generous on purpose. These are O(database size), not O(request):
 // scrub rescans every raw envelope, extraction and LLM output, and
