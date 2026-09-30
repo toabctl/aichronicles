@@ -45,6 +45,12 @@ func ToFTS5(input string) (string, error) {
 	if input == "" {
 		return "", ErrEmpty
 	}
+	// SQLite reads a NUL inside the MATCH string as its end, so any
+	// query containing one fails in the database ("unterminated
+	// string") and surfaced as a 500. No real search text contains it.
+	if strings.ContainsRune(input, 0) {
+		return "", fmt.Errorf("%w: query contains a NUL byte", ErrSyntax)
+	}
 	parts, err := tokenize(input)
 	if err != nil {
 		return "", err

@@ -300,3 +300,12 @@ func TestToFTS5_MultiByteRunesStayWhole(t *testing.T) {
 		})
 	}
 }
+
+func TestToFTS5_RejectsNUL(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{"foo\x00bar", "\x00", "\"a\x00b\""} {
+		if _, err := ToFTS5(in); !errors.Is(err, ErrSyntax) {
+			t.Errorf("ToFTS5(%q): got %v, want ErrSyntax", in, err)
+		}
+	}
+}

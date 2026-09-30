@@ -301,3 +301,15 @@ func TestHandleSearch_CursorIsBoundToItsQuery(t *testing.T) {
 		t.Errorf("same query: got %d hits, want the remaining 2", len(got.Hits))
 	}
 }
+
+// TestHandleSearch_NULIs400 pins the NUL-byte query to a client error;
+// it reached SQLite and came back 500 "unterminated string".
+func TestHandleSearch_NULIs400(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/search?q=foo%00bar", nil))
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status=%d body=%s, want 400", rr.Code, rr.Body.String())
+	}
+}
