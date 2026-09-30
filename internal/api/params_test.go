@@ -179,3 +179,46 @@ func TestDecodeJSONBody_RejectsOversizedPayload(t *testing.T) {
 		t.Errorf("body missing 413 title: %q", rr.Body.String())
 	}
 }
+
+// TestDecodeJSONBody_Titles pins which problem title each failure
+// shape gets: an empty body is named as such rather than surfacing the
+// decoder's bare "EOF", while truncated or garbage JSON stays
+// "Malformed body".
+func TestDecodeJSONBody_Titles(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		body      string
+		wantOk    bool
+		wantTitle string
+	}{
+		{"empty", "", false, "Empty body"},
+		{"whitespace only", "  \n", false, "Empty body"},
+		{"truncated object", `{"name":`, false, "Malformed body"},
+		{"not json", "hello", false, "Malformed body"},
+		{"trailing value", `{"name":"a"}{}`, false, "Malformed body"},
+		{"valid", `{"name":"a"}`, true, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(tc.body))
+			var dst struct {
+				Name string `json:"name"`
+			}
+			if ok := decodeJSONBody(rr, req, &dst); ok != tc.wantOk {
+				t.Fatalf("ok: got %v, want %v (body %q)", ok, tc.wantOk, rr.Body.String())
+			}
+			if tc.wantOk {
+				return
+			}
+			if rr.Code != http.StatusBadRequest {
+				t.Errorf("status: got %d, want 400", rr.Code)
+			}
+			if !strings.Contains(rr.Body.String(), `"title":"`+tc.wantTitle+`"`) {
+				t.Errorf("body %q, want title %q", rr.Body.String(), tc.wantTitle)
+			}
+		})
+	}
+}
