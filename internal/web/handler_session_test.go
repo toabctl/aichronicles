@@ -645,3 +645,13 @@ func TestSessionDetail_SaysWhenTheTimelineIsCut(t *testing.T) {
 		t.Errorf("a one-event session must not show the truncation notice")
 	}
 }
+
+func TestSessionDetail_NonHexIDIs404(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	base, stop := startTestServer(t, st)
+	defer stop()
+	if status, _ := fetch(t, base+"/sessions/not-a-session!"); status != http.StatusNotFound {
+		t.Errorf("status %d, want 404", status)
+	}
+}

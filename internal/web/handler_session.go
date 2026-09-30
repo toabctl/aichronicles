@@ -40,8 +40,14 @@ var errSessionNotFound = errors.New("session not found")
 func (s *Server) sessionDetailHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	resolved, err := s.api.ResolveSession(r.Context(), id)
+	var herr *apiclient.HTTPError
 	switch {
 	case errors.Is(err, apiclient.ErrNotFound):
+		http.NotFound(w, r)
+		return
+	case errors.As(err, &herr) && herr.Status == http.StatusBadRequest:
+		// Not a hex id prefix at all (/sessions/foo): no session can
+		// live at that URL. This used to fall through to the 500 path.
 		http.NotFound(w, r)
 		return
 	case errors.Is(err, apiclient.ErrConflict):
