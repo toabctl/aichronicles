@@ -115,9 +115,14 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 			stats.Deduped++
 		} else {
 			stats.Imported++
+			// IngestSeq is the frame's SSE id. Omitting it sent
+			// `id: 0`, which a reconnecting client echoes back as
+			// Last-Event-ID and the resume gate (> 0) treats as "no
+			// resume" — so the gap was silently never replayed.
 			s.sseBus.Publish(wire.StreamEvent{
 				EventID:    result.EventID,
 				SessionID:  result.SessionID,
+				IngestSeq:  result.IngestSeq,
 				Kind:       env.Kind,
 				TsServerMs: time.Now().UnixMilli(),
 			})

@@ -322,3 +322,45 @@ func TestHandleImport_IdleClientIsCutOff(t *testing.T) {
 		t.Errorf("want the scanner timeout problem, got %s", body)
 	}
 }
+
+// TestHandleImport_PublishesIngestSeq pins the SSE identity of
+// imported events: every frame must carry the row's ingest_seq, or
+// the stream emits `id: 0` and a reconnecting client can never resume
+// past an import.
+func TestHandleImport_PublishesIngestSeq(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	ch, cancel, ok := srv.sseBus.subscribe()
+	if !ok {
+		t.Fatal("subscribe")
+	}
+	defer cancel()
+
+	env1, env2 := validEnvelope(t), validEnvelope(t)
+	env2.EventID = uuid.Must(uuid.NewV7()).String()
+	body := append(envelopeNDJSON(t, env1), envelopeNDJSON(t, env2)...)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/import", bytes.NewReader(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	for _, env := range []events.Envelope{env1, env2} {
+		select {
+		case ev := <-ch:
+			var want int64
+			if err := srv.store.DB().QueryRow(
+				`SELECT ingest_seq FROM raw_envelopes WHERE event_id = ?`, ev.EventID,
+			).Scan(&want); err != nil {
+				t.Fatalf("lookup %s: %v", ev.EventID, err)
+			}
+			if ev.EventID != env.EventID {
+				t.Errorf("frame for %s, want %s", ev.EventID, env.EventID)
+			}
+			if ev.IngestSeq <= 0 || ev.IngestSeq != want {
+				t.Errorf("frame ingest_seq=%d, want the stored %d", ev.IngestSeq, want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("no frame published for an imported event")
+		}
+	}
+}
