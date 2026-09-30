@@ -183,3 +183,15 @@ func TestSkillCandidateUpdate_AllOrNothing(t *testing.T) {
 		t.Errorf("valid update: add_path %q, want /p/new.md", got)
 	}
 }
+
+func TestSkillCandidateRecord_UnknownKindIs400(t *testing.T) {
+	t.Parallel()
+	fx := newWriteFixture(t)
+	code, body := postJSON(t, fx.srv, "/v1/skill-candidates", wire.RecordSkillCandidateRequest{
+		LLMOutputID: fx.outputID, SkillName: "k", ProposedAtMs: 1,
+		Metadata: wire.SkillCandidateMetadata{Kind: "bogus"},
+	})
+	if code != http.StatusBadRequest || !strings.Contains(body, `"title":"Invalid value"`) {
+		t.Errorf("got %d %s, want 400 Invalid value", code, body)
+	}
+}

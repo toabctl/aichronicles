@@ -259,6 +259,14 @@ func RecordSkillCandidateWithMetadata(ctx context.Context, db *sql.DB, llmOutput
 	if proposedAtMs <= 0 {
 		return invalidf("RecordSkillCandidate: proposed_at_ms is required")
 	}
+	// No CHECK constraint guards the column (migration 024), so this
+	// is the only thing keeping an out-of-enum kind out of the store;
+	// it used to be missing here while UpdateSkillCandidate enforced
+	// it, so {"metadata":{"kind":"bogus"}} was stored verbatim.
+	if meta.Kind != "" && !validSkillKind(meta.Kind) {
+		return invalidf("RecordSkillCandidate: kind must be %q or %q, got %q",
+			SkillKindPattern, SkillKindPitfall, meta.Kind)
+	}
 
 	// Scrub the elements before marshalling, not the JSON afterwards:
 	// a secret containing a quote would be backslash-escaped in the
@@ -628,6 +636,12 @@ func LoadSkillCandidatesByName(ctx context.Context, db *sql.DB, skillName string
 	return out, rows.Err()
 }
 
+// validSkillKind reports whether k is one of the two kinds a
+// candidate may carry.
+func validSkillKind(k SkillKind) bool {
+	return k == SkillKindPattern || k == SkillKindPitfall
+}
+
 // SkillCandidateUpdate is the set of fields UpdateSkillCandidate may
 // change on one row. Empty fields are left alone.
 //
@@ -667,7 +681,7 @@ func UpdateSkillCandidate(ctx context.Context, db *sql.DB, candidateID int64, u 
 	if u.BodySHA256 != "" && u.AddPath == "" {
 		return invalidf("UpdateSkillCandidate: add_path is required when body_sha256 is set")
 	}
-	if u.Kind != "" && u.Kind != SkillKindPattern && u.Kind != SkillKindPitfall {
+	if u.Kind != "" && !validSkillKind(u.Kind) {
 		return invalidf("UpdateSkillCandidate: kind must be %q or %q, got %q",
 			SkillKindPattern, SkillKindPitfall, u.Kind)
 	}

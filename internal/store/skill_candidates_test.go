@@ -1331,3 +1331,29 @@ func TestMergeInvariant_HandAuthoredMergeStillAllowed(t *testing.T) {
 		t.Fatalf("hand-authored merge should still succeed: %v", err)
 	}
 }
+
+// TestRecordSkillCandidate_RejectsUnknownKind pins the record path to
+// the same kind enum UpdateSkillCandidate enforces; nothing else (no
+// CHECK constraint) keeps an out-of-enum kind out of the table.
+func TestRecordSkillCandidate_RejectsUnknownKind(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+	loID := mkProposeRow(t, s, 1_700_000_000_000)
+	err := RecordSkillCandidateWithMetadata(ctx, s.DB(), loID, "k", 1_700_000_000_000, SkillCandidateMetadata{Kind: "bogus"})
+	if !IsInvalidValue(err) {
+		t.Fatalf("got %v, want an invalid-value error", err)
+	}
+	rows, err := LoadSkillCandidatesByName(ctx, s.DB(), "k", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("rejected record still stored %d rows", len(rows))
+	}
+	for _, k := range []SkillKind{"", SkillKindPattern, SkillKindPitfall} {
+		if err := RecordSkillCandidateWithMetadata(ctx, s.DB(), loID, "ok-"+string(k), 1_700_000_000_000, SkillCandidateMetadata{Kind: k}); err != nil {
+			t.Errorf("kind %q: %v", k, err)
+		}
+	}
+}
