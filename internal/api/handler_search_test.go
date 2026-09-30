@@ -241,3 +241,30 @@ func TestHandleSearch_FindsNonASCIIWords(t *testing.T) {
 		}
 	}
 }
+
+// TestHandleSearch_RejectsForgedCursorFields pins cursor validation:
+// a well-formed cursor carrying an unknown stage used to 500 in the
+// store, and a negative offset slipped past the depth guard.
+func TestHandleSearch_RejectsForgedCursorFields(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	for name, c := range map[string]wire.SearchCursor{
+		"unknown stage":   {Off: 20, Stage: "bogus"},
+		"empty stage":     {Off: 20, Stage: ""},
+		"negative offset": {Off: -5, Stage: "primary"},
+		"unknown order":   {Off: 20, Stage: "primary", Ord: 7},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			enc, err := wire.EncodeSearchCursor(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rr := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/search?q=fox&cursor="+string(enc), nil))
+			if rr.Code != http.StatusBadRequest {
+				t.Errorf("status=%d body=%s, want 400", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}

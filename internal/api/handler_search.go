@@ -49,6 +49,16 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, http.StatusBadRequest, "Invalid cursor", err.Error())
 			return
 		}
+		// The cursor decodes client bytes: check every field before
+		// the store trusts it. An unknown stage reached the store's
+		// "unknown stage" error as a 500, and a negative offset slipped
+		// past the MaxOffset guard below. We only ever emit cursors
+		// with a concrete stage, so an empty one is forged too.
+		if cur.Off < 0 || !store.IsSearchStage(cur.Stage) || !store.SearchOrder(cur.Ord).IsValid() {
+			writeProblem(w, http.StatusBadRequest, "Invalid cursor",
+				"cursor fields are out of range")
+			return
+		}
 		opts.Offset = cur.Off
 		opts.Stage = cur.Stage
 		opts.NowMs = cur.Now
