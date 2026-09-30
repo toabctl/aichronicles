@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -44,8 +45,20 @@ const importInitialBufferBytes = 1 << 20
 // application/json or no Content-Type at all (cobra-CLI clients
 // commonly omit it). Any explicit non-NDJSON-compatible content-
 // type is rejected with 415.
+//
+// Deadlines: an import streams its body while it works, so it runs
+// far past the server-wide ReadTimeout (which bounds reading the
+// WHOLE body) and WriteTimeout. Both used to fire mid-run: the read
+// side failed with an i/o timeout partway through the corpus, the
+// write side made the partial-stats response undeliverable, and the
+// client saw a bare connection error. The write deadline is lifted
+// for the run like the other long operations; the read side swaps the
+// whole-body bound for an idle bound (idleDeadlineReader), so a long
+// import completes while a stalled client still gets cut off.
 func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = r.Body.Close() }()
+	clearWriteDeadlineForLongOp(w)
+	body := newIdleDeadlineReader(r.Body, http.NewResponseController(w), s.importIdleTimeout)
 
 	if ct := r.Header.Get("Content-Type"); ct != "" && !isAcceptableImportContentType(ct) {
 		writeProblem(w, http.StatusUnsupportedMediaType, "Unsupported content-type",
@@ -56,7 +69,7 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	stats := wire.ImportStats{}
 
-	scanner := bufio.NewScanner(r.Body)
+	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, importInitialBufferBytes), importMaxLineBytes)
 
 	for scanner.Scan() {
@@ -133,6 +146,29 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 
 	stats.DurationM = time.Since(start).Milliseconds()
 	writeJSON(w, http.StatusOK, stats)
+}
+
+// idleDeadlineReader re-arms the connection's read deadline before
+// every Read, turning http.Server.ReadTimeout's whole-body bound into
+// an idle bound: the request may stream for as long as it keeps
+// sending, but a client that sends nothing for idle is cut off with an
+// i/o timeout. Time the handler spends processing between reads does
+// not count against the client.
+type idleDeadlineReader struct {
+	r    io.Reader
+	rc   *http.ResponseController
+	idle time.Duration
+}
+
+func newIdleDeadlineReader(r io.Reader, rc *http.ResponseController, idle time.Duration) *idleDeadlineReader {
+	return &idleDeadlineReader{r: r, rc: rc, idle: idle}
+}
+
+func (d *idleDeadlineReader) Read(p []byte) (int, error) {
+	// ErrNotSupported (e.g. an httptest recorder) leaves the
+	// server-wide deadline in force — the old behaviour, not a failure.
+	_ = d.rc.SetReadDeadline(time.Now().Add(d.idle))
+	return d.r.Read(p)
 }
 
 // isAcceptableImportContentType returns true when ct is empty,

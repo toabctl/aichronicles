@@ -122,6 +122,10 @@ type Server struct {
 	sseBus           *sseBus
 	worker           *IngestWorker
 	ingestQueueMax   int
+	// importIdleTimeout bounds how long /v1/import waits for the next
+	// body bytes; see idleDeadlineReader. A field (not a const) only
+	// so tests can shrink it.
+	importIdleTimeout time.Duration
 	// pendingDepth is the in-memory count of rows in ingest_pending.
 	// Handler increments after a successful enqueue; worker
 	// decrements after MarkPendingProcessed; backpressure reads
@@ -162,6 +166,8 @@ func NewServer(s *store.Store, log *slog.Logger) *Server {
 		pipeline:         pipeline,
 		sseBus:           bus,
 		ingestQueueMax:   DefaultIngestQueueMax,
+
+		importIdleTimeout: httpReadTimeout,
 	}
 	srv.worker = NewIngestWorker(s, pipeline, bus, log.With("component", "ingest_worker"), &srv.pendingDepth)
 	// Seed pendingDepth from any rows the previous daemon
