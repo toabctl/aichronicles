@@ -74,7 +74,8 @@ type HourBucket struct {
 }
 
 // TopSession is the per-session row of the "notable sessions"
-// table, sorted by EventCount descending. We keep StartedAtMs,
+// table, sorted by EventCount descending. EventCount counts the
+// session's events inside the report window, not its lifetime total. We keep StartedAtMs,
 // EndedAtMs, Cwd, and FirstPrompt so the renderer can show a
 // short, recognisable line per session.
 type TopSession struct {
@@ -317,11 +318,20 @@ func loadActivityByHour(ctx context.Context, db *sql.DB, sinceMs int64) ([]HourB
 
 func loadTopSessions(ctx context.Context, db *sql.DB, sinceMs int64, limit int) ([]TopSession, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT s.id, s.event_count, s.started_at_ms, s.ended_at_ms, s.cwd,
+		// Rank by events INSIDE the window — the same ts_source_ms
+		// window the overview totals, top tools and top skills use.
+		// This used to rank by the lifetime sessions.event_count of
+		// any session merely active in the window, so a months-long
+		// session with a handful of recent events outranked one that
+		// was far busier within the window, and its count exceeded
+		// the window's own event total.
+		`SELECT s.id, COUNT(*) AS c, s.started_at_ms, s.ended_at_ms, s.cwd,
 		        COALESCE(s.first_prompt_text, '') AS first_prompt
-		   FROM sessions s
-		  WHERE `+EffectiveTsExpr+` >= ?
-		  ORDER BY s.event_count DESC, s.id ASC
+		   FROM events e
+		   JOIN sessions s ON s.id = e.session_id
+		  WHERE e.ts_source_ms >= ?
+		  GROUP BY s.id
+		  ORDER BY c DESC, s.id ASC
 		  LIMIT ?`,
 		sinceMs, limit,
 	)
