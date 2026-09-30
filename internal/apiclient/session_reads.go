@@ -56,6 +56,24 @@ func (c *Client) SessionExtractions(ctx context.Context, sessionID, kind string)
 	return out, nil
 }
 
+// Extractions queries GET /v1/extractions — the reverse of
+// SessionExtractions: which sessions produced a value (e.g. which
+// session created a PR, with kind "pr_created"). req.Kind is required;
+// req.Value, when set, is matched exactly by the server.
+func (c *Client) Extractions(ctx context.Context, req wire.ExtractionsRequest) (wire.ExtractionsResponse, error) {
+	var q qparams
+	q.SetString("kind", req.Kind)
+	q.SetString("value", req.Value)
+	q.SetInt64("since_ms", req.SinceMs)
+	q.SetInt("limit", req.Limit)
+	q.SetString("cursor", string(req.Cursor))
+	var out wire.ExtractionsResponse
+	if err := c.do(ctx, http.MethodGet, q.URL("/v1/extractions"), nil, &out); err != nil {
+		return wire.ExtractionsResponse{}, err
+	}
+	return out, nil
+}
+
 // SessionCandidatePriors queries GET /v1/sessions/{id}/candidate-priors?limit=.
 func (c *Client) SessionCandidatePriors(ctx context.Context, sessionID string, limit int) (wire.CandidateSessionListResponse, error) {
 	var q qparams
