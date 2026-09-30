@@ -1,10 +1,12 @@
 package mcp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -991,12 +993,16 @@ func getProjectContextAPIHandler(c *apiclient.Client) ToolHandler {
 		renderUnresolvedSectionAPI(&b, uresp.Items)
 
 		// Section 3: typed semantic facts. Subject is the cwd
-		// verbatim (the v1 fact-subject convention).
-		fresp, err := c.Facts(ctx, req.Cwd, req.MaxPerSection*4, "")
+		// verbatim (the v1 fact-subject convention). Read them all
+		// (bounded) and rank before cutting: /v1/facts sorts by
+		// predicate, so taking its first page gave an alphabetical
+		// slice (agent_traces … documentation_at) instead of the
+		// build/test/run contract this section is for.
+		facts, _, err := c.FactsAll(ctx, req.Cwd, projectContextFactsScan)
 		if err != nil {
 			return nil, &Error{Code: InternalError, Message: "get_project_context: facts: " + err.Error()}
 		}
-		renderFactsSectionAPI(&b, fresp.Facts)
+		renderFactsSectionAPI(&b, rankProjectFacts(facts), req.MaxPerSection*4)
 
 		// Section 4: recent workflows. Workflows ride inside
 		// kind=induction llm_outputs rows (Round 8); pull them via
@@ -1090,16 +1096,56 @@ func renderUnresolvedSectionAPI(b *strings.Builder, items []wire.UnresolvedItem)
 	}
 }
 
-func renderFactsSectionAPI(b *strings.Builder, facts []wire.SemanticFact) {
+func renderFactsSectionAPI(b *strings.Builder, facts []wire.SemanticFact, limit int) {
 	fmt.Fprintf(b, "\n## Project facts\n")
 	if len(facts) == 0 {
 		fmt.Fprintln(b, "(none — try `aichronicles facts induce --session <id>` on a past session in this cwd)")
 		return
 	}
-	for _, f := range facts {
+	shown := facts
+	if len(shown) > limit {
+		shown = shown[:limit]
+	}
+	for _, f := range shown {
 		fmt.Fprintf(b, "- %s = %s  (conf=%.2f)\n",
 			mcpField(f.Predicate), mcpField(f.Object), f.Confidence)
 	}
+	if len(facts) > len(shown) {
+		fmt.Fprintf(b, "(%d more facts — see get_facts_for_subject)\n", len(facts)-len(shown))
+	}
+}
+
+// projectContextFactsScan bounds how many facts get_project_context
+// reads for ranking. Well above any real subject (hundreds); the
+// section itself shows far fewer.
+const projectContextFactsScan = 5000
+
+// rankProjectFacts orders facts for the project-context section: the
+// recommended vocabulary first, in its listed order (the language,
+// test/build/lint commands, deploy target… a project's working
+// contract), then every other predicate alphabetically. Stable, so
+// the store's per-predicate order (newest assertion first) holds.
+func rankProjectFacts(facts []wire.SemanticFact) []wire.SemanticFact {
+	rank := make(map[string]int, len(wire.RecommendedFactPredicates))
+	for i, p := range wire.RecommendedFactPredicates {
+		rank[p] = i
+	}
+	out := slices.Clone(facts)
+	slices.SortStableFunc(out, func(a, b wire.SemanticFact) int {
+		ra, aok := rank[a.Predicate]
+		rb, bok := rank[b.Predicate]
+		switch {
+		case aok && bok:
+			return cmp.Compare(ra, rb)
+		case aok:
+			return -1
+		case bok:
+			return 1
+		default:
+			return cmp.Compare(a.Predicate, b.Predicate)
+		}
+	})
+	return out
 }
 
 // renderWorkflowsSectionAPI walks wire.LLMOutput rows of kind=induction

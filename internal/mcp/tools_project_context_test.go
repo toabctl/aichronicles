@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -336,5 +337,45 @@ func TestGetProjectContext_OldHistoryIsNotFirstSession(t *testing.T) {
 	lres := callTool(t, s, "list_sessions", `{"cwd":"`+cwd+`"}`).Content[0].Text
 	if strings.Contains(lres, "(no sessions)") {
 		t.Errorf("list_sessions hides the 90-day-old session:\n%s", lres)
+	}
+}
+
+// TestGetProjectContext_FactsShowTheContractFirst is the regression
+// gate for the facts section's alphabetical slice: it took the first
+// page of predicate-sorted facts, so a project with many facts never
+// showed runs_tests_via / runs_build_via, and nothing said more
+// existed.
+func TestGetProjectContext_FactsShowTheContractFirst(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	const cwd = "/work/contract"
+	loID := seedFactsRow(t, st)
+	save := func(pred, obj string) {
+		t.Helper()
+		if _, err := store.SaveSemanticFact(t.Context(), st.DB(), store.SemanticFact{
+			SourceLLMOutputID: loID, Subject: cwd, Predicate: pred, Object: obj,
+			Confidence: 1, AssertedAtMs: time.Now().UnixMilli(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range 30 { // alphabetically before every runs_* predicate
+		save(fmt.Sprintf("a_note_%02d", i), "x")
+	}
+	save("runs_tests_via", "go test ./...")
+	save("runs_build_via", "go build ./...")
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
+	registerAllTools(t, s, st)
+
+	body := callTool(t, s, "get_project_context", `{"cwd":"`+cwd+`","max_per_section":2}`).Content[0].Text
+	section := body[strings.Index(body, "## Project facts"):]
+	section = section[:strings.Index(section, "## Recent workflows")]
+	for _, want := range []string{"runs_tests_via = go test ./...", "runs_build_via = go build ./...", "more facts — see get_facts_for_subject"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("facts section missing %q:\n%s", want, section)
+		}
+	}
+	if strings.Index(section, "runs_tests_via") > strings.Index(section, "runs_build_via") {
+		t.Errorf("recommended order not kept (runs_tests_via before runs_build_via):\n%s", section)
 	}
 }
