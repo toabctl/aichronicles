@@ -530,10 +530,12 @@ Load-bearing invariants:
   `events.ExtractorRegistry` inside the SQLite Sink; written in the
   same transaction as the event. Discriminated by `kind` (`url`,
   `file_path`, `shell_command`, `skill_load`, `pr_created`).
-  `pr_created` comes only from the structured `gitOperation` record
-  Claude Code attaches to a Bash result (`action: "created"` with a
-  `url`); it is never inferred from the generic URL pool or from
-  command output. Sessions ingested before a new extractor existed
+  `pr_created` comes only from the `gitOperation` record Claude Code
+  attaches to a Bash result (`action: "created"` with a `url`), and
+  only when that url is also a whole line of the result's stdout.
+  The record is Claude Code's own regex inference — it tags any
+  command that mentions `gh pr create` — so the stdout check is what
+  separates a real creation from a mention. Sessions ingested before a new extractor existed
   are recovered with `aichronicles backfill-extractions --only=<kind>`.
 - **`episodes` is the segmenter's output.** Bounded session slices
   produced by `store.SegmentSession`, persisted via

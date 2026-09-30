@@ -612,12 +612,17 @@ func TestSkillLoad_ImportShape_NoToolUseBlock(t *testing.T) {
 
 // TestPRCreated covers the gitOperation record in both payload shapes
 // and every way it can fail to name a created PR. Only an explicit
-// action="created" with an http(s) url yields a row.
+// action="created" with an http(s) url that is also a whole line of
+// stdout yields a row.
 func TestPRCreated(t *testing.T) {
 	t.Parallel()
 	const prURL = "https://github.com/acme/widgets/pull/42"
-	gitOp := func(pr map[string]any) map[string]any {
-		return map[string]any{"gitOperation": map[string]any{"pr": pr}}
+	// result builds a tool result carrying stdout and a gitOperation.pr.
+	result := func(stdout string, pr map[string]any) map[string]any {
+		return map[string]any{
+			"stdout":       stdout,
+			"gitOperation": map[string]any{"pr": pr},
+		}
 	}
 	created := map[string]any{"action": "created", "number": float64(42), "url": prURL}
 
@@ -630,38 +635,74 @@ func TestPRCreated(t *testing.T) {
 			name: "hook shape",
 			env: &Envelope{
 				Tool:    &Tool{Name: "Bash"},
-				Payload: map[string]any{"tool_response": gitOp(created)},
+				Payload: map[string]any{"tool_response": result(prURL+"\n", created)},
 			},
 			wantURL: prURL,
 		},
 		{
 			name: "import shape on tool_result without tool name",
 			env: &Envelope{
-				Payload: map[string]any{"toolUseResult": gitOp(created)},
+				Payload: map[string]any{"toolUseResult": result(prURL, created)},
 			},
 			wantURL: prURL,
 		},
 		{
+			name: "url line among other output",
+			env: &Envelope{Payload: map[string]any{"tool_response": result(
+				"Warning: 1 uncommitted change\n"+prURL+"\n", created)}},
+			wantURL: prURL,
+		},
+		{
+			name: "url line with CRLF and indentation",
+			env: &Envelope{Payload: map[string]any{"tool_response": result(
+				"pushed\r\n  "+prURL+"\r\n", created)}},
+			wantURL: prURL,
+		},
+		{
+			// The false positive that motivated the stdout check: the
+			// command only mentioned `gh pr create` (inside a query) and
+			// printed an existing PR's URL inside other output.
+			name: "url embedded in other output skipped",
+			env: &Envelope{Payload: map[string]any{"tool_response": result(
+				"has tool_response: True ['"+prURL+"']\n", created)}},
+		},
+		{
+			name: "url in reformatted script output skipped",
+			env: &Envelope{Payload: map[string]any{"tool_response": result(
+				"19.3 -> "+prURL+"\n", created)}},
+		},
+		{
+			name: "url only as prefix of a longer line skipped",
+			env: &Envelope{Payload: map[string]any{"tool_response": result(
+				prURL+"/files\n", created)}},
+		},
+		{
+			name: "missing stdout skipped",
+			env: &Envelope{Payload: map[string]any{"tool_response": map[string]any{
+				"gitOperation": map[string]any{"pr": created},
+			}}},
+		},
+		{
 			name: "edited action skipped",
-			env: &Envelope{Payload: map[string]any{"tool_response": gitOp(map[string]any{
+			env: &Envelope{Payload: map[string]any{"tool_response": result(prURL, map[string]any{
 				"action": "edited", "number": float64(42), "url": prURL,
 			})}},
 		},
 		{
 			name: "commented action skipped",
-			env: &Envelope{Payload: map[string]any{"toolUseResult": gitOp(map[string]any{
+			env: &Envelope{Payload: map[string]any{"toolUseResult": result(prURL, map[string]any{
 				"action": "commented", "number": float64(42), "url": prURL,
 			})}},
 		},
 		{
 			name: "created without url skipped",
-			env: &Envelope{Payload: map[string]any{"tool_response": gitOp(map[string]any{
+			env: &Envelope{Payload: map[string]any{"tool_response": result(prURL, map[string]any{
 				"action": "created", "number": float64(42),
 			})}},
 		},
 		{
 			name: "non-http url skipped",
-			env: &Envelope{Payload: map[string]any{"tool_response": gitOp(map[string]any{
+			env: &Envelope{Payload: map[string]any{"tool_response": result("acme/widgets#42", map[string]any{
 				"action": "created", "url": "acme/widgets#42",
 			})}},
 		},
