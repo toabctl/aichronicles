@@ -33,8 +33,9 @@ type RecordSkillCandidateRequest struct {
 	Metadata     SkillCandidateMetadata `json:"metadata,omitempty"`
 }
 
-// RecordSkillCandidateResponse echoes the canonical row id (when
-// the candidate was newly inserted) or zero on idempotent re-record.
+// RecordSkillCandidateResponse reports whether the call created the
+// (llm_output_id, skill_name) row (true) or found it already recorded
+// and merged the metadata in (false).
 type RecordSkillCandidateResponse struct {
 	Inserted bool `json:"inserted"`
 }

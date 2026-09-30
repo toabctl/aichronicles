@@ -42,12 +42,13 @@ func (s *Server) handleSkillCandidatesRecord(w http.ResponseWriter, r *http.Requ
 		Version:  req.Metadata.Version,
 		Kind:     store.SkillKind(req.Metadata.Kind),
 	}
-	if err := store.RecordSkillCandidateWithMetadata(r.Context(), s.store.DB(),
-		req.LLMOutputID, req.SkillName, req.ProposedAtMs, meta); err != nil {
+	inserted, err := store.UpsertSkillCandidate(r.Context(), s.store.DB(),
+		req.LLMOutputID, req.SkillName, req.ProposedAtMs, meta)
+	if err != nil {
 		s.writeError(w, "RecordSkillCandidate", "llm_output_id", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, wire.RecordSkillCandidateResponse{Inserted: true})
+	writeJSON(w, http.StatusOK, wire.RecordSkillCandidateResponse{Inserted: inserted})
 }
 
 // handleSkillCandidatesDecision serves POST

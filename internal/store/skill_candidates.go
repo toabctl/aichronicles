@@ -244,27 +244,43 @@ func RecordSkillCandidate(ctx context.Context, db *sql.DB, llmOutputID int64, sk
 
 // RecordSkillCandidateWithMetadata is the AutoSkill-aware writer:
 // stores triggers / tags / examples / version on the row in the
-// same INSERT that creates it. INSERT OR IGNORE on the natural-key
-// UNIQUE keeps re-runs idempotent; metadata on a duplicate name
-// (rare, only happens if RecordSkillCandidate landed first then
-// metadata was filled in later) goes through DO UPDATE so the
-// row converges to the metadata-rich form.
+// same INSERT that creates it. A re-record of the same natural key
+// keeps the row idempotent; metadata on a duplicate name (rare, only
+// happens if RecordSkillCandidate landed first then metadata was
+// filled in later) is merged in so the row converges to the
+// metadata-rich form. See UpsertSkillCandidate, which also reports
+// whether a row was created.
 func RecordSkillCandidateWithMetadata(ctx context.Context, db *sql.DB, llmOutputID int64, skillName string, proposedAtMs int64, meta SkillCandidateMetadata) error {
+	_, err := UpsertSkillCandidate(ctx, db, llmOutputID, skillName, proposedAtMs, meta)
+	return err
+}
+
+// UpsertSkillCandidate is RecordSkillCandidateWithMetadata that also
+// reports whether this call created the (llm_output_id, skill_name)
+// row (inserted=true) or found it already present and merged the
+// metadata into it (inserted=false).
+//
+// Two statements in one transaction rather than one INSERT … ON
+// CONFLICT DO UPDATE: an upsert affects one row either way, so it
+// can't tell the caller which happened. INSERT … DO NOTHING's
+// RowsAffected can, and the follow-up UPDATE applies exactly the
+// merge the upsert did.
+func UpsertSkillCandidate(ctx context.Context, db *sql.DB, llmOutputID int64, skillName string, proposedAtMs int64, meta SkillCandidateMetadata) (inserted bool, err error) {
 	if llmOutputID <= 0 {
-		return invalidf("RecordSkillCandidate: llm_output_id is required")
+		return false, invalidf("RecordSkillCandidate: llm_output_id is required")
 	}
 	if skillName == "" {
-		return invalidf("RecordSkillCandidate: skill_name is required")
+		return false, invalidf("RecordSkillCandidate: skill_name is required")
 	}
 	if proposedAtMs <= 0 {
-		return invalidf("RecordSkillCandidate: proposed_at_ms is required")
+		return false, invalidf("RecordSkillCandidate: proposed_at_ms is required")
 	}
 	// No CHECK constraint guards the column (migration 024), so this
 	// is the only thing keeping an out-of-enum kind out of the store;
 	// it used to be missing here while UpdateSkillCandidate enforced
 	// it, so {"metadata":{"kind":"bogus"}} was stored verbatim.
 	if meta.Kind != "" && !validSkillKind(meta.Kind) {
-		return invalidf("RecordSkillCandidate: kind must be %q or %q, got %q",
+		return false, invalidf("RecordSkillCandidate: kind must be %q or %q, got %q",
 			SkillKindPattern, SkillKindPitfall, meta.Kind)
 	}
 
@@ -273,15 +289,15 @@ func RecordSkillCandidateWithMetadata(ctx context.Context, db *sql.DB, llmOutput
 	// encoded form and the detector would no longer match it.
 	triggersJSON, err := marshalSkillStringList("triggers", scrubStoredList(meta.Triggers))
 	if err != nil {
-		return err
+		return false, err
 	}
 	tagsJSON, err := marshalSkillStringList("tags", scrubStoredList(meta.Tags))
 	if err != nil {
-		return err
+		return false, err
 	}
 	examplesJSON, err := marshalSkillExamples(scrubStoredExamples(meta.Examples))
 	if err != nil {
-		return err
+		return false, err
 	}
 	version := meta.Version
 	if version == "" {
@@ -289,35 +305,60 @@ func RecordSkillCandidateWithMetadata(ctx context.Context, db *sql.DB, llmOutput
 	}
 	// kindParam is NULL when the caller didn't specify a kind so the
 	// INSERT path picks up the column's DEFAULT 'pattern' and the
-	// DO UPDATE path COALESCEs to the existing row's kind. Without
-	// the NULL marker a bare RecordSkillCandidate (which always lands
-	// the meta zero-value) would clobber a previously-recorded
-	// 'pitfall' on re-run.
+	// merge path COALESCEs to the existing row's kind. Without the
+	// NULL marker a bare RecordSkillCandidate (which always lands the
+	// meta zero-value) would clobber a previously-recorded 'pitfall'
+	// on re-run.
 	var kindParam any
 	if meta.Kind != "" {
 		kindParam = string(meta.Kind)
 	}
 
-	_, err = db.ExecContext(ctx,
-		`INSERT INTO skill_candidates(
-			llm_output_id, skill_name, proposed_at_ms,
-			triggers, tags, examples, version, kind
+	err = WithTx(ctx, db, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO skill_candidates(
+				llm_output_id, skill_name, proposed_at_ms,
+				triggers, tags, examples, version, kind
+			)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'pattern'))
+			 ON CONFLICT(llm_output_id, skill_name) DO NOTHING`,
+			llmOutputID, skillName, proposedAtMs,
+			nullableJSON(triggersJSON), nullableJSON(tagsJSON),
+			nullableJSON(examplesJSON), version, kindParam,
 		)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'pattern'))
-		 ON CONFLICT(llm_output_id, skill_name) DO UPDATE SET
-		     triggers = COALESCE(excluded.triggers, skill_candidates.triggers),
-		     tags     = COALESCE(excluded.tags,     skill_candidates.tags),
-		     examples = COALESCE(excluded.examples, skill_candidates.examples),
-		     version  = COALESCE(skill_candidates.version, excluded.version),
-		     kind     = COALESCE(?, skill_candidates.kind)`,
-		llmOutputID, skillName, proposedAtMs,
-		nullableJSON(triggersJSON), nullableJSON(tagsJSON),
-		nullableJSON(examplesJSON), version, kindParam, kindParam,
-	)
+		if err != nil {
+			return fmt.Errorf("insert skill_candidates: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("insert skill_candidates: rows affected: %w", err)
+		}
+		if n == 1 {
+			inserted = true
+			return nil
+		}
+		// Already present: merge, keeping stored values where the
+		// caller sent none, and the stored version always.
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE skill_candidates SET
+			     triggers = COALESCE(?, triggers),
+			     tags     = COALESCE(?, tags),
+			     examples = COALESCE(?, examples),
+			     version  = COALESCE(version, ?),
+			     kind     = COALESCE(?, kind)
+			  WHERE llm_output_id = ? AND skill_name = ?`,
+			nullableJSON(triggersJSON), nullableJSON(tagsJSON),
+			nullableJSON(examplesJSON), version, kindParam,
+			llmOutputID, skillName,
+		); err != nil {
+			return fmt.Errorf("merge skill_candidates metadata: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("insert skill_candidates: %w", err)
+		return false, err
 	}
-	return nil
+	return inserted, nil
 }
 
 // marshalSkillStringList serialises a string slice to a JSON array,

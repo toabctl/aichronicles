@@ -195,3 +195,19 @@ func TestSkillCandidateRecord_UnknownKindIs400(t *testing.T) {
 		t.Errorf("got %d %s, want 400 Invalid value", code, body)
 	}
 }
+
+func TestSkillCandidateRecord_InsertedIsTruthful(t *testing.T) {
+	t.Parallel()
+	fx := newWriteFixture(t)
+	req := wire.RecordSkillCandidateRequest{LLMOutputID: fx.outputID, SkillName: "again", ProposedAtMs: 1}
+	for i, want := range []bool{true, false} {
+		code, body := postJSON(t, fx.srv, "/v1/skill-candidates", req)
+		var out wire.RecordSkillCandidateResponse
+		if code != http.StatusOK || json.Unmarshal([]byte(body), &out) != nil {
+			t.Fatalf("call %d: %d %s", i, code, body)
+		}
+		if out.Inserted != want {
+			t.Errorf("call %d: inserted=%v, want %v", i, out.Inserted, want)
+		}
+	}
+}

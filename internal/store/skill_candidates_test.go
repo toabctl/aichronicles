@@ -1357,3 +1357,33 @@ func TestRecordSkillCandidate_RejectsUnknownKind(t *testing.T) {
 		}
 	}
 }
+
+// TestUpsertSkillCandidate_ReportsInsert pins the inserted flag the
+// API returns: true only for the call that created the row, false
+// for a re-record — which still merges new metadata and keeps a
+// stored kind the caller didn't resend.
+func TestUpsertSkillCandidate_ReportsInsert(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+	loID := mkProposeRow(t, s, 1_700_000_000_000)
+
+	ins, err := UpsertSkillCandidate(ctx, s.DB(), loID, "twice", 1, SkillCandidateMetadata{Kind: SkillKindPitfall})
+	if err != nil || !ins {
+		t.Fatalf("first: inserted=%v err=%v, want true", ins, err)
+	}
+	ins, err = UpsertSkillCandidate(ctx, s.DB(), loID, "twice", 1, SkillCandidateMetadata{Tags: []string{"late"}})
+	if err != nil || ins {
+		t.Fatalf("second: inserted=%v err=%v, want false", ins, err)
+	}
+	rows, err := LoadSkillCandidatesByName(ctx, s.DB(), "twice", 0)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows: %v %v", rows, err)
+	}
+	if rows[0].Kind != SkillKindPitfall {
+		t.Errorf("kind: got %q, want the stored pitfall kept", rows[0].Kind)
+	}
+	if len(rows[0].Tags) != 1 || rows[0].Tags[0] != "late" {
+		t.Errorf("tags: got %v, want the re-record's metadata merged in", rows[0].Tags)
+	}
+}
