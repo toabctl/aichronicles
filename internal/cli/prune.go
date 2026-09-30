@@ -64,7 +64,7 @@ func newPruneCmd() *cobra.Command {
 			resp, err := c.Prune(ctx, wire.PruneRequest{
 				CutoffMs:          cutoff,
 				IncludeLLMOutputs: includeLLMOuts,
-				DryRun:            !yes,
+				DryRun:            new(!yes),
 			})
 			if err != nil {
 				return fmt.Errorf("prune: %w", err)

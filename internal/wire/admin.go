@@ -2,13 +2,12 @@ package wire
 
 // ScrubRequest is the body shape for POST /v1/scrub.
 //
-// DryRun=true (the default semantics on a freshly-decoded zero
-// value) means "scan and report, do not mutate." Clients that
-// genuinely want to rewrite must send DryRun=false explicitly —
-// the endpoint never accepts an empty body as "go ahead and
-// scrub everything live."
+// DryRun is required: true means "scan and report, do not mutate",
+// false means "rewrite for real". A missing field (or an empty body)
+// is a 400 — the endpoint never infers either mode, because a bool's
+// zero value would silently pick the irreversible one.
 type ScrubRequest struct {
-	DryRun bool `json:"dry_run"`
+	DryRun *bool `json:"dry_run"`
 }
 
 // ScrubResponse mirrors store.ScrubReport on the wire.
@@ -34,15 +33,17 @@ type ScrubResponse struct {
 
 // PruneRequest is the body shape for POST /v1/prune.
 //
-// CutoffMs is the lower bound: rows whose ended_at_ms is strictly
-// less than this are pruned. Active sessions (ended_at NULL) are
-// always protected. IncludeLLMOutputs extends the prune to the
-// LLM-output cache; default behaviour preserves it because
-// summaries / reflections are expensive to regenerate.
+// CutoffMs is the upper bound: sessions whose ended_at_ms is
+// strictly less than it are pruned. It must be positive.
+// Active sessions (ended_at NULL) are always protected.
+// IncludeLLMOutputs extends the prune to the LLM-output cache;
+// default behaviour preserves it because summaries / reflections are
+// expensive to regenerate. DryRun is required, for the same reason as
+// ScrubRequest.DryRun.
 type PruneRequest struct {
 	CutoffMs          int64 `json:"cutoff_ms"`
 	IncludeLLMOutputs bool  `json:"include_llm_outputs"`
-	DryRun            bool  `json:"dry_run"`
+	DryRun            *bool `json:"dry_run"`
 }
 
 // PruneResponse mirrors store.PruneReport on the wire.
