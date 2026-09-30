@@ -271,9 +271,11 @@ func FindEpisodes(ctx context.Context, db *sql.DB, opts FindEpisodesOpts) ([]eve
 		args = append(args, opts.SinceMs)
 	}
 	if q := strings.TrimSpace(opts.QueryContains); q != "" {
-		filter.WriteString(` AND lower(intent_summary) LIKE ? ESCAPE '\'`)
-		// `%` wildcards on both sides → substring; lower() on both
-		// sides for case-insensitive match.
+		// Case-insensitive substring: unicode_lower on the column and
+		// strings.ToLower on the needle fold the same way for every
+		// script. (SQLite's lower() folds ASCII only, which made
+		// non-English intents unmatchable even with the exact case.)
+		filter.WriteString(` AND ` + unicodeLowerFunc + `(intent_summary) LIKE ? ESCAPE '\'`)
 		args = append(args, likeContains(strings.ToLower(q)))
 	}
 	args = append(args, limit, opts.Offset)
