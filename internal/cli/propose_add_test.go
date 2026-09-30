@@ -1014,3 +1014,39 @@ func TestAddSkillCandidate_RefusesTraversingNames(t *testing.T) {
 		})
 	}
 }
+
+// TestRefuseDiscardedSkillName_SeesOldDiscards is the regression gate
+// for the guard's lookup limit: it asked for limit=0, which the store
+// turns into the 20 newest rows, so a discard older than 20 later
+// re-proposals of the same name was invisible and the add went
+// through.
+func TestRefuseDiscardedSkillName_SeesOldDiscards(t *testing.T) {
+	t.Parallel()
+	s := openTempCLIStore(t)
+	ctx := t.Context()
+	const skillName = "rejected-long-ago"
+	newOutput := func(hash string) int64 {
+		t.Helper()
+		res, err := s.DB().Exec(`INSERT INTO llm_outputs(kind, model, prompt_hash, body, created_at_ms) VALUES ('propose', 'm', ?, '{}', 1)`, hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := res.LastInsertId()
+		return id
+	}
+	old := newOutput("old")
+	if err := store.RecordSkillCandidate(ctx, s.DB(), old, skillName, 1_000); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkSkillCandidateDiscarded(ctx, s.DB(), old, skillName, 2_000); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 25 {
+		if err := store.RecordSkillCandidate(ctx, s.DB(), newOutput(fmt.Sprintf("new-%d", i)), skillName, int64(10_000+i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := refuseDiscardedSkillName(ctx, apiForStore(t, s), skillName, false); err == nil {
+		t.Fatal("a discard behind 25 newer re-proposals must still block the add")
+	}
+}

@@ -641,7 +641,11 @@ func refuseDiscardedSkillName(ctx context.Context, c *apiclient.Client, candidat
 	if force {
 		return nil
 	}
-	resp, err := c.SkillCandidatesByName(ctx, candidateName, 0)
+	// Ask for every row the endpoint will return. limit=0 is NOT
+	// "all": the store turns it into its default of 20, so a discard
+	// older than the 20 newest re-proposals of this name was missed
+	// and the guard let the add through.
+	resp, err := c.SkillCandidatesByName(ctx, candidateName, wire.MaxPageLimit)
 	if err != nil {
 		// Soft-fail: a transient api error here shouldn't block the
 		// add path entirely. The on-disk dedup check already ran;
