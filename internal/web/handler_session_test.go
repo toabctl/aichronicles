@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -614,5 +615,33 @@ func TestSessionDetail_FindsSummaryBehindNewerOutputs(t *testing.T) {
 	}
 	if strings.Contains(page, "No cached summary yet") {
 		t.Errorf("page claims the session has no summary")
+	}
+}
+
+// TestSessionDetail_SaysWhenTheTimelineIsCut pins the truncation
+// notice: the page renders the session's first eventsPerSessionPage
+// events, and for longer sessions (hundreds on a real store) the end
+// of the session was simply missing, while the code comment claimed
+// it showed the most recent events.
+func TestSessionDetail_SaysWhenTheTimelineIsCut(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	var id string
+	for i := range eventsPerSessionPage + 5 {
+		id = seedSession(t, st, "sess-long", fmt.Sprintf("prompt %d", i), now.Add(time.Duration(i)*time.Second))
+	}
+	base, stop := startTestServer(t, st)
+	defer stop()
+	_, page := fetch(t, base+"/sessions/"+id)
+	want := fmt.Sprintf("Showing the first %d of %d events", eventsPerSessionPage, eventsPerSessionPage+5)
+	if !strings.Contains(page, want) {
+		t.Errorf("missing truncation notice %q", want)
+	}
+
+	short := seedSession(t, st, "sess-short", "only prompt", now)
+	_, page = fetch(t, base+"/sessions/"+short)
+	if strings.Contains(page, "Showing the first") {
+		t.Errorf("a one-event session must not show the truncation notice")
 	}
 }

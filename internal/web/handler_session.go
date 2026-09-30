@@ -385,8 +385,10 @@ func loadLatestSummary(ctx context.Context, s *Server, sessionID string) (*Sessi
 	return out, nil
 }
 
-// loadEventRows pulls the most recent `limit` events for the
-// session and renders each one for the timeline.
+// loadEventRows pulls the session's FIRST `limit` events, in
+// chronological order (the endpoint returns the head of the
+// session), and renders each one for the timeline. The template
+// compares len(Events) with EventCount to say when the tail is cut.
 func loadEventRows(ctx context.Context, s *Server, sessionID string, limit int) ([]EventRow, error) {
 	resp, err := s.api.SessionEvents(ctx, sessionID, limit, false)
 	if err != nil {
