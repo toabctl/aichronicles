@@ -3,6 +3,7 @@ package apiclient
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/toabctl/aichronicles/internal/wire"
@@ -55,7 +56,7 @@ func (c *Client) SessionsForCompletion(ctx context.Context, prefix string, limit
 // count produced.
 func (c *Client) SegmentSession(ctx context.Context, sessionID string, req wire.SegmentSessionRequest) (wire.SegmentSessionResponse, error) {
 	var out wire.SegmentSessionResponse
-	if err := c.do(ctx, http.MethodPost, "/v1/sessions/"+sessionID+"/segment", req, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/v1/sessions/"+url.PathEscape(sessionID)+"/segment", req, &out); err != nil {
 		return wire.SegmentSessionResponse{}, err
 	}
 	return out, nil
