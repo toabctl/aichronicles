@@ -124,7 +124,7 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 				SessionID:  result.SessionID,
 				IngestSeq:  result.IngestSeq,
 				Kind:       env.Kind,
-				TsServerMs: time.Now().UnixMilli(),
+				TsServerMs: result.TsServerMs,
 			})
 		}
 	}

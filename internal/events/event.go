@@ -34,11 +34,17 @@ type Event struct {
 // resumes from it. Zero on the Deduped=true path (the original
 // insert had already broadcast its own seq, and the dup is
 // suppressed).
+//
+// TsServerMs is the ts_server_ms the store wrote for the row, so a
+// live SSE frame reports the same server timestamp a later replay
+// reads back. Zero when the sink doesn't know it (Deduped, or a
+// buffered sink whose write hasn't committed).
 type Result struct {
-	EventID   string
-	SessionID string
-	IngestSeq int64
-	Deduped   bool
+	EventID    string
+	SessionID  string
+	IngestSeq  int64
+	TsServerMs int64
+	Deduped    bool
 }
 
 // Stats is the aggregate Pipeline.Run returns. Processed counts

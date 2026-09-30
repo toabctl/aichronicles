@@ -347,10 +347,10 @@ func TestHandleImport_PublishesIngestSeq(t *testing.T) {
 	for _, env := range []events.Envelope{env1, env2} {
 		select {
 		case ev := <-ch:
-			var want int64
+			var want, wantTs int64
 			if err := srv.store.DB().QueryRow(
-				`SELECT ingest_seq FROM raw_envelopes WHERE event_id = ?`, ev.EventID,
-			).Scan(&want); err != nil {
+				`SELECT ingest_seq, ts_server_ms FROM raw_envelopes WHERE event_id = ?`, ev.EventID,
+			).Scan(&want, &wantTs); err != nil {
 				t.Fatalf("lookup %s: %v", ev.EventID, err)
 			}
 			if ev.EventID != env.EventID {
@@ -358,6 +358,9 @@ func TestHandleImport_PublishesIngestSeq(t *testing.T) {
 			}
 			if ev.IngestSeq <= 0 || ev.IngestSeq != want {
 				t.Errorf("frame ingest_seq=%d, want the stored %d", ev.IngestSeq, want)
+			}
+			if ev.TsServerMs != wantTs {
+				t.Errorf("frame ts_server_ms=%d, want the stored %d", ev.TsServerMs, wantTs)
 			}
 		case <-time.After(2 * time.Second):
 			t.Fatal("no frame published for an imported event")
