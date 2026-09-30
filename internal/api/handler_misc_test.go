@@ -202,3 +202,75 @@ func TestHandleMisc_RejectsBadParams(t *testing.T) {
 		}
 	}
 }
+
+// TestLLMOutputReads_CarryCacheTokens is the regression gate for the
+// dropped prompt-cache counters: they were saved and scanned but
+// llmOutputToWire never copied them, so every read route returned a
+// row as if its cache usage had never been captured. A row written
+// without them must still read back with the fields omitted.
+func TestLLMOutputReads_CarryCacheTokens(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	save := func(hash string, write, read *int64) int64 {
+		t.Helper()
+		body := mustJSON(t, wire.SaveLLMOutputRequest{
+			Kind: "reflect", Model: "m", PromptHash: hash,
+			InputTokens: new(int64(5)), OutputTokens: new(int64(6)),
+			CacheWriteTokens: write, CacheReadTokens: read,
+			Body: "{}", CreatedAtMs: 1_760_000_000_000,
+		})
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/llm-outputs", bytesReader(body)))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("save: status=%d body=%s", rr.Code, rr.Body.String())
+		}
+		var out wire.SaveLLMOutputResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.ID
+	}
+	withCache := save("h-cache", new(int64(11)), new(int64(22)))
+	noCache := save("h-old", nil, nil)
+
+	get := func(path string, into any) {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("GET %s: status=%d body=%s", path, rr.Code, rr.Body.String())
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), into); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(route string, o wire.LLMOutput) {
+		t.Helper()
+		switch o.ID {
+		case withCache:
+			if o.CacheWriteTokens == nil || *o.CacheWriteTokens != 11 ||
+				o.CacheReadTokens == nil || *o.CacheReadTokens != 22 {
+				t.Errorf("%s: cache tokens not carried: write=%v read=%v", route, o.CacheWriteTokens, o.CacheReadTokens)
+			}
+		case noCache:
+			if o.CacheWriteTokens != nil || o.CacheReadTokens != nil {
+				t.Errorf("%s: uncaptured cache tokens must stay nil: write=%v read=%v", route, o.CacheWriteTokens, o.CacheReadTokens)
+			}
+		}
+	}
+
+	var byID wire.LLMOutput
+	get("/v1/llm-outputs/"+itoa(withCache), &byID)
+	check("by id", byID)
+	var byHash wire.LLMOutput
+	get("/v1/llm-outputs/by-hash?kind=reflect&prompt_hash=h-cache", &byHash)
+	check("by hash", byHash)
+	var list wire.LLMOutputsListResponse
+	get("/v1/llm-outputs?kind=reflect", &list)
+	if len(list.Outputs) != 2 {
+		t.Fatalf("list: got %d rows, want 2", len(list.Outputs))
+	}
+	for _, o := range list.Outputs {
+		check("list", o)
+	}
+}

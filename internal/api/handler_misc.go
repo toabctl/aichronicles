@@ -267,8 +267,12 @@ func llmOutputToWire(o store.LLMOutput) wire.LLMOutput {
 		PromptHash:   o.PromptHash,
 		InputTokens:  o.InputTokens,
 		OutputTokens: o.OutputTokens,
-		Body:         o.Body,
-		CreatedAtMs:  o.CreatedAtMs,
+
+		CacheWriteTokens: o.CacheWriteTokens,
+		CacheReadTokens:  o.CacheReadTokens,
+
+		Body:        o.Body,
+		CreatedAtMs: o.CreatedAtMs,
 	}
 }
 
