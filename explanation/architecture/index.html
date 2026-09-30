@@ -1777,8 +1777,13 @@ the two can't drift.</p>
   only when that url is also a whole line of the result's stdout.
   The record is Claude Code's own regex inference — it tags any
   command that mentions <code>gh pr create</code> — so the stdout check is what
-  separates a real creation from a mention. Sessions ingested before a new extractor existed
-  are recovered with <code>aichronicles backfill-extractions --only=&lt;kind&gt;</code>.</li>
+  separates a real creation from a mention. Sessions ingested before
+  a new extractor existed are recovered with
+  <code>aichronicles backfill-extractions --only=&lt;kind&gt;</code>. Read paths:
+  <code>GET /v1/sessions/{id}/extractions?kind=</code> lists a session's values;
+  <code>GET /v1/extractions?kind=&amp;value=</code> is the reverse — which sessions
+  produced a value (e.g. who created a PR), one row per session with
+  the first sighting's timestamp and cwd.</li>
 <li><strong><code>episodes</code> is the segmenter's output.</strong> Bounded session slices
   produced by <code>store.SegmentSession</code>, persisted via
   <code>SaveEpisodes</code>. Re-segmentable: DELETE-then-INSERT on each
