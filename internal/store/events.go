@@ -14,8 +14,12 @@ import (
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
-// ErrNoSuchSession is returned when a session-id prefix does not match
-// any row. Callers typically wrap this with a feature-specific message.
+// ErrNoSuchSession is the one "session does not exist" sentinel:
+// returned when a session-id prefix matches no row
+// (ResolveSessionIDPrefix) and when a full session id has no row in
+// `sessions` (ComputeSessionOutcome / EnsureSessionOutcome — distinct
+// from "row computed and outcome=unknown"). Callers typically wrap it
+// with a feature-specific message; match with errors.Is.
 var ErrNoSuchSession = errors.New("no such session")
 
 // ErrAmbiguousSessionPrefix is returned when a prefix matches more than
