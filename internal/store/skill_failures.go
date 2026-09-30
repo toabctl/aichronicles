@@ -19,15 +19,15 @@ type SkillFailureContext struct {
 	LoadTsMs   int64 // when the skill was loaded
 	FailTsMs   int64 // when the tool_failure landed
 	FailBody   string
-	NearbyText string // concatenated content_text from a few events around the failure
+	NearbyText string // content_text of the ≤6 events closest to the failure (±60s), chronological
 }
 
 // LoadSkillFailures returns up to `limit` (skill_load → tool_failure)
 // pairs for the named skill within `windowMs` of the load. Each
 // row carries the failure event's content + a tight window of
-// nearby content_text (the previous + next 2 events in the same
-// session) so the evolve prompt sees the failure-in-context, not
-// just an isolated error string.
+// nearby content_text (the six same-session events closest to the
+// failure, within ±60s) so the evolve prompt sees the
+// failure-in-context, not just an isolated error string.
 //
 // Same window default as the staleness detector (10 min). Single
 // query for the (load, fail) pairs; per-row follow-up for the
@@ -92,20 +92,28 @@ SELECT x.session_id,
 		return nil, err
 	}
 
-	// Per-pair: pull events ±60s around the failure ts so the LLM
-	// sees what the agent was trying to do when it failed. Cheap
-	// because idx_events_session_ts covers (session_id, ts_source_ms).
+	// Per-pair: the (up to) six events closest in time to the
+	// failure, within ±60s, in chronological order — so the LLM sees
+	// what the agent was doing just before AND just after it failed.
+	// Picking by distance matters: taking the first six from
+	// fail-60s oldest-first filled up on earlier events in a busy
+	// session and dropped the failure's aftermath (and even the
+	// failure itself). Cheap because idx_events_session_ts covers
+	// (session_id, ts_source_ms); rowid breaks equal-distance ties.
 	const nearbyQuery = `
-SELECT kind, COALESCE(content_text, '') AS content
-  FROM events
- WHERE session_id = ?
-   AND ts_source_ms BETWEEN ? - 60000 AND ? + 60000
- ORDER BY ts_source_ms ASC
- LIMIT 6`
+SELECT kind, content FROM (
+    SELECT ts_source_ms, rowid AS rid, kind, COALESCE(content_text, '') AS content
+      FROM events
+     WHERE session_id = ?
+       AND ts_source_ms BETWEEN ? - 60000 AND ? + 60000
+     ORDER BY ABS(ts_source_ms - ?) ASC, rowid ASC
+     LIMIT 6
+)
+ ORDER BY ts_source_ms ASC, rid ASC`
 
 	out := make([]SkillFailureContext, 0, len(pairs))
 	for _, p := range pairs {
-		nrows, qerr := db.QueryContext(ctx, nearbyQuery, p.sessionID, p.failTs, p.failTs)
+		nrows, qerr := db.QueryContext(ctx, nearbyQuery, p.sessionID, p.failTs, p.failTs, p.failTs)
 		if qerr != nil {
 			return nil, fmt.Errorf("query nearby for %s: %w", p.sessionID, qerr)
 		}
