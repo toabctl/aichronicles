@@ -1026,7 +1026,7 @@ rows, you're ready.</p>
 line</strong> — that puts it in your shell history. We'll stash it in your
 desktop keyring.</p>
 <h2 id="2-stash-the-key-in-your-keyring-30s">2. Stash the key in your keyring (≈30s)<a class="headerlink" href="#2-stash-the-key-in-your-keyring-30s" title="Permanent link">&para;</a></h2>
-<div class="language-fish highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>secret-tool store --label<span class="o">=</span><span class="s1">&#39;Anthropic API&#39;</span> service anthropic user default
+<div class="language-fish highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>secret-tool store --label<span class="o">=</span><span class="s1">'Anthropic API'</span> service anthropic user default
 </span></code></pre></div>
 <p><code>secret-tool</code> prompts for the value on stdin — paste your key, press
 Enter. It writes to whatever Secret-Service backend your desktop
@@ -1039,12 +1039,12 @@ store</code> line.</p>
 <h2 id="3-tell-aichronicles-how-to-fetch-the-key-30s">3. Tell aichronicles how to fetch the key (≈30s)<a class="headerlink" href="#3-tell-aichronicles-how-to-fetch-the-key-30s" title="Permanent link">&para;</a></h2>
 <p>Create the config file at <code>~/.config/aichronicles/config.toml</code>:</p>
 <div class="language-fish highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>mkdir -p -m <span class="m">0700</span> ~/.config/aichronicles
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>cat <span class="o">&gt;</span> ~/.config/aichronicles/config.toml <span class="s">&lt;&lt;&#39;EOF&#39;</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>cat <span class="o">&gt;</span> ~/.config/aichronicles/config.toml <span class="s">&lt;&lt;'EOF'</span>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="s">[llm]</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="s">provider = &quot;anthropic&quot;</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="s">provider = "anthropic"</span>
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>
 </span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="s">[llm.anthropic]</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="s">api_key_command = &quot;secret-tool lookup service anthropic user default&quot;</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="s">api_key_command = "secret-tool lookup service anthropic user default"</span>
 </span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="s">EOF</span>
 </span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>chmod <span class="m">0600</span> ~/.config/aichronicles/config.toml
 </span></code></pre></div>

@@ -1048,7 +1048,7 @@ connects.</p>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
 </span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>curl --silent --unix-socket /run/user/<span class="o">(</span>id -u<span class="o">)</span>/aichronicles/api.sock <span class="se">\</span>
 </span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>     http://unix/v1/healthz
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c"># {&quot;status&quot;:&quot;ok&quot;}</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c"># {"status":"ok"}</span>
 </span></code></pre></div>
 <h2 id="3-wire-agent-hooks-15s">3. Wire agent hooks (≈15s)<a class="headerlink" href="#3-wire-agent-hooks-15s" title="Permanent link">&para;</a></h2>
 <p>Pick the agent(s) you actually use. All three commands are
@@ -1095,7 +1095,7 @@ The columns are:
 <code>session-prefix · started_at · ended_at · event_count · cwd · first
 prompt</code>.</p>
 <p>Want to see the events themselves?</p>
-<div class="language-fish highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>aichronicles search <span class="s1">&#39;hello&#39;</span>
+<div class="language-fish highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>aichronicles search <span class="s1">'hello'</span>
 </span></code></pre></div>
 <p>This is FTS5 — query syntax follows
 <a href="https://www.sqlite.org/fts5.html#full_text_query_syntax">SQLite FTS5</a>.</p>

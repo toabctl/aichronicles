@@ -1435,7 +1435,7 @@ ignores them.</p>
 </span><span id="__span-1-46"><a id="__codelineno-1-46" name="__codelineno-1-46" href="#__codelineno-1-46"></a>        hook.go         HookTranslator
 </span><span id="__span-1-47"><a id="__codelineno-1-47" name="__codelineno-1-47" href="#__codelineno-1-47"></a>        transcript.go   TranscriptSource
 </span><span id="__span-1-48"><a id="__codelineno-1-48" name="__codelineno-1-48" href="#__codelineno-1-48"></a>      codex/
-</span><span id="__span-1-49"><a id="__codelineno-1-49" name="__codelineno-1-49" href="#__codelineno-1-49"></a>        hook.go         HookTranslator (hooks only — Codex&#39;s
+</span><span id="__span-1-49"><a id="__codelineno-1-49" name="__codelineno-1-49" href="#__codelineno-1-49"></a>        hook.go         HookTranslator (hooks only — Codex's
 </span><span id="__span-1-50"><a id="__codelineno-1-50" name="__codelineno-1-50" href="#__codelineno-1-50"></a>                        rollout files have no importer yet)
 </span><span id="__span-1-51"><a id="__codelineno-1-51" name="__codelineno-1-51" href="#__codelineno-1-51"></a>  redact/               detector library + scanner combinators
 </span><span id="__span-1-52"><a id="__codelineno-1-52" name="__codelineno-1-52" href="#__codelineno-1-52"></a>                        (no other internal/* deps)
@@ -1486,12 +1486,12 @@ ignores them.</p>
 </span><span id="__span-1-97"><a id="__codelineno-1-97" name="__codelineno-1-97" href="#__codelineno-1-97"></a>  cli/                  cobra subcommands. Reads go through
 </span><span id="__span-1-98"><a id="__codelineno-1-98" name="__codelineno-1-98" href="#__codelineno-1-98"></a>                        internal/apiclient; a handful of LLM-cache and
 </span><span id="__span-1-99"><a id="__codelineno-1-99" name="__codelineno-1-99" href="#__codelineno-1-99"></a>                        maintenance commands still open the store
-</span><span id="__span-1-100"><a id="__codelineno-1-100" name="__codelineno-1-100" href="#__codelineno-1-100"></a>                        directly (see &quot;Read-migration&quot; above).
+</span><span id="__span-1-100"><a id="__codelineno-1-100" name="__codelineno-1-100" href="#__codelineno-1-100"></a>                        directly (see "Read-migration" above).
 </span><span id="__span-1-101"><a id="__codelineno-1-101" name="__codelineno-1-101" href="#__codelineno-1-101"></a>    apiclient.go        openAPIClient(sockFlag) shared helper
 </span><span id="__span-1-102"><a id="__codelineno-1-102" name="__codelineno-1-102" href="#__codelineno-1-102"></a>    hook.go             hook subprocess body (was ingest.go);
 </span><span id="__span-1-103"><a id="__codelineno-1-103" name="__codelineno-1-103" href="#__codelineno-1-103"></a>                        translators are pure, daemon redacts
 </span><span id="__span-1-104"><a id="__codelineno-1-104" name="__codelineno-1-104" href="#__codelineno-1-104"></a>    setup*.go,          systemd + agent-hook wiring (defaultHookCommand
-</span><span id="__span-1-105"><a id="__codelineno-1-105" name="__codelineno-1-105" href="#__codelineno-1-105"></a>    teardown*.go        is &quot;aichronicles hook&quot;; teardown also removes
+</span><span id="__span-1-105"><a id="__codelineno-1-105" name="__codelineno-1-105" href="#__codelineno-1-105"></a>    teardown*.go        is "aichronicles hook"; teardown also removes
 </span><span id="__span-1-106"><a id="__codelineno-1-106" name="__codelineno-1-106" href="#__codelineno-1-106"></a>                        legacy aichronicles.{service,socket})
 </span><span id="__span-1-107"><a id="__codelineno-1-107" name="__codelineno-1-107" href="#__codelineno-1-107"></a>    import_claude.go,   bulk import paths — each builds an
 </span><span id="__span-1-108"><a id="__codelineno-1-108" name="__codelineno-1-108" href="#__codelineno-1-108"></a>    import_gemini.go,   events.Pipeline + events.Source +
@@ -1647,8 +1647,8 @@ internal/api naming clash).</p>
 </span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>internal/web         ──▶ internal/apiclient, internal/wire, internal/preview,
 </span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>                         internal/timefmt
 </span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>                         (cross-process daemon — aichronicles-web.service —
-</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>                          fronting the api UDS; the previous &quot;reads SQLite
-</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>                          directly via WAL&quot; arrow was the pre-split design)
+</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>                          fronting the api UDS; the previous "reads SQLite
+</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>                          directly via WAL" arrow was the pre-split design)
 </span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>internal/store       ──▶ internal/events, internal/wire, internal/nullable, internal/redact
 </span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>internal/llm/prompts      ──▶ internal/events, internal/llm, internal/redact, internal/wire
 </span><span id="__span-2-22"><a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>internal/llm              ──▶ internal/redact (egress scrub)
@@ -1768,10 +1768,15 @@ the two can't drift.</p>
 <li><strong><code>events</code> is the queryable projection.</strong> Typed columns extracted
   from the envelope JSON; FTS5 indexes <code>content_text</code>.</li>
 <li><strong><code>extractions</code> is the typed-fact layer.</strong> URLs, file paths,
-  shell commands, skill loads. Computed by the <code>events.ExtractorRegistry</code>
-  inside the SQLite Sink; written in the same transaction as the
-  event. Discriminated by <code>kind</code> (<code>url</code>, <code>file_path</code>,
-  <code>shell_command</code>, <code>skill_load</code>).</li>
+  shell commands, skill loads, created PRs. Computed by the
+  <code>events.ExtractorRegistry</code> inside the SQLite Sink; written in the
+  same transaction as the event. Discriminated by <code>kind</code> (<code>url</code>,
+  <code>file_path</code>, <code>shell_command</code>, <code>skill_load</code>, <code>pr_created</code>).
+  <code>pr_created</code> comes only from the structured <code>gitOperation</code> record
+  Claude Code attaches to a Bash result (<code>action: "created"</code> with a
+  <code>url</code>); it is never inferred from the generic URL pool or from
+  command output. Sessions ingested before a new extractor existed
+  are recovered with <code>aichronicles backfill-extractions --only=&lt;kind&gt;</code>.</li>
 <li><strong><code>episodes</code> is the segmenter's output.</strong> Bounded session slices
   produced by <code>store.SegmentSession</code>, persisted via
   <code>SaveEpisodes</code>. Re-segmentable: DELETE-then-INSERT on each
