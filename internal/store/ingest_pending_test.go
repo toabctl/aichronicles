@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+
+	"github.com/toabctl/aichronicles/internal/events"
 )
 
 // enqueueOne is a small helper that hides the WithTx ceremony. The
@@ -281,5 +283,35 @@ func TestEnqueueAndProcessLifecycle(t *testing.T) {
 	remaining, _ := PendingBatch(t.Context(), s.DB(), 10)
 	if len(remaining) != 2 || remaining[0].EventID != "b" || remaining[1].EventID != "c" {
 		t.Errorf("remaining backlog wrong; got %+v", remaining)
+	}
+}
+
+// TestEnqueuePending_AlreadyProcessedDedups pins the phase-1 dedup
+// against events the worker already processed (and so removed from
+// ingest_pending): the re-POST must be deduped, not queued again.
+func TestEnqueuePending_AlreadyProcessedDedups(t *testing.T) {
+	t.Parallel()
+	s := openTestStore(t)
+	env, raw := newValidEnvelope(t)
+	if _, err := NewSink(s).Write(t.Context(), events.Event{Envelope: env, Raw: raw}); err != nil {
+		t.Fatal(err)
+	}
+	var (
+		id      int64
+		deduped bool
+	)
+	if err := WithTx(t.Context(), s.DB(), func(tx *sql.Tx) error {
+		var err error
+		id, deduped, err = EnqueuePending(t.Context(), tx, env.EventID, raw, 1)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !deduped || id != 0 {
+		t.Errorf("got id=%d deduped=%v, want 0/true", id, deduped)
+	}
+	n, err := CountPending(t.Context(), s.DB())
+	if err != nil || n != 0 {
+		t.Errorf("pending rows: %d (%v), want 0", n, err)
 	}
 }
