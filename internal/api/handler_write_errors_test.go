@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -59,7 +60,7 @@ func TestWrites_RejectedInputIs400(t *testing.T) {
 	fact := func(mut func(*wire.SaveSemanticFactRequest)) wire.SaveSemanticFactRequest {
 		r := wire.SaveSemanticFactRequest{
 			SourceLLMOutputID: fx.outputID, Subject: "/work/x", Predicate: "primary_language",
-			Object: "Go", Confidence: 0.9, AssertedAtMs: 1_760_000_000_000,
+			Object: "Go", Confidence: new(0.9), AssertedAtMs: 1_760_000_000_000,
 		}
 		mut(&r)
 		return r
@@ -70,7 +71,7 @@ func TestWrites_RejectedInputIs400(t *testing.T) {
 		wantTitle  string
 	}{
 		{"fact: empty object", "/v1/facts", fact(func(r *wire.SaveSemanticFactRequest) { r.Object = "" }), "Invalid value"},
-		{"fact: confidence > 1", "/v1/facts", fact(func(r *wire.SaveSemanticFactRequest) { r.Confidence = 2 }), "Invalid value"},
+		{"fact: confidence > 1", "/v1/facts", fact(func(r *wire.SaveSemanticFactRequest) { r.Confidence = new(2.0) }), "Invalid value"},
 		{"fact: asserted_at_ms 0", "/v1/facts", fact(func(r *wire.SaveSemanticFactRequest) { r.AssertedAtMs = 0 }), "Invalid value"},
 		{"fact: unknown llm output", "/v1/facts", fact(func(r *wire.SaveSemanticFactRequest) { r.SourceLLMOutputID = 999_999 }), "Unknown reference"},
 		{"outcome: unknown session", "/v1/session-outcomes", wire.SaveSessionOutcomeRequest{SessionID: ghost, ComputedAtMs: 1, Outcome: "unknown"}, "Unknown reference"},
@@ -208,6 +209,41 @@ func TestSkillCandidateRecord_InsertedIsTruthful(t *testing.T) {
 		}
 		if out.Inserted != want {
 			t.Errorf("call %d: inserted=%v, want %v", i, out.Inserted, want)
+		}
+	}
+}
+
+// TestFactsSave_OmittedConfidenceDefaultsToOne pins the confidence
+// default: an omitted field used to decode as 0 and store a
+// zero-confidence fact, bypassing the column's DEFAULT 1.0. An
+// explicit 0 must still be stored as 0.
+func TestFactsSave_OmittedConfidenceDefaultsToOne(t *testing.T) {
+	t.Parallel()
+	fx := newWriteFixture(t)
+	for _, tc := range []struct {
+		name string
+		body string
+		want float64
+	}{
+		{"omitted", `{"source_llm_output_id":%d,"subject":"/s1","predicate":"p","object":"o","asserted_at_ms":1}`, 1.0},
+		{"explicit zero", `{"source_llm_output_id":%d,"subject":"/s2","predicate":"p","object":"o","asserted_at_ms":1,"confidence":0}`, 0},
+	} {
+		rr := httptest.NewRecorder()
+		fx.srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/facts",
+			strings.NewReader(fmt.Sprintf(tc.body, fx.outputID))))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", tc.name, rr.Code, rr.Body.String())
+		}
+		var out wire.SaveSemanticFactResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		var got float64
+		if err := fx.srv.store.DB().QueryRow(`SELECT confidence FROM semantic_facts WHERE id = ?`, out.ID).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != tc.want {
+			t.Errorf("%s: stored confidence %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }

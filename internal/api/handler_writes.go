@@ -97,6 +97,10 @@ func (s *Server) handleEpisodesSave(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, wire.SaveEpisodesResponse{Saved: n})
 }
 
+// defaultFactConfidence is what POST /v1/facts stores when the body
+// omits confidence — semantic_facts.confidence's own DEFAULT 1.0.
+const defaultFactConfidence = 1.0
+
 // handleFactsSave serves POST /v1/facts.
 func (s *Server) handleFactsSave(w http.ResponseWriter, r *http.Request) {
 	var req wire.SaveSemanticFactRequest
@@ -123,8 +127,11 @@ func (s *Server) handleFactsSave(w http.ResponseWriter, r *http.Request) {
 		Subject:           req.Subject,
 		Predicate:         req.Predicate,
 		Object:            req.Object,
-		Confidence:        req.Confidence,
+		Confidence:        defaultFactConfidence,
 		AssertedAtMs:      req.AssertedAtMs,
+	}
+	if req.Confidence != nil {
+		f.Confidence = *req.Confidence
 	}
 	f.EvidenceSessionID = req.EvidenceSessionID
 	f.EvidenceQuote = req.EvidenceQuote
