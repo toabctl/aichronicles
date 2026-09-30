@@ -47,11 +47,18 @@ type IngestPendingRow struct {
 }
 
 // EnqueuePending writes one pending row inside tx. Returns
-// (id, deduped=false, nil) on a fresh insert, or
+// (id, deduped=false, nil) on a fresh insert,
 // (existingID, deduped=true, nil) when an earlier hook had already
-// enqueued the same event_id. Phase-1 dedup means a retrying hook
-// pays for one tiny INSERT-OR-IGNORE rather than re-running the full
-// pipeline on the duplicate.
+// enqueued the same event_id, or (0, deduped=true, nil) when the
+// event was already processed into raw_envelopes. Phase-1 dedup means
+// a retrying hook pays for one tiny INSERT-OR-IGNORE rather than
+// re-running the full pipeline on the duplicate.
+//
+// The raw_envelopes check matters because the worker deletes a
+// pending row once it lands: without it, a re-POST after the drain
+// found no pending row, was re-enqueued and acked deduped=false —
+// contradicting the "re-POST returns deduped" contract — and the
+// worker then burned another ingest_seq discovering the duplicate.
 //
 // The caller supplies tx so the daemon can compose this insert with
 // any future bookkeeping (rate-limit counters, audit rows) in a
@@ -85,6 +92,22 @@ func EnqueuePending(ctx context.Context, tx *sql.Tx, eventID string, body []byte
 		id, err := res.LastInsertId()
 		if err != nil {
 			return 0, false, fmt.Errorf("enqueue pending: last insert id: %w", err)
+		}
+		// Checked AFTER the insert on purpose: the insert holds the
+		// write lock, so no worker commit can land between this read
+		// and our own commit. Reading first would open a snapshot the
+		// worker could invalidate before we write.
+		var processed bool
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM raw_envelopes WHERE event_id = ?)`, eventID,
+		).Scan(&processed); err != nil {
+			return 0, false, fmt.Errorf("enqueue pending: check processed: %w", err)
+		}
+		if processed {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM ingest_pending WHERE id = ?`, id); err != nil {
+				return 0, false, fmt.Errorf("enqueue pending: drop processed duplicate: %w", err)
+			}
+			return 0, true, nil
 		}
 		return id, false, nil
 	}

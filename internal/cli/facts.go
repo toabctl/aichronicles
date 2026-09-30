@@ -433,7 +433,7 @@ func persistInducedFacts(ctx context.Context, c *apiclient.Client, llmOutputID i
 			Subject:           f.Subject,
 			Predicate:         f.Predicate,
 			Object:            f.Object,
-			Confidence:        f.Confidence,
+			Confidence:        new(f.Confidence),
 			AssertedAtMs:      now,
 		}
 		if sessionID != "" {

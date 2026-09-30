@@ -43,15 +43,19 @@ type SaveEpisodesResponse struct {
 }
 
 // SaveSemanticFactRequest is the body for POST /v1/facts.
+//
+// Confidence is in [0, 1]; omitted (nil) means 1.0, the column's
+// default. It used to be a plain float64, so an omitted field was
+// indistinguishable from 0 and stored a zero-confidence fact.
 type SaveSemanticFactRequest struct {
-	SourceLLMOutputID int64   `json:"source_llm_output_id"`
-	Subject           string  `json:"subject"`
-	Predicate         string  `json:"predicate"`
-	Object            string  `json:"object"`
-	Confidence        float64 `json:"confidence"`
-	EvidenceSessionID *string `json:"evidence_session_id,omitempty"`
-	EvidenceQuote     *string `json:"evidence_quote,omitempty"`
-	AssertedAtMs      int64   `json:"asserted_at_ms"`
+	SourceLLMOutputID int64    `json:"source_llm_output_id"`
+	Subject           string   `json:"subject"`
+	Predicate         string   `json:"predicate"`
+	Object            string   `json:"object"`
+	Confidence        *float64 `json:"confidence,omitempty"`
+	EvidenceSessionID *string  `json:"evidence_session_id,omitempty"`
+	EvidenceQuote     *string  `json:"evidence_quote,omitempty"`
+	AssertedAtMs      int64    `json:"asserted_at_ms"`
 }
 
 // SaveSemanticFactResponse echoes the fact id (insert or upsert).
@@ -74,7 +78,12 @@ type SaveSessionOutcomeRequest struct {
 	Outcome           string  `json:"outcome"`
 }
 
-// SessionLink is the wire shape for one outgoing session link.
+// SessionLink is the wire shape for one outgoing session link, on
+// both GET and POST /v1/session-links.
+//
+// CreatedAtMs is set by the server when the link set is saved; GET
+// returns it, and POST ignores whatever the client sends (the store
+// stamps every link of a save with the same time).
 type SessionLink struct {
 	ToSessionID string `json:"to_session_id"`
 	Kind        string `json:"kind"`

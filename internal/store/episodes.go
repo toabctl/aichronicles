@@ -176,7 +176,7 @@ func clipIntentSummary(s string) string {
 // Returns the number of inserted rows.
 func SaveEpisodes(ctx context.Context, db *sql.DB, sessionID string, episodes []events.Episode) (int, error) {
 	if sessionID == "" {
-		return 0, errors.New("SaveEpisodes: session_id is required")
+		return 0, invalidf("SaveEpisodes: session_id is required")
 	}
 	if err := WithTx(ctx, db, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,

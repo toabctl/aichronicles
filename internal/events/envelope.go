@@ -105,6 +105,14 @@ func (e *ValidationError) Error() string {
 	return strings.Join(e.Issues, "; ")
 }
 
+// Envelope transports: how an event reached the daemon.
+const (
+	// TransportHook marks an event pushed live by an agent's hook.
+	TransportHook = "hook"
+	// TransportImport marks an event bulk-loaded from a transcript.
+	TransportImport = "import"
+)
+
 // ErrInvalid is returned wrapped in a ValidationError when Validate rejects
 // an envelope. Callers use errors.Is to detect bad input.
 var ErrInvalid = errors.New("invalid envelope")
@@ -143,6 +151,13 @@ func (e *Envelope) Validate() error {
 	}
 	if e.Payload == nil {
 		issues = append(issues, "payload is required (may be empty {})")
+	}
+	// transport is optional (legacy and third-party envelopes omit it),
+	// but it drives query-time dedup — hook rows win over import
+	// duplicates — so a value outside the documented enum would sit in
+	// neither class. api/openapi.yaml already declares the enum.
+	if e.Transport != "" && e.Transport != TransportHook && e.Transport != TransportImport {
+		issues = append(issues, fmt.Sprintf("transport %q must be %q or %q", e.Transport, TransportHook, TransportImport))
 	}
 
 	if len(issues) == 0 {

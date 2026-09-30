@@ -64,6 +64,20 @@ const (
 	LLMKindSkillMerge LLMOutputKind = "skill_merge"
 )
 
+// Known reports whether k is one of the kinds above. POST
+// /v1/llm-outputs accepts only these: a typo'd kind would be stored
+// and then never found by any reader, which looks exactly like a
+// cache miss that re-runs (and re-pays for) the LLM call.
+func (k LLMOutputKind) Known() bool {
+	switch k {
+	case LLMKindSummary, LLMKindReflect, LLMKindPropose, LLMKindReflectWeekly,
+		LLMKindProposeVerify, LLMKindSkillRevision, LLMKindInduction,
+		LLMKindChallenge, LLMKindFacts, LLMKindSkillMerge:
+		return true
+	}
+	return false
+}
+
 // LLMOutput is the wire shape for one llm_outputs cache row,
 // returned by /v1/llm-outputs and /v1/summaries. Maps from
 // store.LLMOutput at the handler boundary.

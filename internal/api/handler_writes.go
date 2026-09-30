@@ -1,7 +1,6 @@
 package api
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -34,6 +33,17 @@ func (s *Server) handleLLMOutputSave(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "Missing kind", "")
 		return
 	}
+	if !wire.LLMOutputKind(req.Kind).Known() {
+		writeProblem(w, http.StatusBadRequest, "Invalid kind", req.Kind)
+		return
+	}
+	// created_at_ms anchors the row in time for every reader and for
+	// prune; 0 (an omitted field) would date it to 1970, and the next
+	// `prune --include-llm-outputs` would delete it.
+	if req.CreatedAtMs <= 0 {
+		writeProblem(w, http.StatusBadRequest, "Invalid created_at_ms", "must be > 0")
+		return
+	}
 	if req.PromptHash == "" {
 		writeProblem(w, http.StatusBadRequest, "Missing prompt_hash", "")
 		return
@@ -64,7 +74,7 @@ func (s *Server) handleLLMOutputSave(w http.ResponseWriter, r *http.Request) {
 	id, inserted, err := store.SaveLLMOutput(r.Context(), tx, out)
 	if err != nil {
 		_ = tx.Rollback()
-		s.storeError(w, "SaveLLMOutput", err)
+		s.writeError(w, "SaveLLMOutput", "session_id", err)
 		return
 	}
 	if err := tx.Commit(); err != nil {
@@ -92,11 +102,15 @@ func (s *Server) handleEpisodesSave(w http.ResponseWriter, r *http.Request) {
 	}
 	n, err := store.SaveEpisodes(r.Context(), s.store.DB(), req.SessionID, eps)
 	if err != nil {
-		s.storeError(w, "SaveEpisodes", err)
+		s.writeError(w, "SaveEpisodes", "session_id and episodes[].first_event_id", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wire.SaveEpisodesResponse{Saved: n})
 }
+
+// defaultFactConfidence is what POST /v1/facts stores when the body
+// omits confidence — semantic_facts.confidence's own DEFAULT 1.0.
+const defaultFactConfidence = 1.0
 
 // handleFactsSave serves POST /v1/facts.
 func (s *Server) handleFactsSave(w http.ResponseWriter, r *http.Request) {
@@ -124,14 +138,17 @@ func (s *Server) handleFactsSave(w http.ResponseWriter, r *http.Request) {
 		Subject:           req.Subject,
 		Predicate:         req.Predicate,
 		Object:            req.Object,
-		Confidence:        req.Confidence,
+		Confidence:        defaultFactConfidence,
 		AssertedAtMs:      req.AssertedAtMs,
+	}
+	if req.Confidence != nil {
+		f.Confidence = *req.Confidence
 	}
 	f.EvidenceSessionID = req.EvidenceSessionID
 	f.EvidenceQuote = req.EvidenceQuote
 	id, err := store.SaveSemanticFact(r.Context(), s.store.DB(), f)
 	if err != nil {
-		s.storeError(w, "SaveSemanticFact", err)
+		s.writeError(w, "SaveSemanticFact", "source_llm_output_id and evidence_session_id", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wire.SaveSemanticFactResponse{ID: id})
@@ -157,14 +174,7 @@ func (s *Server) handleSessionOutcomeSave(w http.ResponseWriter, r *http.Request
 	}
 	o.LastEventKind = req.LastEventKind
 	if err := store.SaveSessionOutcome(r.Context(), s.store.DB(), o); err != nil {
-		// Distinguish "missing session" (FK violation surfaces as
-		// the readable "session does not exist" error from the
-		// store) from generic storage errors.
-		if errors.Is(err, store.ErrNoSuchSession) {
-			writeProblem(w, http.StatusBadRequest, "Session does not exist", req.SessionID)
-			return
-		}
-		s.storeError(w, "SaveSessionOutcome", err)
+		s.writeError(w, "SaveSessionOutcome", "session_id", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -216,7 +226,7 @@ func (s *Server) handleSessionLinksSave(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 	if err := store.SaveSessionLinks(r.Context(), s.store.DB(), req.FromSessionID, links); err != nil {
-		s.storeError(w, "SaveSessionLinks", err)
+		s.writeError(w, "SaveSessionLinks", "from_session_id and links[].to_session_id", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

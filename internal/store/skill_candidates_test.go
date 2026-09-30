@@ -829,13 +829,13 @@ func TestSkillCandidate_LifecycleTransitionsClearStaleFields(t *testing.T) {
 	}
 }
 
-// TestUpdateSkillCandidateKind pins the merge-target kind refresh:
+// TestUpdateSkillCandidate_Kind pins the merge-target kind refresh:
 // when the LLM-decided union flips pattern→pitfall (or the inverse),
 // the surviving candidate row's kind must follow the merged content.
 // Without this, the DB and the on-disk SKILL.md frontmatter disagree
 // on the contrastive label and any kind-branched downstream surface
 // silently misroutes the merged skill.
-func TestUpdateSkillCandidateKind(t *testing.T) {
+func TestUpdateSkillCandidate_Kind(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
 	ctx := context.Background()
@@ -857,7 +857,7 @@ func TestUpdateSkillCandidateKind(t *testing.T) {
 	}
 
 	// Flip to pitfall.
-	if err := UpdateSkillCandidateKind(ctx, s.DB(), cand.ID, SkillKindPitfall); err != nil {
+	if err := UpdateSkillCandidate(ctx, s.DB(), cand.ID, SkillCandidateUpdate{Kind: SkillKindPitfall}); err != nil {
 		t.Fatalf("update kind: %v", err)
 	}
 	got, err := LoadAddedSkillCandidate(ctx, s.DB(), "label-flips")
@@ -869,7 +869,7 @@ func TestUpdateSkillCandidateKind(t *testing.T) {
 	}
 
 	t.Run("rejects out-of-enum", func(t *testing.T) {
-		err := UpdateSkillCandidateKind(ctx, s.DB(), cand.ID, SkillKind("garbage"))
+		err := UpdateSkillCandidate(ctx, s.DB(), cand.ID, SkillCandidateUpdate{Kind: SkillKind("garbage")})
 		if err == nil {
 			t.Errorf("expected error for out-of-enum kind, got nil")
 		}
@@ -878,27 +878,52 @@ func TestUpdateSkillCandidateKind(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects empty kind", func(t *testing.T) {
-		err := UpdateSkillCandidateKind(ctx, s.DB(), cand.ID, SkillKind(""))
-		if err == nil {
-			t.Errorf("expected error for empty kind, got nil")
+	t.Run("empty update only checks existence", func(t *testing.T) {
+		if err := UpdateSkillCandidate(ctx, s.DB(), cand.ID, SkillCandidateUpdate{}); err != nil {
+			t.Errorf("existing id: %v", err)
+		}
+		if err := UpdateSkillCandidate(ctx, s.DB(), 9_999_999, SkillCandidateUpdate{}); !errors.Is(err, ErrSkillCandidateNotFound) {
+			t.Errorf("missing id: got %v, want ErrSkillCandidateNotFound", err)
+		}
+	})
+
+	t.Run("invalid kind writes nothing", func(t *testing.T) {
+		// add_path is valid, kind is not: the whole update must be
+		// refused before either column changes.
+		err := UpdateSkillCandidate(ctx, s.DB(), cand.ID, SkillCandidateUpdate{AddPath: "/p/should-not-land.md", Kind: "bogus"})
+		if !IsInvalidValue(err) {
+			t.Fatalf("got %v, want an invalid-value error", err)
+		}
+		after, err := LoadAddedSkillCandidate(ctx, s.DB(), "label-flips")
+		if err != nil || after == nil {
+			t.Fatalf("reload: %v / %v", after, err)
+		}
+		if derefStr(after.AddPath) != "/p/x.md" {
+			t.Errorf("add_path changed despite the rejected update: %q", derefStr(after.AddPath))
+		}
+	})
+
+	t.Run("body hash requires add path", func(t *testing.T) {
+		err := UpdateSkillCandidate(ctx, s.DB(), cand.ID, SkillCandidateUpdate{BodySHA256: "abc"})
+		if !IsInvalidValue(err) {
+			t.Errorf("got %v, want an invalid-value error", err)
 		}
 	})
 
 	t.Run("missing id returns ErrSkillCandidateNotFound", func(t *testing.T) {
-		err := UpdateSkillCandidateKind(ctx, s.DB(), 9_999_999, SkillKindPattern)
+		err := UpdateSkillCandidate(ctx, s.DB(), 9_999_999, SkillCandidateUpdate{Kind: SkillKindPattern})
 		if !errors.Is(err, ErrSkillCandidateNotFound) {
 			t.Errorf("expected ErrSkillCandidateNotFound, got %v", err)
 		}
 	})
 }
 
-// TestUpdateSkillCandidateAddBodyHash pins the merge-target hash
+// TestUpdateSkillCandidate_AddBodyHash pins the merge-target hash
 // refresh: after `propose merge` rewrites SKILL.md the surviving
 // added candidate must have its add_body_sha256 + add_path updated
 // to point at the new content. Without this, drift checks would
 // flag every merged file as tampered.
-func TestUpdateSkillCandidateAddBodyHash(t *testing.T) {
+func TestUpdateSkillCandidate_AddBodyHash(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
 	ctx := context.Background()
@@ -916,7 +941,7 @@ func TestUpdateSkillCandidateAddBodyHash(t *testing.T) {
 	}
 
 	const newHash = "deadbeef000000000000000000000000000000000000000000000000deadbeef"
-	if err := UpdateSkillCandidateAddBodyHash(ctx, s.DB(), cand.ID, "/p/new.md", newHash); err != nil {
+	if err := UpdateSkillCandidate(ctx, s.DB(), cand.ID, SkillCandidateUpdate{AddPath: "/p/new.md", BodySHA256: newHash}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	got, err := LoadAddedSkillCandidate(ctx, s.DB(), "to-merge")
@@ -938,7 +963,7 @@ func TestUpdateSkillCandidateAddBodyHash(t *testing.T) {
 	}
 
 	t.Run("missing id returns ErrSkillCandidateNotFound", func(t *testing.T) {
-		err := UpdateSkillCandidateAddBodyHash(ctx, s.DB(), 9_999_999, "/p/x.md", newHash)
+		err := UpdateSkillCandidate(ctx, s.DB(), 9_999_999, SkillCandidateUpdate{AddPath: "/p/x.md", BodySHA256: newHash})
 		if !errors.Is(err, ErrSkillCandidateNotFound) {
 			t.Errorf("expected ErrSkillCandidateNotFound, got %v", err)
 		}
@@ -1304,5 +1329,61 @@ func TestMergeInvariant_HandAuthoredMergeStillAllowed(t *testing.T) {
 	if err := MarkSkillCandidateMerged(ctx, s.DB(), srcLO, "fold-handcrafted",
 		0, "/p", 1_700_000_500_000); err != nil {
 		t.Fatalf("hand-authored merge should still succeed: %v", err)
+	}
+}
+
+// TestRecordSkillCandidate_RejectsUnknownKind pins the record path to
+// the same kind enum UpdateSkillCandidate enforces; nothing else (no
+// CHECK constraint) keeps an out-of-enum kind out of the table.
+func TestRecordSkillCandidate_RejectsUnknownKind(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+	loID := mkProposeRow(t, s, 1_700_000_000_000)
+	err := RecordSkillCandidateWithMetadata(ctx, s.DB(), loID, "k", 1_700_000_000_000, SkillCandidateMetadata{Kind: "bogus"})
+	if !IsInvalidValue(err) {
+		t.Fatalf("got %v, want an invalid-value error", err)
+	}
+	rows, err := LoadSkillCandidatesByName(ctx, s.DB(), "k", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("rejected record still stored %d rows", len(rows))
+	}
+	for _, k := range []SkillKind{"", SkillKindPattern, SkillKindPitfall} {
+		if err := RecordSkillCandidateWithMetadata(ctx, s.DB(), loID, "ok-"+string(k), 1_700_000_000_000, SkillCandidateMetadata{Kind: k}); err != nil {
+			t.Errorf("kind %q: %v", k, err)
+		}
+	}
+}
+
+// TestUpsertSkillCandidate_ReportsInsert pins the inserted flag the
+// API returns: true only for the call that created the row, false
+// for a re-record — which still merges new metadata and keeps a
+// stored kind the caller didn't resend.
+func TestUpsertSkillCandidate_ReportsInsert(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	ctx := context.Background()
+	loID := mkProposeRow(t, s, 1_700_000_000_000)
+
+	ins, err := UpsertSkillCandidate(ctx, s.DB(), loID, "twice", 1, SkillCandidateMetadata{Kind: SkillKindPitfall})
+	if err != nil || !ins {
+		t.Fatalf("first: inserted=%v err=%v, want true", ins, err)
+	}
+	ins, err = UpsertSkillCandidate(ctx, s.DB(), loID, "twice", 1, SkillCandidateMetadata{Tags: []string{"late"}})
+	if err != nil || ins {
+		t.Fatalf("second: inserted=%v err=%v, want false", ins, err)
+	}
+	rows, err := LoadSkillCandidatesByName(ctx, s.DB(), "twice", 0)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows: %v %v", rows, err)
+	}
+	if rows[0].Kind != SkillKindPitfall {
+		t.Errorf("kind: got %q, want the stored pitfall kept", rows[0].Kind)
+	}
+	if len(rows[0].Tags) != 1 || rows[0].Tags[0] != "late" {
+		t.Errorf("tags: got %v, want the re-record's metadata merged in", rows[0].Tags)
 	}
 }

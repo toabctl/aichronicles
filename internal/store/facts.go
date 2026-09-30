@@ -92,22 +92,22 @@ var RecommendedFactPredicates = []string{
 // already the one we wanted. The id is returned either way.
 func SaveSemanticFact(ctx context.Context, db *sql.DB, f SemanticFact) (int64, error) {
 	if f.SourceLLMOutputID <= 0 {
-		return 0, errors.New("SaveSemanticFact: source_llm_output_id is required")
+		return 0, invalidf("SaveSemanticFact: source_llm_output_id is required")
 	}
 	if f.Subject == "" {
-		return 0, errors.New("SaveSemanticFact: subject is required")
+		return 0, invalidf("SaveSemanticFact: subject is required")
 	}
 	if f.Predicate == "" {
-		return 0, errors.New("SaveSemanticFact: predicate is required")
+		return 0, invalidf("SaveSemanticFact: predicate is required")
 	}
 	if f.Object == "" {
-		return 0, errors.New("SaveSemanticFact: object is required")
+		return 0, invalidf("SaveSemanticFact: object is required")
 	}
 	if f.AssertedAtMs <= 0 {
-		return 0, errors.New("SaveSemanticFact: asserted_at_ms is required")
+		return 0, invalidf("SaveSemanticFact: asserted_at_ms is required")
 	}
 	if f.Confidence < 0 || f.Confidence > 1 {
-		return 0, fmt.Errorf("SaveSemanticFact: confidence %v out of [0,1]", f.Confidence)
+		return 0, invalidf("SaveSemanticFact: confidence %v out of [0,1]", f.Confidence)
 	}
 	// A session claimed as evidence must come with a verbatim quote
 	// from that session. The reverse is fine — a quote without a
@@ -117,7 +117,7 @@ func SaveSemanticFact(ctx context.Context, db *sql.DB, f SemanticFact) (int64, e
 	// able to grep X for the substring that proves it.
 	if f.EvidenceSessionID != nil && *f.EvidenceSessionID != "" {
 		if f.EvidenceQuote == nil || *f.EvidenceQuote == "" {
-			return 0, errors.New("SaveSemanticFact: evidence_session_id requires a non-empty evidence_quote")
+			return 0, invalidf("SaveSemanticFact: evidence_session_id requires a non-empty evidence_quote")
 		}
 	}
 

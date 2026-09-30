@@ -852,6 +852,17 @@ func LoadDistinctSourceAgents(ctx context.Context, db *sql.DB) ([]string, error)
 	return out, rows.Err()
 }
 
+// SessionExists reports whether sessionID has a row in `sessions`.
+func SessionExists(ctx context.Context, db *sql.DB, sessionID string) (bool, error) {
+	var ok bool
+	if err := db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)`, sessionID,
+	).Scan(&ok); err != nil {
+		return false, fmt.Errorf("check session %s: %w", sessionID, err)
+	}
+	return ok, nil
+}
+
 // LoadSessionDigest returns the SessionDigestRow for a single
 // session_id, or (nil, nil) if no such session exists. Same row
 // shape as LoadRecentSessionDigests — including the latest_summary

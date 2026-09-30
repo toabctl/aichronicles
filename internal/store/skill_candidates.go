@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/nullable"
@@ -243,20 +244,44 @@ func RecordSkillCandidate(ctx context.Context, db *sql.DB, llmOutputID int64, sk
 
 // RecordSkillCandidateWithMetadata is the AutoSkill-aware writer:
 // stores triggers / tags / examples / version on the row in the
-// same INSERT that creates it. INSERT OR IGNORE on the natural-key
-// UNIQUE keeps re-runs idempotent; metadata on a duplicate name
-// (rare, only happens if RecordSkillCandidate landed first then
-// metadata was filled in later) goes through DO UPDATE so the
-// row converges to the metadata-rich form.
+// same INSERT that creates it. A re-record of the same natural key
+// keeps the row idempotent; metadata on a duplicate name (rare, only
+// happens if RecordSkillCandidate landed first then metadata was
+// filled in later) is merged in so the row converges to the
+// metadata-rich form. See UpsertSkillCandidate, which also reports
+// whether a row was created.
 func RecordSkillCandidateWithMetadata(ctx context.Context, db *sql.DB, llmOutputID int64, skillName string, proposedAtMs int64, meta SkillCandidateMetadata) error {
+	_, err := UpsertSkillCandidate(ctx, db, llmOutputID, skillName, proposedAtMs, meta)
+	return err
+}
+
+// UpsertSkillCandidate is RecordSkillCandidateWithMetadata that also
+// reports whether this call created the (llm_output_id, skill_name)
+// row (inserted=true) or found it already present and merged the
+// metadata into it (inserted=false).
+//
+// Two statements in one transaction rather than one INSERT … ON
+// CONFLICT DO UPDATE: an upsert affects one row either way, so it
+// can't tell the caller which happened. INSERT … DO NOTHING's
+// RowsAffected can, and the follow-up UPDATE applies exactly the
+// merge the upsert did.
+func UpsertSkillCandidate(ctx context.Context, db *sql.DB, llmOutputID int64, skillName string, proposedAtMs int64, meta SkillCandidateMetadata) (inserted bool, err error) {
 	if llmOutputID <= 0 {
-		return errors.New("RecordSkillCandidate: llm_output_id is required")
+		return false, invalidf("RecordSkillCandidate: llm_output_id is required")
 	}
 	if skillName == "" {
-		return errors.New("RecordSkillCandidate: skill_name is required")
+		return false, invalidf("RecordSkillCandidate: skill_name is required")
 	}
 	if proposedAtMs <= 0 {
-		return errors.New("RecordSkillCandidate: proposed_at_ms is required")
+		return false, invalidf("RecordSkillCandidate: proposed_at_ms is required")
+	}
+	// No CHECK constraint guards the column (migration 024), so this
+	// is the only thing keeping an out-of-enum kind out of the store;
+	// it used to be missing here while UpdateSkillCandidate enforced
+	// it, so {"metadata":{"kind":"bogus"}} was stored verbatim.
+	if meta.Kind != "" && !validSkillKind(meta.Kind) {
+		return false, invalidf("RecordSkillCandidate: kind must be %q or %q, got %q",
+			SkillKindPattern, SkillKindPitfall, meta.Kind)
 	}
 
 	// Scrub the elements before marshalling, not the JSON afterwards:
@@ -264,15 +289,15 @@ func RecordSkillCandidateWithMetadata(ctx context.Context, db *sql.DB, llmOutput
 	// encoded form and the detector would no longer match it.
 	triggersJSON, err := marshalSkillStringList("triggers", scrubStoredList(meta.Triggers))
 	if err != nil {
-		return err
+		return false, err
 	}
 	tagsJSON, err := marshalSkillStringList("tags", scrubStoredList(meta.Tags))
 	if err != nil {
-		return err
+		return false, err
 	}
 	examplesJSON, err := marshalSkillExamples(scrubStoredExamples(meta.Examples))
 	if err != nil {
-		return err
+		return false, err
 	}
 	version := meta.Version
 	if version == "" {
@@ -280,35 +305,60 @@ func RecordSkillCandidateWithMetadata(ctx context.Context, db *sql.DB, llmOutput
 	}
 	// kindParam is NULL when the caller didn't specify a kind so the
 	// INSERT path picks up the column's DEFAULT 'pattern' and the
-	// DO UPDATE path COALESCEs to the existing row's kind. Without
-	// the NULL marker a bare RecordSkillCandidate (which always lands
-	// the meta zero-value) would clobber a previously-recorded
-	// 'pitfall' on re-run.
+	// merge path COALESCEs to the existing row's kind. Without the
+	// NULL marker a bare RecordSkillCandidate (which always lands the
+	// meta zero-value) would clobber a previously-recorded 'pitfall'
+	// on re-run.
 	var kindParam any
 	if meta.Kind != "" {
 		kindParam = string(meta.Kind)
 	}
 
-	_, err = db.ExecContext(ctx,
-		`INSERT INTO skill_candidates(
-			llm_output_id, skill_name, proposed_at_ms,
-			triggers, tags, examples, version, kind
+	err = WithTx(ctx, db, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO skill_candidates(
+				llm_output_id, skill_name, proposed_at_ms,
+				triggers, tags, examples, version, kind
+			)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'pattern'))
+			 ON CONFLICT(llm_output_id, skill_name) DO NOTHING`,
+			llmOutputID, skillName, proposedAtMs,
+			nullableJSON(triggersJSON), nullableJSON(tagsJSON),
+			nullableJSON(examplesJSON), version, kindParam,
 		)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'pattern'))
-		 ON CONFLICT(llm_output_id, skill_name) DO UPDATE SET
-		     triggers = COALESCE(excluded.triggers, skill_candidates.triggers),
-		     tags     = COALESCE(excluded.tags,     skill_candidates.tags),
-		     examples = COALESCE(excluded.examples, skill_candidates.examples),
-		     version  = COALESCE(skill_candidates.version, excluded.version),
-		     kind     = COALESCE(?, skill_candidates.kind)`,
-		llmOutputID, skillName, proposedAtMs,
-		nullableJSON(triggersJSON), nullableJSON(tagsJSON),
-		nullableJSON(examplesJSON), version, kindParam, kindParam,
-	)
+		if err != nil {
+			return fmt.Errorf("insert skill_candidates: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("insert skill_candidates: rows affected: %w", err)
+		}
+		if n == 1 {
+			inserted = true
+			return nil
+		}
+		// Already present: merge, keeping stored values where the
+		// caller sent none, and the stored version always.
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE skill_candidates SET
+			     triggers = COALESCE(?, triggers),
+			     tags     = COALESCE(?, tags),
+			     examples = COALESCE(?, examples),
+			     version  = COALESCE(version, ?),
+			     kind     = COALESCE(?, kind)
+			  WHERE llm_output_id = ? AND skill_name = ?`,
+			nullableJSON(triggersJSON), nullableJSON(tagsJSON),
+			nullableJSON(examplesJSON), version, kindParam,
+			llmOutputID, skillName,
+		); err != nil {
+			return fmt.Errorf("merge skill_candidates metadata: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("insert skill_candidates: %w", err)
+		return false, err
 	}
-	return nil
+	return inserted, nil
 }
 
 // marshalSkillStringList serialises a string slice to a JSON array,
@@ -401,7 +451,7 @@ func MarkSkillCandidateAdded(ctx context.Context, db *sql.DB, llmOutputID int64,
 // shape as a pre-migration-023 row.
 func MarkSkillCandidateAddedWithProvenance(ctx context.Context, db *sql.DB, llmOutputID int64, skillName, addPath string, decisionAtMs int64, bodySHA256 string) error {
 	if decisionAtMs <= 0 {
-		return errors.New("MarkSkillCandidateAdded: decision_at_ms is required")
+		return invalidf("MarkSkillCandidateAdded: decision_at_ms is required")
 	}
 	var hashArg any
 	if bodySHA256 != "" {
@@ -453,10 +503,10 @@ func MarkSkillCandidateAddedWithProvenance(ctx context.Context, db *sql.DB, llmO
 // a target; for hand-authored merges it's the only handle).
 func MarkSkillCandidateMerged(ctx context.Context, db *sql.DB, llmOutputID int64, skillName string, mergedIntoID int64, addPath string, decisionAtMs int64) error {
 	if decisionAtMs <= 0 {
-		return errors.New("MarkSkillCandidateMerged: decision_at_ms is required")
+		return invalidf("MarkSkillCandidateMerged: decision_at_ms is required")
 	}
 	if mergedIntoID < 0 {
-		return errors.New("MarkSkillCandidateMerged: merged_into_id must be ≥ 0 (use 0 for hand-authored merges)")
+		return invalidf("MarkSkillCandidateMerged: merged_into_id must be ≥ 0 (use 0 for hand-authored merges)")
 	}
 	var mergedArg any
 	if mergedIntoID > 0 {
@@ -495,7 +545,7 @@ func MarkSkillCandidateMerged(ctx context.Context, db *sql.DB, llmOutputID int64
 // from re-emitting the same kebab-name idea.
 func MarkSkillCandidateDiscarded(ctx context.Context, db *sql.DB, llmOutputID int64, skillName string, decisionAtMs int64) error {
 	if decisionAtMs <= 0 {
-		return errors.New("MarkSkillCandidateDiscarded: decision_at_ms is required")
+		return invalidf("MarkSkillCandidateDiscarded: decision_at_ms is required")
 	}
 	// Clear add_path / add_body_sha256 / merged_into_id on transition
 	// INTO `discard`: the user actively rejected the suggestion, so
@@ -627,76 +677,91 @@ func LoadSkillCandidatesByName(ctx context.Context, db *sql.DB, skillName string
 	return out, rows.Err()
 }
 
-// UpdateSkillCandidateAddBodyHash refreshes the add_path and
-// add_body_sha256 of an existing skill_candidates row by id.
-// Used by `propose merge`: after the merge LLM rewrites the
-// target's SKILL.md, the target row's hash must reflect the new
-// on-disk body — otherwise the next `skills verify` would flag
-// every merged skill as tampered.
-//
-// Scoped tightly: the caller has already loaded the row (typically
-// via LoadAddedSkillCandidate) and is updating only the two fields
-// that the on-disk write changes. Decision/decision_at_ms stay
-// untouched: the row remains the active "added" target.
-//
-// Returns ErrSkillCandidateNotFound when the id doesn't exist.
-func UpdateSkillCandidateAddBodyHash(ctx context.Context, db *sql.DB, candidateID int64, addPath, bodySHA256 string) error {
-	if candidateID <= 0 {
-		return errors.New("UpdateSkillCandidateAddBodyHash: candidate_id is required")
-	}
-	var hashArg any
-	if bodySHA256 != "" {
-		hashArg = bodySHA256
-	} // else nil → SQL NULL
-	res, err := db.ExecContext(ctx,
-		`UPDATE skill_candidates
-		    SET add_path        = ?,
-		        add_body_sha256 = ?
-		  WHERE id = ?`,
-		addPath, hashArg, candidateID,
-	)
-	if err != nil {
-		return fmt.Errorf("update body hash: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("rows affected: %w", err)
-	}
-	if n == 0 {
-		return fmt.Errorf("%w: id=%d", ErrSkillCandidateNotFound, candidateID)
-	}
-	return nil
+// validSkillKind reports whether k is one of the two kinds a
+// candidate may carry.
+func validSkillKind(k SkillKind) bool {
+	return k == SkillKindPattern || k == SkillKindPitfall
 }
 
-// UpdateSkillCandidateKind sets the kind column on a single
-// skill_candidates row by id. Used by `propose merge` after the
-// LLM-decided union: when a `pitfall` candidate merges into a
-// `pattern` skill (or vice-versa), the merged content is now
-// pitfall-flavoured, and the surviving target row's kind must
-// reflect that — otherwise downstream surfaces that branch on
-// kind (the SKILL.md frontmatter is one, but a future
-// pitfall-vs-pattern retrieval bias would be another) silently
-// misroute the merged skill.
+// SkillCandidateUpdate is the set of fields UpdateSkillCandidate may
+// change on one row. Empty fields are left alone.
 //
-// Out-of-enum values are rejected: the caller is expected to pass
-// SkillKindPattern or SkillKindPitfall. An empty kind is also
-// rejected (caller should compute a default before calling).
+//   - AddPath / BodySHA256 refresh where the added skill lives on
+//     disk and the fingerprint of its body. `propose merge` rewrites
+//     the target's SKILL.md, and the target row's hash must follow
+//     or the next `skills verify` flags every merged skill as
+//     tampered. BodySHA256 requires AddPath; an empty BodySHA256 with
+//     an AddPath stores NULL.
+//   - Kind (SkillKindPattern / SkillKindPitfall) follows the merged
+//     content when the LLM-decided union flips the label; otherwise
+//     the DB and the on-disk frontmatter disagree and kind-branched
+//     surfaces misroute the merged skill.
 //
-// Returns ErrSkillCandidateNotFound when the id doesn't exist.
-func UpdateSkillCandidateKind(ctx context.Context, db *sql.DB, candidateID int64, kind SkillKind) error {
+// Decision/decision_at_ms are never touched: the row stays the
+// active "added" target.
+type SkillCandidateUpdate struct {
+	AddPath    string
+	BodySHA256 string
+	Kind       SkillKind
+}
+
+// UpdateSkillCandidate applies u to the skill_candidates row with id
+// candidateID. Every field is validated before anything is written,
+// and all changes land in one UPDATE statement, so a request either
+// applies whole or not at all. (Two independent per-field updates
+// used to commit add_path and then reject an invalid kind, leaving a
+// half-applied change behind a 500.) An empty update only checks that
+// the row exists.
+//
+// Returns an ErrInvalidValue-wrapped error for invalid input and
+// ErrSkillCandidateNotFound when the id doesn't exist.
+func UpdateSkillCandidate(ctx context.Context, db *sql.DB, candidateID int64, u SkillCandidateUpdate) error {
 	if candidateID <= 0 {
-		return errors.New("UpdateSkillCandidateKind: candidate_id is required")
+		return invalidf("UpdateSkillCandidate: candidate_id is required")
 	}
-	if kind != SkillKindPattern && kind != SkillKindPitfall {
-		return fmt.Errorf("UpdateSkillCandidateKind: kind must be %q or %q, got %q",
-			SkillKindPattern, SkillKindPitfall, kind)
+	if u.BodySHA256 != "" && u.AddPath == "" {
+		return invalidf("UpdateSkillCandidate: add_path is required when body_sha256 is set")
 	}
+	if u.Kind != "" && !validSkillKind(u.Kind) {
+		return invalidf("UpdateSkillCandidate: kind must be %q or %q, got %q",
+			SkillKindPattern, SkillKindPitfall, u.Kind)
+	}
+
+	var (
+		sets []string
+		args []any
+	)
+	if u.AddPath != "" {
+		var hashArg any // nil → SQL NULL
+		if u.BodySHA256 != "" {
+			hashArg = u.BodySHA256
+		}
+		sets = append(sets, "add_path = ?", "add_body_sha256 = ?")
+		args = append(args, u.AddPath, hashArg)
+	}
+	if u.Kind != "" {
+		sets = append(sets, "kind = ?")
+		args = append(args, string(u.Kind))
+	}
+	if len(sets) == 0 {
+		var exists bool
+		if err := db.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM skill_candidates WHERE id = ?)`, candidateID,
+		).Scan(&exists); err != nil {
+			return fmt.Errorf("check skill candidate: %w", err)
+		}
+		if !exists {
+			return fmt.Errorf("%w: id=%d", ErrSkillCandidateNotFound, candidateID)
+		}
+		return nil
+	}
+
 	res, err := db.ExecContext(ctx,
-		`UPDATE skill_candidates SET kind = ? WHERE id = ?`,
-		string(kind), candidateID,
+		`UPDATE skill_candidates SET `+strings.Join(sets, ", ")+` WHERE id = ?`,
+		append(args, candidateID)...,
 	)
 	if err != nil {
-		return fmt.Errorf("update kind: %w", err)
+		return fmt.Errorf("update skill candidate: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {

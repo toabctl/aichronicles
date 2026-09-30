@@ -126,3 +126,21 @@ func TestSearchRequest_QueryFingerprint(t *testing.T) {
 		}
 	}
 }
+
+func TestLLMOutputKind_Known(t *testing.T) {
+	t.Parallel()
+	for _, k := range []LLMOutputKind{
+		LLMKindSummary, LLMKindReflect, LLMKindPropose, LLMKindReflectWeekly,
+		LLMKindProposeVerify, LLMKindSkillRevision, LLMKindInduction,
+		LLMKindChallenge, LLMKindFacts, LLMKindSkillMerge,
+	} {
+		if !k.Known() {
+			t.Errorf("%q should be known", k)
+		}
+	}
+	for _, k := range []LLMOutputKind{"", "sumary", "SUMMARY"} {
+		if k.Known() {
+			t.Errorf("%q should not be known", k)
+		}
+	}
+}

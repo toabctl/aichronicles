@@ -140,12 +140,14 @@ func TestIngest_DuplicateRetainsSingleRawEnvelope(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("first: status %d", rr.Code)
 	}
-	// Second POST with identical body. Both return 200; the
-	// ack.Deduped flag now reflects ingest_pending dedup only
-	// (catches a retry while the original is still pending).
-	// Permanent dedup is enforced at the worker level via
-	// raw_envelopes' UNIQUE(event_id) — what callers observe is
-	// that raw_envelopes still has exactly one row.
+	var seqBefore int64
+	_ = srv.store.DB().QueryRow(`SELECT next_value FROM seq WHERE name = 'ingest_seq'`).Scan(&seqBefore)
+
+	// Second POST with identical body, after the first was already
+	// processed. It must be acked deduped (the documented re-POST
+	// contract), leave nothing queued, and burn no ingest_seq. It
+	// used to be re-enqueued and acked deduped=false, because the
+	// enqueue dedup only saw ingest_pending, which the worker empties.
 	rr = httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr,
 		httptest.NewRequest(http.MethodPost, "/v1/ingest", bytes.NewReader(body)))
@@ -157,10 +159,26 @@ func TestIngest_DuplicateRetainsSingleRawEnvelope(t *testing.T) {
 		t.Fatalf("decode ack: %v", err)
 	}
 
-	var rawCount int
+	if !ack.Deduped {
+		t.Errorf("re-POST of a processed event: ack.deduped=false, want true")
+	}
+
+	var rawCount, pending int
+	var seqAfter int64
 	_ = srv.store.DB().QueryRow(`SELECT COUNT(*) FROM raw_envelopes`).Scan(&rawCount)
+	_ = srv.store.DB().QueryRow(`SELECT COUNT(*) FROM ingest_pending`).Scan(&pending)
+	_ = srv.store.DB().QueryRow(`SELECT next_value FROM seq WHERE name = 'ingest_seq'`).Scan(&seqAfter)
 	if rawCount != 1 {
 		t.Errorf("raw_envelopes: got %d, want 1", rawCount)
+	}
+	if pending != 0 {
+		t.Errorf("ingest_pending: got %d rows, want the duplicate not queued", pending)
+	}
+	if seqAfter != seqBefore {
+		t.Errorf("ingest_seq advanced %d → %d for a duplicate", seqBefore, seqAfter)
+	}
+	if depth := srv.pendingDepth.Load(); depth != 0 {
+		t.Errorf("pendingDepth: got %d, want 0", depth)
 	}
 }
 
