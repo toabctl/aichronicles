@@ -192,14 +192,34 @@ func TestHandlePrune_RequiresBody(t *testing.T) {
 	}
 }
 
-func TestHandlePrune_RejectsZeroCutoff(t *testing.T) {
+// TestHandlePrune_RejectsCutoffOutsideNow pins both "prune every
+// ended session" extremes: a non-positive cutoff and one in the
+// future. A cutoff just below now (what the CLI sends) is accepted.
+func TestHandlePrune_RejectsCutoffOutsideNow(t *testing.T) {
 	t.Parallel()
-	srv := newTestServer(t)
-	body := mustJSON(t, wire.PruneRequest{CutoffMs: 0, DryRun: new(true)})
-	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/prune", bytesReader(body)))
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("status=%d, want 400 (cutoff_ms=0 must be refused)", rr.Code)
+	now := time.Now().UnixMilli()
+	cases := []struct {
+		name   string
+		cutoff int64
+		want   int
+	}{
+		{"zero", 0, http.StatusBadRequest},
+		{"negative", -1, http.StatusBadRequest},
+		{"one hour ahead", now + int64(time.Hour/time.Millisecond), http.StatusBadRequest},
+		{"far future", 99_999_999_999_999, http.StatusBadRequest},
+		{"just before now", now - 1, http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := newTestServer(t)
+			body := mustJSON(t, wire.PruneRequest{CutoffMs: tc.cutoff, DryRun: new(true)})
+			rr := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/prune", bytesReader(body)))
+			if rr.Code != tc.want {
+				t.Errorf("cutoff_ms=%d: status=%d body=%s, want %d", tc.cutoff, rr.Code, rr.Body.String(), tc.want)
+			}
+		})
 	}
 }
 

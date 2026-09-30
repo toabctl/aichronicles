@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -62,7 +63,7 @@ func (s *Server) handleScrub(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePrune serves POST /v1/prune. Body: wire.PruneRequest, with
-// dry_run required and cutoff_ms > 0. Response:
+// dry_run required and cutoff_ms in (0, now]. Response:
 // wire.PruneResponse.
 func (s *Server) handlePrune(w http.ResponseWriter, r *http.Request) {
 	clearWriteDeadlineForLongOp(w)
@@ -76,6 +77,15 @@ func (s *Server) handlePrune(w http.ResponseWriter, r *http.Request) {
 	if req.CutoffMs <= 0 {
 		writeProblem(w, http.StatusBadRequest, "Invalid cutoff_ms",
 			"must be > 0; the api will not delete with cutoff_ms=0 (would prune everything)")
+		return
+	}
+	// A cutoff past "now" matches every ended session just as
+	// cutoff_ms=0 would from the other side; refuse it the same way.
+	// The client computes its cutoff before this line runs, on the same
+	// host clock, so an honest "now minus a window" is never rejected.
+	if nowMs := time.Now().UnixMilli(); req.CutoffMs > nowMs {
+		writeProblem(w, http.StatusBadRequest, "Invalid cutoff_ms",
+			fmt.Sprintf("must not be in the future (cutoff_ms=%d, now=%d); it would prune every ended session", req.CutoffMs, nowMs))
 		return
 	}
 	report, err := store.Prune(r.Context(), s.store.DB(), store.PruneOptions{

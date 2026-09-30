@@ -34,7 +34,8 @@ type ScrubResponse struct {
 // PruneRequest is the body shape for POST /v1/prune.
 //
 // CutoffMs is the upper bound: sessions whose ended_at_ms is
-// strictly less than it are pruned. It must be positive.
+// strictly less than it are pruned. It must be positive and not in
+// the future — either extreme would prune every ended session.
 // Active sessions (ended_at NULL) are always protected.
 // IncludeLLMOutputs extends the prune to the LLM-output cache;
 // default behaviour preserves it because summaries / reflections are
