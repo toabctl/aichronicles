@@ -627,14 +627,7 @@ func searchEventsAPIHandler(c *apiclient.Client) ToolHandler {
 			Order: wire.SearchOrderRecency,
 		})
 		if err != nil {
-			if errors.Is(err, apiclient.ErrSocketUnavailable) {
-				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
-			}
-			var herr *apiclient.HTTPError
-			if errors.As(err, &herr) && herr.Status == 400 {
-				return TextError("search_events: %s", herr.Problem.Detail), nil
-			}
-			return nil, &Error{Code: InternalError, Message: "search_events: query: " + err.Error()}
+			return mapAPIError("search_events", err)
 		}
 
 		// search_events historically returned "no events for
@@ -792,10 +785,7 @@ func getSummaryAPIHandler(c *apiclient.Client) ToolHandler {
 			if errors.Is(err, apiclient.ErrConflict) {
 				return TextError("get_summary: prefix %q is ambiguous", req.SessionID), nil
 			}
-			if errors.Is(err, apiclient.ErrSocketUnavailable) {
-				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
-			}
-			return nil, &Error{Code: InternalError, Message: "get_summary: resolve: " + err.Error()}
+			return mapAPIError("get_summary", err)
 		}
 
 		outs, err := c.SessionLLMOutputs(ctx, full, kind, 1)

@@ -1272,3 +1272,16 @@ func TestListWorkflows_FindsAMatchBehindNewerRows(t *testing.T) {
 		t.Errorf("project context workflows section missed the only workflow:\n%s", ctxBody)
 	}
 }
+
+// TestGetSummary_BadPrefixIsAToolError: a non-hex prefix is the
+// agent's mistake; it used to come back as a JSON-RPC internal error.
+func TestGetSummary_BadPrefixIsAToolError(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
+	registerAllTools(t, s, st)
+	res := callTool(t, s, "get_summary", `{"session_id":"not-hex!"}`)
+	if res == nil || !res.IsError || !strings.Contains(res.Content[0].Text, "Invalid prefix") {
+		t.Errorf("want a tool error naming the invalid prefix, got %+v", res)
+	}
+}

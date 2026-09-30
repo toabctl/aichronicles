@@ -3,9 +3,14 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 // TestRegisterTool_PanicsOnDuplicate pins the invariant that the
@@ -37,4 +42,39 @@ func TestRegisterTool_PanicsOnDuplicate(t *testing.T) {
 		}
 	}()
 	s.RegisterTool(Tool{Name: "echo", Handler: noopHandler})
+}
+
+// TestMapAPIError_ClassifiesByStatus pins which api failures reach the
+// agent as a tool error (fix your arguments) versus a protocol error
+// (the server failed). 4xx used to be protocol errors, so a typo'd id
+// looked like an internal failure.
+func TestMapAPIError_ClassifiesByStatus(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		err      error
+		wantTool string // substring of the tool error text; "" = protocol error
+	}{
+		{"not found", &apiclient.HTTPError{Status: 404, Problem: wire.Problem{Title: "Session not found", Detail: "abcd"}}, "list_sessions: Session not found: abcd"},
+		{"bad request, no detail", &apiclient.HTTPError{Status: 400, Problem: wire.Problem{Title: "Invalid prefix"}}, "list_sessions: Invalid prefix"},
+		{"conflict", &apiclient.HTTPError{Status: 409, Problem: wire.Problem{Title: "Ambiguous prefix", Detail: "2 matches"}}, "Ambiguous prefix: 2 matches"},
+		{"socket down", fmt.Errorf("dial: %w", apiclient.ErrSocketUnavailable), "unreachable"},
+		{"server error", &apiclient.HTTPError{Status: 500, Problem: wire.Problem{Title: "Storage error"}}, ""},
+		{"transport", errors.New("connection reset"), ""},
+	}
+	for _, tc := range cases {
+		res, perr := mapAPIError("list_sessions", tc.err)
+		if tc.wantTool == "" {
+			if perr == nil || res != nil {
+				t.Errorf("%s: want a protocol error, got res=%+v err=%+v", tc.name, res, perr)
+			}
+			continue
+		}
+		if perr != nil || res == nil || !res.IsError || !strings.Contains(res.Content[0].Text, tc.wantTool) {
+			t.Errorf("%s: want tool error containing %q, got res=%+v err=%+v", tc.name, tc.wantTool, res, perr)
+		}
+	}
+	if res, perr := mapAPIError("x", nil); res != nil || perr != nil {
+		t.Errorf("nil error must map to (nil, nil)")
+	}
 }
