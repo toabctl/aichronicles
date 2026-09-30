@@ -301,3 +301,29 @@ func TestHandleIngestStats_ReflectsBacklog(t *testing.T) {
 		t.Errorf("OldestAgeMs: got %d, want >0 (now − received_at_ms=1000)", out.OldestAgeMs)
 	}
 }
+
+// TestHandlePrune_ReportsDeadLettered pins the dead-letter count on
+// the wire: store.Prune computed it, but PruneResponse had no field,
+// so an operator could not see those rows being deleted.
+func TestHandlePrune_ReportsDeadLettered(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	if _, err := srv.store.DB().Exec(
+		`INSERT INTO ingest_dead_letter(event_id, received_at_ms, dead_lettered_at_ms, attempt_count)
+		 VALUES ('e1', 10, 20, 5)`); err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	body := mustJSON(t, wire.PruneRequest{CutoffMs: 1000, DryRun: new(true)})
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/prune", bytesReader(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var out wire.PruneResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.DeadLettered != 1 {
+		t.Errorf("dead_lettered: got %d, want 1 (%s)", out.DeadLettered, rr.Body.String())
+	}
+}

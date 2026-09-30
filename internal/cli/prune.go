@@ -102,6 +102,9 @@ func formatPruneResponse(r wire.PruneResponse, window time.Duration) string {
 	if r.LLMOutputs > 0 {
 		fmt.Fprintf(&b, "  llm_outputs:    %d  (--include-llm-outputs)\n", r.LLMOutputs)
 	}
+	if r.DeadLettered > 0 {
+		fmt.Fprintf(&b, "  dead_lettered:  %d  (retired ingest rows)\n", r.DeadLettered)
+	}
 	if !r.DryRun {
 		fmt.Fprintln(&b, "Run `aichronicles vacuum` to reclaim freelist pages on disk.")
 	}

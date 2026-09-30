@@ -49,11 +49,14 @@ type PruneRequest struct {
 
 // PruneResponse mirrors store.PruneReport on the wire.
 type PruneResponse struct {
-	Sessions     int   `json:"sessions"`
-	RawEnvelopes int   `json:"raw_envelopes"`
-	Events       int   `json:"events"`
-	Extractions  int   `json:"extractions"`
-	LLMOutputs   int   `json:"llm_outputs"`
+	Sessions     int `json:"sessions"`
+	RawEnvelopes int `json:"raw_envelopes"`
+	Events       int `json:"events"`
+	Extractions  int `json:"extractions"`
+	LLMOutputs   int `json:"llm_outputs"`
+	// DeadLettered counts retired ingest_dead_letter rows dropped on
+	// the same cutoff (always pruned; the payloads are already gone).
+	DeadLettered int   `json:"dead_lettered"`
 	DryRun       bool  `json:"dry_run"`
 	CutoffMs     int64 `json:"cutoff_ms"`
 }

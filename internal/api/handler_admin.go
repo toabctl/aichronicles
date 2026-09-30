@@ -104,6 +104,7 @@ func (s *Server) handlePrune(w http.ResponseWriter, r *http.Request) {
 		Events:       report.Events,
 		Extractions:  report.Extractions,
 		LLMOutputs:   report.LLMOutputs,
+		DeadLettered: report.DeadLettered,
 		DryRun:       report.DryRun,
 		CutoffMs:     report.CutoffMs,
 	})
