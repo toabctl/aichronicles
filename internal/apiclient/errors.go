@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"syscall"
 
 	"github.com/toabctl/aichronicles/internal/wire"
@@ -43,6 +44,14 @@ var (
 	// ErrAmbiguousSessionPrefix is wrapped by ResolveSession when the
 	// prefix matches several sessions. It also matches ErrConflict.
 	ErrAmbiguousSessionPrefix = errors.New("apiclient: session prefix is ambiguous")
+
+	// ErrUnsupportedEndpoint means the daemon's router does not serve
+	// the route at all: a 404/405 without a problem+json body, which
+	// the api never writes itself. In practice the CLI and the daemon
+	// are different versions. Deliberately NOT ErrNotFound — callers
+	// that treat "not found" as a normal outcome (a cache miss, an
+	// absent row) must not take that branch for a missing endpoint.
+	ErrUnsupportedEndpoint = errors.New("apiclient: the daemon does not serve this endpoint (version mismatch?)")
 )
 
 // HTTPError carries the structured detail of a non-2xx response so
@@ -78,6 +87,16 @@ func decodeProblem(resp *http.Response) error {
 	herr := &HTTPError{
 		Status:   resp.StatusCode,
 		sentinel: sentinelForStatus(resp.StatusCode),
+	}
+	// Every 404 the api writes is problem+json; a bare one comes from
+	// the router (unknown path, or 405 for a known path with another
+	// method). Mapping it to ErrNotFound made a version-skewed daemon
+	// look like "row not found" to callers that treat that as a normal
+	// outcome — e.g. a cache miss that re-runs (and re-pays for) an
+	// LLM call.
+	isProblem := strings.HasPrefix(resp.Header.Get("Content-Type"), "application/problem+json")
+	if !isProblem && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) {
+		herr.sentinel = ErrUnsupportedEndpoint
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err == nil && len(body) > 0 {

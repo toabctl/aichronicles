@@ -40,6 +40,10 @@ func TestHintForError(t *testing.T) {
 			err:          fmt.Errorf("openai: %w (expected in OPENAI_API_KEY)", llm.ErrNoAPIKey),
 			wantContains: "api_key_command",
 		},
+		"unknown endpoint points at a version mismatch": {
+			err:          fmt.Errorf("reflect: %w", apiclient.ErrUnsupportedEndpoint),
+			wantContains: "different versions",
+		},
 		"daemon socket missing points at setup": {
 			err:          fmt.Errorf("post to aichronicles-api: %w", apiclient.ErrSocketUnavailable),
 			wantContains: "systemctl --user",

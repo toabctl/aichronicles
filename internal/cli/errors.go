@@ -37,6 +37,9 @@ func hintForError(err error) string {
 	if errors.Is(err, llm.ErrNoAPIKey) {
 		return "hint: export ANTHROPIC_API_KEY / OPENAI_API_KEY, or set [llm.<provider>].api_key_command in `~/.config/aichronicles/config.toml` (chmod 600)."
 	}
+	if errors.Is(err, apiclient.ErrUnsupportedEndpoint) {
+		return "hint: the CLI and aichronicles-api are different versions; install the matching binaries and restart the daemon (`systemctl --user restart aichronicles-api.service`)."
+	}
 	if errors.Is(err, apiclient.ErrSocketUnavailable) {
 		return "hint: check `systemctl --user status aichronicles-api.service` and `aichronicles setup systemd` to (re)install the units."
 	}
