@@ -593,3 +593,20 @@ func TestSessionDigest_SameShapeOnEveryRoute(t *testing.T) {
 		}
 	}
 }
+
+// TestHandleSessionsResolve_QueryFailureIs500 is the regression gate
+// for the resolve handler's catch-all: every error without a
+// not-found/ambiguous sentinel was answered 400 "Invalid prefix", so a
+// database failure blamed the caller's input and was never logged.
+func TestHandleSessionsResolve_QueryFailureIs500(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	if err := srv.store.DB().Close(); err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/sessions/resolve?prefix=abcd", nil))
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("status=%d body=%s, want 500 for a failed lookup", rr.Code, rr.Body.String())
+	}
+}

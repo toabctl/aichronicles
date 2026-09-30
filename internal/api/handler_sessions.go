@@ -139,10 +139,12 @@ func (s *Server) handleSessionsGet(w http.ResponseWriter, r *http.Request) {
 
 // handleSessionsResolve serves GET /v1/sessions/resolve?prefix=...
 //
-// Resolves an 8-or-more-character hex prefix to a full session_id.
-// Returns 404 when no session matches and 409 when the prefix is
-// ambiguous (multiple matches). MCP tools and CLIs that accept
-// short prefixes use this to convert them to canonical ids.
+// Resolves a hex session-id prefix (any length; a full id works too)
+// to a full session_id. Returns 400 when the prefix isn't hex +
+// hyphens, 404 when no session matches, 409 when the prefix is
+// ambiguous (multiple matches), and 500 when the lookup itself fails.
+// MCP tools and CLIs that accept short prefixes use this to convert
+// them to canonical ids.
 func (s *Server) handleSessionsResolve(w http.ResponseWriter, r *http.Request) {
 	prefix := r.URL.Query().Get("prefix")
 	if prefix == "" {
@@ -157,11 +159,13 @@ func (s *Server) handleSessionsResolve(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, http.StatusNotFound, "Session not found", prefix)
 		case errors.Is(err, store.ErrAmbiguousSessionPrefix):
 			writeProblem(w, http.StatusConflict, "Ambiguous prefix", err.Error())
-		default:
-			// Validation errors (non-hex chars) come back as
-			// plain errors with no sentinel — treat as 400 since
-			// the caller's input is to blame.
+		case errors.Is(err, store.ErrInvalidSessionPrefix):
 			writeProblem(w, http.StatusBadRequest, "Invalid prefix", err.Error())
+		default:
+			// A query failure (locked DB, cancelled context, …). It
+			// used to fall into the 400 branch above, blaming the
+			// caller's input for a server fault and never logging it.
+			s.storeError(w, "ResolveSessionIDPrefix", err)
 		}
 		return
 	}

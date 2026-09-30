@@ -27,6 +27,12 @@ var ErrNoSuchSession = errors.New("no such session")
 // the user can disambiguate without shelling into sqlite.
 var ErrAmbiguousSessionPrefix = errors.New("ambiguous session prefix")
 
+// ErrInvalidSessionPrefix is returned by ResolveSessionIDPrefix when
+// the input can't be a session id prefix at all (empty, or not
+// lowercase-able hex + hyphens) — the caller's input is at fault, as
+// opposed to a query failure.
+var ErrInvalidSessionPrefix = errors.New("invalid session id prefix")
+
 // ambiguityListLimit caps how many candidates we list on an ambiguous
 // prefix. Enough to recognise which one you meant, not so many that a
 // "0" prefix spams the terminal.
@@ -37,21 +43,23 @@ const ambiguityListLimit = 5
 // single full session id in the store. A full UUID also works: the
 // LIKE match is trivially satisfied.
 //
-// Returns ErrNoSuchSession if no row matches, or
+// Returns ErrNoSuchSession if no row matches,
 // ErrAmbiguousSessionPrefix (wrapped with up to ambiguityListLimit
-// matching ids) if the prefix is under-specified. The input must be
+// matching ids) if the prefix is under-specified, or
+// ErrInvalidSessionPrefix for input that can't be a prefix; any other
+// error is a query failure. The input must be
 // lowercase hex + hyphens to keep SQLite's LIKE wildcards out of the
 // query — session ids are UUID strings so this is always true for
 // legitimate input.
 func ResolveSessionIDPrefix(ctx context.Context, db *sql.DB, prefix string) (string, error) {
 	if prefix == "" {
-		return "", errors.New("session id is required")
+		return "", fmt.Errorf("%w: session id is required", ErrInvalidSessionPrefix)
 	}
 	prefix = strings.ToLower(prefix)
 	for _, r := range prefix {
 		isHex := (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')
 		if !isHex && r != '-' {
-			return "", fmt.Errorf("session id must be hex or hyphens, got %q", prefix)
+			return "", fmt.Errorf("%w: must be hex or hyphens, got %q", ErrInvalidSessionPrefix, prefix)
 		}
 	}
 

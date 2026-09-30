@@ -386,8 +386,8 @@ func TestResolveSessionIDPrefix_RejectsNonHexInput(t *testing.T) {
 	// the input validator is the defense.
 	cases := []string{"1a%febea", "1a_febea", "1a;febea", ""}
 	for _, c := range cases {
-		if _, err := ResolveSessionIDPrefix(t.Context(), s.DB(), c); err == nil {
-			t.Errorf("expected error for input %q", c)
+		if _, err := ResolveSessionIDPrefix(t.Context(), s.DB(), c); !errors.Is(err, ErrInvalidSessionPrefix) {
+			t.Errorf("input %q: got %v, want ErrInvalidSessionPrefix", c, err)
 		}
 	}
 }
