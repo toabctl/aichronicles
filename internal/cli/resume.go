@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/resumecmd"
 	"github.com/toabctl/aichronicles/internal/wire"
@@ -53,6 +54,8 @@ func newResumeCmd() *cobra.Command {
 			"behavior when stdin is not a terminal, so it composes with\n" +
 			"pipes). Sessions whose agent we can't model are omitted —\n" +
 			"resume only lists what it can actually relaunch.\n\n" +
+			"Pull requests a session created (recorded from Claude Code's\n" +
+			"gitOperation data) are listed under its entry.\n\n" +
 			"By default only sessions active in the last 6 weeks are\n" +
 			"considered; widen or disable the window with --since (e.g.\n" +
 			"--since 90d, or --since 0 for no limit).\n\n" +
@@ -116,10 +119,13 @@ type resumePicker func(cands []resumeCandidate, in io.Reader, out io.Writer) (in
 // its resolved resume invocation (for launch / print). tail holds the
 // trailing conversation messages shown on the interactive preview card;
 // nil in non-interactive paths (we don't fetch what we won't render).
+// prs holds the URLs of pull requests the session created, oldest
+// first — shown on both the preview card and the printed commands.
 type resumeCandidate struct {
 	digest wire.SessionDigest
 	spec   resumecmd.Spec
 	tail   []wire.SessionEvent
+	prs    []string
 }
 
 // RunResume searches for sessions matching opts.Query, lists the
@@ -211,6 +217,10 @@ func RunResume(
 		return err
 	}
 
+	for i := range cands {
+		cands[i].prs = createdPRs(ctx, c, cands[i].digest.ID)
+	}
+
 	// Launch only when we have a terminal to prompt on and --print
 	// wasn't requested; otherwise show the table + commands and stop.
 	if opts.Print || !opts.Interactive {
@@ -278,12 +288,33 @@ func renderResumeTable(out io.Writer, cands []resumeCandidate) error {
 	return err
 }
 
+// createdPRs returns the URLs of pull requests the session created
+// (pr_created extractions), oldest first. Best-effort like the tail
+// preview: a failed lookup yields no PR lines, never a failed resume.
+func createdPRs(ctx context.Context, c *apiclient.Client, sessionID string) []string {
+	resp, err := c.SessionExtractions(ctx, sessionID, events.ExtractionKindPRCreated)
+	if err != nil || len(resp.Extractions) == 0 {
+		return nil
+	}
+	prs := make([]string, len(resp.Extractions))
+	for i, x := range resp.Extractions {
+		prs[i] = x.Value
+	}
+	return prs
+}
+
 // printResumeCommands emits one copy-pasteable resume one-liner per
-// candidate, numbered to match the table above it.
+// candidate, numbered to match the table above it, each followed by
+// the PRs that session created.
 func printResumeCommands(out io.Writer, cands []resumeCandidate) error {
 	for i, c := range cands {
 		if _, err := fmt.Fprintf(out, "  [%d] %s\n", i+1, c.spec.Shell()); err != nil {
 			return err
+		}
+		for _, pr := range c.prs {
+			if _, err := fmt.Fprintf(out, "      PR %s\n", pr); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

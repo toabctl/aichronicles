@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -315,5 +316,84 @@ func TestResumeBoxContentWidth_AccountsForPadding(t *testing.T) {
 		if got := resumeBoxContentWidth(tc.box); got != tc.want {
 			t.Errorf("resumeBoxContentWidth(%d) = %d, want %d", tc.box, got, tc.want)
 		}
+	}
+}
+
+func TestResumePRLines(t *testing.T) {
+	t.Parallel()
+	pr := func(n int) string { return fmt.Sprintf("https://github.com/acme/widgets/pull/%d", n) }
+	tests := []struct {
+		name string
+		prs  []string
+		want []string
+	}{
+		{"none", nil, nil},
+		{"one", []string{pr(1)}, []string{"PR " + pr(1)}},
+		{"at cap", []string{pr(1), pr(2), pr(3)}, []string{"PR " + pr(1), "PR " + pr(2), "PR " + pr(3)}},
+		{
+			"over cap keeps most recent",
+			[]string{pr(1), pr(2), pr(3), pr(4), pr(5)},
+			[]string{"PR (+3 earlier)", "PR " + pr(4), "PR " + pr(5)},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := resumePRLines(tt.prs); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRenderResumePreviewPane_PRLinesComeOutOfBodyBudget pins that PR
+// lines don't grow the pane: View budgets for three fixed header lines
+// (cwd, when, blank), so the extra PR lines must be taken from the
+// body. One-line messages keep the fill granularity fine enough that a
+// missing subtraction overflows at some budget in the range.
+func TestRenderResumePreviewPane_PRLinesComeOutOfBodyBudget(t *testing.T) {
+	t.Parallel()
+	tail := make([]wire.SessionEvent, 0, 30)
+	for i := 0; i < 30; i++ {
+		tail = append(tail, msg(events.KindUserPrompt, "short"))
+	}
+	c := tuiCand("aaaa-1", "/w/a", "pa", tail)
+	for n := 1; n <= 5; n++ {
+		c.prs = append(c.prs, fmt.Sprintf("https://github.com/acme/widgets/pull/%d", n))
+	}
+	for maxBody := 10; maxBody <= 40; maxBody++ {
+		pane := renderResumePreviewPane(c, 80, maxBody)
+		if got, limit := len(strings.Split(pane, "\n")), 3+maxBody; got > limit {
+			t.Errorf("maxBody=%d: pane is %d lines, over the %d-line budget", maxBody, got, limit)
+		}
+	}
+}
+
+func TestResumeModel_ViewShowsCreatedPRs(t *testing.T) {
+	t.Parallel()
+	const prURL = "https://github.com/acme/widgets/pull/7"
+	withPR := tuiCand("aaaaaaaa-1", "/work/alpha", "open alpha", []wire.SessionEvent{
+		msg(events.KindUserPrompt, "open the pr"),
+	})
+	withPR.prs = []string{prURL}
+	noTail := tuiCand("bbbbbbbb-2", "/work/beta", "open beta", nil)
+	noTail.prs = []string{prURL}
+
+	for _, tc := range []struct {
+		name string
+		cand resumeCandidate
+	}{
+		{"with tail", withPR},
+		{"without tail", noTail},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			next, _ := newResumeModel([]resumeCandidate{tc.cand}).Update(
+				tea.WindowSizeMsg{Width: 160, Height: 40})
+			view := next.(resumeModel).View()
+			if !strings.Contains(view, "PR "+prURL) {
+				t.Errorf("view missing PR line:\n%s", view)
+			}
+		})
 	}
 }

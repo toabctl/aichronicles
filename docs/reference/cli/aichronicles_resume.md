@@ -20,6 +20,9 @@ behavior when stdin is not a terminal, so it composes with
 pipes). Sessions whose agent we can't model are omitted —
 resume only lists what it can actually relaunch.
 
+Pull requests a session created (recorded from Claude Code's
+gitOperation data) are listed under its entry.
+
 By default only sessions active in the last 6 weeks are
 considered; widen or disable the window with --since (e.g.
 --since 90d, or --since 0 for no limit).
