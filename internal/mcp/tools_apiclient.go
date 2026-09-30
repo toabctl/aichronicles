@@ -278,10 +278,9 @@ func getSkillStalenessAPIHandler(c *apiclient.Client) ToolHandler {
 				return nil, e
 			}
 		}
-		windowMs := int64(req.WindowMinutes) * 60 * 1000
-		if windowMs <= 0 {
-			windowMs = 10 * 60 * 1000
-		}
+		// Clamp to the schema's declared bounds: the schema told the
+		// agent "maximum 240" but a larger value went straight through.
+		windowMs := int64(clampLimit(req.WindowMinutes, 10, 240)) * 60 * 1000
 		sinceMs, days := timefmt.SinceMsFromDays(req.SinceDays, 14, 365, time.Now())
 
 		resp, err := c.SkillStaleness(ctx, wire.SkillStalenessRequest{
@@ -345,10 +344,13 @@ func getInsightsAPIHandler(c *apiclient.Client) ToolHandler {
 		}
 		sinceMs, days := timefmt.SinceMsFromDays(req.SinceDays, 30, 365, time.Now())
 
+		// Clamp to the schema's declared bounds (maximum 50): the
+		// server's top_* knobs are uncapped, so the declared limit was
+		// the only one and nothing enforced it.
 		resp, err := c.Insights(ctx, apiclient.InsightsRequest{
 			SinceMs:   sinceMs,
-			TopTools:  req.TopTools,
-			TopSkills: req.TopSkills,
+			TopTools:  clampLimit(req.TopTools, 15, 50),
+			TopSkills: clampLimit(req.TopSkills, 10, 50),
 		})
 		if r, e := mapAPIError("get_insights", err); r != nil || e != nil {
 			return r, e
@@ -449,7 +451,8 @@ func findEpisodesAPIHandler(c *apiclient.Client) ToolHandler {
 		req.Limit = clampLimit(req.Limit, 50, 100)
 		var sinceMs int64
 		if req.SinceDays > 0 {
-			sinceMs, _ = timefmt.SinceMsFromDays(req.SinceDays, 0, 0, time.Now())
+			// 365 is the schema's declared maximum; it was not applied.
+			sinceMs, _ = timefmt.SinceMsFromDays(req.SinceDays, 0, 365, time.Now())
 		}
 
 		// Accept short prefixes for session_id like list_sessions

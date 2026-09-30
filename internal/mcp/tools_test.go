@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
 	"github.com/toabctl/aichronicles/internal/wire"
@@ -76,5 +78,40 @@ func TestMapAPIError_ClassifiesByStatus(t *testing.T) {
 	}
 	if res, perr := mapAPIError("x", nil); res != nil || perr != nil {
 		t.Errorf("nil error must map to (nil, nil)")
+	}
+}
+
+// TestTools_ApplyDeclaredSchemaBounds pins the maxima the tool schemas
+// advertise to what the tools send: find_episodes since_days (365),
+// get_skill_staleness window_minutes (240) and get_insights top_tools
+// / top_skills (50) were declared but passed through unclamped.
+func TestTools_ApplyDeclaredSchemaBounds(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
+	cq := registerAllToolsCapturing(t, s, st)
+	now := time.Now()
+
+	callTool(t, s, "get_insights", `{"top_tools":500,"top_skills":900}`)
+	q := cq.get("/v1/insights")
+	if len(q) != 1 || q[0].Get("top_tools") != "50" || q[0].Get("top_skills") != "50" {
+		t.Errorf("get_insights sent %v, want top_tools=50 top_skills=50", q)
+	}
+	callTool(t, s, "get_skill_staleness", `{"window_minutes":10000}`)
+	q = cq.get("/v1/skills/staleness")
+	if len(q) != 1 || q[0].Get("window_ms") != strconv.Itoa(240*60*1000) {
+		t.Errorf("get_skill_staleness sent %v, want window_ms for 240 minutes", q)
+	}
+	callTool(t, s, "find_episodes", `{"since_days":100000}`)
+	q = cq.get("/v1/episodes")
+	if len(q) != 1 {
+		t.Fatalf("find_episodes made %d episode calls", len(q))
+	}
+	since, err := strconv.ParseInt(q[0].Get("since_ms"), 10, 64)
+	if err != nil {
+		t.Fatalf("since_ms: %v", err)
+	}
+	if floor := now.Add(-366 * 24 * time.Hour).UnixMilli(); since < floor {
+		t.Errorf("find_episodes since_ms %d reaches back past 365 days", since)
 	}
 }
