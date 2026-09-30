@@ -120,3 +120,66 @@ func TestSkillCandidateDecision_InvalidMergeIs400(t *testing.T) {
 		}
 	}
 }
+
+// TestSkillCandidateUpdate_AllOrNothing is the regression gate for the
+// update endpoint's partial write: add_path was committed by one
+// statement before a second rejected the kind, answering 500 with the
+// path already changed; and an empty body for an unknown id was 200.
+func TestSkillCandidateUpdate_AllOrNothing(t *testing.T) {
+	t.Parallel()
+	fx := newWriteFixture(t)
+	if code, body := postJSON(t, fx.srv, "/v1/skill-candidates", wire.RecordSkillCandidateRequest{
+		LLMOutputID: fx.outputID, SkillName: "upd", ProposedAtMs: 1,
+	}); code != http.StatusOK {
+		t.Fatalf("record: %d %s", code, body)
+	}
+	if code, body := postJSON(t, fx.srv, "/v1/skill-candidates/decision", wire.SkillCandidateDecisionRequest{
+		LLMOutputID: fx.outputID, SkillName: "upd", Decision: wire.DecisionAdd, DecisionAtMs: 2, AddPath: "/p/orig.md",
+	}); code != http.StatusOK {
+		t.Fatalf("add: %d %s", code, body)
+	}
+	addedPath := func() string {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		fx.srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/skill-candidates/added?name=upd", nil))
+		var out wire.AddedSkillCandidateResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+			t.Fatalf("added: %v %s", err, rr.Body.String())
+		}
+		if out.Candidate.AddPath == nil {
+			return ""
+		}
+		return *out.Candidate.AddPath
+	}
+	var id int64
+	{
+		rr := httptest.NewRecorder()
+		fx.srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/skill-candidates/added?name=upd", nil))
+		var out wire.AddedSkillCandidateResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		id = out.Candidate.ID
+	}
+	path := "/v1/skill-candidates/" + itoa(id) + "/update"
+
+	code, body := postJSON(t, fx.srv, path, wire.UpdateSkillCandidateRequest{AddPath: "/p/new.md", Kind: "bogus"})
+	if code != http.StatusBadRequest {
+		t.Errorf("bad kind: %d %s, want 400", code, body)
+	}
+	if got := addedPath(); got != "/p/orig.md" {
+		t.Errorf("rejected update still changed add_path to %q", got)
+	}
+	if code, body := postJSON(t, fx.srv, path, wire.UpdateSkillCandidateRequest{BodySHA256: "abc"}); code != http.StatusBadRequest {
+		t.Errorf("hash without path: %d %s, want 400", code, body)
+	}
+	if code, body := postJSON(t, fx.srv, "/v1/skill-candidates/999999/update", wire.UpdateSkillCandidateRequest{}); code != http.StatusNotFound {
+		t.Errorf("empty body, unknown id: %d %s, want 404", code, body)
+	}
+	if code, body := postJSON(t, fx.srv, path, wire.UpdateSkillCandidateRequest{AddPath: "/p/new.md", Kind: "pitfall"}); code != http.StatusOK {
+		t.Errorf("valid update: %d %s", code, body)
+	}
+	if got := addedPath(); got != "/p/new.md" {
+		t.Errorf("valid update: add_path %q, want /p/new.md", got)
+	}
+}

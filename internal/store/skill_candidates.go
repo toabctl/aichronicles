@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/nullable"
@@ -627,76 +628,85 @@ func LoadSkillCandidatesByName(ctx context.Context, db *sql.DB, skillName string
 	return out, rows.Err()
 }
 
-// UpdateSkillCandidateAddBodyHash refreshes the add_path and
-// add_body_sha256 of an existing skill_candidates row by id.
-// Used by `propose merge`: after the merge LLM rewrites the
-// target's SKILL.md, the target row's hash must reflect the new
-// on-disk body — otherwise the next `skills verify` would flag
-// every merged skill as tampered.
+// SkillCandidateUpdate is the set of fields UpdateSkillCandidate may
+// change on one row. Empty fields are left alone.
 //
-// Scoped tightly: the caller has already loaded the row (typically
-// via LoadAddedSkillCandidate) and is updating only the two fields
-// that the on-disk write changes. Decision/decision_at_ms stay
-// untouched: the row remains the active "added" target.
+//   - AddPath / BodySHA256 refresh where the added skill lives on
+//     disk and the fingerprint of its body. `propose merge` rewrites
+//     the target's SKILL.md, and the target row's hash must follow
+//     or the next `skills verify` flags every merged skill as
+//     tampered. BodySHA256 requires AddPath; an empty BodySHA256 with
+//     an AddPath stores NULL.
+//   - Kind (SkillKindPattern / SkillKindPitfall) follows the merged
+//     content when the LLM-decided union flips the label; otherwise
+//     the DB and the on-disk frontmatter disagree and kind-branched
+//     surfaces misroute the merged skill.
 //
-// Returns ErrSkillCandidateNotFound when the id doesn't exist.
-func UpdateSkillCandidateAddBodyHash(ctx context.Context, db *sql.DB, candidateID int64, addPath, bodySHA256 string) error {
-	if candidateID <= 0 {
-		return invalidf("UpdateSkillCandidateAddBodyHash: candidate_id is required")
-	}
-	var hashArg any
-	if bodySHA256 != "" {
-		hashArg = bodySHA256
-	} // else nil → SQL NULL
-	res, err := db.ExecContext(ctx,
-		`UPDATE skill_candidates
-		    SET add_path        = ?,
-		        add_body_sha256 = ?
-		  WHERE id = ?`,
-		addPath, hashArg, candidateID,
-	)
-	if err != nil {
-		return fmt.Errorf("update body hash: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("rows affected: %w", err)
-	}
-	if n == 0 {
-		return fmt.Errorf("%w: id=%d", ErrSkillCandidateNotFound, candidateID)
-	}
-	return nil
+// Decision/decision_at_ms are never touched: the row stays the
+// active "added" target.
+type SkillCandidateUpdate struct {
+	AddPath    string
+	BodySHA256 string
+	Kind       SkillKind
 }
 
-// UpdateSkillCandidateKind sets the kind column on a single
-// skill_candidates row by id. Used by `propose merge` after the
-// LLM-decided union: when a `pitfall` candidate merges into a
-// `pattern` skill (or vice-versa), the merged content is now
-// pitfall-flavoured, and the surviving target row's kind must
-// reflect that — otherwise downstream surfaces that branch on
-// kind (the SKILL.md frontmatter is one, but a future
-// pitfall-vs-pattern retrieval bias would be another) silently
-// misroute the merged skill.
+// UpdateSkillCandidate applies u to the skill_candidates row with id
+// candidateID. Every field is validated before anything is written,
+// and all changes land in one UPDATE statement, so a request either
+// applies whole or not at all. (Two independent per-field updates
+// used to commit add_path and then reject an invalid kind, leaving a
+// half-applied change behind a 500.) An empty update only checks that
+// the row exists.
 //
-// Out-of-enum values are rejected: the caller is expected to pass
-// SkillKindPattern or SkillKindPitfall. An empty kind is also
-// rejected (caller should compute a default before calling).
-//
-// Returns ErrSkillCandidateNotFound when the id doesn't exist.
-func UpdateSkillCandidateKind(ctx context.Context, db *sql.DB, candidateID int64, kind SkillKind) error {
+// Returns an ErrInvalidValue-wrapped error for invalid input and
+// ErrSkillCandidateNotFound when the id doesn't exist.
+func UpdateSkillCandidate(ctx context.Context, db *sql.DB, candidateID int64, u SkillCandidateUpdate) error {
 	if candidateID <= 0 {
-		return invalidf("UpdateSkillCandidateKind: candidate_id is required")
+		return invalidf("UpdateSkillCandidate: candidate_id is required")
 	}
-	if kind != SkillKindPattern && kind != SkillKindPitfall {
-		return invalidf("UpdateSkillCandidateKind: kind must be %q or %q, got %q",
-			SkillKindPattern, SkillKindPitfall, kind)
+	if u.BodySHA256 != "" && u.AddPath == "" {
+		return invalidf("UpdateSkillCandidate: add_path is required when body_sha256 is set")
 	}
+	if u.Kind != "" && u.Kind != SkillKindPattern && u.Kind != SkillKindPitfall {
+		return invalidf("UpdateSkillCandidate: kind must be %q or %q, got %q",
+			SkillKindPattern, SkillKindPitfall, u.Kind)
+	}
+
+	var (
+		sets []string
+		args []any
+	)
+	if u.AddPath != "" {
+		var hashArg any // nil → SQL NULL
+		if u.BodySHA256 != "" {
+			hashArg = u.BodySHA256
+		}
+		sets = append(sets, "add_path = ?", "add_body_sha256 = ?")
+		args = append(args, u.AddPath, hashArg)
+	}
+	if u.Kind != "" {
+		sets = append(sets, "kind = ?")
+		args = append(args, string(u.Kind))
+	}
+	if len(sets) == 0 {
+		var exists bool
+		if err := db.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM skill_candidates WHERE id = ?)`, candidateID,
+		).Scan(&exists); err != nil {
+			return fmt.Errorf("check skill candidate: %w", err)
+		}
+		if !exists {
+			return fmt.Errorf("%w: id=%d", ErrSkillCandidateNotFound, candidateID)
+		}
+		return nil
+	}
+
 	res, err := db.ExecContext(ctx,
-		`UPDATE skill_candidates SET kind = ? WHERE id = ?`,
-		string(kind), candidateID,
+		`UPDATE skill_candidates SET `+strings.Join(sets, ", ")+` WHERE id = ?`,
+		append(args, candidateID)...,
 	)
 	if err != nil {
-		return fmt.Errorf("update kind: %w", err)
+		return fmt.Errorf("update skill candidate: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {

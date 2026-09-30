@@ -287,7 +287,9 @@ func (s *Server) handleSegmentSession(w http.ResponseWriter, r *http.Request) {
 // POST /v1/skill-candidates/{id}/update with body
 // {add_path?, body_sha256?, kind?}. Used by the merge path to
 // converge the surviving candidate's stored hash + kind to the
-// post-merge SKILL.md on disk.
+// post-merge SKILL.md on disk. All-or-nothing (see
+// store.UpdateSkillCandidate): invalid input is a 400 with nothing
+// written, an unknown id a 404 — including for an empty body.
 func (s *Server) handleSkillCandidateUpdate(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
@@ -299,31 +301,18 @@ func (s *Server) handleSkillCandidateUpdate(w http.ResponseWriter, r *http.Reque
 	if !decodeJSONBody(w, r, &req) {
 		return
 	}
-	if req.AddPath != "" || req.BodySHA256 != "" {
-		if req.AddPath == "" {
-			writeProblem(w, http.StatusBadRequest, "add_path is required when body_sha256 is set", "")
-			return
-		}
-		if uerr := store.UpdateSkillCandidateAddBodyHash(r.Context(), s.store.DB(), id, req.AddPath, req.BodySHA256); uerr != nil {
-			if errors.Is(uerr, store.ErrSkillCandidateNotFound) {
-				writeProblem(w, http.StatusNotFound, "Skill candidate not found", "")
-				return
-			}
-			s.slog.Error("UpdateSkillCandidateAddBodyHash", "err", uerr)
-			writeProblem(w, http.StatusInternalServerError, "Storage error", "")
-			return
-		}
+	err = store.UpdateSkillCandidate(r.Context(), s.store.DB(), id, store.SkillCandidateUpdate{
+		AddPath:    req.AddPath,
+		BodySHA256: req.BodySHA256,
+		Kind:       store.SkillKind(req.Kind),
+	})
+	if errors.Is(err, store.ErrSkillCandidateNotFound) {
+		writeProblem(w, http.StatusNotFound, "Skill candidate not found", idStr)
+		return
 	}
-	if req.Kind != "" {
-		if uerr := store.UpdateSkillCandidateKind(r.Context(), s.store.DB(), id, store.SkillKind(req.Kind)); uerr != nil {
-			if errors.Is(uerr, store.ErrSkillCandidateNotFound) {
-				writeProblem(w, http.StatusNotFound, "Skill candidate not found", "")
-				return
-			}
-			s.slog.Error("UpdateSkillCandidateKind", "err", uerr)
-			writeProblem(w, http.StatusInternalServerError, "Storage error", "")
-			return
-		}
+	if err != nil {
+		s.writeError(w, "UpdateSkillCandidate", "the candidate id", err)
+		return
 	}
 	writeJSON(w, http.StatusOK, wire.UpdateSkillCandidateResponse{})
 }
