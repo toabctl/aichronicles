@@ -20,12 +20,12 @@ func TestClient_Extractions_EncodesQuery(t *testing.T) {
 	const tricky = "https://g/o/r/pull/1?a=1&b=two words+x#frag/ä"
 	tests := []struct {
 		name string
-		req  wire.ExtractionsRequest
+		req  wire.ExtractionListRequest
 		want url.Values
 	}{
 		{
 			name: "all fields",
-			req: wire.ExtractionsRequest{
+			req: wire.ExtractionListRequest{
 				Kind: "pr_created", Value: tricky, SinceMs: 1234, Limit: 7, Cursor: "abc",
 			},
 			want: url.Values{
@@ -38,7 +38,7 @@ func TestClient_Extractions_EncodesQuery(t *testing.T) {
 		},
 		{
 			name: "zero values omitted",
-			req:  wire.ExtractionsRequest{Kind: "pr_created"},
+			req:  wire.ExtractionListRequest{Kind: "pr_created"},
 			want: url.Values{"kind": {"pr_created"}},
 		},
 	}
@@ -103,7 +103,7 @@ func TestClient_Extractions_RealServer(t *testing.T) {
 	}
 	waitForIngestDrain(t, st)
 
-	got, err := c.Extractions(t.Context(), wire.ExtractionsRequest{Kind: events.ExtractionKindPRCreated, Value: pr})
+	got, err := c.Extractions(t.Context(), wire.ExtractionListRequest{Kind: events.ExtractionKindPRCreated, Value: pr})
 	if err != nil {
 		t.Fatalf("Extractions(pr_created): %v", err)
 	}
@@ -119,7 +119,7 @@ func TestClient_Extractions_RealServer(t *testing.T) {
 		t.Errorf("pr_created: got %+v, want %+v", got.Extractions, want)
 	}
 
-	got, err = c.Extractions(t.Context(), wire.ExtractionsRequest{Kind: events.ExtractionKindURL, Value: tricky})
+	got, err = c.Extractions(t.Context(), wire.ExtractionListRequest{Kind: events.ExtractionKindURL, Value: tricky})
 	if err != nil {
 		t.Fatalf("Extractions(url): %v", err)
 	}
@@ -132,7 +132,7 @@ func TestClient_Extractions_RealServer(t *testing.T) {
 func TestClient_Extractions_MissingKindIs400(t *testing.T) {
 	t.Parallel()
 	c, _ := newRealServerClient(t)
-	_, err := c.Extractions(t.Context(), wire.ExtractionsRequest{Value: "https://g/o/r/pull/1"})
+	_, err := c.Extractions(t.Context(), wire.ExtractionListRequest{Value: "https://g/o/r/pull/1"})
 	var herr *HTTPError
 	if !errors.As(err, &herr) || herr.Status != http.StatusBadRequest {
 		t.Fatalf("got %v, want *HTTPError with status 400", err)

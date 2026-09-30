@@ -62,11 +62,11 @@ func mentionEnvelope(t *testing.T, sessionKey, cwd, mentioned string, ts time.Ti
 	return env
 }
 
-func getExtractions(t *testing.T, srv *testServer, query string) (int, wire.ExtractionsResponse, string) {
+func getExtractions(t *testing.T, srv *testServer, query string) (int, wire.ExtractionListResponse, string) {
 	t.Helper()
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/extractions?"+query, nil))
-	var out wire.ExtractionsResponse
+	var out wire.ExtractionListResponse
 	if rr.Code == http.StatusOK {
 		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
 			t.Fatalf("decode: %v (%s)", err, rr.Body.String())

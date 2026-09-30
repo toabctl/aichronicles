@@ -245,6 +245,8 @@ internal/               private; only this binary imports
                           sse_bus.go        in-process pub/sub
                           handler_events.go         GET /v1/events
                           handler_sessions.go       GET /v1/sessions{,/{id},/{id}/related}
+                          handler_session_reads.go  GET /v1/sessions/{id}/{events,extractions,…}
+                          handler_extractions.go    GET /v1/extractions (value → sessions)
                           handler_episodes.go       GET /v1/episodes
                           handler_search.go         GET /v1/search
                           handler_facts.go          GET /v1/facts{,/subjects}
