@@ -436,3 +436,39 @@ func TestSessionsList_ProjectionIsIdenticalFilteredOrNot(t *testing.T) {
 		t.Errorf("projection differs by filter:\nunfiltered: %+v\n  filtered: %+v", u, f)
 	}
 }
+
+// TestHandleSessionOutcome_UnknownIs404 is the regression gate for
+// the outcome read answering 500 "Storage error" (and logging ERROR)
+// for a session that simply doesn't exist: the store returns
+// ErrNoSuchSession and the handler must map it like every other
+// per-session read that 404s. A known session still answers 200.
+func TestHandleSessionOutcome_UnknownIs404(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/sessions/nope/outcome", nil))
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("unknown session: status=%d body=%s, want 404", rr.Code, rr.Body.String())
+	}
+
+	env := validEnvelope(t)
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(mustJSON(t, env))))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("seed: status=%d", rr.Code)
+	}
+	id := events.DeriveSessionID(env.SourceAgent, env.SourceSessionID)
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/sessions/"+id+"/outcome", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("known session: status=%d body=%s, want 200", rr.Code, rr.Body.String())
+	}
+	var out wire.SessionOutcome
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.SessionID != id {
+		t.Errorf("session_id: got %q, want %q", out.SessionID, id)
+	}
+}
