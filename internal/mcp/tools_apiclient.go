@@ -847,20 +847,25 @@ func listWorkflowsAPIHandler(c *apiclient.Client) ToolHandler {
 			}
 		}
 		req.Limit = clampLimit(req.Limit, 10, 50)
-		// Pull more than the cap because most induction rows
-		// have no workflow — filter post-fetch.
-		outs, err := c.LLMOutputsList(ctx, "induction", "", req.Limit*5)
-		if r, e := mapAPIError("list_workflows", err); r != nil || e != nil {
-			return r, e
-		}
 
+		// Walk induction rows newest-first across pages until Limit
+		// matches are found. Most rows carry no workflow, so this used
+		// to read Limit*5 rows, filter them, and — when the match sat
+		// further back — report "no workflows yet" over a corpus of
+		// hundreds.
 		needle := strings.ToLower(strings.TrimSpace(req.TaskShapeContains))
 		type entry struct {
 			row wire.LLMOutput
 			ind prompts.InductionResult
 		}
-		var keep []entry
-		for _, r := range outs {
+		var (
+			keep         []entry
+			anyWorkflows bool
+		)
+		for r, err := range c.LLMOutputs(ctx, string(wire.LLMKindInduction), "") {
+			if res, e := mapAPIError("list_workflows", err); res != nil || e != nil {
+				return res, e
+			}
 			var ind prompts.InductionResult
 			if jerr := json.Unmarshal([]byte(r.Body), &ind); jerr != nil {
 				continue
@@ -875,6 +880,7 @@ func listWorkflowsAPIHandler(c *apiclient.Client) ToolHandler {
 				}
 				continue
 			}
+			anyWorkflows = true
 			if needle != "" && !strings.Contains(strings.ToLower(ind.Workflow.TaskShape), needle) {
 				continue
 			}
@@ -884,6 +890,9 @@ func listWorkflowsAPIHandler(c *apiclient.Client) ToolHandler {
 			}
 		}
 		if len(keep) == 0 {
+			if anyWorkflows && needle != "" {
+				return TextResult(fmt.Sprintf("(no workflow's task_shape contains %q)", req.TaskShapeContains)), nil
+			}
 			return TextResult("(no workflows yet — try `aichronicles induction sweep` to populate the workflow corpus)"), nil
 		}
 
@@ -1005,10 +1014,11 @@ func getProjectContextAPIHandler(c *apiclient.Client) ToolHandler {
 		renderFactsSectionAPI(&b, rankProjectFacts(facts), req.MaxPerSection*4)
 
 		// Section 4: recent workflows. Workflows ride inside
-		// kind=induction llm_outputs rows (Round 8); pull them via
-		// /v1/llm-outputs and filter for non-null body.workflow
-		// in the renderer.
-		wfs, err := c.LLMOutputsList(ctx, "induction", "", req.MaxPerSection*3)
+		// kind=induction llm_outputs rows (Round 8); walk those
+		// newest-first until MaxPerSection carry a workflow. (Reading
+		// a fixed MaxPerSection*3 rows first showed "(none …)" whenever
+		// the recent rows happened to have no workflow.)
+		wfs, err := recentWorkflowRows(ctx, c, req.MaxPerSection)
 		if err != nil {
 			return nil, &Error{Code: InternalError, Message: "get_project_context: workflows: " + err.Error()}
 		}
@@ -1146,6 +1156,26 @@ func rankProjectFacts(facts []wire.SemanticFact) []wire.SemanticFact {
 		}
 	})
 	return out
+}
+
+// recentWorkflowRows returns the newest kind=induction rows whose body
+// carries a workflow, up to limit, reading pages only as far as needed.
+func recentWorkflowRows(ctx context.Context, c *apiclient.Client, limit int) ([]wire.LLMOutput, error) {
+	var out []wire.LLMOutput
+	for r, err := range c.LLMOutputs(ctx, string(wire.LLMKindInduction), "") {
+		if err != nil {
+			return nil, err
+		}
+		var ind prompts.InductionResult
+		if json.Unmarshal([]byte(r.Body), &ind) != nil || ind.Workflow == nil || ind.Workflow.TaskShape == "" {
+			continue
+		}
+		out = append(out, r)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 // renderWorkflowsSectionAPI walks wire.LLMOutput rows of kind=induction

@@ -1234,3 +1234,41 @@ func TestGetFactsForSubject_SaysWhenItTruncates(t *testing.T) {
 		t.Errorf("limit=12 of 12: want every fact and no truncation note:\n%s", whole)
 	}
 }
+
+// TestListWorkflows_FindsAMatchBehindNewerRows is the regression gate
+// for list_workflows' one-page read: it filtered the newest limit*5
+// induction rows, so a matching workflow further back was reported as
+// "(no workflows yet …)" over a corpus of hundreds. The walk must
+// reach it, and a filter that matches nothing must say so rather than
+// claim the corpus is empty.
+func TestListWorkflows_FindsAMatchBehindNewerRows(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	seedWorkflowOutput(t, st, "00000000-0000-0000-0000-00000000aaaa", "rebuild the gnome-shell test suite", "r", true)
+	// Push the match back: 80 newer rows without a workflow.
+	if _, err := st.DB().Exec(`UPDATE llm_outputs SET created_at_ms = 1 WHERE kind = 'induction'`); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 80 {
+		if _, err := st.DB().Exec(
+			`INSERT INTO llm_outputs(kind, model, prompt_hash, body, created_at_ms) VALUES ('induction', 'm', ?, '{"rationale":"none"}', ?)`,
+			fmt.Sprintf("newer-%d", i), 1000+i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
+	registerAllTools(t, s, st)
+
+	hit := callTool(t, s, "list_workflows", `{"task_shape_contains":"gnome-shell"}`).Content[0].Text
+	if !strings.Contains(hit, "gnome-shell test suite") {
+		t.Errorf("match behind 80 newer rows not found:\n%s", hit)
+	}
+	miss := callTool(t, s, "list_workflows", `{"task_shape_contains":"no-such-shape"}`).Content[0].Text
+	if strings.Contains(miss, "no workflows yet") || !strings.Contains(miss, "no-such-shape") {
+		t.Errorf("a non-matching filter must not claim the corpus is empty:\n%s", miss)
+	}
+	ctxBody := callTool(t, s, "get_project_context", `{"cwd":"/work/x"}`).Content[0].Text
+	if !strings.Contains(ctxBody, "gnome-shell test suite") {
+		t.Errorf("project context workflows section missed the only workflow:\n%s", ctxBody)
+	}
+}
