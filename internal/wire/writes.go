@@ -78,7 +78,12 @@ type SaveSessionOutcomeRequest struct {
 	Outcome           string  `json:"outcome"`
 }
 
-// SessionLink is the wire shape for one outgoing session link.
+// SessionLink is the wire shape for one outgoing session link, on
+// both GET and POST /v1/session-links.
+//
+// CreatedAtMs is set by the server when the link set is saved; GET
+// returns it, and POST ignores whatever the client sends (the store
+// stamps every link of a save with the same time).
 type SessionLink struct {
 	ToSessionID string `json:"to_session_id"`
 	Kind        string `json:"kind"`
