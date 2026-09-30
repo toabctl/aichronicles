@@ -11,6 +11,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -529,5 +531,65 @@ func TestSessionDigest_SummaryFieldsHaveOneMeaningEach(t *testing.T) {
 	}
 	if detail.LatestSummary == nil || *detail.LatestSummary != body {
 		t.Errorf("detail latest_summary: got %v, want the full body %q", detail.LatestSummary, body)
+	}
+}
+
+// TestSessionDigest_SameShapeOnEveryRoute is the regression gate for
+// the digest loaders' drifted projections: GET /v1/sessions/{id}
+// returned no event_count or start_cwd (the web session page showed
+// "events: 0" for every session), and /v1/sessions/digests no
+// event_count. Every route that returns a wire.SessionDigest must
+// carry the same stored columns.
+func TestSessionDigest_SameShapeOnEveryRoute(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	env := validEnvelope(t)
+	env.Cwd = "/work/proj"
+	for i := 0; i < 3; i++ {
+		e := env
+		e.EventID = uuid.Must(uuid.NewV7()).String()
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(mustJSON(t, e))))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("seed: status=%d", rr.Code)
+		}
+	}
+	id := events.DeriveSessionID(env.SourceAgent, env.SourceSessionID)
+
+	get := func(path string, into any) {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("GET %s: status=%d body=%s", path, rr.Code, rr.Body.String())
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), into); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var list wire.SessionListResponse
+	get("/v1/sessions?since_ms=1", &list)
+	var detail wire.SessionDigest
+	get("/v1/sessions/"+id, &detail)
+	var byIDs, recent wire.SessionDigestsResponse
+	get("/v1/sessions/digests?session_ids="+id, &byIDs)
+	get("/v1/sessions/digests?since_ms=1", &recent)
+	if len(list.Sessions) != 1 || len(byIDs.Digests) != 1 || len(recent.Digests) != 1 {
+		t.Fatalf("expected one row per route: list=%d byIDs=%d recent=%d",
+			len(list.Sessions), len(byIDs.Digests), len(recent.Digests))
+	}
+	for route, d := range map[string]wire.SessionDigest{
+		"list": list.Sessions[0], "detail": detail,
+		"digests by id": byIDs.Digests[0], "digests recent": recent.Digests[0],
+	} {
+		if d.EventCount != 3 {
+			t.Errorf("%s: event_count=%d, want 3", route, d.EventCount)
+		}
+		if d.StartCwd == nil || *d.StartCwd != "/work/proj" {
+			t.Errorf("%s: start_cwd=%v, want /work/proj", route, d.StartCwd)
+		}
+		if d.SourceAgent != env.SourceAgent || d.SourceSessionID != env.SourceSessionID {
+			t.Errorf("%s: source=%q/%q, want %q/%q", route, d.SourceAgent, d.SourceSessionID, env.SourceAgent, env.SourceSessionID)
+		}
 	}
 }

@@ -540,21 +540,70 @@ type SessionDigestRow struct {
 	// cwd. Distinct from Cwd (which reflects the *latest* event's
 	// cwd) because `claude --resume` indexes transcripts by start
 	// cwd, so resume one-liners must `cd` there regardless of where
-	// the session ended up. Populated by the list-path loaders
-	// (LoadRecentSessionDigests + LoadSessionsForListFaceted) so
-	// the web list can render per-row Resume buttons without N+1
-	// fetches against /v1/sessions/{id}/start-cwd.
+	// the session ended up. Populated by every digest loader (see
+	// sessionDigestColumns), so the web list can render per-row
+	// Resume buttons without N+1 fetches against
+	// /v1/sessions/{id}/start-cwd.
 	StartCwd *string
 	// SourceAgent / SourceSessionID identify the upstream agent
 	// (claude-code / gemini-cli / …) and its native session id.
-	// Populated by every list/detail digest loader; consumed by
-	// the web to render Resume buttons.
+	// Consumed by the web to render Resume buttons.
 	SourceAgent     string
 	SourceSessionID string
-	// EventCount is populated by the faceted-list loader (which
-	// reads sessions.event_count directly). Plain digest loaders
-	// leave it 0; consumers branch on the value.
+	// EventCount is sessions.event_count (trigger-maintained).
 	EventCount int
+}
+
+// sessionDigestColumns is the one projection every session-digest
+// loader selects, so /v1/sessions, /v1/sessions/{id},
+// /v1/sessions/digests and the missing-summary sweep return the same
+// row shape. Loaders used to hand-roll their own column lists and
+// drifted: the detail route had no event_count or start_cwd, the
+// missing-summary rows no source_agent. Keep this list and
+// scanSessionDigest in lockstep.
+//
+// latest_summary is the only column that differs: with the body it is
+// a correlated subquery that binds one argument (LLMKindSummary),
+// which the caller must place before its WHERE arguments; without it
+// the column is NULL. id DESC breaks ties between summaries written in
+// the same millisecond so the "latest" body is deterministic.
+func sessionDigestColumns(withSummaryBody bool) string {
+	body := "NULL"
+	if withSummaryBody {
+		body = `(SELECT body FROM llm_outputs
+				WHERE session_id = s.id AND kind = ?
+				ORDER BY created_at_ms DESC, id DESC LIMIT 1)`
+	}
+	return `s.id, s.started_at_ms, s.ended_at_ms, s.event_count,
+			s.cwd, s.start_cwd, s.first_prompt_text, s.summary_topic,
+			s.source_agent, s.source_session_id, ` + body + ` AS latest_summary`
+}
+
+// scanSessionDigest scans one row projected by sessionDigestColumns.
+func scanSessionDigest(r rowScanner) (SessionDigestRow, error) {
+	var (
+		row          SessionDigestRow
+		startedAtMs  sql.NullInt64
+		endedAtMs    sql.NullInt64
+		cwd          sql.NullString
+		startCwd     sql.NullString
+		firstPrompt  sql.NullString
+		summaryTopic sql.NullString
+		latestSum    sql.NullString
+	)
+	if err := r.Scan(&row.ID, &startedAtMs, &endedAtMs, &row.EventCount,
+		&cwd, &startCwd, &firstPrompt, &summaryTopic,
+		&row.SourceAgent, &row.SourceSessionID, &latestSum); err != nil {
+		return SessionDigestRow{}, err
+	}
+	row.StartedAtMs = nullable.Int64Ptr(startedAtMs)
+	row.EndedAtMs = nullable.Int64Ptr(endedAtMs)
+	row.Cwd = nullable.StringPtr(cwd)
+	row.StartCwd = nullable.StringPtr(startCwd)
+	row.FirstPrompt = nullable.StringPtr(firstPrompt)
+	row.SummaryTopic = nullable.StringPtr(summaryTopic)
+	row.LatestSummary = nullable.StringPtr(latestSum)
+	return row, nil
 }
 
 // LoadRecentSessionDigests returns the most-recently-ended sessions
@@ -586,12 +635,7 @@ func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs, untilMs 
 	}
 	args = append(args, limit, offset)
 	rows, err := db.QueryContext(ctx,
-		`SELECT s.id, s.started_at_ms, s.ended_at_ms, s.cwd, s.start_cwd,
-			s.first_prompt_text AS first_prompt,
-			(SELECT body FROM llm_outputs
-				WHERE session_id = s.id AND kind = ?
-				ORDER BY created_at_ms DESC LIMIT 1) AS latest_summary,
-			s.source_agent, s.source_session_id
+		`SELECT `+sessionDigestColumns(true)+`
 		FROM sessions s
 		WHERE `+EffectiveTsExpr+` >= ?`+upper+`
 		ORDER BY `+EffectiveTsExpr+` DESC, s.id DESC
@@ -605,25 +649,10 @@ func LoadRecentSessionDigests(ctx context.Context, db *sql.DB, sinceMs, untilMs 
 
 	var out []SessionDigestRow
 	for rows.Next() {
-		var (
-			r           SessionDigestRow
-			startedAtMs sql.NullInt64
-			endedAtMs   sql.NullInt64
-			cwd         sql.NullString
-			startCwd    sql.NullString
-			firstPrompt sql.NullString
-			latestSum   sql.NullString
-		)
-		if err := rows.Scan(&r.ID, &startedAtMs, &endedAtMs, &cwd, &startCwd,
-			&firstPrompt, &latestSum, &r.SourceAgent, &r.SourceSessionID); err != nil {
+		r, err := scanSessionDigest(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan digest: %w", err)
 		}
-		r.StartedAtMs = nullable.Int64Ptr(startedAtMs)
-		r.EndedAtMs = nullable.Int64Ptr(endedAtMs)
-		r.Cwd = nullable.StringPtr(cwd)
-		r.StartCwd = nullable.StringPtr(startCwd)
-		r.FirstPrompt = nullable.StringPtr(firstPrompt)
-		r.LatestSummary = nullable.StringPtr(latestSum)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -651,12 +680,7 @@ func LoadSessionDigestsByIDs(ctx context.Context, db *sql.DB, ids []string) (map
 	// the IN-clause args in the SQL, so prepend it.
 	args = append([]any{string(LLMKindSummary)}, args...)
 
-	q := `SELECT s.id, s.started_at_ms, s.ended_at_ms, s.cwd, s.start_cwd,
-			s.first_prompt_text AS first_prompt,
-			(SELECT body FROM llm_outputs
-				WHERE session_id = s.id AND kind = ?
-				ORDER BY created_at_ms DESC LIMIT 1) AS latest_summary,
-			s.source_agent, s.source_session_id
+	q := `SELECT ` + sessionDigestColumns(true) + `
 		FROM sessions s
 		WHERE s.id IN (` + placeholders + `)`
 
@@ -668,25 +692,10 @@ func LoadSessionDigestsByIDs(ctx context.Context, db *sql.DB, ids []string) (map
 
 	out := make(map[string]SessionDigestRow, len(ids))
 	for rows.Next() {
-		var (
-			r           SessionDigestRow
-			startedAtMs sql.NullInt64
-			endedAtMs   sql.NullInt64
-			cwd         sql.NullString
-			startCwd    sql.NullString
-			firstPrompt sql.NullString
-			latestSum   sql.NullString
-		)
-		if err := rows.Scan(&r.ID, &startedAtMs, &endedAtMs, &cwd, &startCwd,
-			&firstPrompt, &latestSum, &r.SourceAgent, &r.SourceSessionID); err != nil {
+		r, err := scanSessionDigest(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan digest: %w", err)
 		}
-		r.StartedAtMs = nullable.Int64Ptr(startedAtMs)
-		r.EndedAtMs = nullable.Int64Ptr(endedAtMs)
-		r.Cwd = nullable.StringPtr(cwd)
-		r.StartCwd = nullable.StringPtr(startCwd)
-		r.FirstPrompt = nullable.StringPtr(firstPrompt)
-		r.LatestSummary = nullable.StringPtr(latestSum)
 		out[r.ID] = r
 	}
 	return out, rows.Err()
@@ -729,10 +738,10 @@ func LoadSessionsForListFaceted(ctx context.Context, db *sql.DB, f SessionListFa
 	if limit <= 0 {
 		limit = defaultSessionsForListLimit
 	}
+	// No summary body: the list ships summary_topic, and the body's
+	// correlated subquery per row is what this loader exists to avoid.
 	q := `
-		SELECT s.id, s.started_at_ms, s.ended_at_ms, s.event_count,
-		       s.cwd, s.start_cwd, s.first_prompt_text, s.summary_topic,
-		       s.source_agent, s.source_session_id
+		SELECT ` + sessionDigestColumns(false) + `
 		  FROM sessions s`
 	var conds []string
 	args := []any{}
@@ -803,29 +812,10 @@ func LoadSessionsForListFaceted(ctx context.Context, db *sql.DB, f SessionListFa
 
 	out := make([]SessionDigestRow, 0)
 	for rows.Next() {
-		var (
-			row             SessionDigestRow
-			startedAtMs     sql.NullInt64
-			endedAtMs       sql.NullInt64
-			cwd             sql.NullString
-			startCwd        sql.NullString
-			firstPrompt     sql.NullString
-			summaryTopic    sql.NullString
-			sourceAgent     string
-			sourceSessionID string
-		)
-		if err := rows.Scan(&row.ID, &startedAtMs, &endedAtMs, &row.EventCount,
-			&cwd, &startCwd, &firstPrompt, &summaryTopic, &sourceAgent, &sourceSessionID); err != nil {
+		row, err := scanSessionDigest(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan faceted session row: %w", err)
 		}
-		row.StartedAtMs = nullable.Int64Ptr(startedAtMs)
-		row.EndedAtMs = nullable.Int64Ptr(endedAtMs)
-		row.Cwd = nullable.StringPtr(cwd)
-		row.StartCwd = nullable.StringPtr(startCwd)
-		row.FirstPrompt = nullable.StringPtr(firstPrompt)
-		row.SummaryTopic = nullable.StringPtr(summaryTopic)
-		row.SourceAgent = sourceAgent
-		row.SourceSessionID = sourceSessionID
 		out = append(out, row)
 	}
 	return out, rows.Err()
@@ -857,7 +847,7 @@ func LoadDistinctSourceAgents(ctx context.Context, db *sql.DB) ([]string, error)
 // LoadSessionDigest returns the SessionDigestRow for a single
 // session_id, or (nil, nil) if no such session exists. Same row
 // shape as LoadRecentSessionDigests — including the latest_summary
-// subquery — so the result is interchangeable.
+// body — so the result is interchangeable.
 //
 // Exists to fix a class of bugs where callers loaded the recent
 // list, then walked it Go-side to find one id: that misses any
@@ -865,37 +855,18 @@ func LoadDistinctSourceAgents(ctx context.Context, db *sql.DB) ([]string, error)
 // indexed (sessions.id is the primary key) and always finds the
 // row when it exists.
 func LoadSessionDigest(ctx context.Context, db *sql.DB, sessionID string) (*SessionDigestRow, error) {
-	row := db.QueryRowContext(ctx,
-		`SELECT s.id, s.started_at_ms, s.ended_at_ms, s.cwd,
-			s.first_prompt_text AS first_prompt,
-			(SELECT body FROM llm_outputs
-				WHERE session_id = s.id AND kind = ?
-				ORDER BY created_at_ms DESC LIMIT 1) AS latest_summary,
-			s.source_agent, s.source_session_id
+	r, err := scanSessionDigest(db.QueryRowContext(ctx,
+		`SELECT `+sessionDigestColumns(true)+`
 		FROM sessions s
 		WHERE s.id = ?`,
 		string(LLMKindSummary), sessionID,
-	)
-	var (
-		r           SessionDigestRow
-		startedAtMs sql.NullInt64
-		endedAtMs   sql.NullInt64
-		cwd         sql.NullString
-		firstPrompt sql.NullString
-		latestSum   sql.NullString
-	)
-	switch err := row.Scan(&r.ID, &startedAtMs, &endedAtMs, &cwd, &firstPrompt, &latestSum,
-		&r.SourceAgent, &r.SourceSessionID); {
+	))
+	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return nil, nil
 	case err != nil:
 		return nil, fmt.Errorf("scan session digest: %w", err)
 	}
-	r.StartedAtMs = nullable.Int64Ptr(startedAtMs)
-	r.EndedAtMs = nullable.Int64Ptr(endedAtMs)
-	r.Cwd = nullable.StringPtr(cwd)
-	r.FirstPrompt = nullable.StringPtr(firstPrompt)
-	r.LatestSummary = nullable.StringPtr(latestSum)
 	return &r, nil
 }
 
@@ -917,9 +888,8 @@ type SessionFilter struct {
 //
 // Same row shape as LoadRecentSessionDigests so callers can hand the
 // result to the existing prompts.SessionDigest pipeline without a
-// shape conversion. LatestSummary is always invalid here by
-// construction (NOT EXISTS on the join) — included for shape
-// compatibility, never populated.
+// shape conversion. LatestSummary and SummaryTopic are nil by
+// construction (NOT EXISTS on the join).
 //
 // Limit ≤0 falls back to 200; a wider default than the LLM-bound
 // reflect/propose because this path is read-only and just renders.
@@ -947,11 +917,11 @@ func LoadSessionsMissingSummary(ctx context.Context, db *sql.DB, sinceMs int64, 
 	)`)
 	args = append(args, string(LLMKindSummary))
 
-	q := `SELECT s.id, s.started_at_ms, s.ended_at_ms, s.cwd,
-			s.first_prompt_text AS first_prompt
+	// No summary body: the NOT EXISTS above guarantees there is none.
+	q := `SELECT ` + sessionDigestColumns(false) + `
 		FROM sessions s
 		WHERE ` + strings.Join(conds, " AND ") + `
-		ORDER BY ` + EffectiveTsExpr + ` DESC
+		ORDER BY ` + EffectiveTsExpr + ` DESC, s.id DESC
 		LIMIT ?`
 	args = append(args, limit)
 
@@ -963,22 +933,10 @@ func LoadSessionsMissingSummary(ctx context.Context, db *sql.DB, sinceMs int64, 
 
 	var out []SessionDigestRow
 	for rows.Next() {
-		var (
-			r           SessionDigestRow
-			startedAtMs sql.NullInt64
-			endedAtMs   sql.NullInt64
-			cwd         sql.NullString
-			firstPrompt sql.NullString
-		)
-		// LatestSummary stays nil since the WHERE clause
-		// guarantees no summary exists.
-		if err := rows.Scan(&r.ID, &startedAtMs, &endedAtMs, &cwd, &firstPrompt); err != nil {
+		r, err := scanSessionDigest(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan missing-summary row: %w", err)
 		}
-		r.StartedAtMs = nullable.Int64Ptr(startedAtMs)
-		r.EndedAtMs = nullable.Int64Ptr(endedAtMs)
-		r.Cwd = nullable.StringPtr(cwd)
-		r.FirstPrompt = nullable.StringPtr(firstPrompt)
 		out = append(out, r)
 	}
 	return out, rows.Err()
