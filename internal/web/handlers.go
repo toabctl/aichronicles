@@ -281,14 +281,8 @@ func filtersToURL(basePath string, f sessionListFilters) string {
 // server-side. Empty / false values are skipped.
 func loadSessionsForList(ctx context.Context, s *Server, limit int, cursor string, f sessionListFilters) ([]SessionRow, string, error) {
 	digests, err := s.api.Sessions(ctx, wire.SessionListRequest{
-		Limit:  limit,
-		Cursor: wire.Cursor(cursor),
-		// SinceMs=1 means "any session, no time cutoff." The api
-		// applies a 30-day default when since_ms is unset; the web
-		// list deliberately shows the full corpus capped at limit,
-		// so we pass a tiny epoch value to disable the cutoff
-		// without changing the wire contract.
-		SinceMs:           1,
+		Limit:             limit,
+		Cursor:            wire.Cursor(cursor),
 		SourceAgent:       f.Agent,
 		Project:           f.Project,
 		ToolName:          f.Tool,
