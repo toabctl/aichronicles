@@ -262,7 +262,15 @@ func renderResumePreviewPane(c resumeCandidate, width, maxBodyLines int) string 
 	if fp := strPtrOrDash(d.FirstPrompt); fp != "-" {
 		when += "  ▸ " + flattenLine(fp)
 	}
-	head.WriteString(resumeDimStyle.Render(truncateRunes(when, width)) + "\n\n")
+	head.WriteString(resumeDimStyle.Render(truncateRunes(when, width)) + "\n")
+	prLines := resumePRLines(c.prs)
+	for _, ln := range prLines {
+		head.WriteString(truncateRunes(ln, width) + "\n")
+	}
+	head.WriteString("\n")
+	// The PR lines come out of the body's budget so the pane keeps its
+	// fixed height.
+	maxBodyLines -= len(prLines)
 
 	if len(c.tail) == 0 {
 		head.WriteString(resumeDimStyle.Render("(no message preview)"))
@@ -302,6 +310,26 @@ func renderResumePreviewPane(c resumeCandidate, width, maxBodyLines int) string 
 		}
 	}
 	return head.String() + strings.TrimRight(body.String(), "\n")
+}
+
+// resumeMaxPRLines caps the PR lines on the preview card so a session
+// that opened many PRs can't crowd out the conversation tail.
+const resumeMaxPRLines = 3
+
+// resumePRLines renders a session's created PRs (oldest first) for the
+// preview card. Beyond resumeMaxPRLines it keeps the most recent ones —
+// the likeliest to still be in flight — behind a count of the rest.
+func resumePRLines(prs []string) []string {
+	var lines []string
+	if len(prs) > resumeMaxPRLines {
+		keep := resumeMaxPRLines - 1
+		lines = append(lines, fmt.Sprintf("PR (+%d earlier)", len(prs)-keep))
+		prs = prs[len(prs)-keep:]
+	}
+	for _, pr := range prs {
+		lines = append(lines, "PR "+pr)
+	}
+	return lines
 }
 
 // resumeSpeaker returns the display label and colour style for a

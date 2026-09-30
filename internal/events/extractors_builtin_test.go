@@ -609,3 +609,108 @@ func TestSkillLoad_ImportShape_NoToolUseBlock(t *testing.T) {
 		}
 	}
 }
+
+// TestPRCreated covers the gitOperation record in both payload shapes
+// and every way it can fail to name a created PR. Only an explicit
+// action="created" with an http(s) url yields a row.
+func TestPRCreated(t *testing.T) {
+	t.Parallel()
+	const prURL = "https://github.com/acme/widgets/pull/42"
+	gitOp := func(pr map[string]any) map[string]any {
+		return map[string]any{"gitOperation": map[string]any{"pr": pr}}
+	}
+	created := map[string]any{"action": "created", "number": float64(42), "url": prURL}
+
+	tests := []struct {
+		name    string
+		env     *Envelope
+		wantURL string // empty = no pr_created row expected
+	}{
+		{
+			name: "hook shape",
+			env: &Envelope{
+				Tool:    &Tool{Name: "Bash"},
+				Payload: map[string]any{"tool_response": gitOp(created)},
+			},
+			wantURL: prURL,
+		},
+		{
+			name: "import shape on tool_result without tool name",
+			env: &Envelope{
+				Payload: map[string]any{"toolUseResult": gitOp(created)},
+			},
+			wantURL: prURL,
+		},
+		{
+			name: "edited action skipped",
+			env: &Envelope{Payload: map[string]any{"tool_response": gitOp(map[string]any{
+				"action": "edited", "number": float64(42), "url": prURL,
+			})}},
+		},
+		{
+			name: "commented action skipped",
+			env: &Envelope{Payload: map[string]any{"toolUseResult": gitOp(map[string]any{
+				"action": "commented", "number": float64(42), "url": prURL,
+			})}},
+		},
+		{
+			name: "created without url skipped",
+			env: &Envelope{Payload: map[string]any{"tool_response": gitOp(map[string]any{
+				"action": "created", "number": float64(42),
+			})}},
+		},
+		{
+			name: "non-http url skipped",
+			env: &Envelope{Payload: map[string]any{"tool_response": gitOp(map[string]any{
+				"action": "created", "url": "acme/widgets#42",
+			})}},
+		},
+		{
+			name: "commit and push only",
+			env: &Envelope{Payload: map[string]any{"tool_response": map[string]any{
+				"gitOperation": map[string]any{
+					"commit": map[string]any{"sha": "abc123"},
+					"push":   map[string]any{"branch": "main"},
+				},
+			}}},
+		},
+		{
+			name: "tool_response without gitOperation",
+			env: &Envelope{Payload: map[string]any{"tool_response": map[string]any{
+				"stdout": prURL,
+			}}},
+		},
+		{
+			name: "string tool_response",
+			env:  &Envelope{Payload: map[string]any{"tool_response": prURL}},
+		},
+		{
+			name: "gitOperation of wrong type",
+			env: &Envelope{Payload: map[string]any{"tool_response": map[string]any{
+				"gitOperation": "pr created",
+			}}},
+		},
+		{
+			name: "nil payload",
+			env:  &Envelope{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var got []string
+			for _, x := range DefaultExtractors().Run(tt.env) {
+				if x.Kind == ExtractionKindPRCreated {
+					got = append(got, x.Value)
+				}
+			}
+			var want []string
+			if tt.wantURL != "" {
+				want = []string{tt.wantURL}
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("pr_created values: got %v, want %v", got, want)
+			}
+		})
+	}
+}

@@ -2,12 +2,19 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/toabctl/aichronicles/internal/events"
+	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/resumecmd"
+	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -235,5 +242,97 @@ func TestRunResume_EmptyQueryErrors(t *testing.T) {
 	err := RunResume(t.Context(), apiForStore(t, s), ResumeOptions{Query: "  ", Interactive: true}, strings.NewReader(""), &out, pickNever(t), exec)
 	if err == nil {
 		t.Fatal("expected an error for an empty query")
+	}
+}
+
+// ingestPRCreated records a Bash tool_use in sessionKey whose result
+// carries Claude Code's gitOperation record for a newly created PR —
+// the only source of pr_created extractions.
+func ingestPRCreated(t *testing.T, s *store.Store, sessionKey, cwd, prURL string) {
+	t.Helper()
+	e := events.Envelope{
+		V: 1, EventID: uuid.Must(uuid.NewV7()).String(),
+		SourceAgent: "claude-code", SourceSessionID: sessionKey,
+		Kind: "tool_use", TsSource: time.Now().UTC().Add(-46 * time.Hour),
+		Cwd: cwd, ContentText: "Bash gh pr create --fill",
+		Tool: &events.Tool{Name: "Bash"},
+		Payload: map[string]any{
+			"tool_input": map[string]any{"command": "gh pr create --fill"},
+			"tool_response": map[string]any{
+				"stdout": prURL,
+				"gitOperation": map[string]any{
+					"pr": map[string]any{"action": "created", "number": 7, "url": prURL},
+				},
+			},
+		},
+	}
+	events.ApplyRedaction(&e, redact.Default())
+	raw, err := json.Marshal(e)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	tx, err := s.DB().Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, _, err := store.IngestEnvelope(t.Context(), tx, &e, raw, time.Now().UnixMilli()); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("ingest: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+}
+
+func TestRunResume_PrintListsCreatedPRs(t *testing.T) {
+	t.Parallel()
+	s, _ := seedStore(t)
+	const prURL = "https://github.com/acme/widgets/pull/7"
+	ingestPRCreated(t, s, "sess-foo", "/work/foo", prURL)
+	var out bytes.Buffer
+
+	opts := ResumeOptions{Query: "jsonl", Print: true}
+	if err := RunResume(t.Context(), apiForStore(t, s), opts, strings.NewReader(""), &out, pickNever(t), nil); err != nil {
+		t.Fatalf("RunResume: %v", err)
+	}
+	want := "[1] cd /work/foo && claude --resume sess-foo\n      PR " + prURL + "\n"
+	if !strings.Contains(out.String(), want) {
+		t.Errorf("output missing %q:\n%s", want, out.String())
+	}
+}
+
+func TestRunResume_InteractivePassesCreatedPRsToPicker(t *testing.T) {
+	t.Parallel()
+	s, _ := seedStore(t)
+	const prURL = "https://github.com/acme/widgets/pull/7"
+	ingestPRCreated(t, s, "sess-foo", "/work/foo", prURL)
+	_, _, exec := recordExec()
+	var out bytes.Buffer
+
+	var got []string
+	pick := func(cands []resumeCandidate, _ io.Reader, _ io.Writer) (int, bool, error) {
+		got = cands[0].prs
+		return 0, true, nil
+	}
+	opts := ResumeOptions{Query: "jsonl", Interactive: true}
+	if err := RunResume(t.Context(), apiForStore(t, s), opts, strings.NewReader(""), &out, pick, exec); err != nil {
+		t.Fatalf("RunResume: %v", err)
+	}
+	if want := []string{prURL}; !reflect.DeepEqual(got, want) {
+		t.Errorf("candidate prs: got %v, want %v", got, want)
+	}
+}
+
+func TestRunResume_NoCreatedPRsPrintsNoPRLines(t *testing.T) {
+	t.Parallel()
+	s, _ := seedStore(t)
+	var out bytes.Buffer
+
+	opts := ResumeOptions{Query: "jsonl", Print: true}
+	if err := RunResume(t.Context(), apiForStore(t, s), opts, strings.NewReader(""), &out, pickNever(t), nil); err != nil {
+		t.Fatalf("RunResume: %v", err)
+	}
+	if strings.Contains(out.String(), "PR ") {
+		t.Errorf("unexpected PR line without pr_created rows:\n%s", out.String())
 	}
 }
