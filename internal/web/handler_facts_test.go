@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -149,5 +150,31 @@ func TestFactsPage_DetailEmpty(t *testing.T) {
 	_, body := fetch(t, base+"/facts?subject=%2Fno-such-project")
 	if !strings.Contains(body, "No facts known for") {
 		t.Errorf("expected detail empty-state, got:\n%s", body)
+	}
+}
+
+// TestFactsPage_IndexListsSubjectsPastTheOldCap pins the index to the
+// server's cap rather than the old 200: on a real store the last
+// subjects alphabetically were unreachable from the index.
+func TestFactsPage_IndexListsSubjectsPastTheOldCap(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	base, stop := startTestServer(t, st)
+	defer stop()
+	loID := seedFactsLLMOutput(t, st)
+	for i := range 250 {
+		if _, err := store.SaveSemanticFact(context.Background(), st.DB(), store.SemanticFact{
+			SourceLLMOutputID: loID, Subject: fmt.Sprintf("/work/p%03d", i),
+			Predicate: "primary_language", Object: "Go", Confidence: 1, AssertedAtMs: 1,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, body := fetch(t, base+"/facts")
+	if !strings.Contains(body, "/work/p249") {
+		t.Errorf("subject 250 of 250 missing from the index")
+	}
+	if strings.Contains(body, "The index is capped") {
+		t.Errorf("250 subjects is below the cap; no capped note expected")
 	}
 }

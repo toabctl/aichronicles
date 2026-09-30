@@ -510,13 +510,14 @@ func newSummariesShowCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "show <session>",
 		Short: "Show the most recent stored LLM output for a session",
-		Long: "Renders the latest llm_outputs row matching the given session\n" +
-			"(prefix OK) and type (default: summary). Pass --format=json to\n" +
-			"emit the raw JSON body instead of the human-readable render —\n" +
-			"useful for piping into `jq`.\n\n" +
-			"Errors with `no output for session …/type …` when the session\n" +
-			"exists but has never been summarized/reflected/proposed under\n" +
-			"the requested type.\n\n" +
+		Long: "Renders the latest summary stored for the given session\n" +
+			"(prefix OK). Pass --format=json to emit the raw JSON body\n" +
+			"instead of the human-readable render — useful for piping into\n" +
+			"`jq`.\n\n" +
+			"Errors with `no summary output for session …` when the session\n" +
+			"exists but has never been summarized. Reflect and propose\n" +
+			"outputs span many sessions and are not attached to one; list\n" +
+			"them with `aichronicles summaries list --type reflect|propose`.\n\n" +
 			"Talks to aichronicles-api over its UDS (override with\n" +
 			"--socket or $AICHRONICLES_API_SOCKET).",
 		Args:              cobra.ExactArgs(1),
@@ -537,7 +538,7 @@ func newSummariesShowCmd() *cobra.Command {
 			return runSummariesShow(cmd.Context(), c, args[0], kind, format == FormatJSON, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&typeIn, "type", "summary", "output type (summary | reflect | propose)")
+	cmd.Flags().StringVar(&typeIn, "type", "summary", "output type (only summary is per-session)")
 	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)
 	return cmd
@@ -547,6 +548,13 @@ func newSummariesShowCmd() *cobra.Command {
 // show`. Tests call it directly with a configured *apiclient.Client
 // instead of going through cobra's flag parser.
 func runSummariesShow(ctx context.Context, c *apiclient.Client, sessionPrefix string, kind store.LLMOutputKind, jsonRaw bool, out io.Writer) error {
+	// Only summaries are attached to one session: reflect and propose
+	// outputs are stored without a session id, so this lookup could
+	// never find them and used to answer "no reflect output for
+	// session X" even when reflections existed.
+	if kind != store.LLMKindSummary {
+		return fmt.Errorf("summaries show: --type %s outputs span many sessions and are not attached to one; list them with `aichronicles summaries list --type %s`", kind, kind)
+	}
 	sid, err := c.ResolveSession(ctx, sessionPrefix)
 	if err != nil {
 		return fmt.Errorf("summaries show: %w", err)

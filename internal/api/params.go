@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -240,4 +241,18 @@ func parseNonNegativeIntQuery(w http.ResponseWriter, r *http.Request, name strin
 		return 0, false
 	}
 	return n, true
+}
+
+// pathQuery reads a path-valued filter (cwd, project) and cleans it,
+// so "/work/proj/" and "/work/proj" select the same sessions. Stored
+// cwds are clean absolute paths (agents report os.Getwd), and the
+// filters match them exactly (or by prefix), so an uncleaned trailing
+// slash used to return nothing — the CLI's `unresolved` was the only
+// consumer that cleaned before calling. Empty stays empty: no filter.
+func pathQuery(r *http.Request, name string) string {
+	v := r.URL.Query().Get(name)
+	if v == "" {
+		return ""
+	}
+	return filepath.Clean(v)
 }

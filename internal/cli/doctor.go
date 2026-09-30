@@ -173,7 +173,7 @@ func reportPipelineStaleness(ctx context.Context, w io.Writer, c *apiclient.Clie
 	if len(outs) == 0 {
 		// Distinguish "nothing captured yet" from "captured plenty,
 		// analysed none" — only the second is a problem.
-		resp, sErr := c.Sessions(ctx, wire.SessionListRequest{Limit: 1, SinceMs: 1})
+		resp, sErr := c.Sessions(ctx, wire.SessionListRequest{Limit: 1})
 		if sErr == nil && len(resp.Sessions) > 0 {
 			_, _ = fmt.Fprintf(w,
 				"WARN %d+ session(s) captured but no LLM artifacts exist — the "+

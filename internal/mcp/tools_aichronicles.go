@@ -3,6 +3,8 @@ package mcp
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/toabctl/aichronicles/internal/apiclient"
@@ -45,10 +47,20 @@ func decodeArgs(toolName string, args json.RawMessage, dst any) *Error {
 }
 
 // mapAPIError is the canonical apiclient-error → MCP-result mapping
-// every tool runs after a c.X(...) call. Surfaces ErrSocketUnavailable
-// as a tool-level error so the agent learns "the daemon's down" (not
-// "the request failed for an unspecified reason"); falls back to a
-// protocol-level Error with a "<tool>: " prefix.
+// every tool runs after a c.X(...) call:
+//
+//   - ErrSocketUnavailable → tool-level error, so the agent learns
+//     "the daemon's down" rather than "the request failed".
+//   - a 4xx from the api (bad prefix, unknown id, invalid value) →
+//     tool-level error carrying the problem's title and detail. The
+//     request the agent built is what's wrong, and a tool error is
+//     the MCP channel for "fix your arguments and retry".
+//   - anything else (5xx, transport, decode) → protocol-level Error
+//     with a "<tool>: " prefix.
+//
+// 4xx used to take the protocol-level path, so a typo'd session id
+// surfaced to the agent as an internal server failure, and tools that
+// hand-mapped a few statuses disagreed with those that didn't.
 //
 // Returns (nil, nil) on a nil error so callers can write
 // `if r, e := mapAPIError(...); r != nil || e != nil { return r, e }`.
@@ -58,6 +70,17 @@ func mapAPIError(toolName string, err error) (*ToolResult, *Error) {
 	}
 	if errors.Is(err, apiclient.ErrSocketUnavailable) {
 		return TextError("aichronicles-api unreachable; is the daemon running?"), nil
+	}
+	var herr *apiclient.HTTPError
+	if errors.As(err, &herr) && herr.Status >= 400 && herr.Status < 500 {
+		msg := herr.Problem.Title
+		if msg == "" {
+			msg = fmt.Sprintf("request rejected (%d)", herr.Status)
+		}
+		if herr.Problem.Detail != "" {
+			msg += ": " + herr.Problem.Detail
+		}
+		return TextError("%s: %s", strings.TrimSuffix(toolName, ":"), msg), nil
 	}
 	return nil, &Error{Code: InternalError, Message: toolName + ": " + err.Error()}
 }

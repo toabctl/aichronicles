@@ -3,25 +3,23 @@ package api
 import (
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
-
-// defaultSessionListWindow is the cutoff applied when a client
-// does not supply since_ms. Generous enough that "open the web
-// UI without arguments" lands on a useful list; cheap enough
-// that the query is bounded.
-const defaultSessionListWindow = 30 * 24 * time.Hour
 
 // handleSessionsList serves GET /v1/sessions.
 //
 // Query params:
 //
 //   - since_ms: epoch ms cutoff against effective ts (ended_at,
-//     else started_at). Sessions older are excluded. 0 / unset
-//     applies a 30-day default.
+//     else started_at). Sessions older are excluded. 0 / unset means
+//     no cutoff: the list is newest-first and paginated, so the first
+//     page is the recent sessions either way. (Unset used to mean a
+//     hidden 30-day window while an explicit 0 meant all time, and the
+//     apiclient cannot send 0 — so MCP list_sessions and CLI
+//     `sessions` silently saw 30 days, and the web passed since_ms=1
+//     to escape it.)
 //   - limit:    page size, capped at MaxPageLimit.
 func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 	req, offset, ok := parseSessionListRequest(w, r)
@@ -88,16 +86,12 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 // of apiclient.Client.Sessions, which builds the same query from the
 // same struct). Returns the request, the decoded page offset (cursor
 // is opaque on the wire; offset is its decoded form), and ok=false
-// after a 400 has been written. SinceMs defaults to a 30-day window
-// when the client omits it.
+// after a 400 has been written.
 func parseSessionListRequest(w http.ResponseWriter, r *http.Request) (wire.SessionListRequest, int, bool) {
 	q := r.URL.Query()
 	sinceMs, ok := parseInt64Query(w, r, "since_ms")
 	if !ok {
 		return wire.SessionListRequest{}, 0, false
-	}
-	if q.Get("since_ms") == "" {
-		sinceMs = time.Now().Add(-defaultSessionListWindow).UnixMilli()
 	}
 	limit, offset, ok := parsePage(w, r)
 	if !ok {
@@ -105,11 +99,11 @@ func parseSessionListRequest(w http.ResponseWriter, r *http.Request) (wire.Sessi
 	}
 	return wire.SessionListRequest{
 		SinceMs:           sinceMs,
-		Cwd:               q.Get("cwd"),
+		Cwd:               pathQuery(r, "cwd"),
 		Limit:             limit,
 		Cursor:            wire.Cursor(q.Get("cursor")),
 		SourceAgent:       q.Get("source_agent"),
-		Project:           q.Get("project"),
+		Project:           pathQuery(r, "project"),
 		ToolName:          q.Get("tool_name"),
 		SkillName:         q.Get("skill_name"),
 		FilePathSubstring: q.Get("file_path_substring"),

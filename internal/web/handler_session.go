@@ -40,8 +40,14 @@ var errSessionNotFound = errors.New("session not found")
 func (s *Server) sessionDetailHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	resolved, err := s.api.ResolveSession(r.Context(), id)
+	var herr *apiclient.HTTPError
 	switch {
 	case errors.Is(err, apiclient.ErrNotFound):
+		http.NotFound(w, r)
+		return
+	case errors.As(err, &herr) && herr.Status == http.StatusBadRequest:
+		// Not a hex id prefix at all (/sessions/foo): no session can
+		// live at that URL. This used to fall through to the 500 path.
 		http.NotFound(w, r)
 		return
 	case errors.Is(err, apiclient.ErrConflict):
@@ -385,8 +391,10 @@ func loadLatestSummary(ctx context.Context, s *Server, sessionID string) (*Sessi
 	return out, nil
 }
 
-// loadEventRows pulls the most recent `limit` events for the
-// session and renders each one for the timeline.
+// loadEventRows pulls the session's FIRST `limit` events, in
+// chronological order (the endpoint returns the head of the
+// session), and renders each one for the timeline. The template
+// compares len(Events) with EventCount to say when the tail is cut.
 func loadEventRows(ctx context.Context, s *Server, sessionID string, limit int) ([]EventRow, error) {
 	resp, err := s.api.SessionEvents(ctx, sessionID, limit, false)
 	if err != nil {

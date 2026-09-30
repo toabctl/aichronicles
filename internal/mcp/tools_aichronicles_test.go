@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -1177,5 +1178,110 @@ func TestSearchEvents_NewestFirst(t *testing.T) {
 	newest := preview.ShortID(events.DeriveSessionID("claude-code", "sess-sparse-new"))
 	if !strings.HasPrefix(lines[0], newest) {
 		t.Errorf("first hit should be the newest session %s:\n%s", newest, res.Content[0].Text)
+	}
+}
+
+// TestGetSummary_MultiSessionKindsAreRejected pins get_summary to the
+// one per-session kind: reflect/propose outputs carry no session id,
+// so the tool advertised kinds it could never return and answered
+// "no reflect output for session …" even when reflections existed.
+func TestGetSummary_MultiSessionKindsAreRejected(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
+	registerAllTools(t, s, st)
+	sid := events.DeriveSessionID("claude-code", "sess-foo")
+	for _, kind := range []string{"reflect", "propose"} {
+		res := callTool(t, s, "get_summary", `{"session_id":"`+sid+`","kind":"`+kind+`"}`)
+		if !res.IsError || !strings.Contains(res.Content[0].Text, "not per-session") {
+			t.Errorf("kind=%s: got %+v, want a not-per-session user error", kind, res)
+		}
+	}
+}
+
+// seedManyFacts stores n facts about subject with predicates p000..
+// so their predicate order is predictable.
+func seedManyFacts(t *testing.T, st *store.Store, subject string, n int) {
+	t.Helper()
+	loID := seedFactsRow(t, st)
+	for i := range n {
+		if _, err := store.SaveSemanticFact(t.Context(), st.DB(), store.SemanticFact{
+			SourceLLMOutputID: loID, Subject: subject,
+			Predicate: fmt.Sprintf("p%03d", i), Object: "o",
+			Confidence: 1, AssertedAtMs: time.Now().UnixMilli(),
+		}); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+	}
+}
+
+// TestGetFactsForSubject_SaysWhenItTruncates is the regression gate
+// for the silent first page: the tool promised "every" fact but read
+// one page, so the predicates past the cut vanished without a trace.
+func TestGetFactsForSubject_SaysWhenItTruncates(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	seedManyFacts(t, st, "/work/big", 12)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
+	registerAllTools(t, s, st)
+
+	cut := callTool(t, s, "get_facts_for_subject", `{"subject":"/work/big","limit":5}`).Content[0].Text
+	if !strings.Contains(cut, "more exist") || strings.Contains(cut, "p005") {
+		t.Errorf("limit=5 of 12: want 5 facts and a truncation note:\n%s", cut)
+	}
+	whole := callTool(t, s, "get_facts_for_subject", `{"subject":"/work/big","limit":12}`).Content[0].Text
+	if strings.Contains(whole, "more exist") || !strings.Contains(whole, "p011") {
+		t.Errorf("limit=12 of 12: want every fact and no truncation note:\n%s", whole)
+	}
+}
+
+// TestListWorkflows_FindsAMatchBehindNewerRows is the regression gate
+// for list_workflows' one-page read: it filtered the newest limit*5
+// induction rows, so a matching workflow further back was reported as
+// "(no workflows yet …)" over a corpus of hundreds. The walk must
+// reach it, and a filter that matches nothing must say so rather than
+// claim the corpus is empty.
+func TestListWorkflows_FindsAMatchBehindNewerRows(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	seedWorkflowOutput(t, st, "00000000-0000-0000-0000-00000000aaaa", "rebuild the gnome-shell test suite", "r", true)
+	// Push the match back: 80 newer rows without a workflow.
+	if _, err := st.DB().Exec(`UPDATE llm_outputs SET created_at_ms = 1 WHERE kind = 'induction'`); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 80 {
+		if _, err := st.DB().Exec(
+			`INSERT INTO llm_outputs(kind, model, prompt_hash, body, created_at_ms) VALUES ('induction', 'm', ?, '{"rationale":"none"}', ?)`,
+			fmt.Sprintf("newer-%d", i), 1000+i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
+	registerAllTools(t, s, st)
+
+	hit := callTool(t, s, "list_workflows", `{"task_shape_contains":"gnome-shell"}`).Content[0].Text
+	if !strings.Contains(hit, "gnome-shell test suite") {
+		t.Errorf("match behind 80 newer rows not found:\n%s", hit)
+	}
+	miss := callTool(t, s, "list_workflows", `{"task_shape_contains":"no-such-shape"}`).Content[0].Text
+	if strings.Contains(miss, "no workflows yet") || !strings.Contains(miss, "no-such-shape") {
+		t.Errorf("a non-matching filter must not claim the corpus is empty:\n%s", miss)
+	}
+	ctxBody := callTool(t, s, "get_project_context", `{"cwd":"/work/x"}`).Content[0].Text
+	if !strings.Contains(ctxBody, "gnome-shell test suite") {
+		t.Errorf("project context workflows section missed the only workflow:\n%s", ctxBody)
+	}
+}
+
+// TestGetSummary_BadPrefixIsAToolError: a non-hex prefix is the
+// agent's mistake; it used to come back as a JSON-RPC internal error.
+func TestGetSummary_BadPrefixIsAToolError(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
+	registerAllTools(t, s, st)
+	res := callTool(t, s, "get_summary", `{"session_id":"not-hex!"}`)
+	if res == nil || !res.IsError || !strings.Contains(res.Content[0].Text, "Invalid prefix") {
+		t.Errorf("want a tool error naming the invalid prefix, got %+v", res)
 	}
 }

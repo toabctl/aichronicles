@@ -48,8 +48,7 @@ type SessionDigest struct {
 //
 // SinceMs is an inclusive cutoff against the session's effective
 // timestamp (ended_at_ms when set, else started_at_ms). Sessions
-// older than SinceMs are excluded. Zero means "no cutoff" (server
-// applies a generous default — 30 days).
+// older than SinceMs are excluded. Zero means no cutoff.
 type SessionListRequest struct {
 	SinceMs int64 `json:"since_ms,omitempty"`
 	// Cwd narrows to sessions whose cwd matches exactly. Empty

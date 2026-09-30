@@ -293,16 +293,19 @@ func TestSummariesShow_UnknownKindErrs(t *testing.T) {
 	s, sessID := seedSummariesFixtures(t)
 	c := apiForStore(t, s)
 
-	// This session only has a summary, not a reflection. Asking for
-	// reflect on it should error with a clear "no output" message
-	// rather than silently returning nothing.
-	var out bytes.Buffer
-	err := runSummariesShow(t.Context(), c, sessID[:8], store.LLMKindReflect, false, &out)
-	if err == nil {
-		t.Fatal("expected error when kind not present on session")
-	}
-	if !strings.Contains(err.Error(), "no reflect output") {
-		t.Errorf("expected 'no reflect output' message, got %v", err)
+	// reflect/propose outputs are never attached to one session, so
+	// asking for one per session must say so and point at the
+	// listing — not claim the session has "no reflect output", which
+	// is true of every session and misleading.
+	for _, kind := range []store.LLMOutputKind{store.LLMKindReflect, store.LLMKindPropose} {
+		var out bytes.Buffer
+		err := runSummariesShow(t.Context(), c, sessID[:8], kind, false, &out)
+		if err == nil {
+			t.Fatalf("%s: expected an error", kind)
+		}
+		if !strings.Contains(err.Error(), "not attached to one") || !strings.Contains(err.Error(), "summaries list --type "+string(kind)) {
+			t.Errorf("%s: want the multi-session hint, got %v", kind, err)
+		}
 	}
 }
 

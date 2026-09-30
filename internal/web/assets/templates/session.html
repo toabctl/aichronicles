@@ -136,6 +136,10 @@
 
 <h2>Events</h2>
 {{if .Events}}
+{{if lt (len .Events) .EventCount}}
+<p class="muted">Showing the first {{len .Events}} of {{.EventCount}} events; the rest of the session is not shown here.
+   Search within it with <code>aichronicles search --session {{.ShortID}} &lt;words&gt;</code>.</p>
+{{end}}
 <table>
   <thead>
     <tr>

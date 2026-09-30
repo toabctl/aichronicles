@@ -23,6 +23,9 @@ import (
 // stream. 20 covers a year of weekly-cadence runs without paging.
 const proposeDefaultLimit = 20
 
+// proposeMaxLimit is the largest ?limit= /propose accepts.
+const proposeMaxLimit = 200
+
 // proposeHandler renders /propose: cards of cached propose outputs,
 // newest first. Each card lists the skills the model proposed,
 // each skill with its evidence sessions linked back to
@@ -39,15 +42,22 @@ const proposeDefaultLimit = 20
 func (s *Server) proposeHandler(w http.ResponseWriter, r *http.Request) {
 	limit := proposeDefaultLimit
 	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= proposeMaxLimit {
 			limit = n
 		}
 	}
 
-	rows, err := s.api.LLMOutputsList(r.Context(), string(wire.LLMKindPropose), "", limit)
+	// One row past the limit tells us whether older runs exist; the
+	// page used to cut at the limit and say nothing (20 of 44 runs on
+	// a real store, the rest unreachable without guessing ?limit=).
+	rows, err := s.api.LLMOutputsList(r.Context(), string(wire.LLMKindPropose), "", limit+1)
 	if err != nil {
 		s.internalError(w, "proposeHandler: load", "could not load proposals", err)
 		return
+	}
+	more := len(rows) > limit
+	if more {
+		rows = rows[:limit]
 	}
 
 	now := time.Now()
@@ -55,6 +65,10 @@ func (s *Server) proposeHandler(w http.ResponseWriter, r *http.Request) {
 		Title:     "Propose",
 		Limit:     limit,
 		Proposals: buildProposeCards(rows, now),
+		More:      more,
+	}
+	if more && limit < proposeMaxLimit {
+		page.NextLimit = min(limit*2, proposeMaxLimit)
 	}
 	if err := loadProposalLifecycle(r.Context(), s, &page, now); err != nil {
 		s.log.Error("proposeHandler: lifecycle", "err", err)

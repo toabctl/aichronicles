@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -125,4 +126,37 @@ func TestWorkflowsPage_OmitsInductionRowsWithoutWorkflow(t *testing.T) {
 		t.Errorf("expected empty-state message:\n%s", body)
 	}
 	_ = store.LLMKindInduction
+}
+
+// TestWorkflowsPage_ShowsWorkflowsBehindTheOldCap pins the page to the
+// whole corpus: it read only the newest 200 induction rows, so older
+// workflows vanished while the heading counted the rest as all of them.
+func TestWorkflowsPage_ShowsWorkflowsBehindTheOldCap(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	base, stop := startTestServer(t, st)
+	defer stop()
+	wf, _ := json.Marshal(map[string]any{
+		"workflow": map[string]any{
+			"task_shape": "the oldest workflow", "procedure": []map[string]any{{"action": "step"}},
+			"preconditions": []string{}, "success_checks": []string{}, "evidence": []any{},
+		},
+		"rationale": "r",
+	})
+	if _, err := st.DB().Exec(`INSERT INTO llm_outputs(kind, model, prompt_hash, body, created_at_ms) VALUES ('induction', 'm', 'old', ?, 1)`, string(wf)); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 250 {
+		if _, err := st.DB().Exec(`INSERT INTO llm_outputs(kind, model, prompt_hash, body, created_at_ms) VALUES ('induction', 'm', ?, '{"rationale":"none"}', ?)`,
+			fmt.Sprintf("n%d", i), 1000+i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	status, page := fetch(t, base+"/workflows")
+	if status != http.StatusOK {
+		t.Fatalf("status %d", status)
+	}
+	if !strings.Contains(page, "the oldest workflow") {
+		t.Errorf("workflow behind 250 newer induction rows is missing")
+	}
 }

@@ -1,10 +1,12 @@
 package mcp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -140,7 +142,8 @@ func getUnresolvedForCwdAPIHandler(c *apiclient.Client) ToolHandler {
 func registerGetFactsForSubject(s *Server, c *apiclient.Client) {
 	s.RegisterTool(Tool{
 		Name: "get_facts_for_subject",
-		Description: "Return every persisted semantic fact about a subject. Subjects are " +
+		Description: "Return the persisted semantic facts about a subject, ordered by predicate, " +
+			"up to limit (the output says when more exist). Subjects are " +
 			"typically a project's cwd; predicates pick from a small recommended vocabulary " +
 			"(uses_language_version, runs_tests_via, runs_build_via, key_directory, ...). " +
 			"Use to recall what the agent has learned about a project across past sessions.",
@@ -148,7 +151,7 @@ func registerGetFactsForSubject(s *Server, c *apiclient.Client) {
 			"type": "object",
 			"properties": {
 				"subject": {"type": "string", "description": "exact subject (typically a cwd)"},
-				"limit":   {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}
+				"limit":   {"type": "integer", "minimum": 1, "maximum": 1000, "default": 50}
 			},
 			"required": ["subject"]
 		}`),
@@ -168,25 +171,31 @@ func getFactsForSubjectAPIHandler(c *apiclient.Client) ToolHandler {
 		if strings.TrimSpace(req.Subject) == "" {
 			return TextError("get_facts_for_subject: subject is required"), nil
 		}
-		req.Limit = clampLimit(req.Limit, 50, 200)
-		resp, err := c.Facts(ctx, req.Subject, req.Limit, "")
+		req.Limit = clampLimit(req.Limit, 50, 1000)
+		facts, truncated, err := c.FactsAll(ctx, req.Subject, req.Limit)
 		if r, e := mapAPIError("get_facts_for_subject: load:", err); r != nil || e != nil {
 			return r, e
 		}
-		if len(resp.Facts) == 0 {
+		if len(facts) == 0 {
 			return TextResult(fmt.Sprintf(
 				"(no facts known for %q yet — try `aichronicles facts induce --session <id>` on a past session in this project)",
 				req.Subject)), nil
 		}
 		var b strings.Builder
 		fmt.Fprintf(&b, "subject: %s\n", req.Subject)
-		for _, f := range resp.Facts {
+		for _, f := range facts {
 			fmt.Fprintf(&b, "%s\t%s\t%.2f\t%s\n",
 				mcpField(f.Predicate), mcpField(f.Object), f.Confidence,
 				formatTS(f.AssertedAtMs))
 			if f.EvidenceQuote != nil && *f.EvidenceQuote != "" {
 				fmt.Fprintf(&b, "  quote: %s\n", mcpField(*f.EvidenceQuote))
 			}
+		}
+		// The list is predicate-sorted, so a silent cut drops whole
+		// predicates (it used to stop at 200 of 430 facts, before the
+		// runs_* predicates the description names). Say so.
+		if truncated {
+			fmt.Fprintf(&b, "(showing the first %d facts by predicate; more exist — raise limit, max 1000)\n", req.Limit)
 		}
 		return TextResult(strings.TrimRight(b.String(), "\n")), nil
 	}
@@ -269,10 +278,9 @@ func getSkillStalenessAPIHandler(c *apiclient.Client) ToolHandler {
 				return nil, e
 			}
 		}
-		windowMs := int64(req.WindowMinutes) * 60 * 1000
-		if windowMs <= 0 {
-			windowMs = 10 * 60 * 1000
-		}
+		// Clamp to the schema's declared bounds: the schema told the
+		// agent "maximum 240" but a larger value went straight through.
+		windowMs := int64(clampLimit(req.WindowMinutes, 10, 240)) * 60 * 1000
 		sinceMs, days := timefmt.SinceMsFromDays(req.SinceDays, 14, 365, time.Now())
 
 		resp, err := c.SkillStaleness(ctx, wire.SkillStalenessRequest{
@@ -336,10 +344,13 @@ func getInsightsAPIHandler(c *apiclient.Client) ToolHandler {
 		}
 		sinceMs, days := timefmt.SinceMsFromDays(req.SinceDays, 30, 365, time.Now())
 
+		// Clamp to the schema's declared bounds (maximum 50): the
+		// server's top_* knobs are uncapped, so the declared limit was
+		// the only one and nothing enforced it.
 		resp, err := c.Insights(ctx, apiclient.InsightsRequest{
 			SinceMs:   sinceMs,
-			TopTools:  req.TopTools,
-			TopSkills: req.TopSkills,
+			TopTools:  clampLimit(req.TopTools, 15, 50),
+			TopSkills: clampLimit(req.TopSkills, 10, 50),
 		})
 		if r, e := mapAPIError("get_insights", err); r != nil || e != nil {
 			return r, e
@@ -440,7 +451,8 @@ func findEpisodesAPIHandler(c *apiclient.Client) ToolHandler {
 		req.Limit = clampLimit(req.Limit, 50, 100)
 		var sinceMs int64
 		if req.SinceDays > 0 {
-			sinceMs, _ = timefmt.SinceMsFromDays(req.SinceDays, 0, 0, time.Now())
+			// 365 is the schema's declared maximum; it was not applied.
+			sinceMs, _ = timefmt.SinceMsFromDays(req.SinceDays, 0, 365, time.Now())
 		}
 
 		// Accept short prefixes for session_id like list_sessions
@@ -618,14 +630,7 @@ func searchEventsAPIHandler(c *apiclient.Client) ToolHandler {
 			Order: wire.SearchOrderRecency,
 		})
 		if err != nil {
-			if errors.Is(err, apiclient.ErrSocketUnavailable) {
-				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
-			}
-			var herr *apiclient.HTTPError
-			if errors.As(err, &herr) && herr.Status == 400 {
-				return TextError("search_events: %s", herr.Problem.Detail), nil
-			}
-			return nil, &Error{Code: InternalError, Message: "search_events: query: " + err.Error()}
+			return mapAPIError("search_events", err)
 		}
 
 		// search_events historically returned "no events for
@@ -736,13 +741,12 @@ func registerGetSummary(s *Server, c *apiclient.Client) {
 	s.RegisterTool(Tool{
 		Name: "get_summary",
 		Description: "Fetch the cached LLM-generated summary of one past session. " +
-			"Returns the structured summary body if one was generated. " +
-			"Pass kind=reflect or kind=propose for the multi-session analysis kinds.",
+			"Returns the structured summary body if one was generated.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"session_id": {"type": "string"},
-				"kind":       {"type": "string", "enum": ["summary", "reflect", "propose"], "default": "summary"}
+				"kind":       {"type": "string", "enum": ["summary"], "default": "summary"}
 			},
 			"required": ["session_id"]
 		}`),
@@ -766,6 +770,14 @@ func getSummaryAPIHandler(c *apiclient.Client) ToolHandler {
 		if kind == "" {
 			kind = "summary"
 		}
+		// Only summaries are attached to one session. reflect and
+		// propose outputs span many sessions and are stored without a
+		// session id, so a per-session lookup can never find them;
+		// the tool used to advertise both kinds and then answer "no
+		// reflect output for session X" even when reflections existed.
+		if kind != string(wire.LLMKindSummary) {
+			return TextError("get_summary: kind %q is not per-session; only \"summary\" is (reflect/propose outputs span many sessions — see get_insights or `aichronicles summaries list --type %s`)", kind, kind), nil
+		}
 
 		// Resolve short prefixes to canonical id.
 		full, err := c.ResolveSession(ctx, req.SessionID)
@@ -776,10 +788,7 @@ func getSummaryAPIHandler(c *apiclient.Client) ToolHandler {
 			if errors.Is(err, apiclient.ErrConflict) {
 				return TextError("get_summary: prefix %q is ambiguous", req.SessionID), nil
 			}
-			if errors.Is(err, apiclient.ErrSocketUnavailable) {
-				return TextError("aichronicles-api unreachable; is the daemon running?"), nil
-			}
-			return nil, &Error{Code: InternalError, Message: "get_summary: resolve: " + err.Error()}
+			return mapAPIError("get_summary", err)
 		}
 
 		outs, err := c.SessionLLMOutputs(ctx, full, kind, 1)
@@ -831,20 +840,25 @@ func listWorkflowsAPIHandler(c *apiclient.Client) ToolHandler {
 			}
 		}
 		req.Limit = clampLimit(req.Limit, 10, 50)
-		// Pull more than the cap because most induction rows
-		// have no workflow — filter post-fetch.
-		outs, err := c.LLMOutputsList(ctx, "induction", "", req.Limit*5)
-		if r, e := mapAPIError("list_workflows", err); r != nil || e != nil {
-			return r, e
-		}
 
+		// Walk induction rows newest-first across pages until Limit
+		// matches are found. Most rows carry no workflow, so this used
+		// to read Limit*5 rows, filter them, and — when the match sat
+		// further back — report "no workflows yet" over a corpus of
+		// hundreds.
 		needle := strings.ToLower(strings.TrimSpace(req.TaskShapeContains))
 		type entry struct {
 			row wire.LLMOutput
 			ind prompts.InductionResult
 		}
-		var keep []entry
-		for _, r := range outs {
+		var (
+			keep         []entry
+			anyWorkflows bool
+		)
+		for r, err := range c.LLMOutputs(ctx, string(wire.LLMKindInduction), "") {
+			if res, e := mapAPIError("list_workflows", err); res != nil || e != nil {
+				return res, e
+			}
 			var ind prompts.InductionResult
 			if jerr := json.Unmarshal([]byte(r.Body), &ind); jerr != nil {
 				continue
@@ -859,6 +873,7 @@ func listWorkflowsAPIHandler(c *apiclient.Client) ToolHandler {
 				}
 				continue
 			}
+			anyWorkflows = true
 			if needle != "" && !strings.Contains(strings.ToLower(ind.Workflow.TaskShape), needle) {
 				continue
 			}
@@ -868,6 +883,9 @@ func listWorkflowsAPIHandler(c *apiclient.Client) ToolHandler {
 			}
 		}
 		if len(keep) == 0 {
+			if anyWorkflows && needle != "" {
+				return TextResult(fmt.Sprintf("(no workflow's task_shape contains %q)", req.TaskShapeContains)), nil
+			}
 			return TextResult("(no workflows yet — try `aichronicles induction sweep` to populate the workflow corpus)"), nil
 		}
 
@@ -977,18 +995,23 @@ func getProjectContextAPIHandler(c *apiclient.Client) ToolHandler {
 		renderUnresolvedSectionAPI(&b, uresp.Items)
 
 		// Section 3: typed semantic facts. Subject is the cwd
-		// verbatim (the v1 fact-subject convention).
-		fresp, err := c.Facts(ctx, req.Cwd, req.MaxPerSection*4, "")
+		// verbatim (the v1 fact-subject convention). Read them all
+		// (bounded) and rank before cutting: /v1/facts sorts by
+		// predicate, so taking its first page gave an alphabetical
+		// slice (agent_traces … documentation_at) instead of the
+		// build/test/run contract this section is for.
+		facts, _, err := c.FactsAll(ctx, req.Cwd, projectContextFactsScan)
 		if err != nil {
 			return nil, &Error{Code: InternalError, Message: "get_project_context: facts: " + err.Error()}
 		}
-		renderFactsSectionAPI(&b, fresp.Facts)
+		renderFactsSectionAPI(&b, rankProjectFacts(facts), req.MaxPerSection*4)
 
 		// Section 4: recent workflows. Workflows ride inside
-		// kind=induction llm_outputs rows (Round 8); pull them via
-		// /v1/llm-outputs and filter for non-null body.workflow
-		// in the renderer.
-		wfs, err := c.LLMOutputsList(ctx, "induction", "", req.MaxPerSection*3)
+		// kind=induction llm_outputs rows (Round 8); walk those
+		// newest-first until MaxPerSection carry a workflow. (Reading
+		// a fixed MaxPerSection*3 rows first showed "(none …)" whenever
+		// the recent rows happened to have no workflow.)
+		wfs, err := recentWorkflowRows(ctx, c, req.MaxPerSection)
 		if err != nil {
 			return nil, &Error{Code: InternalError, Message: "get_project_context: workflows: " + err.Error()}
 		}
@@ -1015,7 +1038,10 @@ func renderRecentSessionsForCwdAPI(ctx context.Context, c *apiclient.Client, b *
 	}
 	fmt.Fprintf(b, "\n## Recent sessions in this cwd\n")
 	if len(resp.Sessions) == 0 {
-		fmt.Fprintln(b, "(none — this is the first session in this cwd)")
+		// Scoped to the window: sessions older than since_days are not
+		// asked for, so "first session in this cwd" (the old wording)
+		// was a false claim for any project with older history.
+		fmt.Fprintln(b, "(none in this window — older sessions may exist; widen since_days)")
 		return nil
 	}
 	for _, s := range resp.Sessions {
@@ -1073,16 +1099,76 @@ func renderUnresolvedSectionAPI(b *strings.Builder, items []wire.UnresolvedItem)
 	}
 }
 
-func renderFactsSectionAPI(b *strings.Builder, facts []wire.SemanticFact) {
+func renderFactsSectionAPI(b *strings.Builder, facts []wire.SemanticFact, limit int) {
 	fmt.Fprintf(b, "\n## Project facts\n")
 	if len(facts) == 0 {
 		fmt.Fprintln(b, "(none — try `aichronicles facts induce --session <id>` on a past session in this cwd)")
 		return
 	}
-	for _, f := range facts {
+	shown := facts
+	if len(shown) > limit {
+		shown = shown[:limit]
+	}
+	for _, f := range shown {
 		fmt.Fprintf(b, "- %s = %s  (conf=%.2f)\n",
 			mcpField(f.Predicate), mcpField(f.Object), f.Confidence)
 	}
+	if len(facts) > len(shown) {
+		fmt.Fprintf(b, "(%d more facts — see get_facts_for_subject)\n", len(facts)-len(shown))
+	}
+}
+
+// projectContextFactsScan bounds how many facts get_project_context
+// reads for ranking. Well above any real subject (hundreds); the
+// section itself shows far fewer.
+const projectContextFactsScan = 5000
+
+// rankProjectFacts orders facts for the project-context section: the
+// recommended vocabulary first, in its listed order (the language,
+// test/build/lint commands, deploy target… a project's working
+// contract), then every other predicate alphabetically. Stable, so
+// the store's per-predicate order (newest assertion first) holds.
+func rankProjectFacts(facts []wire.SemanticFact) []wire.SemanticFact {
+	rank := make(map[string]int, len(wire.RecommendedFactPredicates))
+	for i, p := range wire.RecommendedFactPredicates {
+		rank[p] = i
+	}
+	out := slices.Clone(facts)
+	slices.SortStableFunc(out, func(a, b wire.SemanticFact) int {
+		ra, aok := rank[a.Predicate]
+		rb, bok := rank[b.Predicate]
+		switch {
+		case aok && bok:
+			return cmp.Compare(ra, rb)
+		case aok:
+			return -1
+		case bok:
+			return 1
+		default:
+			return cmp.Compare(a.Predicate, b.Predicate)
+		}
+	})
+	return out
+}
+
+// recentWorkflowRows returns the newest kind=induction rows whose body
+// carries a workflow, up to limit, reading pages only as far as needed.
+func recentWorkflowRows(ctx context.Context, c *apiclient.Client, limit int) ([]wire.LLMOutput, error) {
+	var out []wire.LLMOutput
+	for r, err := range c.LLMOutputs(ctx, string(wire.LLMKindInduction), "") {
+		if err != nil {
+			return nil, err
+		}
+		var ind prompts.InductionResult
+		if json.Unmarshal([]byte(r.Body), &ind) != nil || ind.Workflow == nil || ind.Workflow.TaskShape == "" {
+			continue
+		}
+		out = append(out, r)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 // renderWorkflowsSectionAPI walks wire.LLMOutput rows of kind=induction

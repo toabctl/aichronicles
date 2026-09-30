@@ -193,6 +193,10 @@
   {{end}}
 </article>
 {{end}}
+{{if .More}}
+<p class="muted">Showing the {{.Limit}} most recent runs; older runs exist.
+  {{if .NextLimit}}<a href="/propose?limit={{.NextLimit}}">Show {{.NextLimit}}</a>{{else}}Use <code>aichronicles summaries list --type propose</code> to see them all.{{end}}</p>
+{{end}}
 {{else}}
 <article>
   <p class="empty">No cached proposals yet — run

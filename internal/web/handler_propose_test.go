@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -301,4 +302,31 @@ func itoa(n int64) string {
 		buf[i] = '-'
 	}
 	return string(buf[i:])
+}
+
+// TestProposePage_SaysWhenOlderRunsExist is the regression gate for
+// the silent cut at ?limit (default 20): older runs were unreachable
+// and nothing on the page said they existed.
+func TestProposePage_SaysWhenOlderRunsExist(t *testing.T) {
+	t.Parallel()
+	st := openTempStore(t)
+	for i := range 3 {
+		seedProposalRow(t, st, prompts.ProposalResult{
+			Skills: []prompts.ProposedSkill{{Name: fmt.Sprintf("skill-%d", i), Frequency: 1}},
+		}, int64(1_700_000_000_000+i))
+	}
+	base, stop := startTestServer(t, st)
+	defer stop()
+
+	_, cut := fetch(t, base+"/propose?limit=2")
+	if !strings.Contains(cut, "older runs exist") || !strings.Contains(cut, `href="/propose?limit=4"`) {
+		t.Errorf("limit=2 of 3: want the more-runs note and a show-more link")
+	}
+	if strings.Contains(cut, "skill-0") {
+		t.Errorf("limit=2 rendered the third (oldest) run")
+	}
+	_, all := fetch(t, base+"/propose?limit=3")
+	if strings.Contains(all, "older runs exist") {
+		t.Errorf("limit=3 of 3: no more-runs note expected")
+	}
 }

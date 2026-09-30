@@ -100,12 +100,29 @@ func TestDo_400_DecodesProblem_AndIsBadRequestError(t *testing.T) {
 
 func TestDo_404_MapsToErrNotFound(t *testing.T) {
 	t.Parallel()
+	// The api's own 404s are problem+json; that is what ErrNotFound
+	// means.
 	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
 		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"title":"Session not found","status":404}`))
 	}))
 	err := c.do(context.Background(), http.MethodGet, "/missing", nil, nil)
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("got %v, want ErrNotFound", err)
+	}
+}
+
+func TestDo_Bare404_IsUnsupportedEndpoint(t *testing.T) {
+	t.Parallel()
+	// A 404 without a problem body comes from a router that doesn't
+	// know the path — not a missing resource.
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	err := c.do(context.Background(), http.MethodGet, "/missing", nil, nil)
+	if !errors.Is(err, ErrUnsupportedEndpoint) || errors.Is(err, ErrNotFound) {
+		t.Errorf("got %v, want ErrUnsupportedEndpoint and not ErrNotFound", err)
 	}
 }
 
@@ -345,5 +362,27 @@ func TestHTTPError_FormatsTitleAndDetail(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestDecodeProblem_RouteMissIsNotNotFound is the regression gate for
+// version skew posing as "not found": a router 404/405 (no problem
+// body) must match ErrUnsupportedEndpoint and NOT ErrNotFound, while
+// the api's own problem+json 404 still matches ErrNotFound.
+func TestDecodeProblem_RouteMissIsNotNotFound(t *testing.T) {
+	t.Parallel()
+	c, _ := newRealServerClient(t)
+	var out struct{}
+	err := c.do(t.Context(), http.MethodGet, "/v1/no-such-route", nil, &out)
+	if !errors.Is(err, ErrUnsupportedEndpoint) || errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown route: got %v, want ErrUnsupportedEndpoint and not ErrNotFound", err)
+	}
+	err = c.do(t.Context(), http.MethodDelete, "/v1/sessions", nil, &out)
+	if !errors.Is(err, ErrUnsupportedEndpoint) {
+		t.Errorf("wrong method: got %v, want ErrUnsupportedEndpoint", err)
+	}
+	_, err = c.Summary(t.Context(), "no-such-session")
+	if !errors.Is(err, ErrNotFound) || errors.Is(err, ErrUnsupportedEndpoint) {
+		t.Errorf("problem+json 404: got %v, want ErrNotFound only", err)
 	}
 }

@@ -10,10 +10,12 @@ import (
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
-// factsIndexLimit caps how many distinct subjects /facts (no
-// subject) renders. Matches the prior raw-SQL LIMIT 200; the wire
-// endpoint clamps internally too.
-const factsIndexLimit = 200
+// factsIndexLimit asks for as many subjects as /v1/facts/subjects
+// will return (it is capped there and not paginated). It was 200, so
+// on a store with more subjects the alphabetical tail was unreachable
+// from the index with no sign of it; at this cap the page says the
+// list may be incomplete instead.
+const factsIndexLimit = wire.MaxPageLimit
 
 // factsPageLimit is the per-page size for a subject's facts in the
 // detail view; the rest load via the "Load more" control.
@@ -43,6 +45,7 @@ func (s *Server) factsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		page.Subjects = resp.Subjects
+		page.SubjectsCapped = len(resp.Subjects) >= factsIndexLimit
 		s.render(w, r, "facts", page)
 		return
 	}

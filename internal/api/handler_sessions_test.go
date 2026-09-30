@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -608,5 +609,33 @@ func TestHandleSessionsResolve_QueryFailureIs500(t *testing.T) {
 	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/sessions/resolve?prefix=abcd", nil))
 	if rr.Code != http.StatusInternalServerError {
 		t.Errorf("status=%d body=%s, want 500 for a failed lookup", rr.Code, rr.Body.String())
+	}
+}
+
+// TestHandleSessionsList_NoSinceMeansAllTime is the regression gate
+// for the hidden 30-day window: an unset since_ms silently dropped
+// older sessions, and the apiclient cannot send 0 to escape it, so
+// MCP list_sessions and CLI `sessions` reported "(no sessions)" for
+// cwds whose history was older than a month.
+func TestHandleSessionsList_NoSinceMeansAllTime(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	env := validEnvelope(t)
+	env.TsSource = time.Now().Add(-60 * 24 * time.Hour).UTC()
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(mustJSON(t, env))))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("seed: %d", rr.Code)
+	}
+	for _, q := range []string{"", "?since_ms=0"} {
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/sessions"+q, nil))
+		var out wire.SessionListResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(out.Sessions) != 1 {
+			t.Errorf("GET /v1/sessions%s: got %d sessions, want the 60-day-old one", q, len(out.Sessions))
+		}
 	}
 }
