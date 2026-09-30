@@ -116,6 +116,69 @@ func (s *Server) handleSessionExtractions(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, out)
 }
 
+// handleExtractions serves GET /v1/extractions?kind=&value=&since_ms=,
+// the reverse of handleSessionExtractions: which sessions produced a
+// value, e.g. which session created a PR (kind=pr_created). kind is
+// required; value is optional and matched exactly; pagination follows
+// the shared limit/cursor contract. Backed by store.FindExtractions.
+func (s *Server) handleExtractions(w http.ResponseWriter, r *http.Request) {
+	req, offset, ok := parseExtractionsRequest(w, r)
+	if !ok {
+		return
+	}
+	rows, err := store.FindExtractions(r.Context(), s.store.DB(), store.FindExtractionsOpts{
+		Kind:    req.Kind,
+		Value:   req.Value,
+		SinceMs: req.SinceMs,
+		Limit:   req.Limit,
+		Offset:  offset,
+	})
+	if err != nil {
+		s.storeError(w, "FindExtractions", err)
+		return
+	}
+	out := wire.ExtractionsResponse{Extractions: make([]wire.ExtractionSighting, 0, len(rows))}
+	for _, x := range rows {
+		out.Extractions = append(out.Extractions, wire.ExtractionSighting{
+			SessionID:  x.SessionID,
+			Kind:       x.Kind,
+			Value:      x.Value,
+			TsSourceMs: x.TsSourceMs,
+			Cwd:        x.Cwd,
+		})
+	}
+	out.NextCursor = nextCursor(offset, req.Limit, len(rows))
+	writeJSON(w, http.StatusOK, out)
+}
+
+// parseExtractionsRequest decodes + validates the GET /v1/extractions
+// query into wire.ExtractionsRequest (server mirror of
+// apiclient.Client.Extractions). Returns the request, the decoded page
+// offset, and ok=false after a 400.
+func parseExtractionsRequest(w http.ResponseWriter, r *http.Request) (wire.ExtractionsRequest, int, bool) {
+	q := r.URL.Query()
+	kind := q.Get("kind")
+	if kind == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing kind", "kind query param is required")
+		return wire.ExtractionsRequest{}, 0, false
+	}
+	sinceMs, ok := parseInt64Query(w, r, "since_ms")
+	if !ok {
+		return wire.ExtractionsRequest{}, 0, false
+	}
+	limit, offset, ok := parsePage(w, r)
+	if !ok {
+		return wire.ExtractionsRequest{}, 0, false
+	}
+	return wire.ExtractionsRequest{
+		Kind:    kind,
+		Value:   q.Get("value"),
+		SinceMs: sinceMs,
+		Limit:   limit,
+		Cursor:  wire.Cursor(q.Get("cursor")),
+	}, offset, true
+}
+
 // handleSessionCandidatePriors serves
 // GET /v1/sessions/{id}/candidate-priors?limit=. Returns same-cwd
 // prior sessions the LLM can emit session_links for; bounded so a

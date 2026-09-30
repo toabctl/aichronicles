@@ -36,6 +36,37 @@ type SessionExtractionsResponse struct {
 	Extractions []Extraction `json:"extractions"`
 }
 
+// ExtractionsRequest is the query-shape for GET /v1/extractions, the
+// reverse of /v1/sessions/{id}/extractions: which sessions produced a
+// value. Kind is required; Value, when set, matches exactly. Without
+// Value the endpoint lists every value of Kind, newest first — bound
+// it with SinceMs on large kinds such as "url".
+type ExtractionsRequest struct {
+	Kind    string `json:"kind"`
+	Value   string `json:"value,omitempty"`
+	SinceMs int64  `json:"since_ms,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
+	// Cursor pages forward through a previous response's NextCursor.
+	Cursor Cursor `json:"cursor,omitempty"`
+}
+
+// ExtractionSighting is one row of GET /v1/extractions: a session's
+// first sighting of the value (collapsing repeats within a session).
+// TsSourceMs and Cwd belong to that earliest matching event.
+type ExtractionSighting struct {
+	SessionID  string  `json:"session_id"`
+	Kind       string  `json:"kind"`
+	Value      string  `json:"value"`
+	TsSourceMs int64   `json:"ts_source_ms"`
+	Cwd        *string `json:"cwd,omitempty"`
+}
+
+// ExtractionsResponse is the body for GET /v1/extractions.
+type ExtractionsResponse struct {
+	Extractions []ExtractionSighting `json:"extractions"`
+	PageResponse
+}
+
 // SessionDigest already exists in sessions.go (the public-facing
 // wire shape returned by /v1/sessions). The richer
 // SessionDigestRow used by reflect/propose carries additional
