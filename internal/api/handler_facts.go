@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/wire"
@@ -9,16 +10,18 @@ import (
 
 // handleFactsSubjects serves GET /v1/facts/subjects?contains=...
 //
-// Two modes:
+// Two modes, both capped at limit (default wire.DefaultPageLimit,
+// max wire.MaxPageLimit) and not paginated:
 //   - contains=needle: substring match (case-insensitive) — for
-//     autocomplete. Backed by store.FactSubjectsLike, capped at
-//     limit (default wire.DefaultPageLimit, 50).
-//   - no contains:     full distinct list — for the web's facts
-//     index page. Backed by store.LoadDistinctFactSubjects, capped
-//     at a larger default (200) since the consumer renders the
-//     whole index, not a typeahead dropdown.
+//     autocomplete. Backed by store.FactSubjectsLike.
+//   - no contains:     the distinct list, alphabetical — for the
+//     web's facts index page. Backed by store.LoadDistinctFactSubjects.
+//
+// A whitespace-only contains counts as absent, like episodes'
+// query_contains; it used to reach FactSubjectsLike, which rejects an
+// empty needle, and came back 500.
 func (s *Server) handleFactsSubjects(w http.ResponseWriter, r *http.Request) {
-	contains := r.URL.Query().Get("contains")
+	contains := strings.TrimSpace(r.URL.Query().Get("contains"))
 	limit, ok := parseLimitQuery(w, r, wire.DefaultPageLimit)
 	if !ok {
 		return

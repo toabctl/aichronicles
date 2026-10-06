@@ -304,12 +304,21 @@ SELECT DISTINCT e.cwd
 // LoadInvoked returns the skill_load extraction counts from the
 // given window, sorted by descending count. Empty slice is fine
 // — many users don't load skills explicitly via the Skill tool.
+//
+// The window is on the load event's own ts_source_ms — the same
+// definition store.LoadSkillImpact (and so staleness and insights)
+// uses, so Count here equals SkillImpact.TotalLoads for the same
+// sinceMs. It used to filter on the session's ended_at_ms instead:
+// a skill loaded 60 days ago in a session that ended an hour ago
+// counted inside a 30-day window, loads in still-running sessions
+// (ended_at NULL) never counted, and propose put these counts next
+// to impact's loads/success-rate as if they described one window.
 func LoadInvoked(ctx context.Context, db *sql.DB, sinceMs int64) ([]prompts.InvokedSkill, error) {
 	const q = `
 SELECT x.value, COUNT(*) AS c
   FROM extractions x
-  JOIN sessions s ON s.id = x.session_id
- WHERE x.kind = ? AND s.ended_at_ms >= ?
+  JOIN events e ON e.event_id = x.event_id
+ WHERE x.kind = ? AND e.ts_source_ms >= ?
  GROUP BY x.value
  ORDER BY c DESC, x.value ASC`
 	rows, err := db.QueryContext(ctx, q, events.ExtractionKindSkillLoad, sinceMs)
