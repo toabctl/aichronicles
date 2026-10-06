@@ -68,9 +68,10 @@ func (s *Sink) Write(ctx context.Context, e events.Event) (events.Result, error)
 	var (
 		ingestSeq int64
 		deduped   bool
+		tsMs      int64
 	)
 	if err := WithTx(ctx, s.store.DB(), func(tx *sql.Tx) error {
-		tsMs := s.now().UnixMilli()
+		tsMs = s.now().UnixMilli()
 		seq, d, err := IngestEnvelopeWithExtractions(ctx, tx, e.Envelope, e.Raw, tsMs, e.Extractions)
 		if err != nil {
 			return err
@@ -85,12 +86,19 @@ func (s *Sink) Write(ctx context.Context, e events.Event) (events.Result, error)
 	} else {
 		s.imported.Add(1)
 	}
-	return events.Result{
+	res := events.Result{
 		EventID:   e.Envelope.EventID,
 		SessionID: events.DeriveSessionID(e.Envelope.SourceAgent, e.Envelope.SourceSessionID),
-		IngestSeq: ingestSeq,
 		Deduped:   deduped,
-	}, nil
+	}
+	// Row identity only for a row this call stored. On dedup the
+	// store returns the seq value it burned, which addresses no row;
+	// the Result contract promises zero there.
+	if !deduped {
+		res.IngestSeq = ingestSeq
+		res.TsServerMs = tsMs
+	}
+	return res, nil
 }
 
 // Flush is a no-op for the single-tx Sink.

@@ -220,7 +220,7 @@ func run(sockFlag, dbFlag string) error {
 
 	drainCtx, cancel := context.WithTimeout(context.Background(), drainTimeout)
 	defer cancel()
-	if err := shutdown(drainCtx); err != nil {
+	if err := srv.Shutdown(drainCtx, shutdown); err != nil {
 		logger.Warn("api shutdown", "err", err)
 	}
 	// Listener has drained; any envelopes accepted at the wire are

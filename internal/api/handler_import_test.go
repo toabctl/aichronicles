@@ -2,11 +2,15 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -230,5 +234,165 @@ func TestHandleImport_RedactsSecretsServerSide(t *testing.T) {
 	}
 	if !strings.Contains(content, "<redacted:aws_access_key>") {
 		t.Errorf("expected redacted marker; got %q", content)
+	}
+}
+
+// slowImport POSTs lines to /v1/import on a real http.Server with the
+// given timeouts, sleeping gap before each line, and returns the
+// response status and body. A real server (not a recorder) is the
+// point: the bug lived in connection deadlines.
+func slowImport(t *testing.T, srv *testServer, readTimeout, writeTimeout, gap time.Duration, lines [][]byte) (int, string) {
+	t.Helper()
+	ts := httptest.NewUnstartedServer(srv.Handler())
+	ts.Config.ReadTimeout = readTimeout
+	ts.Config.WriteTimeout = writeTimeout
+	ts.Start()
+	t.Cleanup(ts.Close)
+
+	pr, pw := io.Pipe()
+	go func() {
+		for _, l := range lines {
+			time.Sleep(gap)
+			if _, err := pw.Write(l); err != nil {
+				return
+			}
+		}
+		_ = pw.Close()
+	}()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/v1/import", pr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-ndjson")
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("import request: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, _ := io.ReadAll(resp.Body)
+	_ = pr.Close()
+	return resp.StatusCode, string(b)
+}
+
+// TestHandleImport_OutlivesServerTimeouts is the regression gate for
+// imports cut off mid-run: the server-wide ReadTimeout bounds reading
+// the WHOLE body, so any import streaming longer than it failed with an
+// i/o timeout partway through and the client got a bare connection
+// error instead of stats. An import that keeps sending must complete.
+func TestHandleImport_OutlivesServerTimeouts(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	lines := make([][]byte, 6)
+	for i := range lines {
+		env := validEnvelope(t)
+		env.EventID = uuid.Must(uuid.NewV7()).String()
+		lines[i] = envelopeNDJSON(t, env)
+	}
+	// 6 lines × 150ms ≈ 900ms, three times both server timeouts.
+	code, body := slowImport(t, srv, 300*time.Millisecond, 300*time.Millisecond, 150*time.Millisecond, lines)
+	if code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", code, body)
+	}
+	var out wire.ImportStats
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("decode: %v (%s)", err, body)
+	}
+	if out.Imported != len(lines) {
+		t.Errorf("imported %d of %d lines: %+v", out.Imported, len(lines), out)
+	}
+}
+
+// TestHandleImport_IdleClientIsCutOff pins the other half: lifting
+// the whole-body bound must not let a stalled client hold the handler
+// forever. A gap longer than the idle timeout ends the run with the
+// scanner error and the partial stats.
+func TestHandleImport_IdleClientIsCutOff(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	srv.importIdleTimeout = 200 * time.Millisecond
+	env1, env2 := validEnvelope(t), validEnvelope(t)
+	env2.EventID = uuid.Must(uuid.NewV7()).String()
+	lines := [][]byte{envelopeNDJSON(t, env1), envelopeNDJSON(t, env2)}
+	// First line is sent right away (gap applies before each line, so
+	// use a gap well past the idle bound: the first line also waits,
+	// which is itself an idle stall).
+	code, body := slowImport(t, srv, time.Minute, time.Minute, time.Second, lines)
+	if code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s, want 400 after the idle stall", code, body)
+	}
+	if !strings.Contains(body, "Import scanner error") || !strings.Contains(body, "timeout") {
+		t.Errorf("want the scanner timeout problem, got %s", body)
+	}
+}
+
+// TestHandleImport_PublishesIngestSeq pins the SSE identity of
+// imported events: every frame must carry the row's ingest_seq, or
+// the stream emits `id: 0` and a reconnecting client can never resume
+// past an import.
+func TestHandleImport_PublishesIngestSeq(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	ch, cancel, ok := srv.sseBus.subscribe()
+	if !ok {
+		t.Fatal("subscribe")
+	}
+	defer cancel()
+
+	env1, env2 := validEnvelope(t), validEnvelope(t)
+	env2.EventID = uuid.Must(uuid.NewV7()).String()
+	body := append(envelopeNDJSON(t, env1), envelopeNDJSON(t, env2)...)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/import", bytes.NewReader(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	for _, env := range []events.Envelope{env1, env2} {
+		select {
+		case ev := <-ch:
+			var want, wantTs int64
+			if err := srv.store.DB().QueryRow(
+				`SELECT ingest_seq, ts_server_ms FROM raw_envelopes WHERE event_id = ?`, ev.EventID,
+			).Scan(&want, &wantTs); err != nil {
+				t.Fatalf("lookup %s: %v", ev.EventID, err)
+			}
+			if ev.EventID != env.EventID {
+				t.Errorf("frame for %s, want %s", ev.EventID, env.EventID)
+			}
+			if ev.IngestSeq <= 0 || ev.IngestSeq != want {
+				t.Errorf("frame ingest_seq=%d, want the stored %d", ev.IngestSeq, want)
+			}
+			if ev.TsServerMs != wantTs {
+				t.Errorf("frame ts_server_ms=%d, want the stored %d", ev.TsServerMs, wantTs)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("no frame published for an imported event")
+		}
+	}
+}
+
+// TestHandleImport_ClientGoneIsNotAStorageError pins the cancelled-
+// request path: a context that ends mid-import aborts the write, and
+// that must not be reported (or logged) as a storage failure.
+func TestHandleImport_ClientGoneIsNotAStorageError(t *testing.T) {
+	t.Parallel()
+	var logs bytes.Buffer
+	s := newTestServer(t)
+	srv := &testServer{Server: NewServer(s.store, slog.New(slog.NewTextHandler(&logs, nil)))}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	env := validEnvelope(t)
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/import", bytes.NewReader(envelopeNDJSON(t, env)))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if strings.Contains(rr.Body.String(), "Storage error") {
+		t.Errorf("cancelled import reported as a storage error: %s", rr.Body.String())
+	}
+	if strings.Contains(logs.String(), "level=ERROR") {
+		t.Errorf("cancelled import logged at ERROR:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "request context ended mid-import") {
+		t.Errorf("expected the context-ended record, got:\n%s", logs.String())
 	}
 }
