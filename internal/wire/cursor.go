@@ -24,13 +24,18 @@ import (
 //
 // q and the filters are NOT carried here — the client re-sends them
 // alongside the cursor (same shape as PageRequest), and the server
-// re-applies them each page.
+// re-applies them each page. Query holds their fingerprint
+// (SearchRequest.QueryFingerprint) so the server can refuse a cursor
+// re-sent with a different q or filters: the offset and locked stage
+// describe one result set, and applying them to another silently
+// skipped rows or mixed corpora.
 type SearchCursor struct {
 	Off   int    `json:"o"` // OFFSET for the next page
 	Stage string `json:"s"` // locked FTS stage
 	Now   int64  `json:"n"` // pinned now-ms (as-of snapshot)
 	Ord   int    `json:"r"` // store.SearchOrder mode (0=rank, 1=recency)
 	Dedup bool   `json:"d"` // locked NoDedup flag
+	Query uint64 `json:"q"` // fingerprint of q + filters
 }
 
 // EncodeSearchCursor renders a SearchCursor as an opaque Cursor:

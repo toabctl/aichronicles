@@ -10,28 +10,37 @@ package wire
 // summary yet have missing latest_summary. Encode null vs "value"
 // rather than collapsing both to "" so callers can distinguish.
 type SessionDigest struct {
-	ID            string  `json:"id"`
-	StartedAtMs   *int64  `json:"started_at_ms,omitempty"`
-	EndedAtMs     *int64  `json:"ended_at_ms,omitempty"`
-	Cwd           *string `json:"cwd,omitempty"`
-	FirstPrompt   *string `json:"first_prompt,omitempty"`
+	ID          string  `json:"id"`
+	StartedAtMs *int64  `json:"started_at_ms,omitempty"`
+	EndedAtMs   *int64  `json:"ended_at_ms,omitempty"`
+	Cwd         *string `json:"cwd,omitempty"`
+	FirstPrompt *string `json:"first_prompt,omitempty"`
+	// LatestSummary is the full body (JSON) of the session's latest
+	// summary. Populated by GET /v1/sessions/{id} and
+	// /v1/sessions/digests, which feed facts/induction/reflect
+	// prompts. GET /v1/sessions (the list) omits it — too heavy per
+	// row — and carries SummaryTopic instead, so on a list row a nil
+	// LatestSummary does NOT mean "no summary".
 	LatestSummary *string `json:"latest_summary,omitempty"`
-	// EventCount is populated by GET /v1/sessions only; the
-	// per-session detail endpoint leaves it 0. omitempty drops
-	// it from the wire when unset.
-	EventCount int `json:"event_count,omitempty"`
+	// SummaryTopic is the latest summary's one-line `topic`, for
+	// titles. nil when the session has no summary (or it had no
+	// topic).
+	SummaryTopic *string `json:"summary_topic,omitempty"`
+	// EventCount is the session's stored event count, present on
+	// every session route (a real session has at least one event).
+	EventCount int `json:"event_count"`
 	// SourceAgent / SourceSessionID identify the upstream agent
 	// (claude-code / gemini-cli / …) and its own session id.
-	// Populated by both list and detail endpoints. Consumed by
+	// Populated on every session route. Consumed by
 	// the web's Resume buttons to render `claude --resume <id>` /
 	// `gemini --resume <id>`.
 	SourceAgent     string `json:"source_agent,omitempty"`
 	SourceSessionID string `json:"source_session_id,omitempty"`
 	// StartCwd is the cwd captured on the session's first non-null
 	// event — what `claude --resume` keys on (not the latest Cwd).
-	// nil when no event captured a cwd. Populated by GET /v1/sessions
-	// so the web list can render Resume buttons without N+1 hits on
-	// GET /v1/sessions/{id}/start-cwd.
+	// nil when no event captured a cwd. Populated on every session
+	// route so the web list can render Resume buttons without N+1
+	// hits on GET /v1/sessions/{id}/start-cwd.
 	StartCwd *string `json:"start_cwd,omitempty"`
 }
 

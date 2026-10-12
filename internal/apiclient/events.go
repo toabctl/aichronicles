@@ -15,8 +15,10 @@ import (
 //
 // Pagination: clients walk forward by passing the highest
 // IngestSeq from the previous response as SinceSeq on the next
-// call. The response carries LatestSeq so a client can detect
-// "caught up" without a separate query.
+// call, and are caught up when a page comes back shorter than the
+// limit. LatestSeq is the store-wide watermark (see
+// wire.EventListResponse) — ignoring SessionID — so it only marks
+// "caught up" for an unfiltered walk.
 func (c *Client) Events(ctx context.Context, req wire.EventListRequest) (wire.EventListResponse, error) {
 	var q qparams
 	q.SetString("session_id", req.SessionID)

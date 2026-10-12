@@ -49,9 +49,10 @@ func (c *Client) LLMOutputExistsForSession(ctx context.Context, sessionID, kind 
 	return out.Exists, nil
 }
 
-// SessionLLMOutputs fetches every llm_outputs row for a session,
-// optionally filtered by kind. Used by MCP get_summary (when
-// kind != summary).
+// SessionLLMOutputs fetches the first page (newest first, at most
+// limit rows; 0 = the server default) of a session's llm_outputs,
+// optionally filtered by kind. Used by MCP get_summary and the
+// summaries CLI, which ask for the single newest row of one kind.
 func (c *Client) SessionLLMOutputs(ctx context.Context, sessionID, kind string, limit int) ([]wire.LLMOutput, error) {
 	var q qparams
 	q.SetString("kind", kind)

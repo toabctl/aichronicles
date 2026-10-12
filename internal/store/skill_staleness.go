@@ -150,13 +150,14 @@ func LoadSkillStaleness(ctx context.Context, db *sql.DB, sinceMs int64, windowMs
 	}
 
 	// Reuse the impact aggregator (same correlated-subquery shape)
-	// rather than duplicating the SQL. We call it with the package
-	// default cap (defaultMaxImpactSkills = 100) so the staleness
-	// view sees the full distribution before HAVING-filtering down
-	// to "skills with at least one failed load." For a personal-use
-	// store with at most a few dozen distinct skills, the extra
-	// rows are free.
-	impact, err := LoadSkillImpact(ctx, db, sinceMs, windowMs, SkillImpactLimits{})
+	// rather than duplicating the SQL, uncapped: staleness ranks by
+	// FAILED loads, so it must see every loaded skill before
+	// filtering and re-sorting. It used to take LoadSkillImpact's
+	// default cap of the 100 MOST-LOADED skills, so a broken skill
+	// outside that set was never reported whatever max_skills said.
+	// Distinct skills number in the dozens; the uncapped aggregate
+	// costs the same per-load failure probe either way.
+	impact, err := aggregateSkillImpact(ctx, db, sinceMs, windowMs, -1)
 	if err != nil {
 		return nil, fmt.Errorf("aggregate: %w", err)
 	}

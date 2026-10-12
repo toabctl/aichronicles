@@ -173,7 +173,7 @@ func LoadInductionRow(ctx context.Context, db *sql.DB, sessionID string) (*LLMOu
 		`SELECT `+llmOutputColumns+`
 		   FROM llm_outputs
 		  WHERE session_id = ? AND kind = ?
-		  ORDER BY created_at_ms DESC
+		  ORDER BY created_at_ms DESC, id DESC
 		  LIMIT 1`,
 		sessionID, string(LLMKindInduction),
 	)

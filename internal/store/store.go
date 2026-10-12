@@ -19,7 +19,7 @@ import (
 	"strings"
 	"sync"
 
-	_ "modernc.org/sqlite" // pure-Go SQLite driver
+	_ "modernc.org/sqlite" // pure-Go SQLite driver (also imported by unicode_lower.go)
 )
 
 //go:embed migrations/*.sql
@@ -187,6 +187,9 @@ func openWithoutMigrate(path string) (*Store, error) {
 		// amplification on an append-heavy ingest path. FAST is the
 		// cheap 90% and costs essentially nothing.
 		"&_pragma=secure_delete(FAST)"
+	if err := registerUnicodeLower(); err != nil {
+		return nil, fmt.Errorf("register %s: %w", unicodeLowerFunc, err)
+	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)

@@ -48,11 +48,18 @@ const defaultMaxImpactSkills = 100
 // staleness detector — keep them in sync so the two views agree
 // on what "this load failed" means).
 func LoadSkillImpact(ctx context.Context, db *sql.DB, sinceMs int64, windowMs int64, lim SkillImpactLimits) ([]SkillImpact, error) {
-	if windowMs <= 0 {
-		windowMs = defaultStalenessWindow
-	}
 	if lim.MaxSkills <= 0 {
 		lim.MaxSkills = defaultMaxImpactSkills
+	}
+	return aggregateSkillImpact(ctx, db, sinceMs, windowMs, lim.MaxSkills)
+}
+
+// aggregateSkillImpact is LoadSkillImpact's query with an explicit
+// row cap; maxSkills < 0 means every loaded skill (SQLite's LIMIT -1).
+// Sorted by total loads, so a capped call keeps the most-loaded skills.
+func aggregateSkillImpact(ctx context.Context, db *sql.DB, sinceMs, windowMs int64, maxSkills int) ([]SkillImpact, error) {
+	if windowMs <= 0 {
+		windowMs = defaultStalenessWindow
 	}
 
 	// Deliberately no HAVING clause: success-rate-aware callers
@@ -86,7 +93,7 @@ SELECT skill,
 
 	rows, err := db.QueryContext(ctx, aggQuery,
 		events.ExtractionKindSkillLoad, sinceMs,
-		events.KindToolFailure, windowMs, lim.MaxSkills,
+		events.KindToolFailure, windowMs, maxSkills,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("aggregate skill impact: %w", err)

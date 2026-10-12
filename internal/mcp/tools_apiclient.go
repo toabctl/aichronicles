@@ -566,8 +566,8 @@ func registerSearchEvents(s *Server, c *apiclient.Client) {
 	s.RegisterTool(Tool{
 		Name: "search_events",
 		Description: "Search the user's PAST Claude Code, Gemini CLI and Codex CLI sessions by keyword. " +
-			"Returns matching events with session id, timestamp, kind, and a snippet centred on " +
-			"the match. Use when the user asks 'when did I…?', 'find the session where…', " +
+			"Returns matching events, newest first, with session id, timestamp, kind, and a " +
+			"snippet centred on the match. Use when the user asks 'when did I…?', 'find the session where…', " +
 			"'did I work on…'. The corpus is every captured hook event from past sessions, " +
 			"indexed by SQLite FTS5; this is the user's actual conversation history, not a " +
 			"generic web search. " +
@@ -610,6 +610,12 @@ func searchEventsAPIHandler(c *apiclient.Client) ToolHandler {
 			Q:          req.Query,
 			SubagentID: req.SubagentID,
 			Limit:      req.Limit,
+			// Newest first: an agent asking "did I work on X
+			// recently?" wants chronological order. The pre-apiclient
+			// tool asked the store for this; the migration dropped it
+			// (the endpoint had no order parameter) and the tool
+			// silently switched to relevance order.
+			Order: wire.SearchOrderRecency,
 		})
 		if err != nil {
 			if errors.Is(err, apiclient.ErrSocketUnavailable) {
@@ -1014,8 +1020,8 @@ func renderRecentSessionsForCwdAPI(ctx context.Context, c *apiclient.Client, b *
 	}
 	for _, s := range resp.Sessions {
 		title := "-"
-		if s.LatestSummary != nil && *s.LatestSummary != "" {
-			title = mcpField(*s.LatestSummary)
+		if s.SummaryTopic != nil && *s.SummaryTopic != "" {
+			title = mcpField(*s.SummaryTopic)
 		} else if s.FirstPrompt != nil && *s.FirstPrompt != "" {
 			title = preview.OneLine(*s.FirstPrompt)
 		}

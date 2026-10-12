@@ -61,7 +61,7 @@ var promptWhitespaceRE = regexp.MustCompile(`\s+`)
 // and produces the SessionOutcome that captures its outcome signals.
 // Pure read; the caller persists via SaveSessionOutcome.
 //
-// Returns ErrSessionNotFound when sessionID has no row in `sessions`
+// Returns ErrNoSuchSession when sessionID has no row in `sessions`
 // (vs. a session that exists but has zero events — that one returns a
 // SessionOutcome with all-zero counts and Outcome=unknown).
 func ComputeSessionOutcome(ctx context.Context, db *sql.DB, sessionID string) (SessionOutcome, error) {
@@ -77,7 +77,7 @@ func ComputeSessionOutcome(ctx context.Context, db *sql.DB, sessionID string) (S
 		`SELECT 1 FROM sessions WHERE id = ? LIMIT 1`, sessionID,
 	).Scan(&n); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return SessionOutcome{}, fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
+			return SessionOutcome{}, fmt.Errorf("%w: %s", ErrNoSuchSession, sessionID)
 		}
 		return SessionOutcome{}, fmt.Errorf("check session: %w", err)
 	}
@@ -145,12 +145,6 @@ FROM events WHERE session_id = ?`
 	out.Outcome = deriveOutcomeLabel(out)
 	return out, nil
 }
-
-// ErrSessionNotFound is returned by ComputeSessionOutcome (and
-// LoadSessionOutcome on a strict variant if added later) when the
-// sessionID has no row in the sessions table. Distinct from "row
-// computed and outcome=unknown."
-var ErrSessionNotFound = errors.New("session not found")
 
 // sessionOutcomeColumns is the canonical column list for SELECTs that
 // feed scanSessionOutcome. Keep this string and the scan helper in

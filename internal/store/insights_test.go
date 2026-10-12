@@ -310,3 +310,37 @@ func seedSkillLoadEvent(t *testing.T, s *Store, sourceSessionID string, tsMs int
 		t.Fatalf("commit: %v", err)
 	}
 }
+
+// TestInsights_TopSessionsCountOnlyWindowEvents pins top_sessions to
+// the report window: a long session whose events mostly predate the
+// cutoff must be ranked (and reported) by its in-window events only,
+// and no row may claim more events than the window's own total.
+func TestInsights_TopSessionsCountOnlyWindowEvents(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	now := time.Now().UTC()
+	cutoff := now.Add(-30 * 24 * time.Hour)
+	seedInsightsEvents(t, s, "long-lived", "Bash", 10, cutoff.Add(-10*24*time.Hour)) // all before the cutoff
+	seedInsightsEvents(t, s, "long-lived", "Bash", 1, now.Add(-time.Hour))           // one inside
+	seedInsightsEvents(t, s, "busy-now", "Bash", 3, now.Add(-2*time.Hour))
+
+	r, err := LoadInsights(t.Context(), s.DB(), cutoff.UnixMilli(), InsightsLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.TopSessions) != 2 {
+		t.Fatalf("got %d sessions, want 2: %+v", len(r.TopSessions), r.TopSessions)
+	}
+	top, second := r.TopSessions[0], r.TopSessions[1]
+	if top.EventCount != 3 || second.EventCount != 1 {
+		t.Errorf("counts: got %d then %d, want 3 then 1 (in-window events)", top.EventCount, second.EventCount)
+	}
+	if want := events.DeriveSessionID("claude-code", "busy-now"); top.SessionID != want {
+		t.Errorf("top session: got %s, want the busier-in-window one", top.SessionID)
+	}
+	for _, ts := range r.TopSessions {
+		if ts.EventCount > r.Overview.Events {
+			t.Errorf("session %s claims %d events, window total is %d", ts.SessionID, ts.EventCount, r.Overview.Events)
+		}
+	}
+}

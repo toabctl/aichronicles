@@ -78,3 +78,12 @@ func TestClient_RelatedSessions_EmptyForUnknown(t *testing.T) {
 		t.Errorf("got %d candidates, want 0", len(out.Candidates))
 	}
 }
+
+func TestClient_SessionOutcome_UnknownIsErrNotFound(t *testing.T) {
+	t.Parallel()
+	c, _ := newRealServerClient(t)
+	_, err := c.SessionOutcome(t.Context(), "no-such-session")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("got %v, want ErrNotFound", err)
+	}
+}
