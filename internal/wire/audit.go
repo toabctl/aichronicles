@@ -1,10 +1,17 @@
 package wire
 
-// AuditRequest is the query-shape for GET /v1/audit. Both fields
-// are optional; zero means "no filter".
+// AuditRequest is the query-shape for GET /v1/audit. Every field is
+// optional.
+//
+// Rows are scanned most-recently-ingested first. Limit is the page
+// size; zero (or anything above the server's per-call ceiling) means
+// the ceiling. A full scan follows NextCursor until it comes back
+// empty, passing it as Cursor; SinceMs (a ts_source_ms lower bound)
+// must be re-sent unchanged on every page.
 type AuditRequest struct {
-	SinceMs int64 `json:"since_ms,omitempty"`
-	Limit   int   `json:"limit,omitempty"`
+	SinceMs int64  `json:"since_ms,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
+	Cursor  Cursor `json:"cursor,omitempty"`
 }
 
 // AuditFinding is the wire shape for one flagged event row.
@@ -20,9 +27,12 @@ type AuditFinding struct {
 }
 
 // AuditResponse is the body for /v1/audit. Counts are aggregates
-// over the scanned set so callers can render a summary without
-// re-scanning.
+// over this page's scanned rows; a caller paging through the whole
+// table sums them. An empty NextCursor means the scan is complete —
+// anything else means rows remain unscanned.
 type AuditResponse struct {
+	PageResponse
+
 	Findings      []AuditFinding `json:"findings"`
 	Scanned       int            `json:"scanned"`
 	Flagged       int            `json:"flagged"`

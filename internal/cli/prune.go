@@ -64,7 +64,7 @@ func newPruneCmd() *cobra.Command {
 			resp, err := c.Prune(ctx, wire.PruneRequest{
 				CutoffMs:          cutoff,
 				IncludeLLMOutputs: includeLLMOuts,
-				DryRun:            !yes,
+				DryRun:            new(!yes),
 			})
 			if err != nil {
 				return fmt.Errorf("prune: %w", err)
@@ -101,6 +101,9 @@ func formatPruneResponse(r wire.PruneResponse, window time.Duration) string {
 	fmt.Fprintf(&b, "  extractions:    %d  (cascade)\n", r.Extractions)
 	if r.LLMOutputs > 0 {
 		fmt.Fprintf(&b, "  llm_outputs:    %d  (--include-llm-outputs)\n", r.LLMOutputs)
+	}
+	if r.DeadLettered > 0 {
+		fmt.Fprintf(&b, "  dead_lettered:  %d  (retired ingest rows)\n", r.DeadLettered)
 	}
 	if !r.DryRun {
 		fmt.Fprintln(&b, "Run `aichronicles vacuum` to reclaim freelist pages on disk.")

@@ -53,7 +53,7 @@ func newAuditCmd() *cobra.Command {
 			return runAudit(cmd.Context(), c, opts, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().IntVar(&limit, "limit", 0, "max events to scan, newest first (0 = scan all)")
+	cmd.Flags().IntVar(&limit, "limit", 0, "max events to scan, most recently ingested first (0 = scan all)")
 	addFlexDurationFlag(cmd, &since, "since", 0, "only scan events with ts_source newer than this duration (e.g. 24h, 7d)")
 	addSocketFlag(cmd, &sockFlag)
 	addFormatFlag(cmd, &formatIn)
@@ -61,11 +61,16 @@ func newAuditCmd() *cobra.Command {
 }
 
 // AuditOptions controls audit-time filters. Zero values mean
-// "no filter" — the whole events table is scanned.
+// "no filter" — the whole events table is scanned, page by page.
 type AuditOptions struct {
 	SinceMs int64
 	Limit   int
 	Format  OutputFormat // empty == FormatTable
+
+	// pageSize overrides the per-request page size (0 = the server's
+	// ceiling). Tests set it to exercise multi-page scans on a tiny
+	// store.
+	pageSize int
 }
 
 // AuditFindingJSON is the JSON shape emitted by `audit --format=json`.
@@ -90,13 +95,17 @@ type AuditReportJSON struct {
 	PatternHits   map[string]int     `json:"pattern_hits"`
 }
 
-// runAudit calls /v1/audit and renders the response. Format=table
-// emits a header + tab-aligned row per finding; format=json emits
-// the AuditReportJSON envelope.
+// runAudit scans the store through /v1/audit and renders the result.
+// The endpoint answers one bounded page per call; runAudit follows
+// next_cursor until the server reports the end (or opts.Limit rows
+// have been scanned) and sums the per-page counters, so "0 = scan
+// all" really covers every row. Format=table emits a header +
+// tab-aligned row per finding followed by the scanned/flagged totals;
+// format=json emits the AuditReportJSON envelope.
 func runAudit(ctx context.Context, c *apiclient.Client, opts AuditOptions, out io.Writer) error {
-	resp, err := c.Audit(ctx, wire.AuditRequest{SinceMs: opts.SinceMs, Limit: opts.Limit})
+	resp, err := auditAllPages(ctx, c, opts)
 	if err != nil {
-		return fmt.Errorf("audit: %w", err)
+		return err
 	}
 
 	if opts.Format == FormatJSON {
@@ -119,8 +128,12 @@ func runAudit(ctx context.Context, c *apiclient.Client, opts AuditOptions, out i
 		})
 	}
 
+	// The totals line is printed on every table run, so a truncated or
+	// empty scan is never mistaken for a clean full one.
+	summary := fmt.Sprintf("scanned %d events, %d flagged (%d findings)",
+		resp.Scanned, resp.Flagged, resp.TotalFindings)
 	if resp.Flagged == 0 {
-		_, err := fmt.Fprintln(out, "(no findings)")
+		_, err := fmt.Fprintf(out, "(no findings — %s)\n", summary)
 		return err
 	}
 
@@ -141,6 +154,50 @@ func runAudit(ctx context.Context, c *apiclient.Client, opts AuditOptions, out i
 	if err := tw.Flush(); err != nil {
 		return err
 	}
-	_, err = io.Copy(out, &buf)
+	if _, err := io.Copy(out, &buf); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(out, summary)
 	return err
+}
+
+// auditAllPages drives the /v1/audit pagination loop and returns the
+// merged result: findings in scan order, counters and pattern hits
+// summed across pages. It stops on an empty NextCursor (the server's
+// only end-of-scan signal) or once opts.Limit rows are scanned; a
+// cursor that fails to advance is an error rather than a silent loop
+// or an early stop that would under-report coverage.
+func auditAllPages(ctx context.Context, c *apiclient.Client, opts AuditOptions) (wire.AuditResponse, error) {
+	total := wire.AuditResponse{
+		Findings:    []wire.AuditFinding{},
+		PatternHits: map[string]int{},
+	}
+	req := wire.AuditRequest{SinceMs: opts.SinceMs}
+	for {
+		req.Limit = opts.pageSize
+		if opts.Limit > 0 {
+			remaining := opts.Limit - total.Scanned
+			if req.Limit == 0 || remaining < req.Limit {
+				req.Limit = remaining
+			}
+		}
+		page, err := c.Audit(ctx, req)
+		if err != nil {
+			return wire.AuditResponse{}, fmt.Errorf("audit: %w", err)
+		}
+		total.Findings = append(total.Findings, page.Findings...)
+		total.Scanned += page.Scanned
+		total.Flagged += page.Flagged
+		total.TotalFindings += page.TotalFindings
+		for name, n := range page.PatternHits {
+			total.PatternHits[name] += n
+		}
+		if page.NextCursor == "" || (opts.Limit > 0 && total.Scanned >= opts.Limit) {
+			return total, nil
+		}
+		if page.NextCursor == req.Cursor || page.Scanned == 0 {
+			return wire.AuditResponse{}, fmt.Errorf("audit: server returned a non-advancing cursor after %d events", total.Scanned)
+		}
+		req.Cursor = page.NextCursor
+	}
 }
