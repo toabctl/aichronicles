@@ -305,9 +305,10 @@ func (w *IngestWorker) processBatch(ctx context.Context, rows []store.IngestPend
 	// untouched in ingest_pending — replay is the worker's next
 	// drain pass.
 	type batchResult struct {
-		ingestSeq int64
-		deduped   bool
-		prep      *preparedEvent
+		ingestSeq  int64
+		tsServerMs int64
+		deduped    bool
+		prep       *preparedEvent
 	}
 	results := make([]batchResult, 0, len(prepared))
 	batchErr := store.WithTx(ctx, w.store.DB(), func(tx *sql.Tx) error {
@@ -322,7 +323,7 @@ func (w *IngestWorker) processBatch(ctx context.Context, rows []store.IngestPend
 			if err := store.MarkPendingProcessed(ctx, tx, p.row.ID); err != nil {
 				return fmt.Errorf("mark processed %d: %w", p.row.ID, err)
 			}
-			results = append(results, batchResult{ingestSeq: seq, deduped: dedup, prep: p})
+			results = append(results, batchResult{ingestSeq: seq, tsServerMs: tsMs, deduped: dedup, prep: p})
 		}
 		return nil
 	})
@@ -344,7 +345,6 @@ func (w *IngestWorker) processBatch(ctx context.Context, rows []store.IngestPend
 	// after the commit so a partial-commit scenario can't have
 	// already-published SSE frames for rows that ended up rolled
 	// back.
-	now := time.Now().UnixMilli()
 	for _, r := range results {
 		if w.pendingDepth != nil {
 			w.pendingDepth.Add(-1)
@@ -355,7 +355,7 @@ func (w *IngestWorker) processBatch(ctx context.Context, rows []store.IngestPend
 				SessionID:  events.DeriveSessionID(r.prep.env.SourceAgent, r.prep.env.SourceSessionID),
 				IngestSeq:  r.ingestSeq,
 				Kind:       r.prep.env.Kind,
-				TsServerMs: now,
+				TsServerMs: r.tsServerMs,
 			})
 		}
 	}
@@ -424,7 +424,7 @@ func (w *IngestWorker) processOne(ctx context.Context, row store.IngestPendingRo
 			SessionID:  result.SessionID,
 			IngestSeq:  result.IngestSeq,
 			Kind:       env.Kind,
-			TsServerMs: time.Now().UnixMilli(),
+			TsServerMs: result.TsServerMs,
 		})
 	}
 }

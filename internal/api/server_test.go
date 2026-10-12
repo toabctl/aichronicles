@@ -699,3 +699,60 @@ func TestVerifySocketDir(t *testing.T) {
 		}
 	})
 }
+
+// TestServerShutdown_EndsOpenStreams is the regression gate for the
+// SSE shutdown stall: http.Server.Shutdown never cancels request
+// contexts, so an open /v1/stream held the drain for its entire
+// budget and shutdown failed with "context deadline exceeded" on
+// every SIGTERM. Server.Shutdown must end the stream and return well
+// inside the budget.
+func TestServerShutdown_EndsOpenStreams(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "sock")
+	s, err := store.OpenMigrate(filepath.Join(dir, "store.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+	srvInstance := NewServer(s, nil)
+
+	drain, err := ListenAndServe(sock, srvInstance.Handler(), slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatalf("ListenAndServe: %v", err)
+	}
+	client := &http.Client{Transport: &http.Transport{
+		DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+			return net.Dial("unix", sock)
+		},
+	}}
+	resp, err := client.Get("http://unix/v1/stream")
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stream status %d", resp.StatusCode)
+	}
+	streamEnded := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		close(streamEnded)
+	}()
+
+	const budget = 5 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+	start := time.Now()
+	if err := srvInstance.Shutdown(ctx, drain); err != nil {
+		t.Fatalf("shutdown with an open stream: %v (after %s)", err, time.Since(start))
+	}
+	if elapsed := time.Since(start); elapsed > budget/2 {
+		t.Errorf("shutdown took %s; the open stream held the drain", elapsed)
+	}
+	select {
+	case <-streamEnded:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream body never ended after shutdown")
+	}
+}

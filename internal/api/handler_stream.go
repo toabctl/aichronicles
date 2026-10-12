@@ -16,13 +16,13 @@ import (
 // the typical 30s minimum.
 const streamHeartbeatInterval = 15 * time.Second
 
-// streamReplayLimit caps how many events we'll replay on a resume
-// request. A client that's been disconnected for so long that >N
-// events accumulated should reload from /v1/events instead of
-// trickling them through SSE; the cap also bounds the worst-case
-// memory + work per subscriber. Generous enough that a brief proxy
-// hiccup never trips it.
-const streamReplayLimit = 1000
+// streamReplayBatch is how many events one replay query loads. The
+// replay pages through the whole gap in batches of this size rather
+// than stopping at it: a cap here used to deliver the oldest N events
+// of a larger gap and then jump to live frames, silently losing
+// everything in between with no frame telling the client so. The
+// batch bounds per-query memory, not how much is replayed.
+const streamReplayBatch = 1000
 
 // handleStream serves GET /v1/stream as JSON-bodied Server-Sent
 // Events. One goroutine per connection, fed by the in-process
@@ -42,7 +42,8 @@ const streamReplayLimit = 1000
 // next read returns the zero value). The handler exits cleanly
 // in that case.
 //
-// Capacity: returns 429 when SSEMaxSubscribers is reached.
+// Capacity: returns 429 when SSEMaxSubscribers is reached, and 503
+// once Server.Close has started shutdown.
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -61,6 +62,11 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	sinceSeq := parseStreamResume(r)
 
 	ch, cancel, ok := s.sseBus.subscribe()
+	if !ok && s.sseBus.closed.Load() {
+		writeProblem(w, http.StatusServiceUnavailable,
+			"shutting down", "the daemon is stopping; reconnect after it restarts")
+		return
+	}
 	if !ok {
 		writeProblem(w, http.StatusTooManyRequests,
 			"too many streaming subscribers",
@@ -86,19 +92,37 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	// is captured by the bus channel; the dedup-by-maxReplayed gate
 	// below drops the duplicate when we resume normal bus
 	// consumption.
+	//
+	// A long replay can overflow the subscriber buffer, in which case
+	// the bus drops us and the live loop below sees a closed channel
+	// and returns. That is safe: every frame carries its ingest_seq
+	// as id:, so the client reconnects with Last-Event-ID at the last
+	// replayed event and the next request continues from there.
 	var maxReplayed int64
 	if sinceSeq > 0 {
-		replayed, err := store.LoadStreamEventsSinceSeq(r.Context(), s.store.DB(), sinceSeq, streamReplayLimit)
-		if err != nil {
-			s.slog.Warn("stream: replay query failed", "since_seq", sinceSeq, "err", err)
-		}
-		for _, ev := range replayed {
-			if err := writeStreamEvent(w, ev); err != nil {
+		cursor := sinceSeq
+		for {
+			batch, err := store.LoadStreamEventsSinceSeq(r.Context(), s.store.DB(), cursor, streamReplayBatch)
+			if err != nil {
+				// End the stream rather than fall through to live
+				// frames: skipping the gap would lose it silently,
+				// while a closed stream makes the client reconnect
+				// from its last id and retry the replay.
+				s.slog.Warn("stream: replay query failed", "since_seq", cursor, "err", err)
 				return
 			}
+			for _, ev := range batch {
+				if err := writeStreamEvent(w, ev); err != nil {
+					return
+				}
+				if ev.IngestSeq > maxReplayed {
+					maxReplayed = ev.IngestSeq
+				}
+				cursor = ev.IngestSeq
+			}
 			flusher.Flush()
-			if ev.IngestSeq > maxReplayed {
-				maxReplayed = ev.IngestSeq
+			if len(batch) < streamReplayBatch {
+				break
 			}
 		}
 	}

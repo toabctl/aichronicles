@@ -259,6 +259,17 @@ func TestIngestWorker_DrainPublishesToSSEOnNonDeduped(t *testing.T) {
 		if ev.IngestSeq != 1 {
 			t.Errorf("SSE ingest_seq: got %d, want 1 (first event in fresh store)", ev.IngestSeq)
 		}
+		// The live frame must report the stored server timestamp, not
+		// a second time.Now() taken after commit, or a replay of the
+		// same event shows a different ts_server_ms.
+		var stored int64
+		if err := s.DB().QueryRowContext(t.Context(),
+			`SELECT ts_server_ms FROM raw_envelopes WHERE event_id = ?`, id).Scan(&stored); err != nil {
+			t.Fatal(err)
+		}
+		if ev.TsServerMs != stored {
+			t.Errorf("SSE ts_server_ms: got %d, want the stored %d", ev.TsServerMs, stored)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("worker did not publish to SSE bus")
 	}
