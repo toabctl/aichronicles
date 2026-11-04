@@ -8,9 +8,8 @@ import (
 )
 
 // Scrub re-runs the redaction scanner over every stored row.
-// Idempotent. With DryRun=true (the default zero-value), the
-// server reports what would change without mutating; with
-// DryRun=false the rewrites commit. The scrub holds SQLite's
+// Idempotent. DryRun is required (nil is a 400): true reports what
+// would change without mutating; false commits the rewrites. The scrub holds SQLite's
 // write lock for the scan duration, so the api blocks other
 // writers (the hook ingest path) until it completes — operators
 // run during quiet windows.
@@ -23,9 +22,10 @@ func (c *Client) Scrub(ctx context.Context, req wire.ScrubRequest) (wire.ScrubRe
 }
 
 // Prune deletes sessions older than CutoffMs and everything they
-// own. Active sessions (ended_at NULL) are protected. The api
-// rejects CutoffMs<=0 with 400 to prevent "prune everything" on
-// a typo.
+// own. Active sessions (ended_at NULL) are protected. DryRun is
+// required (nil is a 400), and the api rejects a CutoffMs that is
+// <= 0 or in the future with 400 — either would prune every ended
+// session.
 func (c *Client) Prune(ctx context.Context, req wire.PruneRequest) (wire.PruneResponse, error) {
 	var out wire.PruneResponse
 	if err := c.do(ctx, http.MethodPost, "/v1/prune", req, &out); err != nil {

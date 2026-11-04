@@ -38,11 +38,7 @@ type SearchCursor struct {
 // payload can't be marshalled (it always can), so callers may treat
 // it as infallible in practice but must still check.
 func EncodeSearchCursor(c SearchCursor) (Cursor, error) {
-	b, err := json.Marshal(c)
-	if err != nil {
-		return "", fmt.Errorf("encode search cursor: %w", err)
-	}
-	return Cursor(base64.RawURLEncoding.EncodeToString(b)), nil
+	return encodeCursor("search", c)
 }
 
 // DecodeSearchCursor parses an opaque Cursor back into a
@@ -50,15 +46,7 @@ func EncodeSearchCursor(c SearchCursor) (Cursor, error) {
 // bad JSON) so the handler can reply 400 rather than paging from a
 // corrupt position.
 func DecodeSearchCursor(c Cursor) (SearchCursor, error) {
-	raw, err := base64.RawURLEncoding.DecodeString(string(c))
-	if err != nil {
-		return SearchCursor{}, fmt.Errorf("decode search cursor: %w", err)
-	}
-	var out SearchCursor
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return SearchCursor{}, fmt.Errorf("decode search cursor: %w", err)
-	}
-	return out, nil
+	return decodeCursor[SearchCursor]("search", c)
 }
 
 // PageCursor is the decoded payload of a generic list-endpoint
@@ -78,24 +66,59 @@ type PageCursor struct {
 // EncodePageCursor renders a PageCursor as an opaque Cursor
 // (base64url-no-padding over its JSON), mirroring EncodeSearchCursor.
 func EncodePageCursor(c PageCursor) (Cursor, error) {
-	b, err := json.Marshal(c)
-	if err != nil {
-		return "", fmt.Errorf("encode page cursor: %w", err)
-	}
-	return Cursor(base64.RawURLEncoding.EncodeToString(b)), nil
+	return encodeCursor("page", c)
 }
 
 // DecodePageCursor parses an opaque Cursor back into a PageCursor.
 // Returns an error for malformed input (bad base64 or bad JSON) so
 // the handler can reply 400 rather than paging from a corrupt offset.
 func DecodePageCursor(c Cursor) (PageCursor, error) {
+	return decodeCursor[PageCursor]("page", c)
+}
+
+// AuditCursor is the decoded payload of a /v1/audit pagination
+// Cursor: a keyset position on raw_envelopes.ingest_seq. The next page
+// scans rows with ingest_seq strictly below BeforeSeq. ingest_seq is
+// unique, never reused and survives VACUUM (unlike rowid), so pages
+// neither overlap nor skip rows — rows ingested mid-scan land above
+// the first page and are simply not part of this scan.
+type AuditCursor struct {
+	BeforeSeq int64 `json:"b"`
+}
+
+// EncodeAuditCursor renders an AuditCursor as an opaque Cursor.
+func EncodeAuditCursor(c AuditCursor) (Cursor, error) {
+	return encodeCursor("audit", c)
+}
+
+// DecodeAuditCursor parses an opaque Cursor back into an AuditCursor.
+func DecodeAuditCursor(c Cursor) (AuditCursor, error) {
+	return decodeCursor[AuditCursor]("audit", c)
+}
+
+// encodeCursor is the one opaque-cursor wire format every cursor kind
+// shares: base64url-no-padding over the payload's JSON. what names the
+// kind in the error ("encode <what> cursor: …").
+func encodeCursor[T any](what string, c T) (Cursor, error) {
+	b, err := json.Marshal(c)
+	if err != nil {
+		return "", fmt.Errorf("encode %s cursor: %w", what, err)
+	}
+	return Cursor(base64.RawURLEncoding.EncodeToString(b)), nil
+}
+
+// decodeCursor reverses encodeCursor. Malformed input (bad base64 or
+// bad JSON) is an error so handlers reply 400 rather than paging from
+// a corrupt position.
+func decodeCursor[T any](what string, c Cursor) (T, error) {
+	var out T
 	raw, err := base64.RawURLEncoding.DecodeString(string(c))
 	if err != nil {
-		return PageCursor{}, fmt.Errorf("decode page cursor: %w", err)
+		return out, fmt.Errorf("decode %s cursor: %w", what, err)
 	}
-	var out PageCursor
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return PageCursor{}, fmt.Errorf("decode page cursor: %w", err)
+		var zero T
+		return zero, fmt.Errorf("decode %s cursor: %w", what, err)
 	}
 	return out, nil
 }

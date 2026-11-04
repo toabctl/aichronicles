@@ -56,7 +56,7 @@ func newScrubCmd() *cobra.Command {
 			}
 			ctx, cancel := withAdminTimeout(cmd.Context())
 			defer cancel()
-			resp, err := c.Scrub(ctx, wire.ScrubRequest{DryRun: !yes})
+			resp, err := c.Scrub(ctx, wire.ScrubRequest{DryRun: new(!yes)})
 			if err != nil {
 				return fmt.Errorf("scrub: %w", err)
 			}

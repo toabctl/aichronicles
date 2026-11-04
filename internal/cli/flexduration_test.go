@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 func TestParseFlexDuration(t *testing.T) {
@@ -166,5 +169,16 @@ func TestPruneDefault_IsAFiveYearBackstop(t *testing.T) {
 	}
 	if defaultPruneAge < 365*24*time.Hour {
 		t.Error("a sub-year default would make the weekly prune timer destructive")
+	}
+}
+
+func TestFormatPruneResponse_ShowsDeadLettered(t *testing.T) {
+	t.Parallel()
+	got := formatPruneResponse(wire.PruneResponse{DeadLettered: 3, DryRun: true, CutoffMs: 1}, time.Hour)
+	if !strings.Contains(got, "dead_lettered:  3") {
+		t.Errorf("missing dead_lettered line:\n%s", got)
+	}
+	if got := formatPruneResponse(wire.PruneResponse{DryRun: true, CutoffMs: 1}, time.Hour); strings.Contains(got, "dead_lettered") {
+		t.Errorf("zero dead_lettered should stay quiet:\n%s", got)
 	}
 }

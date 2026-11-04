@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -184,9 +185,10 @@ const MaxJSONBodyBytes = 4 << 20 // 4 MiB
 // http.MaxBytesReader so a chunked-transfer payload can't stream
 // gigabytes into json.Decoder; close r.Body when we return; reject
 // unknown fields (so a typo'd payload doesn't silently drop
-// content); emit a 400 "Malformed body" — or 413 "Payload too
-// large" if the cap tripped — with the decoder's error as detail
-// on failure. Returns true on success; the caller must return on
+// content); emit a 400 "Empty body" for a zero-byte body, a 400
+// "Malformed body" with the decoder's error as detail for anything
+// else that fails to decode, or a 413 "Payload too large" if the cap
+// tripped. Returns true on success; the caller must return on
 // a false result.
 //
 // Strict-mode is the default for new endpoints to keep the wire
@@ -203,6 +205,13 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 			writeProblem(w, http.StatusRequestEntityTooLarge,
 				"Payload too large",
 				fmt.Sprintf("body exceeds %d bytes", MaxJSONBodyBytes))
+			return false
+		}
+		// Decode reports a zero-byte body as a bare io.EOF; name it so
+		// the caller sees what's missing rather than "EOF".
+		if errors.Is(err, io.EOF) {
+			writeProblem(w, http.StatusBadRequest, "Empty body",
+				"a JSON request body is required")
 			return false
 		}
 		writeProblem(w, http.StatusBadRequest, "Malformed body", err.Error())

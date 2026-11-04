@@ -6,14 +6,17 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/toabctl/aichronicles/internal/events"
+	"github.com/toabctl/aichronicles/internal/store"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
 func TestHandleScrub_DryRunOnEmptyDB(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)
-	body := mustJSON(t, wire.ScrubRequest{DryRun: true})
+	body := mustJSON(t, wire.ScrubRequest{DryRun: new(true)})
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/scrub", bytesReader(body)))
 	if rr.Code != http.StatusOK {
@@ -29,13 +32,107 @@ func TestHandleScrub_DryRunOnEmptyDB(t *testing.T) {
 	}
 }
 
-func TestHandleScrub_EmptyBodyDefaultsToDryRun(t *testing.T) {
+// TestAdminDestructive_RequireExplicitDryRun is the regression gate
+// for the scrub/prune default: `dry_run` was a plain bool whose zero
+// value is false, so an empty scrub body — which the wire docs called
+// "dry-run by default" — ran an irreversible live rewrite, and a prune
+// body without dry_run deleted for real. Both endpoints must refuse
+// to infer a mode, and must not touch the store when they refuse.
+func TestAdminDestructive_RequireExplicitDryRun(t *testing.T) {
 	t.Parallel()
-	srv := newTestServer(t)
-	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/scrub", nil))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	cases := []struct {
+		name string
+		path string
+		body string
+	}{
+		{"scrub empty body", "/v1/scrub", ""},
+		{"scrub empty object", "/v1/scrub", `{}`},
+		{"scrub null dry_run", "/v1/scrub", `{"dry_run":null}`},
+		{"scrub trailing data", "/v1/scrub", `{"dry_run":true}{"x":1}`},
+		{"scrub unknown field", "/v1/scrub", `{"dry_run":true,"dryrun":false}`},
+		{"prune empty body", "/v1/prune", ""},
+		{"prune missing dry_run", "/v1/prune", `{"cutoff_ms":1000}`},
+		{"prune null dry_run", "/v1/prune", `{"cutoff_ms":1000,"dry_run":null}`},
+		{"prune trailing data", "/v1/prune", `{"cutoff_ms":1000,"dry_run":true}{"x":1}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := newTestServer(t)
+			env := validEnvelope(t)
+			env.ContentText = "leak: AKIAIOSFODNN7EXAMPLE end"
+			seedRawSecret(t, srv, env)
+
+			rr := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body)))
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%s, want 400", rr.Code, rr.Body.String())
+			}
+			var content string
+			if err := srv.store.DB().QueryRow(
+				`SELECT content_text FROM events WHERE event_id = ?`, env.EventID,
+			).Scan(&content); err != nil {
+				t.Fatalf("refused request must leave the row in place: %v", err)
+			}
+			if !strings.Contains(content, "AKIAIOSFODNN7EXAMPLE") {
+				t.Errorf("refused request still rewrote the row: %q", content)
+			}
+		})
+	}
+}
+
+// TestHandleScrub_ExplicitModes pins both explicit modes against a
+// store holding a raw secret: dry_run=true reports without writing,
+// dry_run=false rewrites.
+func TestHandleScrub_ExplicitModes(t *testing.T) {
+	t.Parallel()
+	for _, dry := range []bool{true, false} {
+		srv := newTestServer(t)
+		env := validEnvelope(t)
+		env.ContentText = "leak: AKIAIOSFODNN7EXAMPLE end"
+		seedRawSecret(t, srv, env)
+
+		rr := httptest.NewRecorder()
+		body := mustJSON(t, wire.ScrubRequest{DryRun: new(dry)})
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/scrub", bytesReader(body)))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("dry_run=%v: status=%d body=%s", dry, rr.Code, rr.Body.String())
+		}
+		var out wire.ScrubResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		if out.DryRun != dry {
+			t.Errorf("dry_run=%v: response reports dry_run=%v", dry, out.DryRun)
+		}
+		var content string
+		if err := srv.store.DB().QueryRow(
+			`SELECT content_text FROM events WHERE event_id = ?`, env.EventID,
+		).Scan(&content); err != nil {
+			t.Fatal(err)
+		}
+		if leaked := strings.Contains(content, "AKIAIOSFODNN7EXAMPLE"); leaked != dry {
+			t.Errorf("dry_run=%v: secret still present=%v, want %v", dry, leaked, dry)
+		}
+	}
+}
+
+// seedRawSecret stores env with its secret intact by calling
+// store.IngestEnvelope directly — the "stored before the detector
+// existed" state scrub exists to repair.
+func seedRawSecret(t *testing.T, srv *testServer, env events.Envelope) {
+	t.Helper()
+	raw := mustJSON(t, env)
+	tx, err := srv.store.DB().Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, _, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli()); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("seed ingest: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
 	}
 }
 
@@ -62,7 +159,7 @@ func TestHandleScrub_NoOpAfterServerSideRedaction(t *testing.T) {
 		t.Fatalf("seed ingest: status=%d body=%s", rr.Code, rr.Body.String())
 	}
 
-	scrubBody := mustJSON(t, wire.ScrubRequest{DryRun: false})
+	scrubBody := mustJSON(t, wire.ScrubRequest{DryRun: new(false)})
 	rr = httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/scrub", bytesReader(scrubBody)))
 	if rr.Code != http.StatusOK {
@@ -95,21 +192,41 @@ func TestHandlePrune_RequiresBody(t *testing.T) {
 	}
 }
 
-func TestHandlePrune_RejectsZeroCutoff(t *testing.T) {
+// TestHandlePrune_RejectsCutoffOutsideNow pins both "prune every
+// ended session" extremes: a non-positive cutoff and one in the
+// future. A cutoff just below now (what the CLI sends) is accepted.
+func TestHandlePrune_RejectsCutoffOutsideNow(t *testing.T) {
 	t.Parallel()
-	srv := newTestServer(t)
-	body := mustJSON(t, wire.PruneRequest{CutoffMs: 0})
-	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/prune", bytesReader(body)))
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("status=%d, want 400 (cutoff_ms=0 must be refused)", rr.Code)
+	now := time.Now().UnixMilli()
+	cases := []struct {
+		name   string
+		cutoff int64
+		want   int
+	}{
+		{"zero", 0, http.StatusBadRequest},
+		{"negative", -1, http.StatusBadRequest},
+		{"one hour ahead", now + int64(time.Hour/time.Millisecond), http.StatusBadRequest},
+		{"far future", 99_999_999_999_999, http.StatusBadRequest},
+		{"just before now", now - 1, http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := newTestServer(t)
+			body := mustJSON(t, wire.PruneRequest{CutoffMs: tc.cutoff, DryRun: new(true)})
+			rr := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/prune", bytesReader(body)))
+			if rr.Code != tc.want {
+				t.Errorf("cutoff_ms=%d: status=%d body=%s, want %d", tc.cutoff, rr.Code, rr.Body.String(), tc.want)
+			}
+		})
 	}
 }
 
 func TestHandlePrune_DryRunOnEmptyDB(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)
-	body := mustJSON(t, wire.PruneRequest{CutoffMs: 1000, DryRun: true})
+	body := mustJSON(t, wire.PruneRequest{CutoffMs: 1000, DryRun: new(true)})
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/prune", bytesReader(body)))
 	if rr.Code != http.StatusOK {
@@ -182,5 +299,31 @@ func TestHandleIngestStats_ReflectsBacklog(t *testing.T) {
 	}
 	if out.OldestAgeMs <= 0 {
 		t.Errorf("OldestAgeMs: got %d, want >0 (now − received_at_ms=1000)", out.OldestAgeMs)
+	}
+}
+
+// TestHandlePrune_ReportsDeadLettered pins the dead-letter count on
+// the wire: store.Prune computed it, but PruneResponse had no field,
+// so an operator could not see those rows being deleted.
+func TestHandlePrune_ReportsDeadLettered(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	if _, err := srv.store.DB().Exec(
+		`INSERT INTO ingest_dead_letter(event_id, received_at_ms, dead_lettered_at_ms, attempt_count)
+		 VALUES ('e1', 10, 20, 5)`); err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	body := mustJSON(t, wire.PruneRequest{CutoffMs: 1000, DryRun: new(true)})
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/prune", bytesReader(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var out wire.PruneResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.DeadLettered != 1 {
+		t.Errorf("dead_lettered: got %d, want 1 (%s)", out.DeadLettered, rr.Body.String())
 	}
 }

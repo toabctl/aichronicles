@@ -1,11 +1,7 @@
 package api
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
@@ -14,16 +10,6 @@ import (
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
-// handleScrub serves POST /v1/scrub. Body: wire.ScrubRequest.
-// Response: wire.ScrubResponse. Always returns the report — the
-// caller decides whether the rewrite count is acceptable.
-//
-// The transport-level concern: scrub holds SQLite's write lock
-// for the duration of the scan, so a busy daemon will see hook
-// ingests block until the scrub finishes. For very large stores
-// the operator should run during quiet windows; the api accepts
-// long requests because the http.Server's WriteTimeout is bounded
-// only by the scan time once the response actually starts.
 // clearWriteDeadlineForLongOp lifts the server-wide WriteTimeout for a
 // handler whose work is unbounded by design.
 //
@@ -41,35 +27,28 @@ func clearWriteDeadlineForLongOp(w http.ResponseWriter) {
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 }
 
+// handleScrub serves POST /v1/scrub. Body: wire.ScrubRequest, with
+// dry_run required. Response: wire.ScrubResponse. Always returns the
+// report — the caller decides whether the rewrite count is acceptable.
+//
+// The transport-level concern: scrub holds SQLite's write lock
+// for the duration of the scan, so a busy daemon will see hook
+// ingests block until the scrub finishes. For very large stores
+// the operator should run during quiet windows; the api accepts
+// long requests because the http.Server's WriteTimeout is bounded
+// only by the scan time once the response actually starts.
 func (s *Server) handleScrub(w http.ResponseWriter, r *http.Request) {
 	clearWriteDeadlineForLongOp(w)
-	defer func() { _ = r.Body.Close() }()
-
 	var req wire.ScrubRequest
-	r.Body = http.MaxBytesReader(w, r.Body, MaxJSONBodyBytes)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
-			writeProblem(w, http.StatusRequestEntityTooLarge,
-				"Payload too large",
-				fmt.Sprintf("body exceeds %d bytes", MaxJSONBodyBytes))
-			return
-		}
-		writeProblem(w, http.StatusBadRequest, "Read request body failed", err.Error())
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
-	if len(body) > 0 {
-		dec := json.NewDecoder(bytes.NewReader(body))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&req); err != nil {
-			writeProblem(w, http.StatusBadRequest, "Malformed body", err.Error())
-			return
-		}
+	if !requireDryRun(w, req.DryRun) {
+		return
 	}
 
 	report, err := store.Scrub(r.Context(), s.store.DB(), redact.Default(), store.ScrubOptions{
-		DryRun: req.DryRun,
+		DryRun: *req.DryRun,
 		// Out is intentionally nil: the api endpoint returns
 		// the final report only. Operators that want streaming
 		// per-row progress run `aichronicles scrub` locally,
@@ -77,41 +56,22 @@ func (s *Server) handleScrub(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		s.slog.Error("scrub", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Scrub failed", err.Error())
+		writeProblem(w, http.StatusInternalServerError, "Scrub failed", storeFailureDetail)
 		return
 	}
 	writeJSON(w, http.StatusOK, scrubReportToWire(report))
 }
 
-// handlePrune serves POST /v1/prune. Body: wire.PruneRequest.
-// Response: wire.PruneResponse.
+// handlePrune serves POST /v1/prune. Body: wire.PruneRequest, with
+// dry_run required and cutoff_ms in (0, now]. Response:
+// wire.PruneResponse.
 func (s *Server) handlePrune(w http.ResponseWriter, r *http.Request) {
 	clearWriteDeadlineForLongOp(w)
-	defer func() { _ = r.Body.Close() }()
-
 	var req wire.PruneRequest
-	r.Body = http.MaxBytesReader(w, r.Body, MaxJSONBodyBytes)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
-			writeProblem(w, http.StatusRequestEntityTooLarge,
-				"Payload too large",
-				fmt.Sprintf("body exceeds %d bytes", MaxJSONBodyBytes))
-			return
-		}
-		writeProblem(w, http.StatusBadRequest, "Read request body failed", err.Error())
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
-	if len(body) == 0 {
-		writeProblem(w, http.StatusBadRequest, "Empty body",
-			"prune requires an explicit body with cutoff_ms")
-		return
-	}
-	dec := json.NewDecoder(bytes.NewReader(body))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		writeProblem(w, http.StatusBadRequest, "Malformed body", err.Error())
+	if !requireDryRun(w, req.DryRun) {
 		return
 	}
 	if req.CutoffMs <= 0 {
@@ -119,15 +79,23 @@ func (s *Server) handlePrune(w http.ResponseWriter, r *http.Request) {
 			"must be > 0; the api will not delete with cutoff_ms=0 (would prune everything)")
 		return
 	}
-
+	// A cutoff past "now" matches every ended session just as
+	// cutoff_ms=0 would from the other side; refuse it the same way.
+	// The client computes its cutoff before this line runs, on the same
+	// host clock, so an honest "now minus a window" is never rejected.
+	if nowMs := time.Now().UnixMilli(); req.CutoffMs > nowMs {
+		writeProblem(w, http.StatusBadRequest, "Invalid cutoff_ms",
+			fmt.Sprintf("must not be in the future (cutoff_ms=%d, now=%d); it would prune every ended session", req.CutoffMs, nowMs))
+		return
+	}
 	report, err := store.Prune(r.Context(), s.store.DB(), store.PruneOptions{
 		CutoffMs:          req.CutoffMs,
 		IncludeLLMOutputs: req.IncludeLLMOutputs,
-		DryRun:            req.DryRun,
+		DryRun:            *req.DryRun,
 	})
 	if err != nil {
 		s.slog.Error("prune", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Prune failed", err.Error())
+		writeProblem(w, http.StatusInternalServerError, "Prune failed", storeFailureDetail)
 		return
 	}
 	writeJSON(w, http.StatusOK, wire.PruneResponse{
@@ -136,6 +104,7 @@ func (s *Server) handlePrune(w http.ResponseWriter, r *http.Request) {
 		Events:       report.Events,
 		Extractions:  report.Extractions,
 		LLMOutputs:   report.LLMOutputs,
+		DeadLettered: report.DeadLettered,
 		DryRun:       report.DryRun,
 		CutoffMs:     report.CutoffMs,
 	})
@@ -159,4 +128,23 @@ func scrubReportToWire(r *store.ScrubReport) wire.ScrubResponse {
 		PatternHits: r.PatternHits,
 		DryRun:      r.DryRun,
 	}
+}
+
+// storeFailureDetail is the Detail of a 500 from the admin
+// operations. Like storeError, the underlying error (SQL text, row
+// ids, paths) stays in the daemon log rather than crossing the wire;
+// the detail tells the operator where to find it. Scrub and prune
+// used to echo err.Error() verbatim.
+const storeFailureDetail = "storage error; see the aichronicles-api log for the cause"
+
+// requireDryRun enforces the explicit-mode contract shared by the
+// destructive admin endpoints: dry_run must be present. Writes a 400
+// and returns false when it's missing.
+func requireDryRun(w http.ResponseWriter, dryRun *bool) bool {
+	if dryRun == nil {
+		writeProblem(w, http.StatusBadRequest, "Missing dry_run",
+			"dry_run is required: true to report only, false to write; the api never infers a destructive default")
+		return false
+	}
+	return true
 }

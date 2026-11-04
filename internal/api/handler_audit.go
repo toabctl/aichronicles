@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"net/http"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -16,22 +17,28 @@ import (
 const auditSnippetRunes = 120
 
 // auditMaxRowsCeiling is the hard upper bound on rows scanned per
-// /v1/audit call, regardless of what the client passes. limit=0
-// (the default from parseNonNegativeIntQuery) used to mean
-// "no LIMIT clause" and triggered a full ORDER BY ts_source_ms DESC
-// scan of every row in `events` through the redact scanner — on a
-// real corpus that is hundreds of MB of regex work plus SQLite
-// write-lock contention. Now it means "the ceiling"; a client that
-// wants more rows must page via since_ms.
+// /v1/audit call, regardless of what the client passes. limit=0 or
+// absent means "the ceiling". A full-table scan in one request would
+// push hundreds of MB of content through the regex scanner while
+// holding a read transaction open; instead a client that wants every
+// row follows next_cursor page by page.
 const auditMaxRowsCeiling = 5000
 
 // handleAudit serves GET /v1/audit. Walks events.content_text and
 // runs redact.Default() against every non-null row, returning one
-// finding per matched event plus aggregate counters.
+// finding per matched event plus aggregate counters for the page.
 //
 // Query params (all optional):
 //   - since_ms: only scan events with ts_source_ms >= since_ms
-//   - limit:    cap on rows scanned (newest first)
+//   - limit:    page size (rows scanned), capped at auditMaxRowsCeiling
+//   - cursor:   next_cursor from the previous page
+//
+// Rows are scanned most-recently-ingested first, keyset-paginated on
+// raw_envelopes.ingest_seq (see wire.AuditCursor): each page is an
+// index range scan, so paging through the whole table costs one pass
+// in total rather than one sort per page. next_cursor is set whenever
+// the page came back full; an empty next_cursor is the only signal
+// that the scan reached the end.
 //
 // Server-side scan: the pattern set is the same one the ingest
 // pipeline uses, so this is the canonical "what would the redactor
@@ -39,12 +46,12 @@ const auditMaxRowsCeiling = 5000
 // the snippet field always carries the marker form.
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	clearWriteDeadlineForLongOp(w)
-	req, ok := parseAuditRequest(w, r)
+	req, beforeSeq, ok := parseAuditRequest(w, r)
 	if !ok {
 		return
 	}
 
-	sqlText, args := buildAuditQuery(req.SinceMs, req.Limit)
+	sqlText, args := buildAuditQuery(req.SinceMs, beforeSeq, req.Limit)
 	rows, err := s.store.DB().QueryContext(r.Context(), sqlText, args...)
 	if err != nil {
 		s.storeError(w, "audit query", err)
@@ -57,17 +64,20 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 		Findings:    make([]wire.AuditFinding, 0, 8),
 		PatternHits: map[string]int{},
 	}
+	var lastSeq int64
 	for rows.Next() {
 		var (
+			seq     int64
 			sess    string
 			tsMs    sql.NullInt64
 			kind    string
 			content sql.NullString
 		)
-		if err := rows.Scan(&sess, &tsMs, &kind, &content); err != nil {
+		if err := rows.Scan(&seq, &sess, &tsMs, &kind, &content); err != nil {
 			s.storeError(w, "audit scan", err)
 			return
 		}
+		lastSeq = seq
 		resp.Scanned++
 		if !content.Valid || content.String == "" {
 			continue
@@ -89,53 +99,86 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 			TsSourceMs: nullable.Int64Ptr(tsMs),
 			Kind:       kind,
 			Patterns:   names,
-			Snippet:    auditSnippet(content.String, findings[0]),
+			Snippet:    auditSnippet(content.String, findings),
 		})
 	}
 	if err := rows.Err(); err != nil {
 		s.storeError(w, "audit rows.Err", err)
 		return
 	}
+	// A full page means rows may remain; a short page is the end. The
+	// same stop rule as nextCursor, keyed on ingest_seq instead of an
+	// offset. Encoding a single-int payload can't fail.
+	if resp.Scanned == req.Limit {
+		resp.NextCursor, _ = wire.EncodeAuditCursor(wire.AuditCursor{BeforeSeq: lastSeq})
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
 // parseAuditRequest decodes + validates the GET /v1/audit query into
-// wire.AuditRequest (server mirror of apiclient.Client.Audit). The
-// Limit returned is already clamped to the server-side ceiling: 0
-// ("missing") means "use the ceiling", and anything above it clamps
-// down so an operator passing limit=99999 doesn't strand the daemon
-// in a redact-everything pass.
-func parseAuditRequest(w http.ResponseWriter, r *http.Request) (wire.AuditRequest, bool) {
+// wire.AuditRequest (server mirror of apiclient.Client.Audit) plus the
+// decoded keyset position (0 = first page). Limit 0 ("missing") means
+// "use the ceiling", and anything above it clamps down so an operator
+// passing limit=99999 doesn't strand the daemon in a
+// redact-everything pass. A malformed cursor, or one that doesn't
+// address a positive ingest_seq, is a 400 rather than a silent
+// restart from the top.
+func parseAuditRequest(w http.ResponseWriter, r *http.Request) (wire.AuditRequest, int64, bool) {
 	sinceMs, ok := parseInt64Query(w, r, "since_ms")
 	if !ok {
-		return wire.AuditRequest{}, false
+		return wire.AuditRequest{}, 0, false
 	}
 	limit, ok := parseNonNegativeIntQuery(w, r, "limit", 0)
 	if !ok {
-		return wire.AuditRequest{}, false
+		return wire.AuditRequest{}, 0, false
 	}
 	if limit <= 0 || limit > auditMaxRowsCeiling {
 		limit = auditMaxRowsCeiling
 	}
-	return wire.AuditRequest{SinceMs: sinceMs, Limit: limit}, true
+	req := wire.AuditRequest{SinceMs: sinceMs, Limit: limit}
+	var beforeSeq int64
+	if raw := r.URL.Query().Get("cursor"); raw != "" {
+		cur, err := wire.DecodeAuditCursor(wire.Cursor(raw))
+		if err != nil {
+			writeProblem(w, http.StatusBadRequest, "Invalid cursor", err.Error())
+			return wire.AuditRequest{}, 0, false
+		}
+		if cur.BeforeSeq <= 0 {
+			writeProblem(w, http.StatusBadRequest, "Invalid cursor",
+				"cursor does not address an ingest_seq")
+			return wire.AuditRequest{}, 0, false
+		}
+		req.Cursor = wire.Cursor(raw)
+		beforeSeq = cur.BeforeSeq
+	}
+	return req, beforeSeq, true
 }
 
-// buildAuditQuery composes the audit scan query: every event with
-// non-null content_text, newest-first, optional since_ms cutoff and
-// row limit. Inline rather than living in internal/store because
-// audit is a redact-driven server-side operation; keeping the
-// SQL next to the handler makes the data-flow obvious.
-func buildAuditQuery(sinceMs int64, limit int) (string, []any) {
+// buildAuditQuery composes one audit page: events with non-null
+// content_text, most-recently-ingested first, optional since_ms
+// cutoff, optional keyset position (beforeSeq > 0) and a row limit.
+// Driven by raw_envelopes' unique ingest_seq index; every event has
+// its envelope (events.event_id REFERENCES raw_envelopes), so the
+// inner join drops nothing. Inline rather than living in
+// internal/store because audit is a redact-driven server-side
+// operation; keeping the SQL next to the handler makes the data-flow
+// obvious.
+func buildAuditQuery(sinceMs, beforeSeq int64, limit int) (string, []any) {
 	var filter strings.Builder
 	var args []any
 	if sinceMs > 0 {
-		filter.WriteString(` AND ts_source_ms >= ?`)
+		filter.WriteString(` AND e.ts_source_ms >= ?`)
 		args = append(args, sinceMs)
 	}
-	q := `SELECT session_id, ts_source_ms, kind, content_text
-		FROM events
-		WHERE content_text IS NOT NULL` + filter.String() + `
-		ORDER BY ts_source_ms DESC`
+	if beforeSeq > 0 {
+		filter.WriteString(` AND r.ingest_seq < ?`)
+		args = append(args, beforeSeq)
+	}
+	q := `SELECT r.ingest_seq, e.session_id, e.ts_source_ms, e.kind, e.content_text
+		FROM raw_envelopes r
+		JOIN events e ON e.event_id = r.event_id
+		WHERE e.content_text IS NOT NULL` + filter.String() + `
+		ORDER BY r.ingest_seq DESC`
 	if limit > 0 {
 		q += ` LIMIT ?`
 		args = append(args, limit)
@@ -157,39 +200,29 @@ func uniquePatternNames(findings []redact.Finding) []string {
 }
 
 // auditSnippet renders a short context window around the first
-// finding so the operator can see where the match occurred. The
-// matched bytes are replaced with the marker form so the wire
-// payload never carries raw secrets — copy-pasting an audit
-// response into a ticket is safe.
-func auditSnippet(content string, f redact.Finding) string {
-	start, end := f.Start, f.End
-	if start < 0 {
-		start = 0
-	}
-	if end > len(content) {
-		end = len(content)
-	}
-	if start > end {
-		start = end
-	}
+// finding so the operator can see where the match occurred. EVERY
+// finding in the row is replaced with its marker form before the
+// window is cut, so the wire payload never carries raw secret bytes —
+// copy-pasting an audit response into a ticket is safe even when a
+// row holds several secrets side by side.
+func auditSnippet(content string, findings []redact.Finding) string {
+	masked, anchorStart, anchorEnd := maskFindings(content, findings)
 
-	// The marker is substituted for the matched bytes HERE, while the
-	// offsets still address the original string — never afterwards.
-	// Building the buffer around the raw hit and replacing it at the
-	// end (as this once did) is unsound: the whitespace rewrites and
-	// the rune cap below both mutate the buffer, so the needle stops
-	// matching and strings.Replace silently returns the secret. A
-	// multi-line PEM leaked via the newline swap; any hit longer than
-	// the rune cap leaked via truncation.
-	marker := "<" + f.Pattern + ">"
+	// The window is cut from the fully-masked text, never from the raw
+	// content. Windowing the raw content around the first hit (as this
+	// once did) leaked every other secret inside the ±padding context;
+	// building the buffer around a raw hit and replacing it at the end
+	// (as it did before that) leaked the hit itself once the
+	// whitespace rewrites or the rune cap below mutated the buffer.
+	marker := masked[anchorStart:anchorEnd]
 	budget := auditSnippetRunes - utf8.RuneCountInString(marker)
 	if budget < 0 {
 		budget = 0
 	}
 	padding := budget / 2
 
-	pre := []rune(content[:start])
-	post := []rune(content[end:])
+	pre := []rune(masked[:anchorStart])
+	post := []rune(masked[anchorEnd:])
 	if len(pre) > padding {
 		pre = append([]rune{'…'}, pre[len(pre)-padding:]...)
 	}
@@ -208,4 +241,51 @@ func auditSnippet(content string, f redact.Finding) string {
 		combined = string(r[:auditSnippetRunes]) + "…"
 	}
 	return combined
+}
+
+// maskFindings returns content with every finding's bytes replaced by
+// its "<pattern>" marker, plus the byte span of the first finding's
+// marker in the result (the snippet anchor).
+//
+// Findings are defended rather than trusted: offsets are clamped into
+// range, the list is sorted by Start, and a finding that overlaps an
+// earlier one extends the masked region instead of being dropped —
+// erring toward masking too much, never too little. With no usable
+// finding the anchor is an empty span at offset 0.
+func maskFindings(content string, findings []redact.Finding) (masked string, anchorStart, anchorEnd int) {
+	local := make([]redact.Finding, len(findings))
+	for i, f := range findings {
+		f.Start = max(f.Start, 0)
+		f.End = min(f.End, len(content))
+		if f.Start > f.End {
+			f.Start = f.End
+		}
+		local[i] = f
+	}
+	sort.SliceStable(local, func(i, j int) bool { return local[i].Start < local[j].Start })
+
+	var b strings.Builder
+	b.Grow(len(content))
+	anchored := false
+	prev := 0
+	for _, f := range local {
+		if f.Start < prev {
+			// Overlaps the previous masked span; its leading bytes are
+			// already hidden. Hide the tail too, under the same marker.
+			prev = max(prev, f.End)
+			continue
+		}
+		b.WriteString(content[prev:f.Start])
+		if !anchored {
+			anchorStart = b.Len()
+		}
+		b.WriteString("<" + f.Pattern + ">")
+		if !anchored {
+			anchorEnd = b.Len()
+			anchored = true
+		}
+		prev = f.End
+	}
+	b.WriteString(content[prev:])
+	return b.String(), anchorStart, anchorEnd
 }
