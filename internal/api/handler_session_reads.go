@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/toabctl/aichronicles/internal/events"
@@ -155,9 +156,12 @@ func (s *Server) handleSessionOutcome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	row, err := store.EnsureSessionOutcome(r.Context(), s.store.DB(), id)
+	if errors.Is(err, store.ErrNoSuchSession) {
+		writeProblem(w, http.StatusNotFound, "Session not found", id)
+		return
+	}
 	if err != nil {
-		s.slog.Error("EnsureSessionOutcome", "session_id", id, "err", err)
-		writeProblem(w, http.StatusInternalServerError, "Storage error", "")
+		s.storeError(w, "EnsureSessionOutcome "+id, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wire.SessionOutcome{

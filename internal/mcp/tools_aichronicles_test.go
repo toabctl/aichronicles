@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/toabctl/aichronicles/internal/events"
+	"github.com/toabctl/aichronicles/internal/preview"
 	"github.com/toabctl/aichronicles/internal/redact"
 	"github.com/toabctl/aichronicles/internal/store"
 )
@@ -1134,5 +1135,47 @@ func TestToolsList_IncludesInputSchema(t *testing.T) {
 		if _, ok := tool["inputSchema"]; !ok {
 			t.Errorf("tool %v missing inputSchema", tool["name"])
 		}
+	}
+}
+
+// TestSearchEvents_NewestFirst pins search_events to chronological
+// order: an older, far more relevant row must not lead a newer match.
+func TestSearchEvents_NewestFirst(t *testing.T) {
+	t.Parallel()
+	st := openSeededStore(t)
+	now := time.Now().UTC()
+	for _, fx := range []struct {
+		sess, content string
+		ts            time.Time
+	}{
+		{"sess-dense-old", strings.Repeat("orderword ", 20), now.Add(-24 * time.Hour)},
+		{"sess-sparse-new", "orderword once among many other filler words", now},
+	} {
+		env := events.Envelope{
+			V: 1, EventID: uuid.Must(uuid.NewV7()).String(),
+			SourceAgent: "claude-code", SourceSessionID: fx.sess,
+			Kind: "user_prompt", Role: "user", TsSource: fx.ts,
+			ContentText: fx.content, Payload: map[string]any{},
+			Redaction: &events.Redaction{Applied: true},
+		}
+		raw, _ := json.Marshal(env)
+		tx, _ := st.DB().Begin()
+		if _, _, err := store.IngestEnvelope(t.Context(), tx, &env, raw, time.Now().UnixMilli()); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("seed: %v", err)
+		}
+		_ = tx.Commit()
+	}
+	s := New(ServerInfo{Name: "ac", Version: "0.1"}, slog.New(slog.DiscardHandler))
+	registerAllTools(t, s, st)
+
+	res := callTool(t, s, "search_events", `{"query":"orderword"}`)
+	lines := strings.Split(strings.TrimSpace(res.Content[0].Text), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 hits:\n%s", res.Content[0].Text)
+	}
+	newest := preview.ShortID(events.DeriveSessionID("claude-code", "sess-sparse-new"))
+	if !strings.HasPrefix(lines[0], newest) {
+		t.Errorf("first hit should be the newest session %s:\n%s", newest, res.Content[0].Text)
 	}
 }

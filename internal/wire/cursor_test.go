@@ -91,3 +91,38 @@ func TestDecodeSearchCursor_Malformed(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchRequest_QueryFingerprint(t *testing.T) {
+	t.Parallel()
+	base := SearchRequest{Q: "fox", Kind: "user_prompt", SinceMs: 10}
+	same := SearchRequest{Q: "fox", Kind: "user_prompt", SinceMs: 10}
+	if same.QueryFingerprint() != base.QueryFingerprint() {
+		t.Fatal("equal requests must share a fingerprint")
+	}
+	paging := base
+	paging.Limit, paging.Cursor, paging.NoDedup = 99, "abc", true
+	if paging.QueryFingerprint() != base.QueryFingerprint() {
+		t.Error("paging controls must not change the fingerprint")
+	}
+	for name, mut := range map[string]func(*SearchRequest){
+		"q":             func(r *SearchRequest) { r.Q = "dog" },
+		"kind":          func(r *SearchRequest) { r.Kind = "" },
+		"session":       func(r *SearchRequest) { r.SessionID = "s" },
+		"subagent":      func(r *SearchRequest) { r.SubagentID = "a" },
+		"source agent":  func(r *SearchRequest) { r.SourceAgent = "x" },
+		"tool":          func(r *SearchRequest) { r.ToolName = "Bash" },
+		"skill":         func(r *SearchRequest) { r.SkillName = "k" },
+		"file path":     func(r *SearchRequest) { r.FilePathSubstring = "f" },
+		"since":         func(r *SearchRequest) { r.SinceMs = 11 },
+		"with failures": func(r *SearchRequest) { r.WithFailures = true },
+		// Length-prefixing keeps field boundaries: moving a byte from
+		// one field to its neighbour must change the hash.
+		"field boundary": func(r *SearchRequest) { r.Q, r.Kind = "foxu", "ser_prompt" },
+	} {
+		r := base
+		mut(&r)
+		if r.QueryFingerprint() == base.QueryFingerprint() {
+			t.Errorf("changing %s did not change the fingerprint", name)
+		}
+	}
+}

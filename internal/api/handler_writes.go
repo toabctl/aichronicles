@@ -160,7 +160,7 @@ func (s *Server) handleSessionOutcomeSave(w http.ResponseWriter, r *http.Request
 		// Distinguish "missing session" (FK violation surfaces as
 		// the readable "session does not exist" error from the
 		// store) from generic storage errors.
-		if errors.Is(err, store.ErrSessionNotFound) {
+		if errors.Is(err, store.ErrNoSuchSession) {
 			writeProblem(w, http.StatusBadRequest, "Session does not exist", req.SessionID)
 			return
 		}

@@ -21,6 +21,7 @@ func (c *Client) Search(ctx context.Context, req wire.SearchRequest) (wire.Searc
 	q.SetString("file_path_substring", req.FilePathSubstring)
 	q.SetBool("with_failures", req.WithFailures)
 	q.SetBool("no_dedup", req.NoDedup)
+	q.SetString("order", req.Order)
 	q.SetInt64("since_ms", req.SinceMs)
 	q.SetInt("limit", req.Limit)
 	q.SetString("cursor", string(req.Cursor))

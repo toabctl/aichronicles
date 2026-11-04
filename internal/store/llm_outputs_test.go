@@ -328,7 +328,7 @@ func TestLoadLLMOutputByHash_ReturnsRowWhenPresent(t *testing.T) {
 	}
 }
 
-func TestLoadLLMOutputsForSession_NewestFirst(t *testing.T) {
+func TestLoadLLMOutputs_SessionFilterNewestFirst(t *testing.T) {
 	t.Parallel()
 	s := openTemp(t)
 
@@ -351,9 +351,9 @@ func TestLoadLLMOutputsForSession_NewestFirst(t *testing.T) {
 		})
 	}
 
-	got, err := LoadLLMOutputsForSession(t.Context(), s.DB(), "sess-1")
+	got, err := LoadLLMOutputs(t.Context(), s.DB(), LLMOutputFilter{SessionID: "sess-1"})
 	if err != nil {
-		t.Fatalf("LoadLLMOutputsForSession: %v", err)
+		t.Fatalf("LoadLLMOutputs: %v", err)
 	}
 	if len(got) != 3 {
 		t.Fatalf("expected 3 rows, got %d", len(got))

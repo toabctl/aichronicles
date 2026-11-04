@@ -11,6 +11,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
@@ -434,5 +436,177 @@ func TestSessionsList_ProjectionIsIdenticalFilteredOrNot(t *testing.T) {
 	}
 	if !reflect.DeepEqual(u, f) {
 		t.Errorf("projection differs by filter:\nunfiltered: %+v\n  filtered: %+v", u, f)
+	}
+}
+
+// TestHandleSessionOutcome_UnknownIs404 is the regression gate for
+// the outcome read answering 500 "Storage error" (and logging ERROR)
+// for a session that simply doesn't exist: the store returns
+// ErrNoSuchSession and the handler must map it like every other
+// per-session read that 404s. A known session still answers 200.
+func TestHandleSessionOutcome_UnknownIs404(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/sessions/nope/outcome", nil))
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("unknown session: status=%d body=%s, want 404", rr.Code, rr.Body.String())
+	}
+
+	env := validEnvelope(t)
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(mustJSON(t, env))))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("seed: status=%d", rr.Code)
+	}
+	id := events.DeriveSessionID(env.SourceAgent, env.SourceSessionID)
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/sessions/"+id+"/outcome", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("known session: status=%d body=%s, want 200", rr.Code, rr.Body.String())
+	}
+	var out wire.SessionOutcome
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.SessionID != id {
+		t.Errorf("session_id: got %q, want %q", out.SessionID, id)
+	}
+}
+
+// seedSessionWithSummary ingests one event and saves a kind=summary
+// llm_output for its session; returns the session id and the body.
+func seedSessionWithSummary(t *testing.T, srv *testServer, topic string) (string, string) {
+	t.Helper()
+	env := validEnvelope(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(mustJSON(t, env))))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("seed ingest: status=%d", rr.Code)
+	}
+	id := events.DeriveSessionID(env.SourceAgent, env.SourceSessionID)
+	body := `{"topic":"` + topic + `","outcome":"done"}`
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/llm-outputs", bytesReader(mustJSON(t, wire.SaveLLMOutputRequest{
+		SessionID: &id, Kind: "summary", Model: "m", PromptHash: "h-" + id,
+		Body: body, CreatedAtMs: 1_760_000_000_000,
+	}))))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("seed summary: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	return id, body
+}
+
+// TestSessionDigest_SummaryFieldsHaveOneMeaningEach is the regression
+// gate for latest_summary carrying the topic string on the list but
+// the full summary body on the detail route. Callers relied on both
+// meanings (MCP titles vs facts/induction prompts), so a consumer
+// reading the "wrong" endpoint got the other thing silently. Now
+// latest_summary is always the body and summary_topic the title.
+func TestSessionDigest_SummaryFieldsHaveOneMeaningEach(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	id, body := seedSessionWithSummary(t, srv, "fix the flaky test")
+
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/sessions?since_ms=1", nil))
+	var list wire.SessionListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &list); err != nil || len(list.Sessions) != 1 {
+		t.Fatalf("list: %v body=%s", err, rr.Body.String())
+	}
+	row := list.Sessions[0]
+	if row.SummaryTopic == nil || *row.SummaryTopic != "fix the flaky test" {
+		t.Errorf("list summary_topic: got %v, want the topic", row.SummaryTopic)
+	}
+	if row.LatestSummary != nil {
+		t.Errorf("list latest_summary must be omitted, not repurposed: got %q", *row.LatestSummary)
+	}
+
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/sessions/"+id, nil))
+	var detail wire.SessionDigest
+	if err := json.Unmarshal(rr.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("detail: %v", err)
+	}
+	if detail.LatestSummary == nil || *detail.LatestSummary != body {
+		t.Errorf("detail latest_summary: got %v, want the full body %q", detail.LatestSummary, body)
+	}
+}
+
+// TestSessionDigest_SameShapeOnEveryRoute is the regression gate for
+// the digest loaders' drifted projections: GET /v1/sessions/{id}
+// returned no event_count or start_cwd (the web session page showed
+// "events: 0" for every session), and /v1/sessions/digests no
+// event_count. Every route that returns a wire.SessionDigest must
+// carry the same stored columns.
+func TestSessionDigest_SameShapeOnEveryRoute(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	env := validEnvelope(t)
+	env.Cwd = "/work/proj"
+	for i := 0; i < 3; i++ {
+		e := env
+		e.EventID = uuid.Must(uuid.NewV7()).String()
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(mustJSON(t, e))))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("seed: status=%d", rr.Code)
+		}
+	}
+	id := events.DeriveSessionID(env.SourceAgent, env.SourceSessionID)
+
+	get := func(path string, into any) {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("GET %s: status=%d body=%s", path, rr.Code, rr.Body.String())
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), into); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var list wire.SessionListResponse
+	get("/v1/sessions?since_ms=1", &list)
+	var detail wire.SessionDigest
+	get("/v1/sessions/"+id, &detail)
+	var byIDs, recent wire.SessionDigestsResponse
+	get("/v1/sessions/digests?session_ids="+id, &byIDs)
+	get("/v1/sessions/digests?since_ms=1", &recent)
+	if len(list.Sessions) != 1 || len(byIDs.Digests) != 1 || len(recent.Digests) != 1 {
+		t.Fatalf("expected one row per route: list=%d byIDs=%d recent=%d",
+			len(list.Sessions), len(byIDs.Digests), len(recent.Digests))
+	}
+	for route, d := range map[string]wire.SessionDigest{
+		"list": list.Sessions[0], "detail": detail,
+		"digests by id": byIDs.Digests[0], "digests recent": recent.Digests[0],
+	} {
+		if d.EventCount != 3 {
+			t.Errorf("%s: event_count=%d, want 3", route, d.EventCount)
+		}
+		if d.StartCwd == nil || *d.StartCwd != "/work/proj" {
+			t.Errorf("%s: start_cwd=%v, want /work/proj", route, d.StartCwd)
+		}
+		if d.SourceAgent != env.SourceAgent || d.SourceSessionID != env.SourceSessionID {
+			t.Errorf("%s: source=%q/%q, want %q/%q", route, d.SourceAgent, d.SourceSessionID, env.SourceAgent, env.SourceSessionID)
+		}
+	}
+}
+
+// TestHandleSessionsResolve_QueryFailureIs500 is the regression gate
+// for the resolve handler's catch-all: every error without a
+// not-found/ambiguous sentinel was answered 400 "Invalid prefix", so a
+// database failure blamed the caller's input and was never logged.
+func TestHandleSessionsResolve_QueryFailureIs500(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	if err := srv.store.DB().Close(); err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/sessions/resolve?prefix=abcd", nil))
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("status=%d body=%s, want 500 for a failed lookup", rr.Code, rr.Body.String())
 	}
 }

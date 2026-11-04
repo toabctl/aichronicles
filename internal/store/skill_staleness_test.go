@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -364,5 +365,44 @@ func TestFormatStaleSummary_TruncatesAndFormats(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in %q", want, out)
 		}
+	}
+}
+
+// TestLoadSkillStaleness_SeesSkillsBeyondTheImpactCap is the
+// regression gate for staleness inheriting LoadSkillImpact's cap of
+// the 100 most-loaded skills: a broken skill loaded less often than
+// 100 healthy ones was never reported, whatever max_skills said.
+func TestLoadSkillStaleness_SeesSkillsBeyondTheImpactCap(t *testing.T) {
+	t.Parallel()
+	s := openTemp(t)
+	t0 := time.Date(2026, 4, 26, 10, 0, 0, 0, time.UTC)
+	withTx(t, s, func(tx *sql.Tx) {
+		for i := range defaultMaxImpactSkills + 1 {
+			for j := range 2 { // two loads each: all outrank the broken skill
+				env := &events.Envelope{
+					V: 1, EventID: uuid.Must(uuid.NewV7()).String(),
+					SourceAgent: "claude-code", SourceSessionID: "sess-healthy",
+					Kind: "tool_use", Role: "assistant",
+					TsSource:  t0.Add(time.Duration(i*2+j) * time.Hour),
+					Tool:      &events.Tool{Name: "Skill"},
+					Payload:   map[string]any{"tool_input": map[string]any{"skill": "healthy-" + strconv.Itoa(i)}},
+					Redaction: &events.Redaction{Applied: true},
+				}
+				if _, _, err := IngestEnvelope(t.Context(), tx, env, []byte(`{"v":1}`), env.TsSource.UnixMilli()); err != nil {
+					t.Fatalf("seed: %v", err)
+				}
+			}
+		}
+	})
+	broken := t0.Add(-time.Hour)
+	seedSkillLoadAt(t, s, "sess-broken", "broken-skill", broken)
+	seedToolFailureAt(t, s, "sess-broken", broken.Add(time.Minute))
+
+	rows, err := LoadSkillStaleness(t.Context(), s.DB(), t0.Add(-24*time.Hour).UnixMilli(), 0, SkillStalenessLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Name != "broken-skill" {
+		t.Errorf("stale skills: got %+v, want only broken-skill", rows)
 	}
 }

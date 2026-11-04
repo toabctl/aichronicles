@@ -190,6 +190,22 @@ const (
 	StageExtractions = "extractions"
 )
 
+// IsSearchStage reports whether s names one of the FTS stages above —
+// the check a handler applies to a client-supplied (decoded) cursor
+// before trusting its Stage.
+func IsSearchStage(s string) bool {
+	switch s {
+	case StagePrimary, StageTrigram, StageExtractions:
+		return true
+	}
+	return false
+}
+
+// IsValid reports whether o is a defined SearchOrder.
+func (o SearchOrder) IsValid() bool {
+	return o == OrderRank || o == OrderRecency
+}
+
 // DefaultSearchLimit is the page size SearchEvents applies when
 // SearchEventOpts.Limit is unset (<= 0). Exported so the api handler
 // resolves the same effective limit it passes — the NextCursor "last
@@ -379,9 +395,9 @@ func appendCommonFilters(filter *strings.Builder, args *[]any, opts SearchEventO
 		// extractions are the canonical source — see
 		// internal/events/FilePathExtractor.
 		filter.WriteString(` AND e.session_id IN (
-			SELECT session_id FROM extractions WHERE kind = ? AND value LIKE ?
+			SELECT session_id FROM extractions WHERE kind = ? AND value LIKE ? ESCAPE '\'
 		)`)
-		*args = append(*args, events.ExtractionKindFilePath, "%"+opts.FilePathSubstring+"%")
+		*args = append(*args, events.ExtractionKindFilePath, likeContains(opts.FilePathSubstring))
 	}
 	if opts.WithFailures {
 		filter.WriteString(` AND e.session_id IN (

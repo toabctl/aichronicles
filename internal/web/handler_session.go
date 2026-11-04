@@ -346,43 +346,43 @@ func buildResumeCommandDangerousPtr(agent, sourceSessionID string, cwd *string) 
 // loadLatestSummary returns the most recent summary llm_outputs
 // row for sessionID, parsed into the rendering shape. nil when
 // no summary has been generated for this session yet.
+//
+// Asks /v1/summaries for exactly that row. It used to fetch the
+// session's first page of outputs of every kind and pick the summary
+// out client-side, so a session whose newest page held only other
+// kinds (facts, induction, …) rendered as never summarised.
 func loadLatestSummary(ctx context.Context, s *Server, sessionID string) (*SessionSummary, error) {
-	outs, err := s.api.SessionLLMOutputs(ctx, sessionID, "", 0)
+	o, err := s.api.Summary(ctx, sessionID)
+	if errors.Is(err, apiclient.ErrNotFound) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	// Pick the most recent kind=summary output. SessionLLMOutputs
-	// orders by created_at_ms DESC, so the first match is the latest.
-	for _, o := range outs {
-		if o.Kind != string(wire.LLMKindSummary) {
-			continue
-		}
-		var parsed prompts.SummaryResult
-		if err := json.Unmarshal([]byte(o.Body), &parsed); err != nil {
-			// Bad cached body shouldn't break the page —
-			// surface the raw body in WhatWasDone so the user
-			// can still see what's there.
-			return &SessionSummary{
-				Topic:       "(unparseable cached summary)",
-				WhatWasDone: []string{o.Body},
-				Model:       o.Model,
-				GeneratedAt: time.UnixMilli(o.CreatedAtMs).UTC().Format("2006-01-02 15:04 UTC"),
-			}, nil
-		}
-		out := &SessionSummary{
-			Topic:       parsed.Topic,
-			WhatWasDone: parsed.WhatWasDone,
-			Unresolved:  parsed.Unresolved,
-			KeyFiles:    parsed.KeyFiles,
+	var parsed prompts.SummaryResult
+	if err := json.Unmarshal([]byte(o.Body), &parsed); err != nil {
+		// Bad cached body shouldn't break the page —
+		// surface the raw body in WhatWasDone so the user
+		// can still see what's there.
+		return &SessionSummary{
+			Topic:       "(unparseable cached summary)",
+			WhatWasDone: []string{o.Body},
 			Model:       o.Model,
 			GeneratedAt: time.UnixMilli(o.CreatedAtMs).UTC().Format("2006-01-02 15:04 UTC"),
-		}
-		for _, l := range parsed.Links {
-			out.Links = append(out.Links, SummaryLink{URL: l.URL, UsedFor: l.UsedFor})
-		}
-		return out, nil
+		}, nil
 	}
-	return nil, nil
+	out := &SessionSummary{
+		Topic:       parsed.Topic,
+		WhatWasDone: parsed.WhatWasDone,
+		Unresolved:  parsed.Unresolved,
+		KeyFiles:    parsed.KeyFiles,
+		Model:       o.Model,
+		GeneratedAt: time.UnixMilli(o.CreatedAtMs).UTC().Format("2006-01-02 15:04 UTC"),
+	}
+	for _, l := range parsed.Links {
+		out.Links = append(out.Links, SummaryLink{URL: l.URL, UsedFor: l.UsedFor})
+	}
+	return out, nil
 }
 
 // loadEventRows pulls the most recent `limit` events for the

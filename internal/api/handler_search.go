@@ -21,6 +21,17 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var order store.SearchOrder
+	switch req.Order {
+	case "", wire.SearchOrderRank:
+		order = store.OrderRank
+	case wire.SearchOrderRecency:
+		order = store.OrderRecency
+	default:
+		writeProblem(w, http.StatusBadRequest, "Invalid order",
+			fmt.Sprintf("order must be %q or %q", wire.SearchOrderRank, wire.SearchOrderRecency))
+		return
+	}
 
 	opts := store.SearchEventOpts{
 		Query:             ftsQuery,
@@ -49,6 +60,21 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, http.StatusBadRequest, "Invalid cursor", err.Error())
 			return
 		}
+		// The cursor decodes client bytes: check every field before
+		// the store trusts it. An unknown stage reached the store's
+		// "unknown stage" error as a 500, and a negative offset slipped
+		// past the MaxOffset guard below. We only ever emit cursors
+		// with a concrete stage, so an empty one is forged too.
+		if cur.Off < 0 || !store.IsSearchStage(cur.Stage) || !store.SearchOrder(cur.Ord).IsValid() {
+			writeProblem(w, http.StatusBadRequest, "Invalid cursor",
+				"cursor fields are out of range")
+			return
+		}
+		if cur.Query != req.QueryFingerprint() {
+			writeProblem(w, http.StatusBadRequest, "Cursor does not match query",
+				"re-send the cursor with the same q and filters as the page that produced it, or drop it to start over")
+			return
+		}
 		opts.Offset = cur.Off
 		opts.Stage = cur.Stage
 		opts.NowMs = cur.Now
@@ -56,6 +82,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		opts.NoDedup = cur.Dedup
 	} else {
 		opts.NowMs = time.Now().UnixMilli()
+		opts.Order = order
 	}
 
 	// Resolve the effective page size the store will apply, so the
@@ -98,6 +125,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			Now:   opts.NowMs,
 			Ord:   int(opts.Order),
 			Dedup: opts.NoDedup,
+			Query: req.QueryFingerprint(),
 		})
 		if err != nil {
 			s.storeError(w, "EncodeSearchCursor", err)
@@ -155,6 +183,7 @@ func parseSearchRequest(w http.ResponseWriter, r *http.Request) (wire.SearchRequ
 		SinceMs:           sinceMs,
 		WithFailures:      q.Get("with_failures") == "true",
 		NoDedup:           q.Get("no_dedup") == "true",
+		Order:             q.Get("order"),
 		Limit:             limit,
 		Cursor:            wire.Cursor(q.Get("cursor")),
 	}, ftsQuery, true

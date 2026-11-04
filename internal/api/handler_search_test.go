@@ -5,8 +5,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/toabctl/aichronicles/internal/events"
 	"github.com/toabctl/aichronicles/internal/wire"
 )
 
@@ -214,5 +218,149 @@ func TestHandleSearch_RejectsBadParams(t *testing.T) {
 		if rr.Code != http.StatusBadRequest {
 			t.Errorf("path %q: status=%d, want 400", p, rr.Code)
 		}
+	}
+}
+
+// TestHandleSearch_FindsNonASCIIWords proves the tokenizer fix end to
+// end: a bare non-ASCII word used to reach FTS5 as a split, invalid-
+// UTF-8 fragment and matched nothing.
+func TestHandleSearch_FindsNonASCIIWords(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	ingestSearchDoc(t, srv, "sess-fr", "voilà ça marche enfin")
+	ingestSearchDoc(t, srv, "sess-zh", "你好 世界")
+	for _, q := range []string{"voilà", "你好"} {
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/search?q="+url.QueryEscape(q), nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("q=%q: status=%d body=%s", q, rr.Code, rr.Body.String())
+		}
+		var got wire.SearchResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Hits) != 1 {
+			t.Errorf("q=%q: got %d hits, want 1", q, len(got.Hits))
+		}
+	}
+}
+
+// TestHandleSearch_RejectsForgedCursorFields pins cursor validation:
+// a well-formed cursor carrying an unknown stage used to 500 in the
+// store, and a negative offset slipped past the depth guard.
+func TestHandleSearch_RejectsForgedCursorFields(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	for name, c := range map[string]wire.SearchCursor{
+		"unknown stage":   {Off: 20, Stage: "bogus"},
+		"empty stage":     {Off: 20, Stage: ""},
+		"negative offset": {Off: -5, Stage: "primary"},
+		"unknown order":   {Off: 20, Stage: "primary", Ord: 7},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			enc, err := wire.EncodeSearchCursor(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rr := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/search?q=fox&cursor="+string(enc), nil))
+			if rr.Code != http.StatusBadRequest {
+				t.Errorf("status=%d body=%s, want 400", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+// TestHandleSearch_CursorIsBoundToItsQuery is the regression gate for
+// cursors re-sent with a different q or filters: the old offset and
+// locked FTS stage were silently applied to the new query, skipping
+// rows or mixing corpora. The server must refuse the mismatch and
+// keep accepting the cursor with its own query.
+func TestHandleSearch_CursorIsBoundToItsQuery(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	for i := range 3 {
+		ingestSearchDoc(t, srv, fmt.Sprintf("sess-bind-%d", i), fmt.Sprintf("bindToken doc %d", i))
+	}
+	first := searchPage(t, srv, "/v1/search?q=bindToken&limit=1")
+	if first.NextCursor == "" {
+		t.Fatal("expected a next cursor")
+	}
+	cur := "&cursor=" + string(first.NextCursor)
+	for name, path := range map[string]string{
+		"different q":      "/v1/search?q=otherToken&limit=1" + cur,
+		"added filter":     "/v1/search?q=bindToken&kind=user_prompt&limit=1" + cur,
+		"changed since_ms": "/v1/search?q=bindToken&since_ms=5&limit=1" + cur,
+	} {
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("%s: status=%d, want 400", name, rr.Code)
+		}
+	}
+	// Same query, different page size: still the same result set.
+	if got := searchPage(t, srv, "/v1/search?q=bindToken&limit=2"+cur); len(got.Hits) != 2 {
+		t.Errorf("same query: got %d hits, want the remaining 2", len(got.Hits))
+	}
+}
+
+// TestHandleSearch_NULIs400 pins the NUL-byte query to a client error;
+// it reached SQLite and came back 500 "unterminated string".
+func TestHandleSearch_NULIs400(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/search?q=foo%00bar", nil))
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status=%d body=%s, want 400", rr.Code, rr.Body.String())
+	}
+}
+
+// TestHandleSearch_OrderParam pins ?order=: recency returns newest
+// first regardless of relevance, rank (the default) lets a strongly
+// relevant older row lead, and an unknown value is a 400. Before the
+// parameter existed, callers that needed chronological order (MCP
+// search_events) silently got relevance order.
+func TestHandleSearch_OrderParam(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	seed := func(session, content string, ts time.Time) {
+		t.Helper()
+		env := validEnvelope(t)
+		env.SourceSessionID, env.ContentText, env.TsSource = session, content, ts
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/ingest", bytesReader(mustJSON(t, env))))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("seed: %d", rr.Code)
+		}
+	}
+	now := time.Now().UTC()
+	seed("sess-old-dense", strings.Repeat("orderToken ", 20)+"end", now.Add(-24*time.Hour))
+	seed("sess-new-sparse", "orderToken once among many other unrelated filler words here", now)
+
+	first := func(q string) string {
+		t.Helper()
+		out := searchPage(t, srv, "/v1/search?q=orderToken"+q)
+		if len(out.Hits) != 2 {
+			t.Fatalf("%s: got %d hits", q, len(out.Hits))
+		}
+		return out.Hits[0].SessionID
+	}
+	newest := events.DeriveSessionID("claude-code", "sess-new-sparse")
+	densest := events.DeriveSessionID("claude-code", "sess-old-dense")
+	if got := first("&order=recency"); got != newest {
+		t.Errorf("order=recency: first hit %s, want the newest", got)
+	}
+	if got := first(""); got != densest {
+		t.Errorf("default (rank): first hit %s, want the most relevant", got)
+	}
+	if got := first("&order=rank"); got != densest {
+		t.Errorf("order=rank: first hit %s, want the most relevant", got)
+	}
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/search?q=orderToken&order=oldest", nil))
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("order=oldest: status=%d, want 400", rr.Code)
 	}
 }
