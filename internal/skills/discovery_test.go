@@ -186,8 +186,13 @@ func TestFindProjectSkillsRoot_WalksUpFromCwd(t *testing.T) {
 	if got := FindProjectRoot(proj); got != proj {
 		t.Errorf("at-root cwd: got %q, want %q", got, proj)
 	}
-	if got := FindProjectRoot(root); got != "" {
-		t.Errorf("no-skills ancestor: got %q, want empty", got)
+	// root has no .claude/skills of its own, so it must contribute
+	// nothing: the walk continues to root's parent. Compare against
+	// that walk rather than "" — t.TempDir() may itself sit under a
+	// directory with .claude/skills (e.g. TMPDIR inside $HOME), which
+	// would make an absolute expectation environment-dependent.
+	if got, want := FindProjectRoot(root), FindProjectRoot(filepath.Dir(root)); got != want {
+		t.Errorf("no-skills ancestor: got %q, want %q (the parent's walk)", got, want)
 	}
 	if got := FindProjectRoot(""); got != "" {
 		t.Errorf("empty cwd: got %q, want empty", got)

@@ -73,6 +73,32 @@ func TestSink_Write_DedupesOnRepeatedEventID(t *testing.T) {
 	if !result.Deduped {
 		t.Errorf("second Write with same EventID should be Deduped")
 	}
+	if result.TsServerMs != 0 || result.IngestSeq != 0 {
+		t.Errorf("deduped Write must not report a row identity: %+v", result)
+	}
+}
+
+// TestSink_Write_ReportsStoredServerTimestamp pins Result.TsServerMs
+// to the ts_server_ms actually written, so a live SSE frame built
+// from it matches what a replay of the same row reads back.
+func TestSink_Write_ReportsStoredServerTimestamp(t *testing.T) {
+	t.Parallel()
+	s := openTestStore(t)
+	fixed := time.UnixMilli(1_760_000_000_123)
+	sink := NewSink(s).WithNow(func() time.Time { return fixed })
+
+	env, raw := newValidEnvelope(t)
+	result, err := sink.Write(context.Background(), events.Event{Envelope: env, Raw: raw})
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	var stored int64
+	if err := s.DB().QueryRow(`SELECT ts_server_ms FROM raw_envelopes WHERE event_id = ?`, env.EventID).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if result.TsServerMs != stored || stored != fixed.UnixMilli() {
+		t.Errorf("Result.TsServerMs=%d stored=%d, want both %d", result.TsServerMs, stored, fixed.UnixMilli())
+	}
 }
 
 func TestSink_Write_RejectsUnredacted(t *testing.T) {
